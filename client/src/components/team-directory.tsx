@@ -1,8 +1,13 @@
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Mail, Phone, Calendar, CheckCircle2, XCircle } from "lucide-react";
+import type { User, Order as BackendOrder } from "@shared/schema";
+import { format } from "date-fns";
 
 interface TeamMember {
   id: string;
@@ -16,59 +21,48 @@ interface TeamMember {
   joinedDate: string;
 }
 
-//todo: remove mock functionality
-const mockTeamMembers: TeamMember[] = [
-  {
-    id: "1",
-    name: "Priya Sharma",
-    role: "agent",
-    email: "priya.sharma@orderflowai.com",
-    phone: "+91 98765 12345",
-    status: "active",
-    assignedOrders: 12,
-    completedOrders: 156,
-    joinedDate: "Jan 2024",
-  },
-  {
-    id: "2",
-    name: "Amit Singh",
-    role: "agent",
-    email: "amit.singh@orderflowai.com",
-    phone: "+91 98765 12346",
-    status: "active",
-    assignedOrders: 8,
-    completedOrders: 142,
-    joinedDate: "Feb 2024",
-  },
-  {
-    id: "3",
-    name: "Rahul Verma",
-    role: "manager",
-    email: "rahul.verma@orderflowai.com",
-    phone: "+91 98765 12347",
-    status: "active",
-    assignedOrders: 5,
-    completedOrders: 89,
-    joinedDate: "Dec 2023",
-  },
-  {
-    id: "4",
-    name: "Sneha Patel",
-    role: "agent",
-    email: "sneha.patel@orderflowai.com",
-    phone: "+91 98765 12348",
-    status: "on-leave",
-    assignedOrders: 0,
-    completedOrders: 98,
-    joinedDate: "Mar 2024",
-  },
-];
-
 interface TeamDirectoryProps {
   userRole: "admin" | "manager" | "agent";
 }
 
 export function TeamDirectory({ userRole }: TeamDirectoryProps) {
+  // Fetch users and orders from backend
+  const { data: users, isLoading: usersLoading } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+  });
+
+  const { data: orders, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+    queryKey: ["/api/orders"],
+  });
+
+  const isLoading = usersLoading || ordersLoading;
+
+  // Transform users to team members with order counts
+  const teamMembers = useMemo<TeamMember[]>(() => {
+    if (!users || !orders) return [];
+
+    return users.map((user) => {
+      const userOrders = orders.filter((o) => o.assignedTo === user.id);
+      const completedOrders = userOrders.filter(
+        (o) => o.status === "delivered" || o.status === "confirmed"
+      );
+
+      return {
+        id: user.id,
+        name: user.fullName,
+        role: user.role as TeamMember["role"],
+        email: user.email,
+        phone: user.phone || "N/A",
+        status: user.isActive ? "active" : "offline",
+        assignedOrders: userOrders.filter(
+          (o) => o.status !== "delivered" && o.status !== "cancelled"
+        ).length,
+        completedOrders: completedOrders.length,
+        joinedDate: format(new Date(user.createdAt), "MMM yyyy"),
+      };
+    });
+  }, [users, orders]);
+
   const getInitials = (name: string) => {
     return name
       .split(" ")
@@ -99,13 +93,29 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-10 w-64" data-testid="skeleton-title" />
+          <Skeleton className="h-10 w-32" data-testid="skeleton-button" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-64" data-testid={`skeleton-member-${i}`} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Team Members</h2>
           <p className="text-muted-foreground">
-            {mockTeamMembers.length} total members
+            {teamMembers.length} total members
           </p>
         </div>
         {(userRole === "admin" || userRole === "manager") && (
@@ -114,7 +124,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {mockTeamMembers.map((member) => (
+        {teamMembers.map((member) => (
           <Card key={member.id} data-testid={`card-member-${member.id}`}>
             <CardHeader className="space-y-4">
               <div className="flex items-start justify-between">
