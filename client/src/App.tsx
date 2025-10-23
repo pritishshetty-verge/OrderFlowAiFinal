@@ -8,6 +8,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
+import OrdersPage from "@/pages/orders";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -29,11 +30,16 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 }
 
 function Router() {
+  const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  
   return (
     <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/">
         {() => <ProtectedRoute component={DashboardPage} />}
+      </Route>
+      <Route path="/orders">
+        {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole} />} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
