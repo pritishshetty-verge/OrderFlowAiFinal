@@ -11,6 +11,7 @@ import DashboardPage from "@/pages/dashboard";
 import OrdersPage from "@/pages/orders";
 import AnalyticsPage from "@/pages/analytics";
 import TeamPage from "@/pages/team";
+import SettingsPage from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -48,6 +49,9 @@ function Router() {
       </Route>
       <Route path="/team">
         {() => <ProtectedRoute component={TeamPage} />}
+      </Route>
+      <Route path="/settings">
+        {() => <ProtectedRoute component={SettingsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
