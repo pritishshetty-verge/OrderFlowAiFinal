@@ -4,10 +4,9 @@ import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
 import { OrderDetailsDialog } from "@/components/order-details-dialog";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Package, Clock, Truck, AlertCircle } from "lucide-react";
+import { OrderProgressBar } from "@/components/order-progress-bar";
+import { Card, CardContent } from "@/components/ui/card";
+import { Package } from "lucide-react";
 
 //todo: remove mock functionality
 const mockOrders: Order[] = [
@@ -140,11 +139,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
-  const [filteredOrders, setFilteredOrders] = useState(mockOrders);
+  const [filteredOrders, setFilteredOrders] = useState(
+    mockOrders.filter((o) => o.status === "assigned")
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState("all");
+  const [activeTab, setActiveTab] = useState("assigned");
 
   const handleViewDetails = (order: Order) => {
     setSelectedOrder(order);
@@ -183,7 +184,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     applyFilters("", "all", "all", activeTab);
   };
 
-  const applyFilters = (search: string, status: string, payment: string, tab: string) => {
+  const applyFilters = (search: string, status: string, payment: string, step: string) => {
     let filtered = [...mockOrders];
 
     // Role-based filtering for agents
@@ -191,14 +192,16 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       filtered = filtered.filter((order) => order.assignedTo === "Priya Sharma"); // Mock current user
     }
 
-    // Tab-based filtering
-    if (tab === "pending") {
-      filtered = filtered.filter((order) => order.status === "pending");
-    } else if (tab === "assigned") {
+    // Progress step-based filtering
+    if (step === "assigned") {
       filtered = filtered.filter((order) => order.status === "assigned");
-    } else if (tab === "cod") {
-      filtered = filtered.filter((order) => order.paymentMethod === "cod");
-    } else if (tab === "ndr") {
+    } else if (step === "confirmed") {
+      filtered = filtered.filter((order) => order.status === "confirmed");
+    } else if (step === "cancelled") {
+      filtered = filtered.filter((order) => order.status === "cancelled");
+    } else if (step === "followup") {
+      filtered = filtered.filter((order) => order.status === "pending" || order.status === "shipped");
+    } else if (step === "failed") {
       filtered = filtered.filter((order) => order.status === "ndr");
     }
 
@@ -223,18 +226,39 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setFilteredOrders(filtered);
   };
 
-  const handleTabChange = (value: string) => {
-    setActiveTab(value);
-    applyFilters(searchQuery, statusFilter, paymentFilter, value);
+  const handleStepClick = (status: string) => {
+    setActiveTab(status);
+    applyFilters(searchQuery, statusFilter, paymentFilter, status);
   };
 
-  // Calculate stats for quick view cards
-  const stats = {
-    pending: mockOrders.filter((o) => o.status === "pending").length,
-    assigned: mockOrders.filter((o) => o.status === "assigned").length,
-    cod: mockOrders.filter((o) => o.paymentMethod === "cod").length,
-    ndr: mockOrders.filter((o) => o.status === "ndr").length,
-  };
+  // Calculate stats for progress bar
+  const progressSteps = [
+    {
+      label: "Assigned",
+      count: mockOrders.filter((o) => o.status === "assigned").length,
+      status: "assigned" as const,
+    },
+    {
+      label: "Confirmed",
+      count: mockOrders.filter((o) => o.status === "confirmed").length,
+      status: "confirmed" as const,
+    },
+    {
+      label: "Cancelled",
+      count: mockOrders.filter((o) => o.status === "cancelled").length,
+      status: "cancelled" as const,
+    },
+    {
+      label: "Follow-Up",
+      count: mockOrders.filter((o) => o.status === "pending" || o.status === "shipped").length,
+      status: "followup" as const,
+    },
+    {
+      label: "Failed Delivery",
+      count: mockOrders.filter((o) => o.status === "ndr").length,
+      status: "failed" as const,
+    },
+  ];
 
   return (
     <PageLayout
@@ -242,88 +266,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       description={userRole === "agent" ? "Manage your assigned orders" : "Manage all Shopify orders"}
     >
       <div className="p-6 space-y-6">
+        <OrderProgressBar
+          steps={progressSteps}
+          activeStep={activeTab}
+          onStepClick={handleStepClick}
+        />
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="hover-elevate cursor-pointer" onClick={() => handleTabChange("pending")}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Pending Orders</CardTitle>
-              <Clock className="h-4 w-4 text-yellow-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.pending}</div>
-              <p className="text-xs text-muted-foreground">Awaiting assignment</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate cursor-pointer" onClick={() => handleTabChange("assigned")}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Assigned Orders</CardTitle>
-              <Package className="h-4 w-4 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.assigned}</div>
-              <p className="text-xs text-muted-foreground">Ready for verification</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate cursor-pointer" onClick={() => handleTabChange("cod")}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">COD Orders</CardTitle>
-              <AlertCircle className="h-4 w-4 text-amber-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.cod}</div>
-              <p className="text-xs text-muted-foreground">Requires verification</p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate cursor-pointer" onClick={() => handleTabChange("ndr")}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">NDR Orders</CardTitle>
-              <Truck className="h-4 w-4 text-orange-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.ndr}</div>
-              <p className="text-xs text-muted-foreground">Failed delivery</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Tabs value={activeTab} onValueChange={handleTabChange}>
-          <TabsList>
-            <TabsTrigger value="all" data-testid="tab-all-orders">
-              All Orders
-              <Badge variant="secondary" className="ml-2">
-                {mockOrders.length}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="pending" data-testid="tab-pending-orders">
-              Pending
-              <Badge variant="secondary" className="ml-2">
-                {stats.pending}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="assigned" data-testid="tab-assigned-orders">
-              Assigned
-              <Badge variant="secondary" className="ml-2">
-                {stats.assigned}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="cod" data-testid="tab-cod-orders">
-              COD
-              <Badge variant="secondary" className="ml-2">
-                {stats.cod}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger value="ndr" data-testid="tab-ndr-orders">
-              NDR
-              <Badge variant="secondary" className="ml-2">
-                {stats.ndr}
-              </Badge>
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value={activeTab} className="space-y-4 mt-6">
+        <div className="space-y-4">
             <OrdersFilter
               onSearch={handleSearch}
               onStatusChange={handleStatusChange}
@@ -350,8 +299,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                 onAssignOrder={handleAssignOrder}
               />
             )}
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
 
       <OrderDetailsDialog
