@@ -49,23 +49,21 @@ export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgre
                       "hover-elevate cursor-pointer"
                     )}
                     style={{ 
-                      backgroundColor: step.count === 0 ? '#e5e7eb' : undefined,
+                      backgroundColor: '#e0e0e0',
                       opacity: step.count === 0 ? 0.3 : 1
                     }}
                   >
-                    {step.count > 0 && (
-                      <div
-                        className={cn(
-                          "h-full rounded-full transition-all duration-200",
-                          step.status === "assigned" && "bg-blue-500",
-                          step.status === "confirmed" && "bg-green-500",
-                          step.status === "cancelled" && "bg-gray-400",
-                          step.status === "followup" && "bg-amber-500",
-                          step.status === "failed" && "bg-red-500"
-                        )}
-                        style={{ width: `${fillPercentage}%` }}
-                      />
-                    )}
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-200",
+                        step.status === "assigned" && "bg-blue-500",
+                        step.status === "confirmed" && "bg-green-500",
+                        step.status === "cancelled" && "bg-gray-400",
+                        step.status === "followup" && "bg-amber-500",
+                        step.status === "failed" && "bg-red-500"
+                      )}
+                      style={{ width: `${fillPercentage}%` }}
+                    />
                   </div>
                   
                   {/* Label and count */}
