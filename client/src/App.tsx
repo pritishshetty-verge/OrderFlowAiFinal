@@ -10,6 +10,7 @@ import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import OrdersPage from "@/pages/orders";
 import AnalyticsPage from "@/pages/analytics";
+import TeamPage from "@/pages/team";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -44,6 +45,9 @@ function Router() {
       </Route>
       <Route path="/analytics">
         {() => <ProtectedRoute component={AnalyticsPage} />}
+      </Route>
+      <Route path="/team">
+        {() => <ProtectedRoute component={TeamPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
