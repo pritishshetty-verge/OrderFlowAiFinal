@@ -1,0 +1,441 @@
+# Shopify Order Management & Team Operations Platform for Indian E-Commerce
+
+## **Project Overview:**
+
+The goal of this project is to develop a modern, real-time order management system specifically designed for Indian e-commerce brands operating on Shopify. The system will address critical operational challenges including COD order verification, RTO (Return to Origin) reduction, intelligent order assignment, team coordination, and performance tracking. The platform will provide a unified interface where brands can manage their entire order-to-delivery lifecycle while empowering their operations teams with smart automation, in-app calling capabilities, and actionable insights.
+
+The system will take into account the unique challenges of the Indian e-commerce landscape—high COD order volumes, RTO rates, multi-courier logistics, and the need for systematic customer verification before dispatch. Additionally, it will provide tools for team management, attendance tracking, performance analytics, and continuous learning to ensure operational excellence and scalability.
+
+## **Level:**
+
+Medium to Hard
+
+### **Type of Project:**
+
+Full-Stack SaaS Development, E-Commerce Operations, Real-Time Systems, Team Management
+
+### **Skills Required:**
+
+- React
+- Node.js & Express
+- Real-Time Data Synchronization (WebSockets)
+- Shopify API & Webhooks
+- Telephony Integration (Twilio/Exotel)
+- Database Management (Replit DB/PostgreSQL)
+- shadcn/ui Components
+- Shipping API Integration
+- Sentiment Analysis (OpenAI API)
+- UI Development
+
+### **Key Features**
+
+#### **Milestone 1: Foundation & Shopify Sync**
+
+**Core Infrastructure:**
+- **Shopify Store Connection:**
+  - OAuth authentication flow to securely connect Shopify stores
+  - Fetch and display all historical orders via Shopify Admin API
+  - Clean table interface using shadcn Table component
+  - Display key order information: Order ID, Customer Name, Items, Total, Payment Method, Status, Date
+
+- **Real-Time Bidirectional Sync:**
+  - Implement webhook listeners for order events (orders/create, orders/update, orders/cancelled)
+  - Automatic order ingestion when new orders are placed on Shopify
+  - Bidirectional sync ensuring status changes in app reflect back to Shopify instantly
+  - WebSocket connections for live UI updates across all connected users
+
+- **Order Management Views:**
+  - Advanced filtering by status (Pending, Assigned, Confirmed, Cancelled, Shipped, Delivered, NDR)
+  - Search functionality by order number, customer name, phone number
+  - Sort by date, order value, priority level
+  - Payment method badges (COD vs Prepaid)
+
+- **User Authentication & Role Management:**
+  - Secure JWT-based authentication
+  - Role-based access control (Admin, Manager, Agent)
+  - Team member invitation system via email
+  - Role-specific dashboard views and permissions
+
+**Success Criteria:**
+- Orders sync from Shopify to app within 5 seconds of placement
+- App accurately displays all historical orders with correct data
+- Status updates in app reflect in Shopify within 10 seconds
+- Role-based access correctly restricts agent views to assigned orders only
+
+---
+
+#### **Milestone 2: Intelligent Order Assignment Engine**
+
+**Automated Distribution System:**
+- **Smart COD Detection & Assignment:**
+  - Automatically identify all COD orders requiring verification
+  - Intelligent round-robin distribution algorithm to Present staff
+  - Load-balanced assignment preventing agent overload
+  - Real-time tracking of orders per agent for fair distribution
+
+- **Presence-Based Assignment Logic:**
+  - Orders assigned ONLY to staff with Presence status = "Present"
+  - Presence status options: Present, On Leave, Inactive
+  - All active staff automatically marked "Present" by default
+  - During approved leave, Presence automatically set to "On Leave" (no assignments)
+  - Admins can manually mark staff as "Inactive" to pause assignments
+  - Assignment eligibility determined by Presence status, NOT Clock In/Out status
+  - Staff can receive orders even if they haven't clocked in that day (as long as Presence = Present)
+
+- **Agent Dashboard:**
+  - "My Orders" view showing only assigned orders
+  - Order cards with essential information: customer details, items, delivery address, phone
+  - Visual status indicators (New, In Progress, Completed)
+  - Quick action buttons: Call Customer, Update Status, View Details
+
+- **Attendance & Presence System:**
+  - **Clock In/Out for Attendance Tracking:**
+    - One-click Clock In/Out functionality
+    - Attendance log with timestamps (date, clock-in time, clock-out time, total hours)
+    - Used purely for HR records and payroll purposes
+    - Does NOT control order assignment eligibility
+  
+  - **Presence Status for Order Assignment:**
+    - Three status options: Present, On Leave, Inactive
+    - All active staff automatically marked "Present" by default
+    - Staff marked "On Leave" during approved leave periods (no assignments)
+    - Admins can manually set staff to "Inactive" to pause assignments
+    - Orders distributed ONLY to staff with Presence = "Present"
+    - Staff can receive orders even without clocking in (if Presence = Present)
+
+- **Admin Override Controls:**
+  - Manual order reassignment capability
+  - Pause/resume auto-assignment for specific agents
+  - Bulk order assignment for special cases
+  - View all agent workloads in real-time
+
+**Success Criteria:**
+- Orders distributed evenly within 10 seconds of staff being marked Present
+- Staff with Presence = "On Leave" or "Inactive" receive zero assignments
+- Orders successfully assigned to Present staff regardless of Clock In status
+- Admins can successfully reassign any order with instant effect
+
+---
+
+#### **Milestone 3: In-App Calling & Status Management**
+
+**Integrated Communication System:**
+- **In-App Telephony:**
+  - "Call Customer" button initiating calls through integrated dialer (Twilio/Exotel API)
+  - In-app dialer widget showing call status (Connecting, Active, Ended)
+  - Real-time call duration timer
+  - Automatic call recording for all conversations
+  - Call recordings stored securely with order reference
+
+- **Streamlined Status Update Workflow:**
+  - Quick status action buttons appearing during/after call:
+    - ✅ **Confirmed** → Moves order to fulfillment queue, syncs to Shopify
+    - ❌ **Cancelled** → Opens modal for cancellation reason selection with notes
+    - 📞 **No Answer** → Automatically schedules follow-up in 2 hours
+    - ⏰ **Follow-up Later** → Agent selects custom date/time for callback
+  - Status changes instantly sync to Shopify (tags, notes, internal status)
+  - Order timeline showing all status changes and actions
+
+- **Cancellation Reason Management:**
+  - Pre-built dropdown of common Indian e-commerce cancellation reasons:
+    - Customer changed mind
+    - Found better price elsewhere
+    - Wrong item/size/color ordered
+    - Delivery time too long
+    - Family member disapproved
+    - Fake/test order
+    - Customer unreachable
+    - Address issues
+  - Optional notes field for additional context
+  - Analytics on cancellation reasons for insights
+
+- **Call History & Audit Trail:**
+  - Complete call log per order (date, time, duration, outcome, agent)
+  - Playback functionality for recorded calls (admin/manager access)
+  - Download call recordings for training/quality assurance
+  - Searchable call history across all orders
+
+- **Follow-Up Management:**
+  - Dedicated "Follow-Ups" tab in agent dashboard
+  - Orders automatically appear at scheduled follow-up time
+  - Follow-ups prioritized over new order assignments
+  - Escalation for multiple failed attempts
+
+**Success Criteria:**
+- Calls connect within 3 seconds of clicking "Call"
+- 98%+ call recording success rate
+- All status updates sync to Shopify within 10 seconds
+- Follow-ups appear exactly at scheduled time with zero delays
+
+---
+
+#### **Milestone 4: NDR Management & Resolution System**
+
+**Failed Delivery Recovery:**
+- **NDR Detection & Integration:**
+  - Webhook integration with major Indian courier APIs (Delhivery, Shiprocket, etc.)
+  - Automatic NDR creation when delivery fails
+  - NDR reason capture (Customer Unavailable, Wrong Address, Refused Delivery, etc.)
+  - Real-time notifications to admins and assigned agents
+
+- **Intelligent NDR Assignment:**
+  - Automatic assignment using same round-robin logic as orders
+  - High-value order prioritization in NDR queue
+  - Separate "NDR Queue" tab in agent dashboard
+  - Visual distinction between new orders and NDRs
+
+- **Resolution Workflow:**
+  - Call customer to understand delivery failure reason
+  - Update resolution action:
+    - **Re-attempt Delivery** → Confirm/correct delivery address, schedule new attempt
+    - **Schedule Specific Time** → Coordinate delivery window with customer
+    - **Convert to Prepaid** → Send payment link, update order type
+    - **Return to Origin (RTO)** → Mark as failed, process refund
+  - Resolution updates automatically sync back to courier system
+  - Courier notification sent when re-attempt scheduled
+
+- **NDR Analytics Dashboard:**
+  - NDR rate calculation (% of orders)
+  - Breakdown by courier, region, product category
+  - Resolution rate per agent
+  - Average time to resolve NDRs
+  - RTO rate tracking
+  - Cost impact analysis (lost revenue from RTOs)
+
+- **Escalation Management:**
+  - Automatic escalation for unresolved NDRs after 48 hours
+  - Manager assignment for complex cases
+  - Customer communication templates for common scenarios
+
+**Success Criteria:**
+- NDRs created and assigned within 1 hour of courier notification
+- 70% of NDRs successfully resolved before becoming RTO
+- Resolution updates sync to courier in real-time
+- Clear audit trail for every NDR showing all actions taken
+
+---
+
+#### **Milestone 5: Performance Dashboards & Analytics**
+
+**Data-Driven Insights:**
+- **Admin Overview Dashboard (shadcn Cards & Recharts):**
+  - **Key Metrics Widgets:**
+    - Total orders (today/week/month with comparisons)
+    - Confirmation rate (% of COD orders confirmed)
+    - Cancellation rate (% and trend)
+    - NDR rate and RTO rate
+    - Average Order Value (AOV)
+    - Revenue at risk (pending COD orders value)
+  
+  - **Real-Time Operational Metrics:**
+    - Orders pending verification (count and value)
+    - Active calls in progress
+    - Staff currently online
+    - Today's confirmed orders vs target
+    - Call queue depth
+
+  - **Trend Visualizations:**
+    - Order volume trends (line charts)
+    - Confirmation rate trends over time
+    - RTO rate weekly comparison
+    - Peak calling hours heatmap
+
+- **Staff Performance Dashboard:**
+  - Comprehensive agent performance table showing:
+    - Agent name and online status
+    - Calls made today
+    - Confirmation rate (%)
+    - Cancellation rate (%)
+    - Average call duration
+    - Customer sentiment score (avg. across all calls)
+    - NDR resolution rate
+  - Sortable by any metric
+  - Color-coded performance indicators (green/yellow/red)
+  - Drill-down: Click agent name → detailed call history and order list
+
+- **Order Flow Visualization:**
+  - Funnel chart showing conversion at each stage:
+    - Total Orders → Assigned → Called → Confirmed → Shipped → Delivered
+  - Drop-off identification at each stage
+  - Time-to-completion metrics for each stage
+  - Bottleneck detection
+
+- **Sentiment Analysis Integration:**
+  - Automatic call recording transcription
+  - AI-powered sentiment analysis (OpenAI/Google Cloud NLP)
+  - Sentiment scoring: Positive, Neutral, Negative
+  - Aggregate sentiment score per agent
+  - Flag negative sentiment calls for coaching
+  - Keyword extraction for common customer concerns
+  - Sentiment trends over time
+
+- **Custom Reporting:**
+  - Flexible date range selector
+  - Export functionality (CSV, Excel)
+  - Pre-built report templates:
+    - Weekly Performance Summary
+    - RTO Deep-Dive Analysis
+    - Agent Comparison Report
+    - Courier Performance Report
+    - Product-wise Cancellation Analysis
+  - Scheduled email reports for stakeholders
+
+**Success Criteria:**
+- Dashboard loads completely in under 2 seconds
+- All metrics update in real-time without page refresh
+- Sentiment analysis accuracy above 80%
+- Reports generate and export within 5 seconds
+
+---
+
+#### **Milestone 6: Team Collaboration & HR Features**
+
+**Unified Team Management:**
+- **People Section:**
+  - Complete team directory with:
+    - Name, role, email, phone, join date
+    - Current online/offline status
+    - Profile photo
+    - Performance summary (calls, confirmation rate, sentiment)
+  - Quick actions: Edit role, Update details, Deactivate account
+  - Filterable by role, status, performance tier
+  - Export team roster
+
+- **Enhanced Attendance Management:**
+  - Full attendance history in calendar view
+  - Late arrival tracking and alerts
+  - Early departure logging
+  - Overtime calculation
+  - Monthly attendance summary per employee
+  - Export attendance reports for payroll
+  - Visual indicators for patterns (frequent lateness, absences)
+
+- **Leave Management System:**
+  - Staff submit leave requests:
+    - Date range picker
+    - Leave type (Sick, Casual, Planned)
+    - Reason/notes
+  - Admin approval workflow:
+    - Approve/Reject with comments
+    - Leave balance validation
+    - Coverage check (minimum staff requirement)
+  - Leave balance tracking per employee
+  - Leave calendar showing team availability
+  - Automatic leave deduction from balance
+
+- **In-App Team Chat:**
+  - Real-time team communication channel
+  - Order-specific threads (mention orders with #ORDER123)
+  - @mentions for direct messages to team members
+  - File/image sharing capability
+  - Message reactions and threads
+  - Searchable message history
+  - Unread message indicators
+
+- **Unified Notifications Hub:**
+  - Centralized notification center with:
+    - New order assignment alerts
+    - NDR assignment notifications
+    - Leave request status updates
+    - Team mentions in chat
+    - Performance milestone achievements
+    - System updates and announcements
+  - Mark as read/unread functionality
+  - Notification preferences/settings
+  - Browser push notifications
+  - Email digest option for missed notifications
+
+**Success Criteria:**
+- Chat messages delivered instantly (< 1 second latency)
+- Leave workflow reduces email/WhatsApp coordination by 80%
+- Zero missed assignments due to notification system
+- Attendance tracking eliminates manual spreadsheets
+
+---
+
+#### **Milestone 7: Learning Center & Shipping Integration**
+
+**Knowledge & Fulfillment Systems:**
+- **Learning Center:**
+  - Comprehensive resource library:
+    - Standard Operating Procedures (SOPs)
+    - Training videos and tutorials
+    - Product knowledge guides
+    - Call script templates
+    - Best practices documentation
+  - Content categorization:
+    - Onboarding (new hire essentials)
+    - Advanced Techniques
+    - Policy & Compliance
+    - Product Training
+    - Soft Skills Development
+  - Search functionality across all content
+  - Bookmark/favorite resources
+  - Completion tracking (admin visibility)
+  - Quiz/assessment integration for knowledge validation
+
+- **New Hire Onboarding:**
+  - Structured onboarding checklist with milestones:
+    - Complete profile setup
+    - Watch welcome videos
+    - Read essential SOPs
+    - Shadow experienced agent
+    - Complete first 10 calls
+    - Pass assessment quiz
+  - Progress tracking (% completion)
+  - Auto-assignment of intro training modules
+  - Manager sign-off on readiness
+  - Time-to-productivity tracking
+
+- **Integrated Shipping Management:**
+  - **Courier Selection:**
+    - View available couriers for delivery pincode
+    - Serviceability check (real-time pincode validation)
+    - Rate comparison across couriers
+    - Show estimated delivery time
+    - Recommend optimal courier based on historical performance
+  
+  - **Label Generation:**
+    - Generate shipping labels directly in app (Shiprocket/Delhivery API)
+    - Bulk label generation (select multiple orders)
+    - Print-ready label format (PDF download)
+    - Automatic tracking number capture
+    - QR code generation for warehouse scanning
+  
+  - **Order Fulfillment:**
+    - Mark orders as "Fulfilled" with tracking details
+    - Auto-sync tracking numbers to Shopify
+    - Update fulfillment status in real-time
+    - Manifest generation for courier pickup
+    - Pickup scheduling integration
+
+- **Courier Performance Analytics:**
+  - Delivery success rate per courier
+  - Average delivery time (ordered → delivered)
+  - NDR rate comparison across couriers
+  - Region-wise performance breakdown
+  - Cost efficiency analysis
+  - Recommendations for best courier per region/product type
+  - SLA compliance tracking
+
+**Success Criteria:**
+- New agents complete onboarding in under 2 days
+- Shipping labels generated in under 30 seconds
+- Tracking numbers sync to Shopify within 10 seconds
+- Courier selection optimized based on data increases delivery success by 15%
+
+---
+
+### **Client Information:**
+
+The target users are Indian D2C (Direct-to-Consumer) e-commerce brands operating on Shopify, particularly in high-COD categories such as fashion, beauty, health supplements, and home goods. These brands typically:
+
+- Process 100-500+ COD orders daily
+- Employ operations teams of 5-50 staff members
+- Face RTO rates of 20-40% (industry challenge)
+- Operate with limited tech infrastructure and scattered tools
+- Need systematic COD verification to reduce fake orders
+- Require real-time visibility into operations and team performance
+- Seek to scale efficiently without proportional increase in operational overhead
+
+The platform addresses their core pain points: high RTO losses, manual order verification via external tools, lack of intelligent assignment, fragmented team communication, and absence of actionable performance data. By providing a unified, modern, and automated solution, the platform enables these brands to professionalize their operations, reduce costs, and scale sustainably.
