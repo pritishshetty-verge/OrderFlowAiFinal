@@ -295,10 +295,10 @@ export function OrderQuickPreview({
         </div>
 
         {/* Action Buttons - Fixed at bottom */}
-        <div className="fixed bottom-0 right-0 w-[500px] sm:w-[600px] bg-background border-t p-4">
-          <div className="flex gap-2">
+        <div className="absolute bottom-0 left-0 right-0 bg-card border-t p-4">
+          <div className="flex gap-3">
             <Button
-              variant="outline"
+              variant="secondary"
               className="flex-1"
               onClick={onInvoice}
               data-testid="button-invoice"
@@ -306,7 +306,7 @@ export function OrderQuickPreview({
               Invoice
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               className="flex-1"
               onClick={onRefund}
               data-testid="button-refund"
@@ -314,7 +314,7 @@ export function OrderQuickPreview({
               Refund
             </Button>
             <Button
-              variant="default"
+              variant="secondary"
               className="flex-1"
               onClick={onEditOrder}
               data-testid="button-edit-order"
