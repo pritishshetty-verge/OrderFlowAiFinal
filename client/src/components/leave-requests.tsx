@@ -113,7 +113,25 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   });
 
   const onSubmit = (data: LeaveFormValues) => {
-    console.log("Leave request submitted:", data);
+    const currentUser = localStorage.getItem("userRole") === "admin" 
+      ? "Admin User" 
+      : localStorage.getItem("userRole") === "manager" 
+      ? "Manager" 
+      : "Agent";
+
+    const newRequest: LeaveRequest = {
+      id: `${Date.now()}`,
+      employeeName: currentUser,
+      type: data.type,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      reason: data.reason,
+      status: "pending",
+      requestedAt: new Date(),
+    };
+
+    setRequests((prev) => [newRequest, ...prev]);
+    
     toast({
       title: "Leave Request Submitted",
       description: "Your request has been sent for approval.",

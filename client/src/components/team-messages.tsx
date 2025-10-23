@@ -143,6 +143,7 @@ interface TeamMessagesProps {
 }
 
 export function TeamMessages({ userRole }: TeamMessagesProps) {
+  const [conversations, setConversations] = useState<Conversation[]>(mockConversations);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(
     mockConversations[0]
   );
@@ -160,11 +161,45 @@ export function TeamMessages({ userRole }: TeamMessagesProps) {
   const handleSendMessage = () => {
     if (!messageInput.trim() || !selectedConversation) return;
 
-    console.log("Sending message:", messageInput);
+    const newMessage: Message = {
+      id: `${Date.now()}`,
+      senderId: "me",
+      senderName: "You",
+      content: messageInput,
+      timestamp: new Date(),
+      isRead: true,
+    };
+
+    // Update conversations state
+    setConversations((prevConvs) =>
+      prevConvs.map((conv) => {
+        if (conv.id === selectedConversation.id) {
+          return {
+            ...conv,
+            messages: [...conv.messages, newMessage],
+            lastMessage: messageInput,
+            lastMessageTime: new Date(),
+          };
+        }
+        return conv;
+      })
+    );
+
+    // Update selected conversation
+    setSelectedConversation((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        messages: [...prev.messages, newMessage],
+        lastMessage: messageInput,
+        lastMessageTime: new Date(),
+      };
+    });
+
     setMessageInput("");
   };
 
-  const filteredConversations = mockConversations.filter((conv) =>
+  const filteredConversations = conversations.filter((conv) =>
     conv.participantName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
