@@ -58,7 +58,12 @@ export function OrdersTable({
         </TableHeader>
         <TableBody>
           {orders.map((order) => (
-            <TableRow key={order.id} className="hover-elevate" data-testid={`row-order-${order.id}`}>
+            <TableRow
+              key={order.id}
+              className="hover-elevate cursor-pointer"
+              onClick={() => onViewDetails?.(order)}
+              data-testid={`row-order-${order.id}`}
+            >
               <TableCell className="font-mono text-xs font-medium">
                 #{order.shopifyOrderId}
               </TableCell>
@@ -94,7 +99,10 @@ export function OrdersTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => onCallCustomer?.(order)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCallCustomer?.(order);
+                      }}
                       data-testid={`button-call-${order.id}`}
                     >
                       <Phone className="h-4 w-4" />
@@ -103,7 +111,10 @@ export function OrdersTable({
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => onViewDetails?.(order)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewDetails?.(order);
+                    }}
                     data-testid={`button-view-${order.id}`}
                   >
                     <Eye className="h-4 w-4" />
@@ -112,7 +123,10 @@ export function OrdersTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => onAssignOrder?.(order)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAssignOrder?.(order);
+                      }}
                       data-testid={`button-assign-${order.id}`}
                     >
                       <UserPlus className="h-4 w-4" />

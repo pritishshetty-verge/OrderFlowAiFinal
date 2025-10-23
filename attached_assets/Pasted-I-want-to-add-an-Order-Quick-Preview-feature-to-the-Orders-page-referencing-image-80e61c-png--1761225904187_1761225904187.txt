@@ -1,0 +1,83 @@
+I want to add an 'Order Quick Preview' feature to the 'Orders' page (referencing image_80e61c.png).
+
+When a user clicks on any order row in the main table (e.g., clicking on the row for Rajesh Kumar or Arjun Mehta), a side panel or modal dialog should appear on the right side of the screen. This panel should display a detailed quick preview of the selected order, similar to the design shown in the reference images (image_80e600.jpg and image_80e5fe.jpg).
+
+Here are the key elements and functionalities I need for this quick preview panel:
+
+Panel Structure & Content:
+
+Header:
+
+Display the Order ID (e.g., #012345/10 from the reference).
+
+Include a close button (X icon) in the top right corner to dismiss the panel.
+
+Order Details Section:
+
+Created at: Date and time the order was placed.
+
+Payment Status: A tag indicating 'Paid' or 'Pending Payment'.
+
+Order Status: A tag indicating the current status (e.g., 'In progress', 'Assigned', 'Confirmed').
+
+Customer Information Section:
+
+Customer Name: (e.g., 'Dunder Mifflin LTD.')
+
+Customer Email: Clickable email address.
+
+Customer Phone: Clickable phone number.
+
+An edit icon next to the customer info, which, when clicked, should open a separate dialog/section to edit customer details.
+
+Timeline/Activity Log Section:
+
+A chronological list of events related to the order, similar to the timeline in the reference image. Each entry should include:
+
+A status indicator (e.g., circle for pending, checkmark for completed).
+
+A description of the event (e.g., 'The packing has been started', 'The invoice has been sent to the customer').
+
+Date of the event.
+
+Items Ordered Section:
+
+A list of all items in the order, each displaying:
+
+An item icon/thumbnail (like the colored gradients in the reference).
+
+Item Name.
+
+Item Variant/Category (e.g., '(category) (Type) (size)').
+
+Quantity.
+
+Price per item.
+
+Financial Summary Section:
+
+Subtotal.
+
+Discount.
+
+Shipping Cost.
+
+Tax.
+
+Total: Clearly displayed.
+
+Action Buttons (at the bottom of the panel):
+
+'Invoice' button.
+
+'Refund' button.
+
+'Edit order' button.
+
+Behavior:
+
+The panel should appear smoothly from the right side.
+
+Clicking outside the panel or on the close (X) button should dismiss it.
+
+The content within the panel should dynamically update based on the order row that was clicked."

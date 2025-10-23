@@ -2,7 +2,7 @@ import { useState } from "react";
 import { PageLayout } from "@/components/page-layout";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
-import { OrderDetailsDialog } from "@/components/order-details-dialog";
+import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
@@ -137,7 +137,7 @@ interface OrdersPageProps {
 
 export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [filteredOrders, setFilteredOrders] = useState(
     mockOrders.filter((o) => o.status === "assigned")
@@ -149,7 +149,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   const handleViewDetails = (order: Order) => {
     setSelectedOrder(order);
-    setIsDetailsDialogOpen(true);
+    setIsQuickPreviewOpen(true);
   };
 
   const handleCallCustomer = (order: Order) => {
@@ -302,10 +302,26 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         </div>
       </div>
 
-      <OrderDetailsDialog
+      <OrderQuickPreview
         order={selectedOrder}
-        open={isDetailsDialogOpen}
-        onOpenChange={setIsDetailsDialogOpen}
+        open={isQuickPreviewOpen}
+        onOpenChange={setIsQuickPreviewOpen}
+        onEditCustomer={() => {
+          console.log("Edit customer clicked");
+          // TODO: Implement edit customer dialog
+        }}
+        onInvoice={() => {
+          console.log("Invoice clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement invoice generation
+        }}
+        onRefund={() => {
+          console.log("Refund clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement refund dialog
+        }}
+        onEditOrder={() => {
+          console.log("Edit order clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement edit order dialog
+        }}
       />
 
       <AssignOrderDialog
