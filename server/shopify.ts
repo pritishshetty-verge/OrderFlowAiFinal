@@ -40,7 +40,16 @@ export class ShopifyClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Shopify API error: ${response.statusText}`);
+      const errorBody = await response.text();
+      console.error('Shopify API error details:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorBody,
+        url: url.replace(/\.myshopify\.com/, '.myshopify.com'), // Don't log full URL
+        hasApiKey: !!this.config.apiKey,
+        apiKeyLength: this.config.apiKey?.length || 0
+      });
+      throw new Error(`Shopify API error: ${response.statusText} (${response.status})`);
     }
 
     return await response.json();
@@ -126,9 +135,20 @@ export class ShopifyClient {
   }
 }
 
-export const shopifyClient = new ShopifyClient({
+// Validate configuration at startup
+const shopifyConfig = {
   storeUrl: process.env.SHOPIFY_STORE_URL!,
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecret: process.env.SHOPIFY_API_SECRET!,
   webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
+};
+
+console.log('Shopify configuration status:', {
+  hasStoreUrl: !!shopifyConfig.storeUrl,
+  hasApiKey: !!shopifyConfig.apiKey,
+  hasApiSecret: !!shopifyConfig.apiSecret,
+  hasWebhookSecret: !!shopifyConfig.webhookSecret,
+  storeUrlFormat: shopifyConfig.storeUrl?.includes('.myshopify.com') ? 'valid' : 'invalid',
 });
+
+export const shopifyClient = new ShopifyClient(shopifyConfig);
