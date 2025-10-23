@@ -4,6 +4,7 @@ import { ProfileSettings } from "@/components/settings-profile";
 import { PreferencesSettings } from "@/components/settings-preferences";
 import { NotificationsSettings } from "@/components/settings-notifications";
 import { SecuritySettings } from "@/components/settings-security";
+import { ShopifySettings } from "@/components/settings-shopify";
 
 export default function SettingsPage() {
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
@@ -28,6 +29,11 @@ export default function SettingsPage() {
             <TabsTrigger value="security" data-testid="tab-security">
               Security
             </TabsTrigger>
+            {userRole === "admin" && (
+              <TabsTrigger value="shopify" data-testid="tab-shopify">
+                Shopify
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="profile">
@@ -45,6 +51,12 @@ export default function SettingsPage() {
           <TabsContent value="security">
             <SecuritySettings />
           </TabsContent>
+
+          {userRole === "admin" && (
+            <TabsContent value="shopify">
+              <ShopifySettings />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </PageLayout>
