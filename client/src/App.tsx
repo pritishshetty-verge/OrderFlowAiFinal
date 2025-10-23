@@ -9,6 +9,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import OrdersPage from "@/pages/orders";
+import AnalyticsPage from "@/pages/analytics";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -40,6 +41,9 @@ function Router() {
       </Route>
       <Route path="/orders">
         {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole} />} />}
+      </Route>
+      <Route path="/analytics">
+        {() => <ProtectedRoute component={AnalyticsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
