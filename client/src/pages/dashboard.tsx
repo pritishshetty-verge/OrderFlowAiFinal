@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
@@ -7,119 +8,86 @@ import { ConnectionStatus } from "@/components/connection-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useLocation } from "wouter";
 import { LogOut } from "lucide-react";
+import type { Order as BackendOrder, User } from "@shared/schema";
 
-//todo: remove mock functionality
-const mockOrders: Order[] = [
-  {
-    id: "1",
-    shopifyOrderId: "1001",
-    customerName: "Rajesh Kumar",
-    customerPhone: "+91 98765 43210",
-    items: "iPhone 15 Pro, AirPods Pro",
-    total: 145000,
-    paymentMethod: "cod",
-    status: "assigned",
-    assignedTo: "Priya Sharma",
-    createdAt: new Date(Date.now() - 1000 * 60 * 30),
-  },
-  {
-    id: "2",
-    shopifyOrderId: "1002",
-    customerName: "Priya Patel",
-    customerPhone: "+91 98765 43211",
-    items: "Samsung Galaxy S24",
-    total: 79999,
-    paymentMethod: "prepaid",
-    status: "confirmed",
-    assignedTo: "Amit Singh",
-    createdAt: new Date(Date.now() - 1000 * 60 * 120),
-  },
-  {
-    id: "3",
-    shopifyOrderId: "1003",
-    customerName: "Amit Verma",
-    customerPhone: "+91 98765 43212",
-    items: "OnePlus 12, Smart Watch",
-    total: 95000,
-    paymentMethod: "cod",
-    status: "pending",
-    createdAt: new Date(Date.now() - 1000 * 60 * 15),
-  },
-  {
-    id: "4",
-    shopifyOrderId: "1004",
-    customerName: "Sneha Reddy",
-    customerPhone: "+91 98765 43213",
-    items: "iPad Air, Apple Pencil",
-    total: 68000,
-    paymentMethod: "prepaid",
-    status: "shipped",
-    assignedTo: "Priya Sharma",
-    createdAt: new Date(Date.now() - 1000 * 60 * 240),
-  },
-  {
-    id: "5",
-    shopifyOrderId: "1005",
-    customerName: "Vikram Singh",
-    customerPhone: "+91 98765 43214",
-    items: "MacBook Pro 14",
-    total: 199000,
-    paymentMethod: "cod",
-    status: "cancelled",
-    assignedTo: "Amit Singh",
-    createdAt: new Date(Date.now() - 1000 * 60 * 180),
-  },
-  {
-    id: "6",
-    shopifyOrderId: "1006",
-    customerName: "Anjali Gupta",
-    customerPhone: "+91 98765 43215",
-    items: "Sony WH-1000XM5",
-    total: 29990,
-    paymentMethod: "prepaid",
-    status: "delivered",
-    assignedTo: "Priya Sharma",
-    createdAt: new Date(Date.now() - 1000 * 60 * 360),
-  },
-  {
-    id: "7",
-    shopifyOrderId: "1007",
-    customerName: "Karan Malhotra",
-    customerPhone: "+91 98765 43216",
-    items: "PS5 Console, Games Bundle",
-    total: 54990,
-    paymentMethod: "cod",
-    status: "ndr",
-    assignedTo: "Amit Singh",
-    createdAt: new Date(Date.now() - 1000 * 60 * 90),
-  },
-  {
-    id: "8",
-    shopifyOrderId: "1008",
-    customerName: "Neha Sharma",
-    customerPhone: "+91 98765 43217",
-    items: "Dell XPS 13",
-    total: 125000,
-    paymentMethod: "prepaid",
-    status: "confirmed",
-    assignedTo: "Priya Sharma",
-    createdAt: new Date(Date.now() - 1000 * 60 * 45),
-  },
-];
+// Transform backend order to frontend order format
+function transformOrder(order: BackendOrder, users: User[]): Order {
+  const assignedUser = order.assignedTo
+    ? users.find((u) => u.id === order.assignedTo)
+    : undefined;
+
+  return {
+    id: order.id,
+    shopifyOrderId: order.shopifyOrderNumber,
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
+    items: order.itemsSummary || "",
+    total: parseFloat(order.totalPrice),
+    paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
+    status: order.status as Order["status"],
+    assignedTo: assignedUser?.fullName,
+    createdAt: new Date(order.shopifyCreatedAt),
+  };
+}
 
 export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [filteredOrders, setFilteredOrders] = useState(mockOrders);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
-  const [isConnected] = useState(true); //todo: remove mock functionality
 
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+
+  // Fetch orders from backend
+  const { data: ordersData, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+    queryKey: ["/api/orders"],
+  });
+
+  // Fetch users for assignment display
+  const { data: usersData, isLoading: usersLoading } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+  });
+
+  // Transform backend orders to frontend format
+  const allOrders = useMemo(() => {
+    if (!ordersData || !usersData) return [];
+    return ordersData.map((order) => transformOrder(order, usersData));
+  }, [ordersData, usersData]);
+
+  // Check Shopify connection status (connected if we have orders synced)
+  const isConnected = (ordersData?.length ?? 0) > 0;
+
+  // Apply filters to orders
+  const filteredOrders = useMemo(() => {
+    let filtered = [...allOrders];
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (order) =>
+          order.shopifyOrderId.toLowerCase().includes(query) ||
+          order.customerName.toLowerCase().includes(query) ||
+          order.customerPhone.includes(query)
+      );
+    }
+
+    if (statusFilter !== "all") {
+      filtered = filtered.filter((order) => order.status === statusFilter);
+    }
+
+    if (paymentFilter !== "all") {
+      filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
+    }
+
+    return filtered;
+  }, [allOrders, searchQuery, statusFilter, paymentFilter]);
+
+  const isLoading = ordersLoading || usersLoading;
 
   const handleLogout = () => {
     localStorage.removeItem("userRole");
@@ -143,59 +111,34 @@ export default function DashboardPage() {
 
   const handleSearch = (value: string) => {
     setSearchQuery(value);
-    applyFilters(value, statusFilter, paymentFilter);
   };
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value);
-    applyFilters(searchQuery, value, paymentFilter);
   };
 
   const handlePaymentChange = (value: string) => {
     setPaymentFilter(value);
-    applyFilters(searchQuery, statusFilter, value);
   };
 
   const handleClearFilters = () => {
     setSearchQuery("");
     setStatusFilter("all");
     setPaymentFilter("all");
-    setFilteredOrders(mockOrders);
   };
 
-  const applyFilters = (search: string, status: string, payment: string) => {
-    let filtered = [...mockOrders];
-
-    if (search) {
-      const query = search.toLowerCase();
-      filtered = filtered.filter(
-        (order) =>
-          order.shopifyOrderId.toLowerCase().includes(query) ||
-          order.customerName.toLowerCase().includes(query) ||
-          order.customerPhone.includes(query)
-      );
-    }
-
-    if (status !== "all") {
-      filtered = filtered.filter((order) => order.status === status);
-    }
-
-    if (payment !== "all") {
-      filtered = filtered.filter((order) => order.paymentMethod === payment);
-    }
-
-    setFilteredOrders(filtered);
-  };
-
-  //todo: remove mock functionality - calculate from real data
-  const stats = {
-    totalOrders: mockOrders.length,
-    confirmedOrders: mockOrders.filter((o) => o.status === "confirmed").length,
-    cancelledOrders: mockOrders.filter((o) => o.status === "cancelled").length,
-    totalRevenue: mockOrders
-      .filter((o) => o.status === "confirmed")
-      .reduce((sum, o) => sum + o.total, 0),
-  };
+  // Calculate stats from real data
+  const stats = useMemo(
+    () => ({
+      totalOrders: allOrders.length,
+      confirmedOrders: allOrders.filter((o) => o.status === "confirmed").length,
+      cancelledOrders: allOrders.filter((o) => o.status === "cancelled").length,
+      totalRevenue: allOrders
+        .filter((o) => o.status === "confirmed" || o.status === "delivered")
+        .reduce((sum, o) => sum + o.total, 0),
+    }),
+    [allOrders]
+  );
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -224,33 +167,49 @@ export default function DashboardPage() {
       </header>
 
       <main className="flex-1 overflow-auto p-6">
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">
-              Overview of your order management operations
-            </p>
+        {isLoading ? (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-64" data-testid="skeleton-title" />
+              <Skeleton className="h-4 w-96" data-testid="skeleton-description" />
+            </div>
+            <div className="grid gap-4 md:grid-cols-4">
+              <Skeleton className="h-32" data-testid="skeleton-stat-1" />
+              <Skeleton className="h-32" data-testid="skeleton-stat-2" />
+              <Skeleton className="h-32" data-testid="skeleton-stat-3" />
+              <Skeleton className="h-32" data-testid="skeleton-stat-4" />
+            </div>
+            <Skeleton className="h-96 w-full" data-testid="skeleton-table" />
           </div>
+        ) : (
+          <div className="space-y-6">
+            <div>
+              <h1 className="text-3xl font-bold">Dashboard</h1>
+              <p className="text-muted-foreground mt-1">
+                Overview of your order management operations
+              </p>
+            </div>
 
-          <DashboardStats {...stats} />
-          
-          <div className="space-y-4">
-            <OrdersFilter
-              onSearch={handleSearch}
-              onStatusChange={handleStatusChange}
-              onPaymentChange={handlePaymentChange}
-              onClearFilters={handleClearFilters}
-            />
-            
-            <OrdersTable
-              orders={filteredOrders}
-              userRole={userRole}
-              onCallCustomer={handleCallCustomer}
-              onViewDetails={handleViewDetails}
-              onAssignOrder={handleAssignOrder}
-            />
+            <DashboardStats {...stats} />
+
+            <div className="space-y-4">
+              <OrdersFilter
+                onSearch={handleSearch}
+                onStatusChange={handleStatusChange}
+                onPaymentChange={handlePaymentChange}
+                onClearFilters={handleClearFilters}
+              />
+
+              <OrdersTable
+                orders={filteredOrders}
+                userRole={userRole}
+                onCallCustomer={handleCallCustomer}
+                onViewDetails={handleViewDetails}
+                onAssignOrder={handleAssignOrder}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </main>
 
       <OrderDetailsDialog
