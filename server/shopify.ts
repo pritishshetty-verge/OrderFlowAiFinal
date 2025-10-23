@@ -76,8 +76,7 @@ export class ShopifyClient {
 
   verifyWebhook(body: string, hmacHeader: string): boolean {
     if (!this.config.webhookSecret) {
-      console.warn("No webhook secret configured - skipping verification");
-      return true;
+      throw new Error("Webhook secret not configured - refusing to process unverified webhooks");
     }
 
     const hash = crypto

@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, updateUserSchema } from "@shared/schema";
+import { ZodError } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -186,12 +187,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           const customerData = {
             shopifyCustomerId: shopifyOrder.customer.id.toString(),
-            email: shopifyOrder.customer.email || shopifyOrder.email,
-            fullName: `${shopifyOrder.customer.first_name || ""} ${shopifyOrder.customer.last_name || ""}`.trim(),
+            email: shopifyOrder.customer.email || shopifyOrder.email || null,
+            firstName: shopifyOrder.customer.first_name || null,
+            lastName: shopifyOrder.customer.last_name || null,
             phone: shopifyOrder.customer.phone || shopifyOrder.phone || null,
-            shippingAddress: shopifyOrder.shipping_address
-              ? JSON.stringify(shopifyOrder.shipping_address)
-              : null,
           };
 
           if (existingCustomer) {
@@ -324,7 +323,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
       res.json(user);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
       console.error("Error updating user:", error);
       res.status(500).json({ error: "Failed to update user" });
     }
@@ -354,7 +356,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = insertLeaveRequestSchema.parse(req.body);
       const request = await storage.createLeaveRequest(validatedData);
       res.status(201).json(request);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
       console.error("Error creating leave request:", error);
       res.status(500).json({ error: "Failed to create leave request" });
     }
@@ -372,7 +377,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Leave request not found" });
       }
       res.json(request);
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      }
       console.error("Error updating leave request:", error);
       res.status(500).json({ error: "Failed to update leave request" });
     }
