@@ -39,9 +39,14 @@ export function ShopifySettings() {
       });
     },
     onError: (error: Error) => {
+      const errorMessage = error.message || "Failed to sync orders from Shopify.";
+      const isUnauthorized = errorMessage.includes("Unauthorized") || errorMessage.includes("401");
+      
       toast({
         title: "Sync Failed",
-        description: error.message || "Failed to sync orders from Shopify. Please check your API credentials.",
+        description: isUnauthorized 
+          ? "Invalid Shopify credentials. Please check your Admin API access token in Secrets."
+          : errorMessage,
         variant: "destructive",
       });
     },
@@ -85,32 +90,36 @@ export function ShopifySettings() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Store className="h-5 w-5" />
-            <CardTitle>Shopify Integration</CardTitle>
+            <CardTitle>Shopify Integration Setup</CardTitle>
           </div>
           <CardDescription>
             Connect and sync your Shopify store orders
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Store Connection</p>
-              <p className="text-sm text-muted-foreground">
-                {import.meta.env.VITE_SHOPIFY_STORE_URL || "Not configured"}
-              </p>
-            </div>
-            <Badge variant="outline" className="gap-1">
-              <Check className="h-3 w-3" />
-              Connected
-            </Badge>
-          </div>
-
           <Alert>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              Your Shopify store credentials are securely stored in environment variables.
+              <strong className="block mb-2">Required Secrets (add in Replit Secrets):</strong>
+              <ul className="text-xs space-y-1 list-disc list-inside">
+                <li><code className="bg-muted px-1 rounded">SHOPIFY_STORE_URL</code> - Your store domain (e.g., mystore.myshopify.com)</li>
+                <li><code className="bg-muted px-1 rounded">SHOPIFY_API_KEY</code> - Admin API Access Token (from Shopify Admin → Settings → Apps → Develop apps)</li>
+                <li><code className="bg-muted px-1 rounded">SHOPIFY_API_SECRET</code> - Admin API Secret Key</li>
+                <li><code className="bg-muted px-1 rounded">SHOPIFY_WEBHOOK_SECRET</code> - Webhook verification secret</li>
+              </ul>
             </AlertDescription>
           </Alert>
+
+          <div className="rounded-lg border p-4 space-y-2">
+            <p className="text-sm font-medium">How to get your Shopify API credentials:</p>
+            <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+              <li>Go to Shopify Admin → Settings → Apps and sales channels</li>
+              <li>Click "Develop apps" → "Create an app"</li>
+              <li>Configure Admin API scopes: read_orders, write_orders, read_customers</li>
+              <li>Install the app and copy the Admin API access token</li>
+              <li>Add credentials to Replit Secrets</li>
+            </ol>
+          </div>
         </CardContent>
       </Card>
 
