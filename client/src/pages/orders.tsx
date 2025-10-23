@@ -45,7 +45,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [activeTab, setActiveTab] = useState("assigned");
 
   // Fetch orders from backend
-  const { data: ordersData, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
   });
 
@@ -56,9 +56,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   // Transform backend orders to frontend format
   const allOrders = useMemo(() => {
-    if (!ordersData || !usersData) return [];
-    return ordersData.map((order) => transformOrder(order, usersData));
-  }, [ordersData, usersData]);
+    if (!ordersResponse?.orders || !usersData) return [];
+    return ordersResponse.orders.map((order) => transformOrder(order, usersData));
+  }, [ordersResponse, usersData]);
 
   // Get current user ID for agent filtering
   const currentUserId = localStorage.getItem("userId");
@@ -69,7 +69,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
     // Role-based filtering for agents
     if (userRole === "agent" && currentUserId) {
-      const backendFiltered = ordersData?.filter(
+      const backendFiltered = ordersResponse?.orders?.filter(
         (order) => order.assignedTo === currentUserId
       );
       filtered = backendFiltered
@@ -111,7 +111,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     }
 
     return filtered;
-  }, [allOrders, userRole, currentUserId, ordersData, usersData, activeTab, searchQuery, statusFilter, paymentFilter]);
+  }, [allOrders, userRole, currentUserId, ordersResponse, usersData, activeTab, searchQuery, statusFilter, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 

@@ -57,7 +57,7 @@ function InsightCard({ title, value, change, trend, icon }: InsightCardProps) {
 
 export default function AnalyticsPage() {
   // Fetch orders from backend
-  const { data: ordersData, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
   });
 
@@ -68,9 +68,9 @@ export default function AnalyticsPage() {
 
   // Transform backend orders to frontend format
   const allOrders = useMemo(() => {
-    if (!ordersData || !usersData) return [];
-    return ordersData.map((order) => transformOrder(order, usersData));
-  }, [ordersData, usersData]);
+    if (!ordersResponse?.orders || !usersData) return [];
+    return ordersResponse.orders.map((order) => transformOrder(order, usersData));
+  }, [ordersResponse, usersData]);
 
   const isLoading = ordersLoading || usersLoading;
 

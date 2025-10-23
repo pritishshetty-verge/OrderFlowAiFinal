@@ -116,16 +116,13 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Create leave request mutation
   const createMutation = useMutation({
     mutationFn: async (data: LeaveFormValues) => {
-      return apiRequest("/api/leave-requests", {
-        method: "POST",
-        body: JSON.stringify({
-          userId: currentUserId,
-          leaveType: data.leaveType,
-          startDate: data.startDate.toISOString(),
-          endDate: data.endDate.toISOString(),
-          reason: data.reason,
-          status: "pending",
-        }),
+      return apiRequest("POST", "/api/leave-requests", {
+        userId: currentUserId,
+        leaveType: data.leaveType,
+        startDate: data.startDate.toISOString(),
+        endDate: data.endDate.toISOString(),
+        reason: data.reason,
+        status: "pending",
       });
     },
     onSuccess: () => {
@@ -149,12 +146,9 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Approve leave request mutation
   const approveMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/leave-requests/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          status: "approved",
-          reviewedBy: currentUserId,
-        }),
+      return apiRequest("PATCH", `/api/leave-requests/${id}`, {
+        status: "approved",
+        reviewedBy: currentUserId,
       });
     },
     onSuccess: () => {
@@ -176,12 +170,9 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Reject leave request mutation
   const rejectMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/leave-requests/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          status: "rejected",
-          reviewedBy: currentUserId,
-        }),
+      return apiRequest("PATCH", `/api/leave-requests/${id}`, {
+        status: "rejected",
+        reviewedBy: currentUserId,
       });
     },
     onSuccess: () => {

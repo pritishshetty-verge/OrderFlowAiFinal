@@ -31,7 +31,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     queryKey: ["/api/users"],
   });
 
-  const { data: orders, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
   });
 
@@ -39,10 +39,10 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
   // Transform users to team members with order counts
   const teamMembers = useMemo<TeamMember[]>(() => {
-    if (!users || !orders) return [];
+    if (!users || !ordersResponse?.orders) return [];
 
     return users.map((user) => {
-      const userOrders = orders.filter((o) => o.assignedTo === user.id);
+      const userOrders = ordersResponse.orders.filter((o) => o.assignedTo === user.id);
       const completedOrders = userOrders.filter(
         (o) => o.status === "delivered" || o.status === "confirmed"
       );
@@ -61,7 +61,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         joinedDate: format(new Date(user.createdAt), "MMM yyyy"),
       };
     });
-  }, [users, orders]);
+  }, [users, ordersResponse]);
 
   const getInitials = (name: string) => {
     return name

@@ -44,7 +44,7 @@ export default function DashboardPage() {
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
 
   // Fetch orders from backend
-  const { data: ordersData, isLoading: ordersLoading } = useQuery<BackendOrder[]>({
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
   });
 
@@ -55,12 +55,12 @@ export default function DashboardPage() {
 
   // Transform backend orders to frontend format
   const allOrders = useMemo(() => {
-    if (!ordersData || !usersData) return [];
-    return ordersData.map((order) => transformOrder(order, usersData));
-  }, [ordersData, usersData]);
+    if (!ordersResponse?.orders || !usersData) return [];
+    return ordersResponse.orders.map((order) => transformOrder(order, usersData));
+  }, [ordersResponse, usersData]);
 
   // Check Shopify connection status (connected if we have orders synced)
-  const isConnected = (ordersData?.length ?? 0) > 0;
+  const isConnected = (ordersResponse?.orders?.length ?? 0) > 0;
 
   // Apply filters to orders
   const filteredOrders = useMemo(() => {
