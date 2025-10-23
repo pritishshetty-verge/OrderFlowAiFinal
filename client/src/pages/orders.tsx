@@ -44,9 +44,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("assigned");
 
-  // Fetch orders from backend
+  // Fetch orders from backend with auto-refresh every 30 seconds
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
+    refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
   });
 
   // Fetch users for assignment display
