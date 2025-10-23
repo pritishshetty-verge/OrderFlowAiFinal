@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -37,11 +39,13 @@ import { format } from "date-fns";
 import { CalendarIcon, Plus, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { LeaveRequest as BackendLeaveRequest, User } from "@shared/schema";
 
-interface LeaveRequest {
+interface DisplayLeaveRequest {
   id: string;
   employeeName: string;
-  type: "sick" | "vacation" | "personal" | "emergency";
+  type: string;
   startDate: Date;
   endDate: Date;
   reason: string;
@@ -50,44 +54,8 @@ interface LeaveRequest {
   reviewedBy?: string;
 }
 
-//todo: remove mock functionality
-const mockLeaveRequests: LeaveRequest[] = [
-  {
-    id: "1",
-    employeeName: "Priya Sharma",
-    type: "vacation",
-    startDate: new Date(2025, 9, 25),
-    endDate: new Date(2025, 9, 27),
-    reason: "Family wedding in Delhi",
-    status: "pending",
-    requestedAt: new Date(2025, 9, 20),
-  },
-  {
-    id: "2",
-    employeeName: "Amit Singh",
-    type: "sick",
-    startDate: new Date(2025, 9, 22),
-    endDate: new Date(2025, 9, 22),
-    reason: "Fever and cold",
-    status: "approved",
-    requestedAt: new Date(2025, 9, 21),
-    reviewedBy: "Rahul Verma",
-  },
-  {
-    id: "3",
-    employeeName: "Sneha Patel",
-    type: "personal",
-    startDate: new Date(2025, 9, 28),
-    endDate: new Date(2025, 9, 30),
-    reason: "Personal work",
-    status: "rejected",
-    requestedAt: new Date(2025, 9, 19),
-    reviewedBy: "Rahul Verma",
-  },
-];
-
 const leaveFormSchema = z.object({
-  type: z.enum(["sick", "vacation", "personal", "emergency"]),
+  leaveType: z.enum(["sick", "vacation", "personal", "emergency"]),
   startDate: z.date(),
   endDate: z.date(),
   reason: z.string().min(10, "Reason must be at least 10 characters"),
@@ -101,70 +69,150 @@ interface LeaveRequestsProps {
 
 export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   const [open, setOpen] = useState(false);
-  const [requests, setRequests] = useState(mockLeaveRequests);
   const { toast } = useToast();
+  const currentUserId = localStorage.getItem("userId");
+
+  // Fetch leave requests and users
+  const { data: backendRequests, isLoading: requestsLoading } = useQuery<BackendLeaveRequest[]>({
+    queryKey: ["/api/leave-requests"],
+  });
+
+  const { data: users, isLoading: usersLoading } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+  });
+
+  const isLoading = requestsLoading || usersLoading;
+
+  // Transform backend requests to display format
+  const requests = useMemo<DisplayLeaveRequest[]>(() => {
+    if (!backendRequests || !users) return [];
+
+    return backendRequests.map((req) => {
+      const employee = users.find((u) => u.id === req.userId);
+      const reviewer = req.reviewedBy ? users.find((u) => u.id === req.reviewedBy) : undefined;
+
+      return {
+        id: req.id,
+        employeeName: employee?.fullName || "Unknown User",
+        type: req.leaveType,
+        startDate: new Date(req.startDate),
+        endDate: new Date(req.endDate),
+        reason: req.reason,
+        status: req.status as "pending" | "approved" | "rejected",
+        requestedAt: new Date(req.createdAt),
+        reviewedBy: reviewer?.fullName,
+      };
+    });
+  }, [backendRequests, users]);
 
   const form = useForm<LeaveFormValues>({
     resolver: zodResolver(leaveFormSchema),
     defaultValues: {
-      type: "vacation",
+      leaveType: "vacation",
       reason: "",
     },
   });
 
+  // Create leave request mutation
+  const createMutation = useMutation({
+    mutationFn: async (data: LeaveFormValues) => {
+      return apiRequest("/api/leave-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          userId: currentUserId,
+          leaveType: data.leaveType,
+          startDate: data.startDate.toISOString(),
+          endDate: data.endDate.toISOString(),
+          reason: data.reason,
+          status: "pending",
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
+      toast({
+        title: "Leave Request Submitted",
+        description: "Your request has been sent for approval.",
+      });
+      setOpen(false);
+      form.reset();
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to submit leave request. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Approve leave request mutation
+  const approveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest(`/api/leave-requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "approved",
+          reviewedBy: currentUserId,
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
+      toast({
+        title: "Request Approved",
+        description: "Leave request has been approved.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to approve request. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Reject leave request mutation
+  const rejectMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return apiRequest(`/api/leave-requests/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "rejected",
+          reviewedBy: currentUserId,
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
+      toast({
+        title: "Request Rejected",
+        description: "Leave request has been rejected.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to reject request. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const onSubmit = (data: LeaveFormValues) => {
-    const currentUser = localStorage.getItem("userRole") === "admin" 
-      ? "Admin User" 
-      : localStorage.getItem("userRole") === "manager" 
-      ? "Manager" 
-      : "Agent";
-
-    const newRequest: LeaveRequest = {
-      id: `${Date.now()}`,
-      employeeName: currentUser,
-      type: data.type,
-      startDate: data.startDate,
-      endDate: data.endDate,
-      reason: data.reason,
-      status: "pending",
-      requestedAt: new Date(),
-    };
-
-    setRequests((prev) => [newRequest, ...prev]);
-    
-    toast({
-      title: "Leave Request Submitted",
-      description: "Your request has been sent for approval.",
-    });
-    setOpen(false);
-    form.reset();
+    createMutation.mutate(data);
   };
 
   const handleApprove = (id: string) => {
-    setRequests((prev) =>
-      prev.map((req) =>
-        req.id === id ? { ...req, status: "approved" as const, reviewedBy: "Current User" } : req
-      )
-    );
-    toast({
-      title: "Request Approved",
-      description: "Leave request has been approved.",
-    });
+    approveMutation.mutate(id);
   };
 
   const handleReject = (id: string) => {
-    setRequests((prev) =>
-      prev.map((req) =>
-        req.id === id ? { ...req, status: "rejected" as const, reviewedBy: "Current User" } : req
-      )
-    );
-    toast({
-      title: "Request Rejected",
-      description: "Leave request has been rejected.",
-    });
+    rejectMutation.mutate(id);
   };
 
-  const getStatusVariant = (status: LeaveRequest["status"]) => {
+  const getStatusVariant = (status: DisplayLeaveRequest["status"]) => {
     switch (status) {
       case "approved":
         return "default";
@@ -175,7 +223,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
     }
   };
 
-  const getTypeColor = (type: LeaveRequest["type"]) => {
+  const getTypeColor = (type: string) => {
     switch (type) {
       case "sick":
         return "text-red-600";
@@ -185,10 +233,28 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
         return "text-purple-600";
       case "emergency":
         return "text-orange-600";
+      default:
+        return "text-gray-600";
     }
   };
 
   const canManageRequests = userRole === "admin" || userRole === "manager";
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-10 w-64" data-testid="skeleton-title" />
+          <Skeleton className="h-10 w-32" data-testid="skeleton-button" />
+        </div>
+        <div className="grid gap-4">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-40" data-testid={`skeleton-request-${i}`} />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -217,7 +283,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <FormField
                   control={form.control}
-                  name="type"
+                  name="leaveType"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Leave Type</FormLabel>
@@ -354,8 +420,12 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
                   >
                     Cancel
                   </Button>
-                  <Button type="submit" data-testid="button-submit-request">
-                    Submit Request
+                  <Button 
+                    type="submit" 
+                    disabled={createMutation.isPending}
+                    data-testid="button-submit-request"
+                  >
+                    {createMutation.isPending ? "Submitting..." : "Submit Request"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -386,6 +456,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
                       size="sm"
                       variant="outline"
                       onClick={() => handleApprove(request.id)}
+                      disabled={approveMutation.isPending}
                       data-testid={`button-approve-${request.id}`}
                     >
                       <Check className="h-4 w-4 mr-1" />
@@ -395,6 +466,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
                       size="sm"
                       variant="outline"
                       onClick={() => handleReject(request.id)}
+                      disabled={rejectMutation.isPending}
                       data-testid={`button-reject-${request.id}`}
                     >
                       <X className="h-4 w-4 mr-1" />
