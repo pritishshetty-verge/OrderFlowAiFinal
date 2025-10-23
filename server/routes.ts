@@ -306,7 +306,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const { topic, path } of webhookTopics) {
         try {
           const webhookAddress = `${baseUrl}${path}`;
+          console.log(`Registering webhook: ${topic} -> ${webhookAddress}`);
           const result = await shopifyClient.registerWebhook(topic, webhookAddress);
+          console.log(`✓ Successfully registered ${topic}:`, result.webhook?.id);
           results.push({
             topic,
             address: webhookAddress,
@@ -314,6 +316,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: result.webhook?.id,
           });
         } catch (error: any) {
+          console.error(`✗ Failed to register ${topic}:`, error.message);
+          console.error('Full error details:', error);
           results.push({
             topic,
             status: "failed",
