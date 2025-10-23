@@ -86,6 +86,7 @@ export const orders = pgTable("orders", {
   // Order details
   status: text("status").notNull().default("pending"), // pending, assigned, confirmed, shipped, delivered, cancelled, ndr
   fulfillmentStatus: text("fulfillment_status"), // Shopify fulfillment status
+  fulfilledAt: timestamp("fulfilled_at"),
   financialStatus: text("financial_status"), // Shopify financial status
   paymentMethod: text("payment_method").notNull(), // prepaid, cod
   
@@ -94,11 +95,14 @@ export const orders = pgTable("orders", {
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   totalTax: decimal("total_tax", { precision: 12, scale: 2 }).default("0"),
   totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default("0"),
+  discountCode: text("discount_code"),
   shippingPrice: decimal("shipping_price", { precision: 12, scale: 2 }).default("0"),
   currency: text("currency").notNull().default("INR"),
   
   // Shipping address
   shippingAddress: jsonb("shipping_address"), // Full address object
+  shippingAddressLine1: text("shipping_address_line1"),
+  shippingAddressLine2: text("shipping_address_line2"),
   shippingCity: text("shipping_city"),
   shippingState: text("shipping_state"),
   shippingPincode: text("shipping_pincode"),
@@ -116,6 +120,7 @@ export const orders = pgTable("orders", {
   courierName: text("courier_name"),
   trackingNumber: text("tracking_number"),
   trackingUrl: text("tracking_url"),
+  shipmentStatus: text("shipment_status"),
   
   // Metadata
   tags: text("tags").array(),
