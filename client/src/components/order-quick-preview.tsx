@@ -200,44 +200,6 @@ export function OrderQuickPreview({
 
           <Separator />
 
-          {/* Timeline */}
-          <div>
-            <p className="text-sm font-medium text-muted-foreground mb-4">Timeline</p>
-            <div className="space-y-4">
-              {timelineEvents.map((event, index) => (
-                <div key={event.id} className="flex gap-3">
-                  <div className="flex flex-col items-center">
-                    {event.completed ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    ) : (
-                      <Circle className="h-5 w-5 text-muted-foreground" />
-                    )}
-                    {index < timelineEvents.length - 1 && (
-                      <div className="w-px h-8 bg-border mt-1" />
-                    )}
-                  </div>
-                  <div className="flex-1 pb-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-sm font-medium">{event.description}</p>
-                        {event.detail && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {event.detail}
-                          </p>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {format(event.date, "MMM dd, yyyy")}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <Separator />
-
           {/* Items */}
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-4">Items</p>
