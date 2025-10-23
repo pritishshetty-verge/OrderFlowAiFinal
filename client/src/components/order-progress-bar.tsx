@@ -13,13 +13,21 @@ interface OrderProgressBarProps {
 }
 
 export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgressBarProps) {
-  const totalOrders = steps.reduce((sum, step) => sum + step.count, 0);
+  // Find the baseline (Assigned count)
+  const assignedCount = steps.find(s => s.status === "assigned")?.count || 1;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         {steps.map((step, index) => {
-          const percentage = totalOrders > 0 ? (step.count / totalOrders) * 100 : 0;
+          // Assigned is always 100%, others are relative to Assigned count
+          let fillPercentage: number;
+          if (step.status === "assigned") {
+            fillPercentage = 100;
+          } else {
+            fillPercentage = assignedCount > 0 ? Math.min((step.count / assignedCount) * 100, 100) : 0;
+          }
+          
           const isActive = activeStep === step.status;
           
           return (
@@ -36,17 +44,29 @@ export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgre
                   {/* Progress bar segment */}
                   <div
                     className={cn(
-                      "h-2 rounded-full transition-all duration-200",
+                      "h-2 rounded-full transition-all duration-200 relative overflow-hidden",
                       isActive ? "ring-2 ring-primary ring-offset-2" : "",
-                      step.status === "assigned" && "bg-blue-500",
-                      step.status === "confirmed" && "bg-green-500",
-                      step.status === "cancelled" && "bg-gray-400",
-                      step.status === "followup" && "bg-amber-500",
-                      step.status === "failed" && "bg-red-500",
                       "hover-elevate cursor-pointer"
                     )}
-                    style={{ opacity: percentage > 0 ? 1 : 0.3 }}
-                  />
+                    style={{ 
+                      backgroundColor: step.count === 0 ? '#e5e7eb' : undefined,
+                      opacity: step.count === 0 ? 0.3 : 1
+                    }}
+                  >
+                    {step.count > 0 && (
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all duration-200",
+                          step.status === "assigned" && "bg-blue-500",
+                          step.status === "confirmed" && "bg-green-500",
+                          step.status === "cancelled" && "bg-gray-400",
+                          step.status === "followup" && "bg-amber-500",
+                          step.status === "failed" && "bg-red-500"
+                        )}
+                        style={{ width: `${fillPercentage}%` }}
+                      />
+                    )}
+                  </div>
                   
                   {/* Label and count */}
                   <div className="text-center">
