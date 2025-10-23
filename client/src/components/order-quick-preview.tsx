@@ -138,7 +138,7 @@ export function OrderQuickPreview({
           </div>
         </SheetHeader>
 
-        <div className="px-6 space-y-6 pb-24">
+        <div className="px-6 space-y-6 pb-6">
           {/* Order Info */}
           <div className="grid grid-cols-3 gap-4">
             <div>
@@ -292,11 +292,11 @@ export function OrderQuickPreview({
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Action Buttons - Fixed at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 bg-card border-t p-4">
-          <div className="flex gap-3">
+          <Separator />
+
+          {/* Action Buttons - At the very bottom */}
+          <div className="flex gap-3 pt-2">
             <Button
               variant="secondary"
               className="flex-1"
