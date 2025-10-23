@@ -40,7 +40,10 @@ const statusConfig: Record<OrderStatus, { label: string; className: string }> = 
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const config = statusConfig[status];
+  const config = statusConfig[status] || {
+    label: status || "Unknown",
+    className: "bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20",
+  };
   
   return (
     <Badge
