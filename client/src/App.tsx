@@ -47,7 +47,11 @@ function Router() {
 }
 
 export default function App() {
+  const [location] = useLocation();
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  const isLoggedIn = localStorage.getItem("userRole");
+  const isLoginPage = location === "/login";
+  
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
@@ -59,9 +63,7 @@ export default function App() {
         <TooltipProvider>
           <SidebarProvider style={style as React.CSSProperties}>
             <div className="flex h-screen w-full">
-              <Route path="/">
-                {() => localStorage.getItem("userRole") && <AppSidebar userRole={userRole} />}
-              </Route>
+              {isLoggedIn && !isLoginPage && <AppSidebar userRole={userRole} />}
               <Router />
             </div>
           </SidebarProvider>
