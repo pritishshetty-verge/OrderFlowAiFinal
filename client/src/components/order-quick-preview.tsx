@@ -170,7 +170,7 @@ export function OrderQuickPreview({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 text-[#172033]"
                 onClick={onEditCustomer}
                 data-testid="button-edit-customer"
               >
