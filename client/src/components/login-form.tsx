@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Package } from "lucide-react";
+import logoUrl from "@assets/image_1761228744572.png";
 
 interface LoginFormProps {
   onLogin?: (email: string, password: string, role: string) => void;
@@ -25,12 +25,10 @@ export function LoginForm({ onLogin }: LoginFormProps) {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-4 text-center">
           <div className="flex justify-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Package className="h-8 w-8" />
-            </div>
+            <img src={logoUrl} alt="OrderFlowAI Logo" className="h-16 w-16 rounded-lg" />
           </div>
           <div>
-            <CardTitle className="text-2xl">Welcome to OrderSync</CardTitle>
+            <CardTitle className="text-2xl">Welcome to OrderFlowAI</CardTitle>
             <CardDescription>
               Sign in to manage your Shopify orders
             </CardDescription>

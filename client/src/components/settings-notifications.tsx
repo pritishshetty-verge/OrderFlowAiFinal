@@ -37,7 +37,7 @@ export function NotificationsSettings() {
             <CardTitle>Email Notifications</CardTitle>
           </div>
           <CardDescription>
-            Manage which emails you receive from OrderSync
+            Manage which emails you receive from OrderFlowAI
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

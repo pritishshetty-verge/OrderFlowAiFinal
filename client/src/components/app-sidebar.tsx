@@ -12,6 +12,7 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import logoUrl from "@assets/image_1761228744572.png";
 
 const menuItems = [
   {
@@ -50,11 +51,9 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
     <Sidebar data-testid="sidebar-main">
       <SidebarHeader className="border-b border-sidebar-border p-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Package className="h-5 w-5" />
-          </div>
+          <img src={logoUrl} alt="OrderFlowAI Logo" className="h-10 w-10 rounded-md" />
           <div className="flex flex-col">
-            <span className="text-sm font-semibold">OrderSync</span>
+            <span className="text-sm font-semibold">OrderFlowAI</span>
             <span className="text-xs text-muted-foreground">Shopify Manager</span>
           </div>
         </div>

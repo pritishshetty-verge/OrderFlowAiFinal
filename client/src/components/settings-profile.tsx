@@ -39,7 +39,7 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
     resolver: zodResolver(profileSchema),
     defaultValues: {
       name: userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent",
-      email: `${userRole}@ordersync.com`,
+      email: `${userRole}@orderflowai.com`,
       phone: "+91 98765 43210",
       department: "Operations",
     },
