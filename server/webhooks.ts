@@ -1,0 +1,286 @@
+import { Request, Response } from "express";
+import { shopifyClient } from "./shopify";
+import { storage } from "./storage";
+import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
+
+export async function handleOrderCreated(req: Request, res: Response) {
+  try {
+    const hmac = req.get("X-Shopify-Hmac-Sha256");
+    const body = JSON.stringify(req.body);
+
+    // Verify webhook authenticity
+    if (!hmac || !shopifyClient.verifyWebhook(body, hmac)) {
+      console.error("Webhook verification failed");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const shopifyOrder = req.body;
+    
+    // Log webhook receipt
+    await storage.createWebhookLog({
+      topic: "orders/create",
+      shopifyOrderId: shopifyOrder.id?.toString() || null,
+      payload: shopifyOrder,
+    });
+
+    // Check if order already exists
+    const existingOrder = await storage.getOrderByShopifyId(
+      shopifyOrder.id.toString(),
+    );
+    if (existingOrder) {
+      console.log(`Order ${shopifyOrder.id} already exists, skipping`);
+      return res.status(200).json({ message: "Order already exists" });
+    }
+
+    // Create or update customer
+    let customer;
+    if (shopifyOrder.customer) {
+      const existingCustomer = await storage.getCustomerByShopifyId(
+        shopifyOrder.customer.id.toString(),
+      );
+
+      const customerData: InsertCustomer = {
+        shopifyCustomerId: shopifyOrder.customer.id.toString(),
+        email: shopifyOrder.customer.email || shopifyOrder.email,
+        firstName: shopifyOrder.customer.first_name || null,
+        lastName: shopifyOrder.customer.last_name || null,
+        phone: shopifyOrder.customer.phone || shopifyOrder.phone || null,
+      };
+
+      if (existingCustomer) {
+        customer = await storage.updateCustomer(existingCustomer.id, customerData);
+      } else {
+        customer = await storage.createCustomer(customerData);
+      }
+    }
+
+    // Create order
+    const orderData: InsertOrder = {
+      shopifyOrderId: shopifyOrder.id.toString(),
+      shopifyOrderNumber: shopifyOrder.order_number?.toString() || shopifyOrder.name,
+      customerId: customer?.id || null,
+      customerName: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() || shopifyOrder.billing_address?.name || "Guest",
+      customerEmail: shopifyOrder.email || null,
+      customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
+      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
+      fulfillmentStatus: shopifyOrder.fulfillment_status || null,
+      financialStatus: shopifyOrder.financial_status || null,
+      totalPrice: shopifyOrder.total_price || "0",
+      subtotal: shopifyOrder.subtotal_price || "0",
+      totalTax: shopifyOrder.total_tax || "0",
+      totalDiscount: shopifyOrder.total_discounts || "0",
+      shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
+      currency: shopifyOrder.currency || "INR",
+      paymentMethod: shopifyOrder.payment_gateway_names?.[0] || "Unknown",
+      shippingAddress: shopifyOrder.shipping_address || null,
+      shippingCity: shopifyOrder.shipping_address?.city || null,
+      shippingState: shopifyOrder.shipping_address?.province || null,
+      shippingPincode: shopifyOrder.shipping_address?.zip || null,
+      shippingCountry: shopifyOrder.shipping_address?.country || null,
+      itemsCount: shopifyOrder.line_items?.length || 1,
+      itemsSummary: shopifyOrder.line_items?.map((item: any) => item.name).join(", ") || null,
+      assignedTo: null,
+      assignedAt: null,
+      rawShopifyData: shopifyOrder,
+      shopifyCreatedAt: new Date(shopifyOrder.created_at),
+      shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
+    };
+
+    const order = await storage.createOrder(orderData);
+
+    // Create order items
+    if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
+      const items: InsertOrderItem[] = shopifyOrder.line_items.map((item: any) => ({
+        orderId: order.id,
+        shopifyLineItemId: item.id?.toString() || null,
+        shopifyProductId: item.product_id?.toString() || null,
+        shopifyVariantId: item.variant_id?.toString() || null,
+        productName: item.name || "Unknown Product",
+        variantTitle: item.variant_title || null,
+        sku: item.sku || null,
+        quantity: item.quantity,
+        price: item.price || "0",
+        totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+        imageUrl: item.image_url || null,
+      }));
+
+      await storage.createOrderItems(items);
+    }
+
+    // Create initial status history
+    await storage.createOrderStatus({
+      orderId: order.id,
+      status: orderData.status || "Pending",
+      previousStatus: null,
+      changedBy: null,
+      note: "Order created from Shopify",
+    });
+
+    console.log(`Successfully created order ${order.shopifyOrderNumber}`);
+    res.status(200).json({ message: "Order created successfully" });
+  } catch (error) {
+    console.error("Error processing order creation webhook:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+export async function handleOrderUpdated(req: Request, res: Response) {
+  try {
+    const hmac = req.get("X-Shopify-Hmac-Sha256");
+    const body = JSON.stringify(req.body);
+
+    if (!hmac || !shopifyClient.verifyWebhook(body, hmac)) {
+      console.error("Webhook verification failed");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const shopifyOrder = req.body;
+
+    // Log webhook receipt
+    await storage.createWebhookLog({
+      topic: "orders/update",
+      shopifyOrderId: shopifyOrder.id?.toString() || null,
+      payload: shopifyOrder,
+    });
+
+    const existingOrder = await storage.getOrderByShopifyId(
+      shopifyOrder.id.toString(),
+    );
+
+    if (!existingOrder) {
+      console.log(`Order ${shopifyOrder.id} not found, creating new order`);
+      return handleOrderCreated(req, res);
+    }
+
+    // Update customer if needed
+    if (shopifyOrder.customer && existingOrder.customerId) {
+      const customerData: Partial<InsertCustomer> = {
+        email: shopifyOrder.customer.email || shopifyOrder.email,
+        firstName: shopifyOrder.customer.first_name || null,
+        lastName: shopifyOrder.customer.last_name || null,
+        phone: shopifyOrder.customer.phone || shopifyOrder.phone || null,
+      };
+
+      await storage.updateCustomer(existingOrder.customerId, customerData);
+    }
+
+    // Update order
+    const newStatus = mapShopifyStatus(
+      shopifyOrder.financial_status,
+      shopifyOrder.fulfillment_status,
+    );
+
+    const orderData: Partial<InsertOrder> = {
+      status: newStatus,
+      fulfillmentStatus: shopifyOrder.fulfillment_status || null,
+      financialStatus: shopifyOrder.financial_status || null,
+      totalPrice: shopifyOrder.total_price || "0",
+      subtotal: shopifyOrder.subtotal_price || "0",
+      shippingAddress: shopifyOrder.shipping_address || null,
+      rawShopifyData: shopifyOrder,
+      shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
+    };
+
+    await storage.updateOrder(existingOrder.id, orderData);
+
+    // Create status history if status changed
+    if (newStatus !== existingOrder.status) {
+      await storage.createOrderStatus({
+        orderId: existingOrder.id,
+        status: newStatus,
+        previousStatus: existingOrder.status,
+        changedBy: null,
+        note: "Status updated from Shopify",
+      });
+    }
+
+    console.log(`Successfully updated order ${existingOrder.shopifyOrderNumber}`);
+    res.status(200).json({ message: "Order updated successfully" });
+  } catch (error) {
+    console.error("Error processing order update webhook:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+export async function handleOrderCancelled(req: Request, res: Response) {
+  try {
+    const hmac = req.get("X-Shopify-Hmac-Sha256");
+    const body = JSON.stringify(req.body);
+
+    if (!hmac || !shopifyClient.verifyWebhook(body, hmac)) {
+      console.error("Webhook verification failed");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const shopifyOrder = req.body;
+
+    // Log webhook receipt
+    await storage.createWebhookLog({
+      topic: "orders/cancelled",
+      shopifyOrderId: shopifyOrder.id?.toString() || null,
+      payload: shopifyOrder,
+    });
+
+    const existingOrder = await storage.getOrderByShopifyId(
+      shopifyOrder.id.toString(),
+    );
+
+    if (!existingOrder) {
+      console.log(`Order ${shopifyOrder.id} not found`);
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // Update order status to cancelled
+    await storage.updateOrder(existingOrder.id, {
+      status: "Cancelled",
+    });
+
+    // Create status history
+    await storage.createOrderStatus({
+      orderId: existingOrder.id,
+      status: "Cancelled",
+      previousStatus: existingOrder.status,
+      changedBy: null,
+      note: shopifyOrder.cancel_reason
+        ? `Cancelled: ${shopifyOrder.cancel_reason}`
+        : "Cancelled from Shopify",
+    });
+
+    console.log(`Successfully cancelled order ${existingOrder.shopifyOrderNumber}`);
+    res.status(200).json({ message: "Order cancelled successfully" });
+  } catch (error) {
+    console.error("Error processing order cancellation webhook:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+// Helper function to map Shopify statuses to our system
+function mapShopifyStatus(
+  financialStatus?: string,
+  fulfillmentStatus?: string,
+): string {
+  // Cancelled is highest priority
+  if (financialStatus === "refunded" || financialStatus === "voided") {
+    return "Cancelled";
+  }
+
+  // Check fulfillment status
+  if (fulfillmentStatus === "fulfilled") {
+    return "Delivered";
+  }
+  if (fulfillmentStatus === "partial") {
+    return "Shipped";
+  }
+  if (fulfillmentStatus === "unfulfilled" || fulfillmentStatus === null) {
+    // Check payment status
+    if (financialStatus === "paid") {
+      return "Processing";
+    }
+    if (financialStatus === "pending" || financialStatus === "authorized") {
+      return "Pending";
+    }
+  }
+
+  // Default
+  return "Pending";
+}
