@@ -9,11 +9,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2 } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2 } from "lucide-react";
 import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -46,6 +56,8 @@ type InviteUserFormData = z.infer<typeof inviteUserSchema>;
 
 export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<TeamMember | null>(null);
   const { toast } = useToast();
 
   // Fetch users and orders from backend
@@ -97,8 +109,44 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
+  // Mutation for deleting users
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await apiRequest("DELETE", `/api/users/${userId}`);
+      return await res.json();
+    },
+    onSuccess: () => {
+      // Close dialog and invalidate cache
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: "Success",
+        description: "Team member deleted successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete user",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleInviteUser = (data: InviteUserFormData) => {
     inviteUserMutation.mutate(data);
+  };
+
+  const handleDeleteUser = (member: TeamMember) => {
+    setUserToDelete(member);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (userToDelete) {
+      deleteUserMutation.mutate(userToDelete.id);
+    }
   };
 
   // Transform users to team members with order counts
@@ -269,6 +317,16 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 >
                   Call
                 </Button>
+                {(userRole === "admin" || userRole === "manager") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDeleteUser(member)}
+                    data-testid={`button-delete-${member.id}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -378,6 +436,42 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent data-testid="dialog-delete-user">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Team Member</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {userToDelete?.name}? This action cannot be undone.
+              All data associated with this team member will be permanently removed from the database.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={deleteUserMutation.isPending}
+              data-testid="button-cancel-delete"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={deleteUserMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-confirm-delete"
+            >
+              {deleteUserMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
