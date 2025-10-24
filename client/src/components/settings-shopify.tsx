@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { RefreshCw, Check, AlertCircle, Store, Webhook } from "lucide-react";
+import { RefreshCw, Check, AlertCircle, Store, Webhook, Activity } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
   syncedCount: number;
@@ -15,9 +16,33 @@ interface SyncResult {
   totalOrders: number;
 }
 
+interface BackendOrder {
+  id: string;
+  shopifyOrderId: string;
+  orderNumber: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string | null;
+  totalAmount: string;
+  paymentMethod: string;
+  status: string;
+  shippingAddress: string;
+  createdAt: string;
+  assignedTo: string | null;
+  priority: string;
+}
+
 export function ShopifySettings() {
   const { toast } = useToast();
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+
+  // Fetch most recent order to show webhook activity
+  const { data: recentOrderData } = useQuery<{ orders: BackendOrder[]; total: number }>({
+    queryKey: ["/api/orders?limit=1"],
+    refetchInterval: 30000, // Auto-refresh every 30 seconds
+  });
+
+  const lastOrder = recentOrderData?.orders?.[0];
 
   // Manual sync mutation
   const syncMutation = useMutation({
@@ -270,6 +295,64 @@ export function ShopifySettings() {
               <li>Order updates sync in real-time</li>
               <li>Cancelled orders immediately reflected</li>
               <li>Auto-refresh every 30 seconds ensures you never miss updates</li>
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Webhook Activity Status */}
+      <Card data-testid="card-webhook-status">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5" />
+            <CardTitle>Webhook Activity Status</CardTitle>
+          </div>
+          <CardDescription>
+            Monitor webhook integration health and recent activity
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {lastOrder ? (
+            <Alert className="bg-green-500/10 border-green-500/20">
+              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+              <AlertDescription>
+                <div className="space-y-1">
+                  <p className="font-medium text-green-700 dark:text-green-400">
+                    Webhooks are working!
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Last order received: <strong>#{lastOrder.orderNumber}</strong> ({lastOrder.customerName})
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Received {formatDistanceToNow(new Date(lastOrder.createdAt), { addSuffix: true })}
+                  </p>
+                </div>
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="space-y-1">
+                  <p className="font-medium">No orders received yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    Once you set up webhooks (guide above), new orders will appear here automatically.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    You can use the Manual Sync button above to import existing orders from your Shopify store.
+                  </p>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-2 text-sm">
+            <p className="font-medium">How to verify webhooks are working:</p>
+            <ul className="text-muted-foreground space-y-1 list-disc list-inside ml-2">
+              <li>Create a test order in your Shopify store</li>
+              <li>Check n8n workflow execution log for successful run</li>
+              <li>This status should update within 30 seconds showing the new order</li>
+              <li>If no update after 1 minute, review the setup guide above</li>
             </ul>
           </div>
         </CardContent>
