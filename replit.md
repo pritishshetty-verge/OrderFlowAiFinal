@@ -66,12 +66,13 @@ Preferred communication style: Simple, everyday language.
 **Current Implementation:**
 - PostgreSQL database via Neon Serverless with WebSocket constructor for real-time capabilities
 - Drizzle ORM for schema definition and migrations
-- User table with UUID primary keys, username, and password fields
+- User table with UUID primary keys, username, password, first name, last name, and role fields
+- Invites table for managing team member invitation workflow with email, token, expiration, and status tracking
 - Schema definitions in `shared/schema.ts` for type sharing between client and server
 
 **Planned Schema Extensions:**
 - Orders table for Shopify order data
-- Team members and assignments
+- Team assignments and activity tracking
 - Customer verification history
 - Analytics and performance metrics
 - Leave requests and team messages
@@ -90,8 +91,16 @@ Preferred communication style: Simple, everyday language.
 - Role stored in localStorage for client-side routing protection
 - Protected routes with automatic redirection to login
 
+**Team Invite System:**
+- Email-based invitation workflow replacing direct user creation
+- Secure token generation with 7-day expiration
+- Invite API endpoint: POST /api/invites (creates invite, logs email to console)
+- Future integration with SendGrid or Resend for email delivery
+- Users set their own password when accepting invite (invitation link with token)
+
 **Security Considerations:**
 - Raw body parsing preserved for webhook signature verification
+- Cryptographically secure invite tokens with expiration
 - Session-based authentication with HTTP-only cookies (planned)
 - CSRF protection for state-changing operations (planned)
 
