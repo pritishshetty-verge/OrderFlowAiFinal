@@ -101,7 +101,7 @@ Preferred communication style: Simple, everyday language.
 
 ## External Dependencies
 
-### Shopify Integration (Planned)
+### Shopify Integration
 
 **OAuth Authentication:**
 - Secure store connection flow
@@ -109,14 +109,20 @@ Preferred communication style: Simple, everyday language.
 - Store metadata and configuration storage
 
 **Shopify Admin API:**
-- Historical order fetching
-- Real-time order synchronization
-- Status update propagation back to Shopify
+- Historical order fetching via manual sync
+- Real-time order synchronization via n8n webhook relay
+- Status update propagation back to Shopify (planned)
 
-**Webhook Listeners:**
-- `orders/create`: New order ingestion
-- `orders/update`: Order modification sync
-- `orders/cancelled`: Cancellation handling
+**Webhook Architecture:**
+- **n8n Relay System**: Uses n8n as a stable webhook relay to handle Replit's ephemeral URLs
+- **Webhook Verification**: Dual-mode verification system
+  - Direct Shopify webhooks: HMAC signature verification required
+  - n8n relay webhooks: Header-based verification (`X-Forwarded-By: n8n` header required)
+- **Event Routing**: n8n Switch node routes events by `x-shopify-topic` header:
+  - `orders/create` → `/api/webhooks/orders/create`
+  - `orders/updated` → `/api/webhooks/orders/update`
+  - `orders/cancelled` → `/api/webhooks/orders/cancelled`
+- **Setup Guide**: Comprehensive 4-step guide in Settings > Shopify tab with visual workflow instructions
 
 ### UI Component Libraries
 
