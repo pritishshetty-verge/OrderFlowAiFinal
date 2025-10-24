@@ -3,9 +3,10 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
-import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema } from "@shared/schema";
+import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
+import { OrderAssignmentEngine } from "./assignment";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -149,6 +150,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating order status:", error);
       res.status(500).json({ error: "Failed to update order status" });
+    }
+  });
+
+  // ============================================================================
+  // ORDER ASSIGNMENT API
+  // ============================================================================
+
+  // Auto-assign a COD order using round-robin algorithm
+  app.post("/api/orders/:id/auto-assign", async (req, res) => {
+    try {
+      const assignmentEngine = new OrderAssignmentEngine(storage);
+      const success = await assignmentEngine.autoAssignOrder(req.params.id);
+
+      if (success) {
+        const order = await storage.getOrder(req.params.id);
+        res.json({ success: true, order });
+      } else {
+        res.json({ 
+          success: false, 
+          message: "No eligible agents available or order not eligible for auto-assignment" 
+        });
+      }
+    } catch (error) {
+      console.error("Error auto-assigning order:", error);
+      res.status(500).json({ error: "Failed to auto-assign order" });
+    }
+  });
+
+  // Manually assign order to specific agent (admin override)
+  app.post("/api/orders/:id/assign-manual", async (req, res) => {
+    try {
+      const { agentId, assignedBy, note } = req.body;
+
+      if (!agentId || !assignedBy) {
+        return res.status(400).json({ error: "agentId and assignedBy are required" });
+      }
+
+      const assignmentEngine = new OrderAssignmentEngine(storage);
+      await assignmentEngine.manualAssignOrder(
+        req.params.id,
+        agentId,
+        assignedBy,
+        note
+      );
+
+      const order = await storage.getOrder(req.params.id);
+      res.json({ success: true, order });
+    } catch (error: any) {
+      console.error("Error manually assigning order:", error);
+      res.status(500).json({ error: error.message || "Failed to manually assign order" });
+    }
+  });
+
+  // Bulk assign multiple orders to agents
+  app.post("/api/orders/bulk-assign", async (req, res) => {
+    try {
+      const { orderIds, agentId, assignedBy, note } = req.body;
+
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ error: "orderIds array is required" });
+      }
+
+      if (!agentId || !assignedBy) {
+        return res.status(400).json({ error: "agentId and assignedBy are required" });
+      }
+
+      const assignmentEngine = new OrderAssignmentEngine(storage);
+      const results = [];
+
+      for (const orderId of orderIds) {
+        try {
+          await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note);
+          results.push({ orderId, success: true });
+        } catch (error: any) {
+          results.push({ orderId, success: false, error: error.message });
+        }
+      }
+
+      res.json({ results });
+    } catch (error) {
+      console.error("Error bulk assigning orders:", error);
+      res.status(500).json({ error: "Failed to bulk assign orders" });
+    }
+  });
+
+  // Get agent workload statistics
+  app.get("/api/agents/workload", async (req, res) => {
+    try {
+      const assignmentEngine = new OrderAssignmentEngine(storage);
+      const workloads = await assignmentEngine.getAgentWorkloads();
+      res.json(workloads);
+    } catch (error) {
+      console.error("Error fetching agent workloads:", error);
+      res.status(500).json({ error: "Failed to fetch agent workloads" });
     }
   });
 
@@ -593,6 +688,129 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error updating user:", error);
       res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // Update user presence status
+  app.patch("/api/users/:id/presence", async (req, res) => {
+    try {
+      const { presenceStatus } = req.body;
+
+      if (!presenceStatus || !["present", "onleave", "inactive"].includes(presenceStatus)) {
+        return res.status(400).json({ 
+          error: "Invalid presence status. Must be: present, onleave, or inactive" 
+        });
+      }
+
+      const user = await storage.updateUser(req.params.id, { presenceStatus });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ success: true, user });
+    } catch (error) {
+      console.error("Error updating presence status:", error);
+      res.status(500).json({ error: "Failed to update presence status" });
+    }
+  });
+
+  // ============================================================================
+  // ATTENDANCE API (HR/Payroll Tracking)
+  // ============================================================================
+
+  // Clock in
+  app.post("/api/attendance/clock-in", async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      // Check if already clocked in today
+      const existing = await storage.getTodayAttendance(userId);
+      if (existing && existing.clockInTime) {
+        return res.status(400).json({ 
+          error: "Already clocked in today",
+          attendance: existing 
+        });
+      }
+
+      // Create or update attendance record
+      const attendance = await storage.clockIn(userId, now);
+      res.json({ success: true, attendance });
+    } catch (error) {
+      console.error("Error clocking in:", error);
+      res.status(500).json({ error: "Failed to clock in" });
+    }
+  });
+
+  // Clock out
+  app.post("/api/attendance/clock-out", async (req, res) => {
+    try {
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const now = new Date();
+
+      // Get today's attendance
+      const existing = await storage.getTodayAttendance(userId);
+      if (!existing || !existing.clockInTime) {
+        return res.status(400).json({ error: "Not clocked in today" });
+      }
+
+      if (existing.clockOutTime) {
+        return res.status(400).json({ 
+          error: "Already clocked out today",
+          attendance: existing 
+        });
+      }
+
+      // Calculate total hours
+      const clockInTime = new Date(existing.clockInTime);
+      const totalHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+
+      const attendance = await storage.clockOut(userId, now, totalHours);
+      res.json({ success: true, attendance });
+    } catch (error) {
+      console.error("Error clocking out:", error);
+      res.status(500).json({ error: "Failed to clock out" });
+    }
+  });
+
+  // Get attendance records
+  app.get("/api/attendance", async (req, res) => {
+    try {
+      const { userId, startDate, endDate } = req.query;
+
+      const filters = {
+        userId: userId as string | undefined,
+        startDate: startDate ? new Date(startDate as string) : undefined,
+        endDate: endDate ? new Date(endDate as string) : undefined,
+      };
+
+      const records = await storage.getAttendanceRecords(filters);
+      res.json(records);
+    } catch (error) {
+      console.error("Error fetching attendance:", error);
+      res.status(500).json({ error: "Failed to fetch attendance records" });
+    }
+  });
+
+  // Get today's attendance for a user
+  app.get("/api/attendance/today/:userId", async (req, res) => {
+    try {
+      const attendance = await storage.getTodayAttendance(req.params.userId);
+      res.json(attendance || null);
+    } catch (error) {
+      console.error("Error fetching today's attendance:", error);
+      res.status(500).json({ error: "Failed to fetch attendance" });
     }
   });
 

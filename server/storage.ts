@@ -1,4 +1,4 @@
-import {  eq, and, desc, asc, or, count } from "drizzle-orm";
+import {  eq, and, desc, asc, or, count, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import {
   type User,
@@ -24,6 +24,8 @@ import {
   type InsertWebhookLog,
   type ShopifyCredentials,
   type InsertShopifyCredentials,
+  type Attendance,
+  type InsertAttendance,
   users,
   invites,
   customers,
@@ -35,6 +37,7 @@ import {
   teamMessages,
   webhookLogs,
   shopifyCredentials,
+  attendance,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -109,6 +112,16 @@ export interface IStorage {
   updateShopifyCredentials(id: string, data: Partial<InsertShopifyCredentials>): Promise<ShopifyCredentials | undefined>;
   deleteShopifyCredentials(id: string): Promise<void>;
   updateCredentialTestStatus(id: string, status: 'success' | 'failed', message?: string): Promise<void>;
+
+  // Attendance
+  getTodayAttendance(userId: string): Promise<Attendance | undefined>;
+  clockIn(userId: string, time: Date): Promise<Attendance>;
+  clockOut(userId: string, time: Date, totalHours: number): Promise<Attendance | undefined>;
+  getAttendanceRecords(filters?: {
+    userId?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<Attendance[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -597,6 +610,109 @@ export class DbStorage implements IStorage {
         updatedAt: new Date(),
       })
       .where(eq(shopifyCredentials.id, id));
+  }
+
+  // ============================================================================
+  // ATTENDANCE
+  // ============================================================================
+
+  async getTodayAttendance(userId: string): Promise<Attendance | undefined> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const [record] = await db
+      .select()
+      .from(attendance)
+      .where(
+        and(
+          eq(attendance.userId, userId),
+          gte(attendance.date, today),
+          lte(attendance.date, tomorrow)
+        )
+      );
+    return record;
+  }
+
+  async clockIn(userId: string, time: Date): Promise<Attendance> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Check if record exists for today
+    const existing = await this.getTodayAttendance(userId);
+
+    if (existing) {
+      // Update existing record
+      const [updated] = await db
+        .update(attendance)
+        .set({
+          clockInTime: time,
+          updatedAt: new Date(),
+        })
+        .where(eq(attendance.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    // Create new record
+    const [record] = await db
+      .insert(attendance)
+      .values({
+        userId,
+        date: today,
+        clockInTime: time,
+      })
+      .returning();
+    return record;
+  }
+
+  async clockOut(userId: string, time: Date, totalHours: number): Promise<Attendance | undefined> {
+    const existing = await this.getTodayAttendance(userId);
+
+    if (!existing) {
+      return undefined;
+    }
+
+    const [updated] = await db
+      .update(attendance)
+      .set({
+        clockOutTime: time,
+        totalHours: totalHours.toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(attendance.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  async getAttendanceRecords(filters?: {
+    userId?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<Attendance[]> {
+    const conditions = [];
+
+    if (filters?.userId) {
+      conditions.push(eq(attendance.userId, filters.userId));
+    }
+    if (filters?.startDate) {
+      conditions.push(gte(attendance.date, filters.startDate));
+    }
+    if (filters?.endDate) {
+      conditions.push(lte(attendance.date, filters.endDate));
+    }
+
+    const query = db
+      .select()
+      .from(attendance)
+      .orderBy(desc(attendance.date));
+
+    if (conditions.length > 0) {
+      return await query.where(and(...conditions));
+    }
+
+    return await query;
   }
 }
 
