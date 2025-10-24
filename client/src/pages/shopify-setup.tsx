@@ -62,8 +62,12 @@ export default function ShopifySetupPage() {
   // Save credentials mutation
   const saveCredentialsMutation = useMutation({
     mutationFn: async (data: CredentialsFormData) => {
+      console.log("🚀 Submitting credentials to server...");
       const res = await apiRequest("POST", "/api/shopify/credentials", data);
-      return await res.json();
+      console.log("✅ Server responded with status:", res.status);
+      const jsonData = await res.json();
+      console.log("📦 Response data:", jsonData);
+      return jsonData;
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
