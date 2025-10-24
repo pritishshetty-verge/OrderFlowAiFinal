@@ -288,55 +288,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Register webhooks endpoint
-  app.post("/api/shopify/webhooks/register", async (req, res) => {
-    try {
-      const baseUrl = process.env.REPLIT_DOMAINS
-        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}`
-        : 'http://localhost:5000';
-
-      const webhookTopics = [
-        { topic: "orders/create", path: "/api/webhooks/orders/create" },
-        { topic: "orders/updated", path: "/api/webhooks/orders/update" },
-        { topic: "orders/cancelled", path: "/api/webhooks/orders/cancelled" },
-      ];
-
-      const results = [];
-      
-      for (const { topic, path } of webhookTopics) {
-        try {
-          const webhookAddress = `${baseUrl}${path}`;
-          console.log(`Registering webhook: ${topic} -> ${webhookAddress}`);
-          const result = await shopifyClient.registerWebhook(topic, webhookAddress);
-          console.log(`✓ Successfully registered ${topic}:`, result.webhook?.id);
-          results.push({
-            topic,
-            address: webhookAddress,
-            status: "registered",
-            id: result.webhook?.id,
-          });
-        } catch (error: any) {
-          console.error(`✗ Failed to register ${topic}:`, error.message);
-          console.error('Full error details:', error);
-          results.push({
-            topic,
-            status: "failed",
-            error: error.message,
-          });
-        }
-      }
-
-      const successCount = results.filter(r => r.status === "registered").length;
-      
-      res.json({
-        message: `Successfully registered ${successCount} out of ${webhookTopics.length} webhooks`,
-        webhooks: results,
-      });
-    } catch (error: any) {
-      console.error("Error registering webhooks:", error);
-      res.status(500).json({ error: "Failed to register webhooks", details: error.message });
-    }
-  });
+  // NOTE: Webhook registration via API removed - now using n8n relay for stability
+  // See Settings > Shopify > Real-Time Webhook Setup for n8n configuration guide
 
   // ============================================================================
   // USERS API
