@@ -27,6 +27,14 @@ const parseDatabaseUrl = (url: string) => {
 
 const connectionConfig = parseDatabaseUrl(process.env.DATABASE_URL);
 
+console.log('=== DATABASE CONNECTION CONFIG ===');
+console.log('Host:', connectionConfig.host);
+console.log('Port:', connectionConfig.port);
+console.log('Database:', connectionConfig.database);
+console.log('User:', connectionConfig.user);
+console.log('PGHOST env var (should be ignored):', process.env.PGHOST);
+console.log('==================================');
+
 // Create pool with explicit parameters - this overrides PG* env vars like PGHOST
 export const pool = new Pool(connectionConfig);
 
