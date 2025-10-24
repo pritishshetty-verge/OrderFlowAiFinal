@@ -197,10 +197,84 @@ export function ShopifySettings() {
             </div>
           </div>
 
-          {/* Step 2: Configure Shopify Webhooks */}
+          {/* Step 2: Build n8n Relay Workflow */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">2</Badge>
+              <h3 className="font-semibold">Build n8n Relay Workflow</h3>
+            </div>
+            <div className="ml-8 space-y-3">
+              <p className="text-sm text-muted-foreground">Add these 5 nodes to your n8n workflow:</p>
+              
+              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                <p className="text-sm font-medium">Node 1: Webhook Trigger</p>
+                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
+                  <li>• Type: Webhook</li>
+                  <li>• Method: POST</li>
+                  <li>• Path: /shopify-orders</li>
+                  <li>• Response: Immediately Respond</li>
+                  <li>• Copy the Production URL - you'll use this in Step 3</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                <p className="text-sm font-medium">Node 2: Switch (Route by Topic)</p>
+                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
+                  <li>• Type: Switch</li>
+                  <li>• Mode: Rules</li>
+                  <li>• Add 3 routing rules:</li>
+                  <li className="ml-4">Rule 1: If <code className="bg-background px-1 rounded">{'{{ $json.headers["x-shopify-topic"] }}'}</code> equals "orders/create" → Output 0</li>
+                  <li className="ml-4">Rule 2: If <code className="bg-background px-1 rounded">{'{{ $json.headers["x-shopify-topic"] }}'}</code> equals "orders/updated" → Output 1</li>
+                  <li className="ml-4">Rule 3: If <code className="bg-background px-1 rounded">{'{{ $json.headers["x-shopify-topic"] }}'}</code> equals "orders/cancelled" → Output 2</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                <p className="text-sm font-medium">Node 3-5: HTTP Request (3 nodes, one per route)</p>
+                <div className="space-y-3 mt-2">
+                  <div className="pl-2 border-l-2 border-green-500">
+                    <p className="text-xs font-medium text-green-700 dark:text-green-400">Node 3 (Connected to Switch Output 0):</p>
+                    <ul className="text-xs text-muted-foreground space-y-1 ml-2">
+                      <li>• Method: POST</li>
+                      <li>• URL: <code className="bg-background px-1 rounded text-xs">{window.location.origin}/api/webhooks/orders/create</code></li>
+                      <li>• Headers: <code className="bg-background px-1 rounded text-xs">X-Forwarded-By: n8n</code></li>
+                      <li>• Body: Raw JSON: <code className="bg-background px-1 rounded text-xs">{'{{ $json.body }}'}</code></li>
+                    </ul>
+                  </div>
+                  <div className="pl-2 border-l-2 border-blue-500">
+                    <p className="text-xs font-medium text-blue-700 dark:text-blue-400">Node 4 (Connected to Switch Output 1):</p>
+                    <ul className="text-xs text-muted-foreground space-y-1 ml-2">
+                      <li>• Method: POST</li>
+                      <li>• URL: <code className="bg-background px-1 rounded text-xs">{window.location.origin}/api/webhooks/orders/update</code></li>
+                      <li>• Headers: <code className="bg-background px-1 rounded text-xs">X-Forwarded-By: n8n</code></li>
+                      <li>• Body: Raw JSON: <code className="bg-background px-1 rounded text-xs">{'{{ $json.body }}'}</code></li>
+                    </ul>
+                  </div>
+                  <div className="pl-2 border-l-2 border-red-500">
+                    <p className="text-xs font-medium text-red-700 dark:text-red-400">Node 5 (Connected to Switch Output 2):</p>
+                    <ul className="text-xs text-muted-foreground space-y-1 ml-2">
+                      <li>• Method: POST</li>
+                      <li>• URL: <code className="bg-background px-1 rounded text-xs">{window.location.origin}/api/webhooks/orders/cancelled</code></li>
+                      <li>• Headers: <code className="bg-background px-1 rounded text-xs">X-Forwarded-By: n8n</code></li>
+                      <li>• Body: Raw JSON: <code className="bg-background px-1 rounded text-xs">{'{{ $json.body }}'}</code></li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <Alert className="bg-yellow-500/10 border-yellow-500/20">
+                <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+                <AlertDescription className="text-sm">
+                  <strong>Critical:</strong> All HTTP Request nodes MUST include header <code className="bg-muted px-1 rounded text-xs">X-Forwarded-By: n8n</code> or requests will be rejected!
+                </AlertDescription>
+              </Alert>
+            </div>
+          </div>
+
+          {/* Step 3: Configure Shopify Webhooks */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">3</Badge>
               <h3 className="font-semibold">Configure Shopify Webhooks</h3>
             </div>
             <div className="ml-8 space-y-3">
@@ -210,56 +284,24 @@ export function ShopifySettings() {
               <div className="rounded-lg border divide-y">
                 <div className="p-3 space-y-1">
                   <p className="text-sm font-medium">Event: Order creation</p>
-                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL from Step 2</p>
                   <p className="text-xs text-muted-foreground">Format: JSON</p>
                 </div>
                 <div className="p-3 space-y-1">
                   <p className="text-sm font-medium">Event: Order updated</p>
-                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">URL: Same n8n webhook URL from Step 2</p>
                   <p className="text-xs text-muted-foreground">Format: JSON</p>
                 </div>
                 <div className="p-3 space-y-1">
                   <p className="text-sm font-medium">Event: Order cancelled</p>
-                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">URL: Same n8n webhook URL from Step 2</p>
                   <p className="text-xs text-muted-foreground">Format: JSON</p>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Step 3: Create n8n Workflow */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">3</Badge>
-              <h3 className="font-semibold">Build n8n Relay Workflow</h3>
-            </div>
-            <div className="ml-8 space-y-3">
-              <p className="text-sm text-muted-foreground">Add these nodes to your n8n workflow:</p>
-              
-              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
-                <p className="text-sm font-medium">Node 1: Webhook Trigger</p>
-                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
-                  <li>• Type: Webhook</li>
-                  <li>• Method: POST</li>
-                  <li>• Path: /shopify-orders</li>
-                  <li>• Copy the Production URL - this goes in Shopify webhooks (Step 2)</li>
-                </ul>
-              </div>
-
-              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
-                <p className="text-sm font-medium">Node 2: HTTP Request</p>
-                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
-                  <li>• Method: POST</li>
-                  <li>• URL: <code className="bg-background px-1 rounded text-xs">{window.location.origin}/api/webhooks/orders/create</code></li>
-                  <li>• Headers: Add <code className="bg-background px-1 rounded text-xs">X-Forwarded-By: n8n</code></li>
-                  <li>• Body: Pass through from previous node</li>
-                </ul>
-              </div>
-
-              <Alert className="bg-yellow-500/10 border-yellow-500/20">
-                <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
                 <AlertDescription className="text-sm">
-                  <strong>Critical:</strong> You MUST add the header <code className="bg-muted px-1 rounded text-xs">X-Forwarded-By: n8n</code> or webhooks will be rejected!
+                  <strong>Note:</strong> All 3 webhooks use the SAME n8n URL. The Switch node in Step 2 routes them to the correct endpoint based on the event type.
                 </AlertDescription>
               </Alert>
             </div>
