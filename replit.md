@@ -29,6 +29,10 @@ Preferred communication style: Simple, everyday language.
 **Component Architecture:**
 - Modular component structure with separation of concerns
 - Reusable UI components in `client/src/components/ui/`
+  - StatusBadge: Connection/status indicators with variant support
+  - SettingsCard: Clean card wrapper for settings sections
+  - CopyButton: Copy-to-clipboard functionality
+  - CodeBlock: Code display with syntax highlighting and copy button
 - Feature-specific components for orders, analytics, team management
 - Page-level components with protected routing based on user roles (admin, manager, agent)
 
@@ -118,11 +122,14 @@ Preferred communication style: Simple, everyday language.
 - **Webhook Verification**: Dual-mode verification system
   - Direct Shopify webhooks: HMAC signature verification required
   - n8n relay webhooks: Header-based verification (`X-Forwarded-By: n8n` header required)
-- **Event Routing**: n8n Switch node routes events by `x-shopify-topic` header:
-  - `orders/create` → `/api/webhooks/orders/create`
-  - `orders/updated` → `/api/webhooks/orders/update`
-  - `orders/cancelled` → `/api/webhooks/orders/cancelled`
-- **Setup Guide**: Comprehensive 4-step guide in Settings > Shopify tab with visual workflow instructions
+- **Simplified Setup**: 3 separate n8n workflows (one per event type) instead of complex Switch workflow
+  - orders/create workflow → `/api/webhooks/orders/create`
+  - orders/updated workflow → `/api/webhooks/orders/update`
+  - orders/cancelled workflow → `/api/webhooks/orders/cancelled`
+- **Setup Guides**: 
+  - Main settings page (/settings, Shopify tab): Clean status overview with quick actions
+  - Initial Setup Guide (/settings/shopify/setup): 3-step wizard for Shopify connection
+  - Webhook Setup Guide (/settings/shopify/webhooks): Tabbed guide with detailed n8n configuration
 
 ### UI Component Libraries
 
