@@ -17,6 +17,7 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("agent"), // admin, manager, agent
   department: text("department").default("Operations"),
   employeeId: text("employee_id").unique(),
+  presenceStatus: text("presence_status").notNull().default("present"), // present, onleave, inactive
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -40,6 +41,7 @@ export const updateUserSchema = createInsertSchema(users).pick({
   role: true,
   department: true,
   employeeId: true,
+  presenceStatus: true,
   isActive: true,
 }).partial();
 
@@ -327,3 +329,28 @@ export const insertShopifyCredentialsSchema = createInsertSchema(shopifyCredenti
 
 export type InsertShopifyCredentials = z.infer<typeof insertShopifyCredentialsSchema>;
 export type ShopifyCredentials = typeof shopifyCredentials.$inferSelect;
+
+// ============================================================================
+// ATTENDANCE (HR/Payroll Tracking)
+// ============================================================================
+
+export const attendance = pgTable("attendance", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: timestamp("date").notNull(),
+  clockInTime: timestamp("clock_in_time"),
+  clockOutTime: timestamp("clock_out_time"),
+  totalHours: decimal("total_hours", { precision: 5, scale: 2 }), // Calculated field
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertAttendanceSchema = createInsertSchema(attendance).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
+export type Attendance = typeof attendance.$inferSelect;
