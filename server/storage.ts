@@ -4,6 +4,8 @@ import {
   type User,
   type InsertUser,
   type UpdateUser,
+  type Invite,
+  type InsertInvite,
   type Customer,
   type InsertCustomer,
   type Order,
@@ -23,6 +25,7 @@ import {
   type ShopifyCredentials,
   type InsertShopifyCredentials,
   users,
+  invites,
   customers,
   orders,
   orderItems,
@@ -42,6 +45,13 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: UpdateUser): Promise<User | undefined>;
   listUsers(filters?: { role?: string; isActive?: boolean }): Promise<User[]>;
+
+  // Invites
+  createInvite(invite: InsertInvite & { token: string; expiresAt: Date; invitedBy?: string }): Promise<Invite>;
+  getInviteByToken(token: string): Promise<Invite | undefined>;
+  getInviteByEmail(email: string): Promise<Invite | undefined>;
+  updateInviteStatus(id: string, status: 'accepted' | 'expired'): Promise<void>;
+  listPendingInvites(): Promise<Invite[]>;
 
   // Customers
   getCustomer(id: string): Promise<Customer | undefined>;
@@ -154,6 +164,39 @@ export class DbStorage implements IStorage {
       return await db.select().from(users).where(and(...conditions));
     }
     return await db.select().from(users);
+  }
+
+  // ============================================================================
+  // INVITES
+  // ============================================================================
+
+  async createInvite(inviteData: InsertInvite & { token: string; expiresAt: Date; invitedBy?: string }): Promise<Invite> {
+    const [invite] = await db.insert(invites).values(inviteData).returning();
+    return invite;
+  }
+
+  async getInviteByToken(token: string): Promise<Invite | undefined> {
+    const [invite] = await db.select().from(invites).where(eq(invites.token, token));
+    return invite;
+  }
+
+  async getInviteByEmail(email: string): Promise<Invite | undefined> {
+    const [invite] = await db.select().from(invites).where(eq(invites.email, email));
+    return invite;
+  }
+
+  async updateInviteStatus(id: string, status: 'accepted' | 'expired'): Promise<void> {
+    await db
+      .update(invites)
+      .set({ 
+        status,
+        acceptedAt: status === 'accepted' ? new Date() : undefined 
+      })
+      .where(eq(invites.id, id));
+  }
+
+  async listPendingInvites(): Promise<Invite[]> {
+    return await db.select().from(invites).where(eq(invites.status, 'pending'));
   }
 
   // ============================================================================

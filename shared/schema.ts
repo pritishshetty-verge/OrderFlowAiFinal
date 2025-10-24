@@ -48,6 +48,39 @@ export type UpdateUser = z.infer<typeof updateUserSchema>;
 export type User = typeof users.$inferSelect;
 
 // ============================================================================
+// USER INVITATIONS
+// ============================================================================
+
+export const invites = pgTable("invites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  role: text("role").notNull().default("agent"), // admin, manager, agent
+  token: text("token").notNull().unique(), // Unique token for invite link
+  invitedBy: varchar("invited_by").references(() => users.id),
+  status: text("status").notNull().default("pending"), // pending, accepted, expired
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertInviteSchema = createInsertSchema(invites).pick({
+  email: true,
+  firstName: true,
+  lastName: true,
+  role: true,
+}).extend({
+  email: z.string().email("Invalid email address"),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  role: z.enum(["admin", "manager", "agent"]).default("agent"),
+});
+
+export type InsertInvite = z.infer<typeof insertInviteSchema>;
+export type Invite = typeof invites.$inferSelect;
+
+// ============================================================================
 // CUSTOMERS
 // ============================================================================
 

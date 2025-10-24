@@ -14,8 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Phone, Calendar, UserPlus, Loader2 } from "lucide-react";
-import type { User, Order as BackendOrder, InsertUser } from "@shared/schema";
-import { insertUserSchema } from "@shared/schema";
+import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -35,12 +34,15 @@ interface TeamDirectoryProps {
   userRole: "admin" | "manager" | "agent";
 }
 
-// Form schema for creating new team members
-const createMemberSchema = insertUserSchema.extend({
-  password: z.string().min(6, "Password must be at least 6 characters"),
+// Invite user form schema
+const inviteUserSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  role: z.enum(["admin", "manager", "agent"]).default("agent"),
 });
 
-type CreateMemberFormData = z.infer<typeof createMemberSchema>;
+type InviteUserFormData = z.infer<typeof inviteUserSchema>;
 
 export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -57,55 +59,47 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
   const isLoading = usersLoading || ordersLoading;
 
-  // Form for creating new members
-  const form = useForm<CreateMemberFormData>({
-    resolver: zodResolver(createMemberSchema),
+  // Form for inviting users
+  const form = useForm<InviteUserFormData>({
+    resolver: zodResolver(inviteUserSchema),
     defaultValues: {
-      username: "",
-      password: "",
       email: "",
-      fullName: "",
-      phone: "",
+      firstName: "",
+      lastName: "",
       role: "agent",
-      department: "Operations",
     },
   });
 
-  // Mutation for creating new team members
-  const createMemberMutation = useMutation({
-    mutationFn: async (data: CreateMemberFormData) => {
-      const res = await apiRequest("POST", "/api/users", data);
+  // Mutation for sending invites
+  const inviteUserMutation = useMutation({
+    mutationFn: async (data: InviteUserFormData) => {
+      const res = await apiRequest("POST", "/api/invites", data);
       return await res.json();
     },
-    onSuccess: () => {
-      console.log("✅ User created successfully, closing dialog...");
-      
-      // Immediately close dialog and reset form
+    onSuccess: (_, variables) => {
+      // Close dialog and reset form
       form.reset();
       setIsDialogOpen(false);
       
-      // Invalidate and show toast
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      // Invalidate invites cache and show toast
+      queryClient.invalidateQueries({ queryKey: ["/api/invites"] });
       toast({
         title: "Success",
-        description: "Team member added successfully",
+        description: `Invite sent to ${variables.email}`,
       });
-      
-      console.log("Dialog state set to false");
     },
     onError: (error: any) => {
-      console.error("❌ Error creating user:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to add team member",
+        description: error.message || "Failed to send invite",
         variant: "destructive",
       });
     },
   });
 
-  const handleCreateMember = async (data: CreateMemberFormData) => {
+  const handleInviteUser = async (data: InviteUserFormData) => {
     try {
-      await createMemberMutation.mutateAsync(data);
+      await inviteUserMutation.mutateAsync(data);
     } catch (error) {
       // Error is already handled in onError callback
     }
@@ -195,7 +189,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         {(userRole === "admin" || userRole === "manager") && (
           <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-member">
             <UserPlus className="h-4 w-4 mr-2" />
-            Add Member
+            Invite User
           </Button>
         )}
       </div>
@@ -285,32 +279,15 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         ))}
       </div>
 
-      {/* Add Member Dialog */}
+      {/* Invite User Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add New Team Member</DialogTitle>
-            <DialogDescription>
-              Create a new team member account. They will receive their credentials via email.
-            </DialogDescription>
+            <DialogTitle>Invite user</DialogTitle>
           </DialogHeader>
 
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleCreateMember)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="fullName"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="John Doe" {...field} data-testid="input-full-name" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
+            <form onSubmit={form.handleSubmit(handleInviteUser)} className="space-y-4">
               <FormField
                 control={form.control}
                 name="email"
@@ -318,7 +295,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <FormItem>
                     <FormLabel>Email *</FormLabel>
                     <FormControl>
-                      <Input type="email" placeholder="john@example.com" {...field} data-testid="input-email" />
+                      <Input type="email" placeholder="johnsmith@mail.com" {...field} data-testid="input-email" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -327,12 +304,12 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
               <FormField
                 control={form.control}
-                name="username"
+                name="firstName"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Username *</FormLabel>
+                    <FormLabel>First name</FormLabel>
                     <FormControl>
-                      <Input placeholder="johndoe" {...field} data-testid="input-username" />
+                      <Input placeholder="John" {...field} value={field.value || ""} data-testid="input-first-name" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -341,26 +318,12 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
               <FormField
                 control={form.control}
-                name="password"
+                name="lastName"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Password *</FormLabel>
+                    <FormLabel>Last name</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="Min 6 characters" {...field} data-testid="input-password" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="phone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone</FormLabel>
-                    <FormControl>
-                      <Input placeholder="+91 98765 43210" {...field} value={field.value || ""} data-testid="input-phone" />
+                      <Input placeholder="Smith" {...field} value={field.value || ""} data-testid="input-last-name" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -372,7 +335,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 name="role"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Role *</FormLabel>
+                    <FormLabel>Role</FormLabel>
                     <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger data-testid="select-role">
@@ -390,42 +353,28 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="department"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Department</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Operations" {...field} value={field.value || ""} data-testid="input-department" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
               <DialogFooter>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setIsDialogOpen(false)}
-                  disabled={createMemberMutation.isPending}
+                  disabled={inviteUserMutation.isPending}
                   data-testid="button-cancel"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createMemberMutation.isPending}
+                  disabled={inviteUserMutation.isPending}
                   data-testid="button-submit"
                 >
-                  {createMemberMutation.isPending ? (
+                  {inviteUserMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
+                      Sending...
                     </>
                   ) : (
-                    "Create Member"
+                    "Send Invite"
                   )}
                 </Button>
               </DialogFooter>

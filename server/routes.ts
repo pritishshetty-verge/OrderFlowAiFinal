@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
-import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema } from "@shared/schema";
+import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
 
@@ -593,6 +593,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error updating user:", error);
       res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // ============================================================================
+  // INVITES API
+  // ============================================================================
+
+  // Send user invite
+  app.post("/api/invites", async (req, res) => {
+    try {
+      const validatedData = insertInviteSchema.parse(req.body);
+      
+      // Check if email already has a pending invite
+      const existingInvite = await storage.getInviteByEmail(validatedData.email);
+      if (existingInvite && existingInvite.status === 'pending') {
+        return res.status(400).json({ error: "An invite has already been sent to this email" });
+      }
+      
+      // Check if user already exists with this email
+      const existingUser = await storage.getUserByEmail(validatedData.email);
+      if (existingUser) {
+        return res.status(400).json({ error: "A user with this email already exists" });
+      }
+      
+      // Generate unique invite token (simple random string for now)
+      const token = Array.from({ length: 32 }, () => 
+        Math.random().toString(36).charAt(2)
+      ).join('');
+      
+      // Set expiration to 7 days from now
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+      
+      // Create invite
+      const invite = await storage.createInvite({
+        ...validatedData,
+        token,
+        expiresAt,
+        // TODO: Get invitedBy from authenticated user session
+        invitedBy: undefined,
+      });
+      
+      // TODO: Send email via SendGrid/Resend integration
+      // For now, log the invite details to console
+      const inviteUrl = `${req.protocol}://${req.get('host')}/accept-invite?token=${token}`;
+      console.log('\n📧 USER INVITE EMAIL');
+      console.log('===================');
+      console.log(`To: ${validatedData.email}`);
+      console.log(`Subject: You're invited to join OrderFlowAI`);
+      console.log(`\nHi ${validatedData.firstName || 'there'},\n`);
+      console.log(`You've been invited to join OrderFlowAI as a ${validatedData.role}.`);
+      console.log(`\nClick the link below to accept your invitation and set up your account:`);
+      console.log(inviteUrl);
+      console.log(`\nThis invite expires in 7 days.`);
+      console.log('===================\n');
+      
+      res.json({ 
+        message: "Invite sent successfully",
+        invite: {
+          id: invite.id,
+          email: invite.email,
+          role: invite.role,
+          expiresAt: invite.expiresAt,
+        }
+      });
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Invalid invite data", details: error.errors });
+      }
+      console.error("Error creating invite:", error);
+      res.status(500).json({ error: "Failed to send invite" });
+    }
+  });
+
+  // List pending invites
+  app.get("/api/invites", async (req, res) => {
+    try {
+      const invites = await storage.listPendingInvites();
+      res.json(invites);
+    } catch (error) {
+      console.error("Error fetching invites:", error);
+      res.status(500).json({ error: "Failed to fetch invites" });
     }
   });
 
