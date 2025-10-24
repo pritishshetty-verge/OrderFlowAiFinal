@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { shopifyClient } from "./shopify";
 import { storage } from "./storage";
+import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
 
 // Helper function to verify webhook authenticity
@@ -163,6 +164,27 @@ export async function handleOrderCreated(req: Request, res: Response) {
       changedBy: null,
       note: "Order created from Shopify",
     });
+
+    // Auto-assign COD orders to available agents
+    const isCOD = orderData.paymentMethod?.toLowerCase().includes("cod") || 
+                  orderData.paymentMethod?.toLowerCase().includes("cash");
+    
+    if (isCOD) {
+      try {
+        console.log(`Attempting auto-assignment for COD order ${order.shopifyOrderNumber}`);
+        const assignmentEngine = new OrderAssignmentEngine(storage);
+        const wasAssigned = await assignmentEngine.autoAssignOrder(order.id);
+        
+        if (wasAssigned) {
+          console.log(`✓ COD order ${order.shopifyOrderNumber} auto-assigned successfully`);
+        } else {
+          console.log(`⚠ No agents available for auto-assignment of order ${order.shopifyOrderNumber}`);
+        }
+      } catch (assignError) {
+        // Log error but don't fail the webhook
+        console.error(`Error during auto-assignment for order ${order.shopifyOrderNumber}:`, assignError);
+      }
+    }
 
     console.log(`Successfully created order ${order.shopifyOrderNumber}`);
     res.status(200).json({ message: "Order created successfully" });
