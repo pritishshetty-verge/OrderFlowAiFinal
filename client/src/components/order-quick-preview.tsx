@@ -102,11 +102,11 @@ export function OrderQuickPreview({
 
   const getTagColor = (index: number) => {
     const colors = [
-      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-      "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-      "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400",
-      "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-      "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+      "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
+      "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
+      "bg-pink-50 text-pink-700 dark:bg-pink-900/20 dark:text-pink-400",
+      "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400",
+      "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400",
     ];
     return colors[index % colors.length];
   };
@@ -187,39 +187,37 @@ export function OrderQuickPreview({
 
           {/* Tags Section */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <p className="text-sm font-medium text-muted-foreground">Tags:</p>
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-start gap-3">
+              <p className="text-sm font-semibold text-foreground pt-1.5">Tags:</p>
+              <div className="flex flex-wrap items-center gap-2 flex-1">
                 {isLoading ? (
-                  <Skeleton className="h-6 w-24" />
+                  <Skeleton className="h-7 w-24 rounded-full" />
                 ) : (
                   <>
                     {currentTags.map((tag, index) => (
-                      <Badge
+                      <span
                         key={tag}
-                        className={`${getTagColor(index)} border-0 font-medium text-xs px-3 py-1 no-default-hover-elevate group`}
+                        className={`${getTagColor(index)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default`}
                         data-testid={`badge-tag-${index}`}
                       >
                         {tag}
                         <button
                           onClick={() => handleRemoveTag(tag)}
-                          className="ml-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
                           data-testid={`button-remove-tag-${index}`}
                         >
                           <X className="h-3 w-3" />
                         </button>
-                      </Badge>
+                      </span>
                     ))}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    <button
                       onClick={() => setShowAddTagDialog(true)}
+                      className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
                       data-testid="button-add-tag"
                     >
-                      <Plus className="h-3 w-3 mr-1" />
+                      <Plus className="h-3 w-3" />
                       Add
-                    </Button>
+                    </button>
                   </>
                 )}
               </div>
