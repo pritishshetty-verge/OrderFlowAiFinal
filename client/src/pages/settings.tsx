@@ -4,7 +4,7 @@ import { ProfileSettings } from "@/components/settings-profile";
 import { PreferencesSettings } from "@/components/settings-preferences";
 import { NotificationsSettings } from "@/components/settings-notifications";
 import { SecuritySettings } from "@/components/settings-security";
-import { ShopifySettings } from "@/components/settings-shopify";
+import { ShopifySettingsMain } from "@/components/settings-shopify-main";
 
 export default function SettingsPage() {
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
@@ -54,7 +54,7 @@ export default function SettingsPage() {
 
           {userRole === "admin" && (
             <TabsContent value="shopify">
-              <ShopifySettings />
+              <ShopifySettingsMain />
             </TabsContent>
           )}
         </Tabs>

@@ -1,0 +1,160 @@
+	The current Shopify settings page is cluttered with too much text and instructions. We need to redesign it to look clean and professional like enterprise SaaS apps (e.g., Slack, Stripe, Shopify itself).
+
+PROBLEMS TO FIX:
+1. Too much instructional text on the main settings page
+2. Setup guide is mixed with configuration controls
+3. Not clear what the current status is vs. what needs to be done
+4. UI doesn't follow modern SaaS design patterns
+
+GOALS:
+- Main settings page should be clean with minimal text
+- Move detailed setup instructions to a separate dedicated page
+- Show clear status indicators (connected/not connected)
+- Easy access to help/documentation when needed
+- Reduce code complexity and avoid technical debt
+
+---
+
+DESIGN REQUIREMENTS:
+
+1. MAIN SETTINGS PAGE (Shopify Tab)
+   Layout should have:
+   
+   A. Connection Status Card (top)
+      - Green checkmark icon + "Connected to Shopify" OR Red X + "Not Connected"
+      - Store name/domain displayed
+      - "Last synced: [timestamp]" or "Never synced"
+      - Action buttons:
+        * "Sync Now" (primary button)
+        * "Disconnect" (text link, secondary)
+   
+   B. API Credentials Section (collapsible)
+      - Only show if not connected yet
+      - Clean form fields for:
+        * Store URL
+        * API Key (with show/hide toggle)
+        * API Secret (with show/hide toggle)
+        * Webhook Secret (with show/hide toggle)
+      - "Save Credentials" button
+      - Small help text: "Need help? View setup guide →" (links to setup page)
+   
+   C. Real-Time Sync Status Card
+      - Icon indicator (green dot = active, gray = inactive)
+      - "Real-time webhooks: Active" or "Not configured"
+      - "Last webhook received: [timestamp]" or "No webhooks received yet"
+      - Action button: "Setup Webhooks →" (links to webhook setup page)
+   
+   D. Manual Sync Section (simple)
+      - "Import existing orders from Shopify"
+      - "Sync Orders" button
+      - Small status text below: "Last synced: X orders on [date]"
+
+2. NEW DEDICATED PAGES TO CREATE:
+
+   A. "/settings/shopify/setup" - Initial Setup Guide
+      - Step-by-step wizard-style UI
+      - Progress indicator (Step 1 of 3, Step 2 of 3, etc.)
+      - Each step has:
+        * Clear title
+        * Brief explanation (2-3 sentences max)
+        * Visual aids (code blocks, checkboxes)
+        * "Next" button
+      - Steps:
+        1. Get API credentials from Shopify
+        2. Add credentials to app
+        3. Test connection
+   
+   B. "/settings/shopify/webhooks" - Webhook Setup Guide
+      - Clean tab navigation: "Overview" | "n8n Setup" | "Shopify Config" | "Testing"
+      - Overview tab:
+        * What are webhooks (1 sentence)
+        * Why we use n8n (1 sentence)
+        * Visual diagram showing: Shopify → n8n → Your App
+      - n8n Setup tab:
+        * Expandable sections for each node configuration
+        * Copy-paste code blocks
+        * "Copy Configuration" buttons
+      - Shopify Config tab:
+        * Table showing what webhooks to create
+        * n8n URL input field (user pastes their n8n URL)
+        * Direct link to Shopify webhook settings
+      - Testing tab:
+        * Simple checklist
+        * "Create Test Order" instructions
+        * Real-time webhook activity log (last 10 webhooks)
+
+3. WEBHOOK GUIDE CORRECTIONS:
+
+   Current issues I see in the attached PDF:
+   - Node configuration shows json.body but should be {{$json["body"]}}
+   - Headers format is unclear (should show as key-value pairs)
+   - Switch node routing is overly complex (can be simplified)
+   - Missing information about activating the workflow
+   
+   Updated n8n workflow instructions:
+   
+   **Simplified Approach:**
+   Instead of 1 webhook → Switch → 3 HTTP nodes, use 3 separate simple workflows:
+   
+   Workflow 1: "Shopify Orders - Create"
+   - Webhook node (path: /orders-create)
+   - HTTP Request node → POST to /api/webhooks/orders/create
+   
+   Workflow 2: "Shopify Orders - Update"  
+   - Webhook node (path: /orders-update)
+   - HTTP Request node → POST to /api/webhooks/orders/update
+   
+   Workflow 3: "Shopify Orders - Cancel"
+   - Webhook node (path: /orders-cancelled)
+   - HTTP Request node → POST to /api/webhooks/orders/cancelled
+   
+   This is simpler and easier to debug than the switch approach.
+
+4. UI/UX IMPROVEMENTS:
+
+   - Use consistent spacing (Tailwind: space-y-6 for sections)
+   - Use card components with proper elevation/borders
+   - Add loading states for all async actions
+   - Add success/error toast notifications
+   - Use icons consistently (e.g., CheckCircle, XCircle, Clock, AlertTriangle)
+   - Color coding:
+     * Green for success/active
+     * Gray for inactive/pending
+     * Red for errors
+     * Blue for informational
+   - Add empty states with helpful CTAs
+   - Make all links and buttons have clear hover states
+
+5. CODE EFFICIENCY & TECHNICAL DEBT:
+
+   - Consolidate webhook handler logic (avoid duplication across create/update/cancel)
+   - Use shared validation middleware
+   - Extract reusable UI components:
+     * StatusBadge component
+     * SettingsCard component  
+     * CopyButton component
+     * CodeBlock component
+   - Remove unused webhook registration API code completely
+   - Simplify state management (avoid over-fetching)
+   - Add proper error boundaries
+   - Use React Query or SWR for data fetching (avoid manual refetch logic)
+   - Implement proper TypeScript types for webhook payloads
+
+6. NAVIGATION:
+
+   Settings sidebar should show:
+   - Shopify (main settings)
+     * Setup Guide (sub-item, only if not connected)
+     * Webhook Setup (sub-item)
+   - Profile
+   - Notifications
+   - Security
+
+INSPIRATION:
+Look at how these apps handle integrations:
+- Stripe Dashboard (stripe.com/docs)
+- Notion integrations page
+- Slack app directory
+- Linear settings page
+
+Please refactor the Shopify settings to follow this structure. Keep the code DRY, modular, and maintainable.

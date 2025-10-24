@@ -12,6 +12,8 @@ import OrdersPage from "@/pages/orders";
 import AnalyticsPage from "@/pages/analytics";
 import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
+import ShopifySetupPage from "@/pages/shopify-setup";
+import ShopifyWebhooksPage from "@/pages/shopify-webhooks";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -52,6 +54,12 @@ function Router() {
       </Route>
       <Route path="/settings">
         {() => <ProtectedRoute component={SettingsPage} />}
+      </Route>
+      <Route path="/settings/shopify/setup">
+        {() => <ProtectedRoute component={ShopifySetupPage} />}
+      </Route>
+      <Route path="/settings/shopify/webhooks">
+        {() => <ProtectedRoute component={ShopifyWebhooksPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
