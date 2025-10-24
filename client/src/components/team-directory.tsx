@@ -97,12 +97,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
-  const handleInviteUser = async (data: InviteUserFormData) => {
-    try {
-      await inviteUserMutation.mutateAsync(data);
-    } catch (error) {
-      // Error is already handled in onError callback
-    }
+  const handleInviteUser = (data: InviteUserFormData) => {
+    inviteUserMutation.mutate(data);
   };
 
   // Transform users to team members with order counts
