@@ -57,10 +57,12 @@ export default function DashboardPage() {
   const [paymentFilter, setPaymentFilter] = useState("all");
 
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  const userId = localStorage.getItem("userId");
 
   // Fetch orders from backend with auto-refresh every 30 seconds
+  // For agents: fetch only their assigned orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders"],
+    queryKey: userRole === "agent" ? ["/api/orders", { assignedTo: userId }] : ["/api/orders"],
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
   });
 
