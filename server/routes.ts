@@ -714,6 +714,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update user presence status (alternative endpoint for team presence component)
+  app.post("/api/users/presence", async (req, res) => {
+    try {
+      const { userId, status } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      if (!status || !["present", "onleave", "inactive"].includes(status)) {
+        return res.status(400).json({ 
+          error: "Invalid presence status. Must be: present, onleave, or inactive" 
+        });
+      }
+
+      const user = await storage.updateUser(userId, { presenceStatus: status });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      res.json({ success: true, user });
+    } catch (error) {
+      console.error("Error updating presence status:", error);
+      res.status(500).json({ error: "Failed to update presence status" });
+    }
+  });
+
   // Delete user
   app.delete("/api/users/:id", async (req, res) => {
     try {
