@@ -46,6 +46,19 @@ export async function handleOrderCreated(req: Request, res: Response) {
 
     const shopifyOrder = req.body;
     
+    // Log incoming payload for debugging
+    console.log("Incoming webhook payload:", JSON.stringify(shopifyOrder, null, 2));
+    
+    // Validate required fields
+    if (!shopifyOrder || !shopifyOrder.id) {
+      console.error("Invalid webhook payload: missing order ID");
+      console.error("Payload structure:", Object.keys(shopifyOrder || {}));
+      return res.status(400).json({ 
+        error: "Invalid payload: missing order ID",
+        receivedKeys: Object.keys(shopifyOrder || {})
+      });
+    }
+    
     // Log webhook receipt
     await storage.createWebhookLog({
       topic: "orders/create",
@@ -169,6 +182,18 @@ export async function handleOrderUpdated(req: Request, res: Response) {
 
     const shopifyOrder = req.body;
 
+    // Log incoming payload for debugging
+    console.log("Incoming order update webhook:", JSON.stringify(shopifyOrder, null, 2));
+    
+    // Validate required fields
+    if (!shopifyOrder || !shopifyOrder.id) {
+      console.error("Invalid webhook payload: missing order ID");
+      return res.status(400).json({ 
+        error: "Invalid payload: missing order ID",
+        receivedKeys: Object.keys(shopifyOrder || {})
+      });
+    }
+
     // Log webhook receipt
     await storage.createWebhookLog({
       topic: "orders/update",
@@ -250,6 +275,18 @@ export async function handleOrderCancelled(req: Request, res: Response) {
     }
 
     const shopifyOrder = req.body;
+
+    // Log incoming payload for debugging
+    console.log("Incoming order cancellation webhook:", JSON.stringify(shopifyOrder, null, 2));
+    
+    // Validate required fields
+    if (!shopifyOrder || !shopifyOrder.id) {
+      console.error("Invalid webhook payload: missing order ID");
+      return res.status(400).json({ 
+        error: "Invalid payload: missing order ID",
+        receivedKeys: Object.keys(shopifyOrder || {})
+      });
+    }
 
     // Log webhook receipt
     await storage.createWebhookLog({
