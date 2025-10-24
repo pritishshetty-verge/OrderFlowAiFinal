@@ -19,11 +19,25 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
     ? users.find((u) => u.id === order.assignedTo)
     : undefined;
 
+  // Format shipping address
+  const addressParts = [
+    order.shippingAddressLine1,
+    order.shippingAddressLine2,
+    order.shippingCity,
+    order.shippingState,
+    order.shippingPincode,
+  ].filter(Boolean);
+  const shippingAddress = addressParts.length > 0 ? addressParts.join(", ") : undefined;
+
   return {
     id: order.id,
     shopifyOrderId: order.shopifyOrderNumber,
     customerName: order.customerName,
     customerPhone: order.customerPhone,
+    shippingAddress,
+    shippingCity: order.shippingCity || undefined,
+    shippingState: order.shippingState || undefined,
+    shippingPincode: order.shippingPincode || undefined,
     items: order.itemsSummary || "",
     total: parseFloat(order.totalPrice),
     paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",

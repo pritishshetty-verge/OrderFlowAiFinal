@@ -17,6 +17,10 @@ export interface Order {
   shopifyOrderId: string;
   customerName: string;
   customerPhone: string;
+  shippingAddress?: string; // Full formatted address
+  shippingCity?: string;
+  shippingState?: string;
+  shippingPincode?: string;
   items: string;
   total: number;
   paymentMethod: "cod" | "prepaid";
