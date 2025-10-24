@@ -208,8 +208,8 @@ export type OrderItem = typeof orderItems.$inferSelect;
 export const orderAssignments = pgTable("order_assignments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  assignedBy: varchar("assigned_by").references(() => users.id),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  assignedBy: varchar("assigned_by").references(() => users.id, { onDelete: "set null" }),
   note: text("note"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
