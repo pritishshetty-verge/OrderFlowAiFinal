@@ -1,3 +1,11 @@
+// CRITICAL: Delete Replit auto-generated PG* variables FIRST
+// This prevents them from overriding our explicit DATABASE_URL parsing
+delete process.env.PGHOST;
+delete process.env.PGPORT;
+delete process.env.PGUSER;
+delete process.env.PGPASSWORD;
+delete process.env.PGDATABASE;
+
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-serverless';
 import ws from "ws";
@@ -11,24 +19,38 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// Parse DATABASE_URL explicitly to create connection config
-// This ensures we use the correct database regardless of PG* environment variables
+// Parse DATABASE_URL explicitly to extract connection details
+// This ensures we use the correct Neon database, not Replit's auto-generated values
 const parseDatabaseUrl = (url: string) => {
   const parsed = new URL(url);
-  return {
+  
+  // Extract all connection details explicitly
+  const config = {
     host: parsed.hostname,
     port: parseInt(parsed.port || '5432'),
     database: parsed.pathname.slice(1).split('?')[0],
     user: parsed.username,
     password: parsed.password,
-    ssl: parsed.searchParams.get('sslmode') === 'require' ? { rejectUnauthorized: false } : undefined,
+    ssl: { rejectUnauthorized: false }, // Neon requires SSL
   };
+  
+  console.log('Database connection config:', {
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.user,
+    passwordLength: config.password?.length || 0,
+    ssl: config.ssl,
+  });
+  
+  return config;
 };
 
 const connectionConfig = parseDatabaseUrl(process.env.DATABASE_URL);
 
-// Create pool with explicit connection config
-// This overrides any PG* environment variables that might be set
+// Create pool with EXPLICIT connection config
+// By passing an object with explicit host/port/user/password/database,
+// we completely bypass any PG* environment variables
 export const pool = new Pool(connectionConfig);
 
 export const db = drizzle({ client: pool, schema });
