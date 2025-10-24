@@ -1,0 +1,238 @@
+Build an intelligent order assignment system that automatically distributes COD orders to available agents using round-robin logic. The system should ensure fair distribution based on agent presence status and current workload, while giving admins full control to override assignments.
+
+Core Requirements
+1. Database Schema Updates
+Users Table:
+
+Add presenceStatus field with three options: present, onleave, inactive
+
+Default value: present
+
+All active agents are marked present by default
+
+This field controls assignment eligibility
+
+Orders Table:
+
+Add assignedTo field (foreign key to users table, nullable)
+
+Track which agent is responsible for each order
+
+NULL means unassigned
+
+Attendance Table (for HR/payroll tracking):
+
+Track daily clock in/out times for each staff member
+
+Fields: userId, date, clockInTime, clockOutTime, totalHours
+
+This is ONLY for HR records and payroll
+
+Does NOT affect order assignment eligibility
+
+2. Assignment Logic Rules
+Automatic Assignment Triggers:
+
+When a new COD order arrives from Shopify webhook
+
+Order should be auto-assigned within 10 seconds
+
+Eligibility Criteria (who receives assignments):
+
+User role = agent
+
+Presence status = present
+
+Account is active
+
+Important: Presence vs Attendance:
+
+Presence status controls assignment eligibility
+
+Clock in/out is separate and does NOT control assignments
+
+An agent can receive orders even without clocking in, as long as presence = present
+
+Round-Robin Distribution:
+
+Distribute orders evenly across all eligible agents
+
+Consider current workload (number of open/assigned orders)
+
+Agent with fewest assigned orders gets next order
+
+Break ties by last assignment time (least recently assigned goes first)
+
+Orders That Get Auto-Assigned:
+
+Only COD (Cash on Delivery) orders
+
+Prepaid orders are NOT auto-assigned
+
+3. Frontend Display Requirements
+Orders Page (Agent View):
+
+Agent sees ONLY orders assigned to them in the orders table
+
+Show all standard order information (order ID, customer, items, status, etc.)
+
+This is the agent's working queue
+
+Dashboard Page (Admin/Manager View):
+
+Display ALL orders in the orders table (not filtered by assignment)
+
+Full visibility across entire store
+
+Can see which agent is assigned to each order
+
+Visual Indicators:
+
+Show assigned agent name/badge on each order
+
+Indicate unassigned orders clearly
+
+Display agent workload metrics
+
+4. Admin Controls
+Presence Status Management:
+
+Admin can change any agent's presence status to: present, onleave, or inactive
+
+When set to onleave or inactive, agent receives zero new assignments
+
+Agent can self-update their own presence (e.g., mark themselves on leave)
+
+Manual Assignment Override:
+
+Admin can manually reassign any order to any agent
+
+Admin can assign unassigned orders
+
+Changes should reflect immediately in both admin and agent views
+
+Pause/Resume Auto-Assignment:
+
+Admin can pause auto-assignment for specific agents
+
+Useful for training, breaks, or overflow management
+
+Bulk Assignment:
+
+Admin can select multiple unassigned orders and assign them manually
+
+Useful for handling backlogs or special cases
+
+5. Attendance System (HR Function)
+Clock In/Out:
+
+Simple one-click clock in/out button for staff
+
+Records timestamp and calculates total hours worked
+
+Admin can view full attendance history for all staff
+
+Used purely for HR records and payroll calculations
+
+Make it clear to users: "Attendance does not affect order assignment"
+
+Attendance Reports:
+
+Admin can view daily/weekly/monthly attendance logs
+
+Export attendance data for payroll processing
+
+Track late arrivals, early departures if needed
+
+6. Workload Visibility
+For Admins:
+
+Dashboard showing each agent's current workload
+
+Metrics: number of assigned orders, orders completed today, confirmation rate
+
+Real-time view of who is working on what
+
+Identify overloaded or underutilized agents
+
+For Agents:
+
+Simple counter showing "You have X assigned orders"
+
+No need to see other agents' workloads
+
+7. Edge Cases to Handle
+No Eligible Agents:
+
+If no agents have present status, keep orders in unassigned queue
+
+Show admin alert: "X orders waiting, no agents available"
+
+Auto-assign when an agent becomes present
+
+Agent Goes On Leave Mid-Day:
+
+Stop sending new orders to that agent immediately
+
+Existing assigned orders remain with them (admin can reassign if needed)
+
+Burst of Orders:
+
+Handle multiple orders arriving simultaneously
+
+Ensure fair distribution without double-assignment
+
+Process assignments in order received (FIFO)
+
+Order Reassignment:
+
+When admin reassigns an order, update assignedTo field
+
+Both old and new agent's views should update
+
+No complex audit trail needed for MVP
+
+8. Success Criteria
+ COD orders are automatically assigned within 10 seconds of arrival
+
+ Distribution is roughly even across all present agents (e.g., 3 agents with 20 orders = ~7/7/6 split)
+
+ Agents with onleave or inactive status receive zero assignments
+
+ Agents can receive orders without clocking in (as long as presence = present)
+
+ Admin can manually reassign any order instantly
+
+ Agent sees only their assigned orders on Orders page
+
+ Admin sees all orders on Dashboard page
+
+ Attendance tracking works independently of assignment system
+
+What NOT to Include in MVP
+❌ Separate HR role (admin handles HR functions)
+
+❌ WebSocket real-time updates (will add later; use page refresh for now)
+
+❌ Separate NDR assignment logic (NDRs stay with originally assigned agent)
+
+❌ Complex assignment analytics or predictions
+
+❌ Agent performance scoring in assignment algorithm
+
+❌ Multi-queue assignment (orders by priority/value)
+
+Implementation Guidance
+Keep the assignment algorithm simple and predictable
+
+Use database transactions to prevent race conditions during assignment
+
+Provide clear admin UI controls for all override actions
+
+Make presence status changes obvious and instant
+
+Clearly separate attendance tracking from assignment logic in the UI
+
+Focus on reliability over complexity
+
+Ensure the system handles high order volumes gracefully
