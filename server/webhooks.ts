@@ -3,25 +3,45 @@ import { shopifyClient } from "./shopify";
 import { storage } from "./storage";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
 
+// Helper function to verify webhook authenticity
+// Supports both direct Shopify webhooks and n8n relay
+function verifyWebhookAuth(req: Request): { valid: boolean; error?: string } {
+  const forwardedBy = req.get("X-Forwarded-By");
+  
+  // If request comes from n8n relay, skip HMAC verification
+  if (forwardedBy === "n8n") {
+    console.log("✓ Webhook received from n8n relay (HMAC verification skipped)");
+    return { valid: true };
+  }
+
+  // Direct Shopify webhook - verify HMAC
+  const hmac = req.get("X-Shopify-Hmac-Sha256");
+  const body = JSON.stringify(req.body);
+
+  if (!hmac) {
+    console.error("Webhook verification failed: Missing HMAC header");
+    return { valid: false, error: "Unauthorized: Missing signature" };
+  }
+
+  try {
+    if (!shopifyClient.verifyWebhook(body, hmac)) {
+      console.error("Webhook verification failed: Invalid signature");
+      return { valid: false, error: "Unauthorized: Invalid signature" };
+    }
+    console.log("✓ Direct Shopify webhook verified");
+    return { valid: true };
+  } catch (verifyError: any) {
+    console.error("Webhook verification error:", verifyError.message);
+    return { valid: false, error: "Unauthorized: Webhook secret not configured" };
+  }
+}
+
 export async function handleOrderCreated(req: Request, res: Response) {
   try {
-    const hmac = req.get("X-Shopify-Hmac-Sha256");
-    const body = JSON.stringify(req.body);
-
-    // Verify webhook authenticity
-    if (!hmac) {
-      console.error("Webhook verification failed: Missing HMAC header");
-      return res.status(401).json({ error: "Unauthorized: Missing signature" });
-    }
-
-    try {
-      if (!shopifyClient.verifyWebhook(body, hmac)) {
-        console.error("Webhook verification failed: Invalid signature");
-        return res.status(401).json({ error: "Unauthorized: Invalid signature" });
-      }
-    } catch (verifyError: any) {
-      console.error("Webhook verification error:", verifyError.message);
-      return res.status(401).json({ error: "Unauthorized: Webhook secret not configured" });
+    // Verify webhook authenticity (supports both Shopify direct and n8n relay)
+    const verification = verifyWebhookAuth(req);
+    if (!verification.valid) {
+      return res.status(401).json({ error: verification.error });
     }
 
     const shopifyOrder = req.body;
@@ -141,22 +161,10 @@ export async function handleOrderCreated(req: Request, res: Response) {
 
 export async function handleOrderUpdated(req: Request, res: Response) {
   try {
-    const hmac = req.get("X-Shopify-Hmac-Sha256");
-    const body = JSON.stringify(req.body);
-
-    if (!hmac) {
-      console.error("Webhook verification failed: Missing HMAC header");
-      return res.status(401).json({ error: "Unauthorized: Missing signature" });
-    }
-
-    try {
-      if (!shopifyClient.verifyWebhook(body, hmac)) {
-        console.error("Webhook verification failed: Invalid signature");
-        return res.status(401).json({ error: "Unauthorized: Invalid signature" });
-      }
-    } catch (verifyError: any) {
-      console.error("Webhook verification error:", verifyError.message);
-      return res.status(401).json({ error: "Unauthorized: Webhook secret not configured" });
+    // Verify webhook authenticity (supports both Shopify direct and n8n relay)
+    const verification = verifyWebhookAuth(req);
+    if (!verification.valid) {
+      return res.status(401).json({ error: verification.error });
     }
 
     const shopifyOrder = req.body;
@@ -235,22 +243,10 @@ export async function handleOrderUpdated(req: Request, res: Response) {
 
 export async function handleOrderCancelled(req: Request, res: Response) {
   try {
-    const hmac = req.get("X-Shopify-Hmac-Sha256");
-    const body = JSON.stringify(req.body);
-
-    if (!hmac) {
-      console.error("Webhook verification failed: Missing HMAC header");
-      return res.status(401).json({ error: "Unauthorized: Missing signature" });
-    }
-
-    try {
-      if (!shopifyClient.verifyWebhook(body, hmac)) {
-        console.error("Webhook verification failed: Invalid signature");
-        return res.status(401).json({ error: "Unauthorized: Invalid signature" });
-      }
-    } catch (verifyError: any) {
-      console.error("Webhook verification error:", verifyError.message);
-      return res.status(401).json({ error: "Unauthorized: Webhook secret not configured" });
+    // Verify webhook authenticity (supports both Shopify direct and n8n relay)
+    const verification = verifyWebhookAuth(req);
+    if (!verification.valid) {
+      return res.status(401).json({ error: verification.error });
     }
 
     const shopifyOrder = req.body;
