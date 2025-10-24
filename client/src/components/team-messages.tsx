@@ -43,14 +43,12 @@ export function TeamMessages({ userRole }: TeamMessagesProps) {
   // Send message mutation
   const sendMutation = useMutation({
     mutationFn: async (message: string) => {
-      return apiRequest("/api/messages", {
-        method: "POST",
-        body: JSON.stringify({
-          fromUserId: currentUserId,
-          toUserId: selectedUserId,
-          message,
-        }),
+      const res = await apiRequest("POST", "/api/messages", {
+        fromUserId: currentUserId,
+        toUserId: selectedUserId,
+        message,
       });
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ 
