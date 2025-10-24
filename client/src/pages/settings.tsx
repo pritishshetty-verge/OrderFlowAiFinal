@@ -5,6 +5,7 @@ import { PreferencesSettings } from "@/components/settings-preferences";
 import { NotificationsSettings } from "@/components/settings-notifications";
 import { SecuritySettings } from "@/components/settings-security";
 import { ShopifySettingsMain } from "@/components/settings-shopify-main";
+import { AttendanceSettings } from "@/components/settings-attendance";
 
 export default function SettingsPage() {
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
@@ -19,6 +20,9 @@ export default function SettingsPage() {
           <TabsList data-testid="tabs-settings">
             <TabsTrigger value="profile" data-testid="tab-profile">
               Profile
+            </TabsTrigger>
+            <TabsTrigger value="attendance" data-testid="tab-attendance">
+              Attendance
             </TabsTrigger>
             <TabsTrigger value="preferences" data-testid="tab-preferences">
               Preferences
@@ -38,6 +42,10 @@ export default function SettingsPage() {
 
           <TabsContent value="profile">
             <ProfileSettings userRole={userRole} />
+          </TabsContent>
+
+          <TabsContent value="attendance">
+            <AttendanceSettings userRole={userRole} />
           </TabsContent>
 
           <TabsContent value="preferences">
