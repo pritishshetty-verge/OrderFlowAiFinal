@@ -63,7 +63,7 @@ export function AssignOrderDialog({
   // Manual assignment mutation
   const assignMutation = useMutation({
     mutationFn: async ({ orderId, userId }: { orderId: string; userId: string }) => {
-      return await apiRequest("POST", "/api/orders/assign", { orderId, userId });
+      return await apiRequest("POST", `/api/orders/${orderId}/assign`, { userId });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
