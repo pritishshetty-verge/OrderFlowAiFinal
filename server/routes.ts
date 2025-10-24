@@ -3,8 +3,9 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
-import { insertOrderSchema, insertLeaveRequestSchema, updateUserSchema } from "@shared/schema";
+import { insertOrderSchema, insertLeaveRequestSchema, updateUserSchema, insertShopifyCredentialsSchema } from "@shared/schema";
 import { ZodError } from "zod";
+import { encrypt, decrypt } from "./encryption";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -290,6 +291,173 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // NOTE: Webhook registration via API removed - now using n8n relay for stability
   // See Settings > Shopify > Real-Time Webhook Setup for n8n configuration guide
+
+  // ============================================================================
+  // SHOPIFY CREDENTIALS API
+  // ============================================================================
+
+  // Get Shopify credentials status (without exposing secrets)
+  app.get("/api/shopify/credentials/status", async (req, res) => {
+    try {
+      const credentials = await storage.getShopifyCredentials();
+      
+      if (!credentials) {
+        return res.json({
+          configured: false,
+          storeUrl: null,
+          lastTested: null,
+          testStatus: null,
+        });
+      }
+
+      res.json({
+        configured: true,
+        storeUrl: credentials.storeUrl,
+        lastTested: credentials.lastTestedAt,
+        testStatus: credentials.testStatus,
+        testMessage: credentials.testMessage,
+      });
+    } catch (error) {
+      console.error("Error getting credentials status:", error);
+      res.status(500).json({ error: "Failed to get credentials status" });
+    }
+  });
+
+  // Save Shopify credentials (encrypted)
+  app.post("/api/shopify/credentials", async (req, res) => {
+    try {
+      const validatedData = insertShopifyCredentialsSchema.parse(req.body);
+
+      // Encrypt sensitive fields
+      const encryptedCredentials = {
+        storeUrl: validatedData.storeUrl,
+        apiKey: encrypt(validatedData.apiKey),
+        apiSecret: encrypt(validatedData.apiSecret),
+        accessToken: encrypt(validatedData.accessToken),
+        webhookSecret: validatedData.webhookSecret ? encrypt(validatedData.webhookSecret) : undefined,
+        isActive: true,
+      };
+
+      const savedCredentials = await storage.saveShopifyCredentials(encryptedCredentials);
+
+      // Test the connection immediately
+      try {
+        const decryptedKey = decrypt(savedCredentials.apiKey);
+        const decryptedSecret = decrypt(savedCredentials.apiSecret);
+        const decryptedToken = decrypt(savedCredentials.accessToken);
+
+        // Test by fetching shop info
+        const shopInfo = await shopifyClient.getShopInfo({
+          storeUrl: savedCredentials.storeUrl,
+          apiKey: decryptedKey,
+          apiSecret: decryptedSecret,
+          accessToken: decryptedToken,
+        });
+
+        await storage.updateCredentialTestStatus(
+          savedCredentials.id,
+          'success',
+          `Connected to ${shopInfo.name || savedCredentials.storeUrl}`,
+        );
+
+        res.json({
+          success: true,
+          message: "Credentials saved and tested successfully",
+          storeUrl: savedCredentials.storeUrl,
+          shopName: shopInfo.name,
+        });
+      } catch (testError: any) {
+        await storage.updateCredentialTestStatus(
+          savedCredentials.id,
+          'failed',
+          testError.message || "Connection test failed",
+        );
+
+        res.json({
+          success: true,
+          message: "Credentials saved but connection test failed",
+          storeUrl: savedCredentials.storeUrl,
+          testError: testError.message,
+        });
+      }
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: "Validation error", details: error.errors });
+      }
+      console.error("Error saving credentials:", error);
+      res.status(500).json({ error: "Failed to save credentials" });
+    }
+  });
+
+  // Test Shopify connection
+  app.post("/api/shopify/credentials/test", async (req, res) => {
+    try {
+      const credentials = await storage.getShopifyCredentials();
+      
+      if (!credentials) {
+        return res.status(404).json({ error: "No credentials found" });
+      }
+
+      const decryptedKey = decrypt(credentials.apiKey);
+      const decryptedSecret = decrypt(credentials.apiSecret);
+      const decryptedToken = decrypt(credentials.accessToken);
+
+      const shopInfo = await shopifyClient.getShopInfo({
+        storeUrl: credentials.storeUrl,
+        apiKey: decryptedKey,
+        apiSecret: decryptedSecret,
+        accessToken: decryptedToken,
+      });
+
+      await storage.updateCredentialTestStatus(
+        credentials.id,
+        'success',
+        `Connected to ${shopInfo.name || credentials.storeUrl}`,
+      );
+
+      res.json({
+        success: true,
+        message: "Connection successful",
+        shopName: shopInfo.name,
+        shopDomain: shopInfo.domain,
+        storeUrl: credentials.storeUrl,
+      });
+    } catch (error: any) {
+      console.error("Connection test failed:", error);
+      
+      const credentials = await storage.getShopifyCredentials();
+      if (credentials) {
+        await storage.updateCredentialTestStatus(
+          credentials.id,
+          'failed',
+          error.message || "Connection test failed",
+        );
+      }
+
+      res.status(400).json({
+        success: false,
+        error: error.message || "Connection test failed",
+      });
+    }
+  });
+
+  // Delete Shopify credentials
+  app.delete("/api/shopify/credentials", async (req, res) => {
+    try {
+      const credentials = await storage.getShopifyCredentials();
+      
+      if (!credentials) {
+        return res.status(404).json({ error: "No credentials found" });
+      }
+
+      await storage.deleteShopifyCredentials(credentials.id);
+      
+      res.json({ success: true, message: "Credentials deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting credentials:", error);
+      res.status(500).json({ error: "Failed to delete credentials" });
+    }
+  });
 
   // ============================================================================
   // USERS API

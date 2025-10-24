@@ -20,6 +20,8 @@ import {
   type InsertTeamMessage,
   type WebhookLog,
   type InsertWebhookLog,
+  type ShopifyCredentials,
+  type InsertShopifyCredentials,
   users,
   customers,
   orders,
@@ -29,6 +31,7 @@ import {
   leaveRequests,
   teamMessages,
   webhookLogs,
+  shopifyCredentials,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -89,6 +92,13 @@ export interface IStorage {
   // Webhook Logs
   createWebhookLog(log: InsertWebhookLog): Promise<WebhookLog>;
   markWebhookProcessed(id: string, error?: string): Promise<void>;
+
+  // Shopify Credentials
+  getShopifyCredentials(): Promise<ShopifyCredentials | undefined>;
+  saveShopifyCredentials(credentials: InsertShopifyCredentials): Promise<ShopifyCredentials>;
+  updateShopifyCredentials(id: string, data: Partial<InsertShopifyCredentials>): Promise<ShopifyCredentials | undefined>;
+  deleteShopifyCredentials(id: string): Promise<void>;
+  updateCredentialTestStatus(id: string, status: 'success' | 'failed', message?: string): Promise<void>;
 }
 
 export class DbStorage implements IStorage {
@@ -481,6 +491,69 @@ export class DbStorage implements IStorage {
         error: error || null,
       })
       .where(eq(webhookLogs.id, id));
+  }
+
+  // ============================================================================
+  // SHOPIFY CREDENTIALS
+  // ============================================================================
+
+  async getShopifyCredentials(): Promise<ShopifyCredentials | undefined> {
+    const [credentials] = await db
+      .select()
+      .from(shopifyCredentials)
+      .where(eq(shopifyCredentials.isActive, true))
+      .orderBy(desc(shopifyCredentials.createdAt))
+      .limit(1);
+    return credentials;
+  }
+
+  async saveShopifyCredentials(credentials: InsertShopifyCredentials): Promise<ShopifyCredentials> {
+    // Deactivate any existing credentials
+    await db
+      .update(shopifyCredentials)
+      .set({ isActive: false, updatedAt: new Date() });
+
+    // Insert new credentials
+    const [newCredentials] = await db
+      .insert(shopifyCredentials)
+      .values(credentials)
+      .returning();
+    return newCredentials;
+  }
+
+  async updateShopifyCredentials(
+    id: string,
+    data: Partial<InsertShopifyCredentials>,
+  ): Promise<ShopifyCredentials | undefined> {
+    const [updated] = await db
+      .update(shopifyCredentials)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(shopifyCredentials.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteShopifyCredentials(id: string): Promise<void> {
+    await db
+      .update(shopifyCredentials)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(shopifyCredentials.id, id));
+  }
+
+  async updateCredentialTestStatus(
+    id: string,
+    status: 'success' | 'failed',
+    message?: string,
+  ): Promise<void> {
+    await db
+      .update(shopifyCredentials)
+      .set({
+        testStatus: status,
+        testMessage: message || null,
+        lastTestedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(shopifyCredentials.id, id));
   }
 }
 

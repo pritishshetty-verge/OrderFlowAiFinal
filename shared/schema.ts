@@ -260,3 +260,37 @@ export const webhookLogs = pgTable("webhook_logs", {
 export const insertWebhookLogSchema = createInsertSchema(webhookLogs).omit({ id: true, createdAt: true });
 export type InsertWebhookLog = z.infer<typeof insertWebhookLogSchema>;
 export type WebhookLog = typeof webhookLogs.$inferSelect;
+
+// ============================================================================
+// SHOPIFY CREDENTIALS
+// ============================================================================
+
+export const shopifyCredentials = pgTable("shopify_credentials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeUrl: text("store_url").notNull(),
+  apiKey: text("api_key").notNull(), // Encrypted
+  apiSecret: text("api_secret").notNull(), // Encrypted
+  accessToken: text("access_token").notNull(), // Encrypted
+  webhookSecret: text("webhook_secret"), // Encrypted, optional
+  isActive: boolean("is_active").notNull().default(true),
+  lastTestedAt: timestamp("last_tested_at"),
+  testStatus: text("test_status"), // success, failed
+  testMessage: text("test_message"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertShopifyCredentialsSchema = createInsertSchema(shopifyCredentials).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+}).extend({
+  storeUrl: z.string().min(1, "Store URL is required").regex(/\.myshopify\.com$/, "Store URL must end with .myshopify.com"),
+  apiKey: z.string().min(1, "Admin API access token is required"),
+  apiSecret: z.string().min(1, "API secret key is required"),
+  accessToken: z.string().min(1, "Access token is required"),
+  webhookSecret: z.string().optional(),
+});
+
+export type InsertShopifyCredentials = z.infer<typeof insertShopifyCredentialsSchema>;
+export type ShopifyCredentials = typeof shopifyCredentials.$inferSelect;

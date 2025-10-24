@@ -83,6 +83,30 @@ export class ShopifyClient {
     return await response.json();
   }
 
+  async getShopInfo(customConfig?: ShopifyConfig & { accessToken: string }): Promise<any> {
+    const config = customConfig || this.config;
+    const baseUrl = `https://${config.storeUrl}/admin/api/2024-01`;
+    const url = `${baseUrl}/shop.json`;
+    
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": customConfig?.accessToken || this.config.apiKey,
+    };
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Shopify API error: ${response.statusText} - ${errorBody}`);
+    }
+
+    const data = await response.json();
+    return data.shop;
+  }
+
   verifyWebhook(body: string, hmacHeader: string): boolean {
     if (!this.config.webhookSecret) {
       throw new Error("Webhook secret not configured - refusing to process unverified webhooks");
