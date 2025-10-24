@@ -78,15 +78,23 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       return await res.json();
     },
     onSuccess: () => {
+      console.log("✅ User created successfully, closing dialog...");
+      
+      // Immediately close dialog and reset form
+      form.reset();
+      setIsDialogOpen(false);
+      
+      // Invalidate and show toast
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({
         title: "Success",
         description: "Team member added successfully",
       });
-      setIsDialogOpen(false);
-      form.reset();
+      
+      console.log("Dialog state set to false");
     },
     onError: (error: any) => {
+      console.error("❌ Error creating user:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to add team member",
@@ -95,8 +103,12 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
-  const handleCreateMember = (data: CreateMemberFormData) => {
-    createMemberMutation.mutate(data);
+  const handleCreateMember = async (data: CreateMemberFormData) => {
+    try {
+      await createMemberMutation.mutateAsync(data);
+    } catch (error) {
+      // Error is already handled in onError callback
+    }
   };
 
   // Transform users to team members with order counts
@@ -348,7 +360,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <FormItem>
                     <FormLabel>Phone</FormLabel>
                     <FormControl>
-                      <Input placeholder="+91 98765 43210" {...field} data-testid="input-phone" />
+                      <Input placeholder="+91 98765 43210" {...field} value={field.value || ""} data-testid="input-phone" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -385,7 +397,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <FormItem>
                     <FormLabel>Department</FormLabel>
                     <FormControl>
-                      <Input placeholder="Operations" {...field} data-testid="input-department" />
+                      <Input placeholder="Operations" {...field} value={field.value || ""} data-testid="input-department" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
