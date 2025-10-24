@@ -4,6 +4,7 @@ import { DashboardStats } from "@/components/dashboard-stats";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
+import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
@@ -123,8 +125,8 @@ export default function DashboardPage() {
   };
 
   const handleAssignOrder = (order: Order) => {
-    console.log("Assigning order:", order.id);
-    alert(`Assign order #${order.shopifyOrderId} to agent`);
+    setSelectedOrder(order);
+    setIsAssignDialogOpen(true);
   };
 
   const handleSearch = (value: string) => {
@@ -247,6 +249,12 @@ export default function DashboardPage() {
           console.log("Edit order clicked for order:", selectedOrder?.shopifyOrderId);
           // TODO: Implement edit order dialog
         }}
+      />
+
+      <AssignOrderDialog
+        order={selectedOrder}
+        open={isAssignDialogOpen}
+        onOpenChange={setIsAssignDialogOpen}
       />
     </div>
   );
