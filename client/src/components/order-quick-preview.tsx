@@ -245,7 +245,17 @@ export function OrderQuickPreview({
                 <span>₹{subtotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Discount</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Discount</span>
+                  {order.discountCode && (
+                    <Badge 
+                      className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate"
+                      data-testid="badge-discount-code"
+                    >
+                      {order.discountCode}
+                    </Badge>
+                  )}
+                </div>
                 <span>₹{discount.toLocaleString()}</span>
               </div>
               <div className="flex justify-between text-sm">

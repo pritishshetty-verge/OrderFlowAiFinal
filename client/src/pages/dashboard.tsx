@@ -43,6 +43,7 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
     paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
     status: order.status as Order["status"],
     assignedTo: assignedUser?.fullName,
+    discountCode: order.discountCode || undefined,
     createdAt: new Date(order.shopifyCreatedAt),
   };
 }

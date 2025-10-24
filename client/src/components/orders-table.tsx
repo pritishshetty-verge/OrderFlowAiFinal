@@ -26,6 +26,7 @@ export interface Order {
   paymentMethod: "cod" | "prepaid";
   status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr";
   assignedTo?: string;
+  discountCode?: string;
   createdAt: Date;
 }
 
