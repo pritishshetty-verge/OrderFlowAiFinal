@@ -18,10 +18,6 @@ interface SyncResult {
 export function ShopifySettings() {
   const { toast } = useToast();
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
-  const [webhookStatus, setWebhookStatus] = useState<{
-    registered: boolean;
-    message?: string;
-  } | null>(null);
 
   // Manual sync mutation
   const syncMutation = useMutation({
@@ -52,35 +48,8 @@ export function ShopifySettings() {
     },
   });
 
-  // Register webhooks mutation
-  const registerWebhooksMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", "/api/shopify/webhooks/register", {});
-      return response.json();
-    },
-    onSuccess: (data) => {
-      setWebhookStatus({ registered: true, message: data.message });
-      toast({
-        title: "Webhooks Registered",
-        description: "Shopify webhooks have been successfully registered. New orders will sync automatically.",
-      });
-    },
-    onError: (error: Error) => {
-      setWebhookStatus({ registered: false, message: error.message });
-      toast({
-        title: "Webhook Registration Failed",
-        description: error.message || "Failed to register webhooks. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
   const handleSync = () => {
     syncMutation.mutate();
-  };
-
-  const handleRegisterWebhooks = () => {
-    registerWebhooksMutation.mutate();
   };
 
   return (
@@ -167,65 +136,140 @@ export function ShopifySettings() {
         </CardContent>
       </Card>
 
-      {/* Webhook Configuration */}
+      {/* Webhook Setup Guide */}
       <Card data-testid="card-webhooks">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Webhook className="h-5 w-5" />
-            <CardTitle>Real-Time Webhooks</CardTitle>
+            <CardTitle>Real-Time Webhook Setup (via n8n)</CardTitle>
           </div>
           <CardDescription>
-            Enable automatic order synchronization via webhooks
+            Follow this step-by-step guide to enable automatic order synchronization
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
-            <Button
-              onClick={handleRegisterWebhooks}
-              disabled={registerWebhooksMutation.isPending}
-              variant="outline"
-              data-testid="button-register-webhooks"
-              className="gap-2"
-            >
-              {registerWebhooksMutation.isPending ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Registering...
-                </>
-              ) : (
-                <>
-                  <Webhook className="h-4 w-4" />
-                  Register Webhooks
-                </>
-              )}
-            </Button>
-            <p className="text-sm text-muted-foreground">
-              Set up webhooks for orders/create, orders/update, and orders/cancelled
-            </p>
+        <CardContent className="space-y-6">
+          {/* Why n8n explanation */}
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <strong>Why use n8n?</strong> Replit app URLs change, so we use n8n (a free workflow automation tool) as a stable relay between Shopify and your app.
+            </AlertDescription>
+          </Alert>
+
+          {/* Step 1: Set up n8n */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">1</Badge>
+              <h3 className="font-semibold">Set up n8n (Free)</h3>
+            </div>
+            <div className="ml-8 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                1. Create a free account at <a href="https://n8n.io" target="_blank" rel="noopener" className="text-primary underline">n8n.io</a> or self-host it
+              </p>
+              <p className="text-sm text-muted-foreground">
+                2. Create a new workflow called "Shopify to OrderFlowAI Relay"
+              </p>
+            </div>
           </div>
 
-          {webhookStatus && (
-            <Alert
-              variant={webhookStatus.registered ? "default" : "destructive"}
-              data-testid="alert-webhook-status"
-            >
-              {webhookStatus.registered ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <AlertCircle className="h-4 w-4" />
-              )}
-              <AlertDescription>
-                {webhookStatus.message || "Webhook status updated"}
-              </AlertDescription>
-            </Alert>
-          )}
+          {/* Step 2: Configure Shopify Webhooks */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">2</Badge>
+              <h3 className="font-semibold">Configure Shopify Webhooks</h3>
+            </div>
+            <div className="ml-8 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                In your Shopify Admin → Settings → Notifications → Webhooks, create these 3 webhooks:
+              </p>
+              <div className="rounded-lg border divide-y">
+                <div className="p-3 space-y-1">
+                  <p className="text-sm font-medium">Event: Order creation</p>
+                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">Format: JSON</p>
+                </div>
+                <div className="p-3 space-y-1">
+                  <p className="text-sm font-medium">Event: Order updated</p>
+                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">Format: JSON</p>
+                </div>
+                <div className="p-3 space-y-1">
+                  <p className="text-sm font-medium">Event: Order cancelled</p>
+                  <p className="text-xs text-muted-foreground">URL: Your n8n webhook URL (from Step 3)</p>
+                  <p className="text-xs text-muted-foreground">Format: JSON</p>
+                </div>
+              </div>
+            </div>
+          </div>
 
-          <div className="rounded-lg border p-4 space-y-2">
-            <p className="text-sm font-medium">How webhooks work:</p>
-            <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-              <li>New orders automatically appear in your dashboard</li>
+          {/* Step 3: Create n8n Workflow */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">3</Badge>
+              <h3 className="font-semibold">Build n8n Relay Workflow</h3>
+            </div>
+            <div className="ml-8 space-y-3">
+              <p className="text-sm text-muted-foreground">Add these nodes to your n8n workflow:</p>
+              
+              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                <p className="text-sm font-medium">Node 1: Webhook Trigger</p>
+                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
+                  <li>• Type: Webhook</li>
+                  <li>• Method: POST</li>
+                  <li>• Path: /shopify-orders</li>
+                  <li>• Copy the Production URL - this goes in Shopify webhooks (Step 2)</li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-2 bg-muted/30">
+                <p className="text-sm font-medium">Node 2: HTTP Request</p>
+                <ul className="text-xs text-muted-foreground space-y-1 ml-4">
+                  <li>• Method: POST</li>
+                  <li>• URL: <code className="bg-background px-1 rounded text-xs">{window.location.origin}/api/webhooks/orders/create</code></li>
+                  <li>• Headers: Add <code className="bg-background px-1 rounded text-xs">X-Forwarded-By: n8n</code></li>
+                  <li>• Body: Pass through from previous node</li>
+                </ul>
+              </div>
+
+              <Alert className="bg-yellow-500/10 border-yellow-500/20">
+                <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+                <AlertDescription className="text-sm">
+                  <strong>Critical:</strong> You MUST add the header <code className="bg-muted px-1 rounded text-xs">X-Forwarded-By: n8n</code> or webhooks will be rejected!
+                </AlertDescription>
+              </Alert>
+            </div>
+          </div>
+
+          {/* Step 4: Test the Setup */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default" className="rounded-full w-6 h-6 flex items-center justify-center p-0">4</Badge>
+              <h3 className="font-semibold">Test Your Setup</h3>
+            </div>
+            <div className="ml-8 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                1. Create a test order in your Shopify store
+              </p>
+              <p className="text-sm text-muted-foreground">
+                2. Check n8n workflow execution log - should show successful run
+              </p>
+              <p className="text-sm text-muted-foreground">
+                3. Refresh your Orders page - new order should appear within 30 seconds
+              </p>
+            </div>
+          </div>
+
+          {/* Benefits */}
+          <div className="rounded-lg border p-4 space-y-2 bg-primary/5">
+            <p className="text-sm font-medium flex items-center gap-2">
+              <Check className="h-4 w-4 text-green-600" />
+              What you get with webhooks:
+            </p>
+            <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside ml-6">
+              <li>New orders appear automatically (no manual sync needed)</li>
               <li>Order updates sync in real-time</li>
-              <li>Cancelled orders are immediately reflected</li>
+              <li>Cancelled orders immediately reflected</li>
+              <li>Auto-refresh every 30 seconds ensures you never miss updates</li>
             </ul>
           </div>
         </CardContent>
