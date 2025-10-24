@@ -148,7 +148,7 @@ export const orders = pgTable("orders", {
   itemsSummary: text("items_summary"), // e.g., "Product A, Product B"
   
   // Assignment
-  assignedTo: varchar("assigned_to").references(() => users.id),
+  assignedTo: varchar("assigned_to").references(() => users.id, { onDelete: "set null" }),
   assignedAt: timestamp("assigned_at"),
   
   // Tracking
