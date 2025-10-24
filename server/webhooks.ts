@@ -98,6 +98,12 @@ export async function handleOrderCreated(req: Request, res: Response) {
       }
     }
 
+    // Detect and normalize payment method
+    const rawPaymentMethod = shopifyOrder.payment_gateway_names?.[0] || "Unknown";
+    const isCOD = rawPaymentMethod.toLowerCase() === "cash on delivery (cod)" || 
+                  rawPaymentMethod.toLowerCase() === "cash on delivery";
+    const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
+
     // Create order
     const orderData: InsertOrder = {
       shopifyOrderId: shopifyOrder.id.toString(),
@@ -117,7 +123,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
       shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
       currency: shopifyOrder.currency || "INR",
-      paymentMethod: shopifyOrder.payment_gateway_names?.[0] || "Unknown",
+      paymentMethod: normalizedPaymentMethod,
       shippingAddress: shopifyOrder.shipping_address || null,
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
@@ -166,9 +172,6 @@ export async function handleOrderCreated(req: Request, res: Response) {
     });
 
     // Auto-assign COD orders to available agents
-    const isCOD = orderData.paymentMethod?.toLowerCase().includes("cod") || 
-                  orderData.paymentMethod?.toLowerCase().includes("cash");
-    
     if (isCOD) {
       try {
         console.log(`Attempting auto-assignment for COD order ${order.shopifyOrderNumber}`);
