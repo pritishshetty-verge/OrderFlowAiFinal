@@ -159,20 +159,59 @@ export class ShopifyClient {
   }
 }
 
-// Validate configuration at startup
-const shopifyConfig = {
-  storeUrl: process.env.SHOPIFY_STORE_URL!,
-  apiKey: process.env.SHOPIFY_API_KEY!,
-  apiSecret: process.env.SHOPIFY_API_SECRET!,
+// Load credentials dynamically from DB or environment variables
+async function loadShopifyCredentials(): Promise<ShopifyConfig> {
+  try {
+    // Try to import storage (avoid circular dependency)
+    const { storage } = await import("./storage");
+    const { decrypt } = await import("./encryption");
+    
+    const credentials = await storage.getShopifyCredentials();
+    
+    if (credentials && credentials.isActive) {
+      // Use database credentials (decrypted)
+      return {
+        storeUrl: credentials.storeUrl,
+        apiKey: decrypt(credentials.accessToken), // Use accessToken as the API key for requests
+        apiSecret: decrypt(credentials.apiSecret),
+        webhookSecret: credentials.webhookSecret ? decrypt(credentials.webhookSecret) : undefined,
+      };
+    }
+  } catch (error) {
+    console.log("No database credentials found, falling back to environment variables");
+  }
+
+  // Fallback to environment variables
+  return {
+    storeUrl: process.env.SHOPIFY_STORE_URL!,
+    apiKey: process.env.SHOPIFY_API_KEY!,
+    apiSecret: process.env.SHOPIFY_API_SECRET!,
+    webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
+  };
+}
+
+// Initialize with environment variables (will be updated when first request comes in)
+const initialConfig = {
+  storeUrl: process.env.SHOPIFY_STORE_URL || "placeholder.myshopify.com",
+  apiKey: process.env.SHOPIFY_API_KEY || "",
+  apiSecret: process.env.SHOPIFY_API_SECRET || "",
   webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
 };
 
 console.log('Shopify configuration status:', {
-  hasStoreUrl: !!shopifyConfig.storeUrl,
-  hasApiKey: !!shopifyConfig.apiKey,
-  hasApiSecret: !!shopifyConfig.apiSecret,
-  hasWebhookSecret: !!shopifyConfig.webhookSecret,
-  storeUrlFormat: shopifyConfig.storeUrl?.includes('.myshopify.com') ? 'valid' : 'invalid',
+  hasStoreUrl: !!initialConfig.storeUrl,
+  hasApiKey: !!initialConfig.apiKey,
+  hasApiSecret: !!initialConfig.apiSecret,
+  hasWebhookSecret: !!initialConfig.webhookSecret,
+  storeUrlFormat: initialConfig.storeUrl?.includes('.myshopify.com') ? 'valid' : 'invalid',
 });
 
-export const shopifyClient = new ShopifyClient(shopifyConfig);
+export const shopifyClient = new ShopifyClient(initialConfig);
+
+// Update client configuration when needed
+export async function updateShopifyClient() {
+  const config = await loadShopifyCredentials();
+  (shopifyClient as any).config = config;
+  (shopifyClient as any).baseUrl = `https://${config.storeUrl}/admin/api/2024-01`;
+  return shopifyClient;
+}

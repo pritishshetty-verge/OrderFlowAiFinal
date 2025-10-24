@@ -161,7 +161,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { limit = 50 } = req.body;
 
-      const response = await shopifyClient.fetchOrders({
+      // Update client with latest credentials from DB or env vars
+      const { updateShopifyClient } = await import("./shopify");
+      const client = await updateShopifyClient();
+
+      const response = await client.fetchOrders({
         status: "any",
         limit,
       });
