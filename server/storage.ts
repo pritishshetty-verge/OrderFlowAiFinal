@@ -47,6 +47,7 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: UpdateUser): Promise<User | undefined>;
+  deleteUser(id: string): Promise<void>;
   listUsers(filters?: { role?: string; isActive?: boolean }): Promise<User[]>;
 
   // Invites
@@ -162,6 +163,10 @@ export class DbStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
   }
 
   async listUsers(filters?: {

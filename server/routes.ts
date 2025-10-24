@@ -714,6 +714,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete user
+  app.delete("/api/users/:id", async (req, res) => {
+    try {
+      const userId = req.params.id;
+
+      // Check if user exists
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Delete the user from database
+      await storage.deleteUser(userId);
+
+      res.json({ success: true, message: "User deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting user:", error);
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
   // ============================================================================
   // ATTENDANCE API (HR/Payroll Tracking)
   // ============================================================================
