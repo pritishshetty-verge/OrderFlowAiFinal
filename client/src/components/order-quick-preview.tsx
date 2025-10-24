@@ -2,26 +2,12 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { X, Mail, Phone, Edit, CheckCircle2, Circle } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Mail, Phone, Edit, CheckCircle2, Circle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { Order } from "@/components/orders-table";
+import type { Order as BackendOrder, OrderItem as BackendOrderItem, OrderStatusHistory } from "@shared/schema";
 import { format } from "date-fns";
-
-interface TimelineEvent {
-  id: string;
-  description: string;
-  detail?: string;
-  date: Date;
-  completed: boolean;
-}
-
-interface OrderItem {
-  id: string;
-  name: string;
-  variant: string;
-  quantity: number;
-  price: number;
-  color: string;
-}
 
 interface OrderQuickPreviewProps {
   order: Order | null;
@@ -33,62 +19,6 @@ interface OrderQuickPreviewProps {
   onEditOrder?: () => void;
 }
 
-//todo: remove mock functionality
-const getMockTimelineEvents = (orderId: string): TimelineEvent[] => {
-  return [
-    {
-      id: "1",
-      description: "Order placed",
-      detail: "Order created by customer",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2),
-      completed: true,
-    },
-    {
-      id: "2",
-      description: "Payment confirmed",
-      detail: "Payment verified and processed",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2 + 1000 * 60 * 30),
-      completed: true,
-    },
-    {
-      id: "3",
-      description: "The packing has been started",
-      detail: "Confirmed by Tommy Smith",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 24),
-      completed: true,
-    },
-    {
-      id: "4",
-      description: "The invoice has been sent to the customer",
-      detail: "Invoice email was sent to customer",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 12),
-      completed: true,
-    },
-    {
-      id: "5",
-      description: "Order ready for shipment",
-      detail: "Awaiting pickup",
-      date: new Date(Date.now() - 1000 * 60 * 60 * 2),
-      completed: false,
-    },
-  ];
-};
-
-//todo: remove mock functionality
-const getMockOrderItems = (items: string): OrderItem[] => {
-  const itemNames = items.split(", ");
-  const colors = ["#fbbf24", "#60a5fa", "#f87171", "#a78bfa", "#34d399"];
-  
-  return itemNames.map((name, index) => ({
-    id: `item-${index}`,
-    name: name,
-    variant: "(Standard) (Type A) (Medium)",
-    quantity: Math.floor(Math.random() * 5) + 1,
-    price: Math.floor(Math.random() * 50000) + 10000,
-    color: colors[index % colors.length],
-  }));
-};
-
 export function OrderQuickPreview({
   order,
   open,
@@ -98,16 +28,38 @@ export function OrderQuickPreview({
   onRefund,
   onEditOrder,
 }: OrderQuickPreviewProps) {
+  // Fetch full order details from backend
+  const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
+    queryKey: ["/api/orders", order?.id],
+    enabled: open && !!order?.id,
+  });
+
+  // Fetch order items
+  const { data: orderItems = [], isLoading: itemsLoading } = useQuery<BackendOrderItem[]>({
+    queryKey: ["/api/orders", order?.id, "items"],
+    enabled: open && !!order?.id,
+  });
+
+  // Fetch order history/timeline
+  const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
+    queryKey: ["/api/orders", order?.id, "history"],
+    enabled: open && !!order?.id,
+  });
+
   if (!order) return null;
 
-  const timelineEvents = getMockTimelineEvents(order.id);
-  const orderItems = getMockOrderItems(order.items);
-  
-  const subtotal = orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const discount = 0;
-  const shipping = 100;
-  const tax = Math.floor(subtotal * 0.18);
-  const total = subtotal - discount + shipping + tax;
+  const isLoading = orderLoading || itemsLoading || historyLoading;
+
+  // Generate random colors for items (for visual consistency)
+  const colors = ["#fbbf24", "#60a5fa", "#f87171", "#a78bfa", "#34d399"];
+  const getItemColor = (index: number) => colors[index % colors.length];
+
+  // Payment breakdown from real order data
+  const subtotal = orderDetails ? parseFloat(orderDetails.subtotal || "0") : 0;
+  const discount = orderDetails ? parseFloat(orderDetails.totalDiscount || "0") : 0;
+  const shipping = orderDetails ? parseFloat(orderDetails.shippingPrice || "0") : 0;
+  const tax = orderDetails ? parseFloat(orderDetails.totalTax || "0") : 0;
+  const total = orderDetails ? parseFloat(orderDetails.totalPrice || "0") : 0;
 
   const getPaymentStatus = (method: string) => {
     return method === "prepaid" ? "Paid" : "Pending Payment";
@@ -125,6 +77,15 @@ export function OrderQuickPreview({
     };
     return statusMap[status] || "secondary";
   };
+
+  // Transform status history into timeline events
+  const timelineEvents = orderHistory.map((history) => ({
+    id: history.id,
+    description: `Status changed to ${history.status}`,
+    detail: history.note || undefined,
+    date: new Date(history.createdAt),
+    completed: true,
+  }));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -179,14 +140,18 @@ export function OrderQuickPreview({
             </div>
             <div className="space-y-2">
               <p className="font-medium">{order.customerName}</p>
-              <a
-                href={`mailto:customer@example.com`}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
-                data-testid="link-customer-email"
-              >
-                <Mail className="h-4 w-4" />
-                customer@example.com
-              </a>
+              {isLoading ? (
+                <Skeleton className="h-5 w-48" />
+              ) : orderDetails?.customerEmail ? (
+                <a
+                  href={`mailto:${orderDetails.customerEmail}`}
+                  className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
+                  data-testid="link-customer-email"
+                >
+                  <Mail className="h-4 w-4" />
+                  {orderDetails.customerEmail}
+                </a>
+              ) : null}
               <a
                 href={`tel:${order.customerPhone}`}
                 className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
@@ -209,29 +174,85 @@ export function OrderQuickPreview({
 
           <Separator />
 
+          {/* Timeline */}
+          {timelineEvents.length > 0 && (
+            <>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground mb-4">Timeline</p>
+                <div className="space-y-4">
+                  {timelineEvents.map((event, index) => (
+                    <div key={event.id} className="flex gap-3">
+                      <div className="flex flex-col items-center">
+                        {event.completed ? (
+                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                        ) : (
+                          <Circle className="h-5 w-5 text-muted-foreground" />
+                        )}
+                        {index < timelineEvents.length - 1 && (
+                          <div className="w-px h-8 bg-border mt-1" />
+                        )}
+                      </div>
+                      <div className="flex-1 pb-4">
+                        <p className="text-sm font-medium">{event.description}</p>
+                        {event.detail && (
+                          <p className="text-xs text-muted-foreground mt-1">{event.detail}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {format(event.date, "MMM dd, yyyy 'at' h:mm a")}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <Separator />
+            </>
+          )}
+
           {/* Items */}
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-4">Items</p>
-            <div className="space-y-3">
-              {orderItems.map((item) => (
-                <div key={item.id} className="flex items-center gap-3">
-                  <div
-                    className="w-12 h-12 rounded-md"
-                    style={{
-                      background: `linear-gradient(135deg, ${item.color} 0%, ${item.color}dd 100%)`,
-                    }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{item.variant}</p>
+            {isLoading ? (
+              <div className="space-y-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <Skeleton className="w-12 h-12 rounded-md" />
+                    <div className="flex-1">
+                      <Skeleton className="h-4 w-32 mb-2" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                    <Skeleton className="h-4 w-20" />
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium">₹{item.price.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">Qty: {item.quantity}</p>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {orderItems.map((item, index) => (
+                  <div key={item.id} className="flex items-center gap-3">
+                    <div
+                      className="w-12 h-12 rounded-md flex items-center justify-center"
+                      style={{
+                        background: `linear-gradient(135deg, ${getItemColor(index)} 0%, ${getItemColor(index)}dd 100%)`,
+                      }}
+                    >
+                      {item.imageUrl ? (
+                        <img src={item.imageUrl} alt={item.productName} className="w-full h-full object-cover rounded-md" />
+                      ) : null}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{item.productName}</p>
+                      {item.variantTitle && (
+                        <p className="text-xs text-muted-foreground">{item.variantTitle}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium">₹{parseFloat(item.price).toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">Qty: {item.quantity}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <Separator />
@@ -239,39 +260,50 @@ export function OrderQuickPreview({
           {/* Payment Summary */}
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-4">Payment</p>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span>₹{subtotal.toLocaleString()}</span>
+            {isLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="flex justify-between">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                ))}
               </div>
-              <div className="flex justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">Discount</span>
-                  {order.discountCode && (
-                    <Badge 
-                      className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate"
-                      data-testid="badge-discount-code"
-                    >
-                      {order.discountCode}
-                    </Badge>
-                  )}
+            ) : (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span>₹{subtotal.toLocaleString()}</span>
                 </div>
-                <span>₹{discount.toLocaleString()}</span>
+                <div className="flex justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Discount</span>
+                    {order.discountCode && (
+                      <Badge 
+                        className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate"
+                        data-testid="badge-discount-code"
+                      >
+                        {order.discountCode}
+                      </Badge>
+                    )}
+                  </div>
+                  <span>₹{discount.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Shipping cost</span>
+                  <span>₹{shipping.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Tax</span>
+                  <span>₹{tax.toLocaleString()}</span>
+                </div>
+                <Separator className="my-2" />
+                <div className="flex justify-between text-base font-semibold">
+                  <span>Total</span>
+                  <span>₹{total.toLocaleString()}</span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Shipping cost</span>
-                <span>₹{shipping.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Tax</span>
-                <span>₹{tax.toLocaleString()}</span>
-              </div>
-              <Separator className="my-2" />
-              <div className="flex justify-between text-base font-semibold">
-                <span>Total</span>
-                <span>₹{total.toLocaleString()}</span>
-              </div>
-            </div>
+            )}
           </div>
 
           <Separator />
