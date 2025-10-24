@@ -37,11 +37,6 @@ export function ShopifySettingsMain() {
   const { toast } = useToast();
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
-  // Check if Shopify is configured
-  const hasShopifyConfig = Boolean(
-    process.env.SHOPIFY_STORE_URL && process.env.SHOPIFY_API_KEY
-  );
-
   // Fetch most recent order to show webhook activity
   const { data: recentOrderData, isLoading: isLoadingOrders } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders?limit=1"],
@@ -49,7 +44,8 @@ export function ShopifySettingsMain() {
   });
 
   const lastOrder = recentOrderData?.orders?.[0];
-  const isConnected = hasShopifyConfig && (recentOrderData?.total ?? 0) > 0;
+  // Consider Shopify connected if we have any orders in the system
+  const isConnected = (recentOrderData?.total ?? 0) > 0;
 
   // Manual sync mutation
   const syncMutation = useMutation({
@@ -98,7 +94,7 @@ export function ShopifySettingsMain() {
           />
         }
       >
-        {!hasShopifyConfig ? (
+        {!isConnected ? (
           <div className="space-y-4">
             <Alert>
               <AlertCircle className="h-4 w-4" />
@@ -117,8 +113,8 @@ export function ShopifySettingsMain() {
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-sm text-muted-foreground">Store Domain</p>
-                <p className="text-sm font-medium">{process.env.SHOPIFY_STORE_URL || "Not set"}</p>
+                <p className="text-sm text-muted-foreground">Integration Status</p>
+                <p className="text-sm font-medium">Connected & Syncing</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Orders</p>
