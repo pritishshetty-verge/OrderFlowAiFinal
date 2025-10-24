@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
-import { OrderDetailsDialog } from "@/components/order-details-dialog";
+import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { ConnectionStatus } from "@/components/connection-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -36,7 +36,7 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
 export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
@@ -97,7 +97,7 @@ export default function DashboardPage() {
 
   const handleViewDetails = (order: Order) => {
     setSelectedOrder(order);
-    setIsDialogOpen(true);
+    setIsQuickPreviewOpen(true);
   };
 
   const handleCallCustomer = (order: Order) => {
@@ -210,10 +210,26 @@ export default function DashboardPage() {
         )}
       </main>
 
-      <OrderDetailsDialog
+      <OrderQuickPreview
         order={selectedOrder}
-        open={isDialogOpen}
-        onOpenChange={setIsDialogOpen}
+        open={isQuickPreviewOpen}
+        onOpenChange={setIsQuickPreviewOpen}
+        onEditCustomer={() => {
+          console.log("Edit customer clicked");
+          // TODO: Implement edit customer dialog
+        }}
+        onInvoice={() => {
+          console.log("Invoice clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement invoice generation
+        }}
+        onRefund={() => {
+          console.log("Refund clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement refund dialog
+        }}
+        onEditOrder={() => {
+          console.log("Edit order clicked for order:", selectedOrder?.shopifyOrderId);
+          // TODO: Implement edit order dialog
+        }}
       />
     </div>
   );
