@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
-import { Phone, Eye, UserPlus } from "lucide-react";
+import { Phone, UserPlus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 export interface Order {
@@ -108,17 +108,6 @@ export function OrdersTable({
                       <Phone className="h-4 w-4" />
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewDetails?.(order);
-                    }}
-                    data-testid={`button-view-${order.id}`}
-                  >
-                    <Eye className="h-4 w-4" />
-                  </Button>
                   {userRole !== "agent" && !order.assignedTo && (
                     <Button
                       variant="ghost"
