@@ -329,41 +329,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Save Shopify credentials (encrypted)
   app.post("/api/shopify/credentials", async (req, res) => {
+    console.log("\n=== CREDENTIAL SAVE REQUEST STARTED ===");
+    console.log("Timestamp:", new Date().toISOString());
+    
     try {
+      // Log incoming data (without sensitive values)
+      console.log("Step 1: Received request body fields:", Object.keys(req.body));
+      console.log("Store URL:", req.body.storeUrl);
+      console.log("Access Token length:", req.body.accessToken?.length || 0);
+      console.log("API Key length:", req.body.apiKey?.length || 0);
+      console.log("API Secret length:", req.body.apiSecret?.length || 0);
+      console.log("Webhook Secret provided:", !!req.body.webhookSecret);
+
+      // Validate with Zod
+      console.log("\nStep 2: Starting validation...");
       const validatedData = insertShopifyCredentialsSchema.parse(req.body);
+      console.log("✓ Validation successful");
 
       // Encrypt sensitive fields
+      console.log("\nStep 3: Starting encryption...");
+      console.log("Encrypting API Key...");
+      const encryptedApiKey = encrypt(validatedData.apiKey);
+      console.log("✓ API Key encrypted, length:", encryptedApiKey.length);
+
+      console.log("Encrypting API Secret...");
+      const encryptedApiSecret = encrypt(validatedData.apiSecret);
+      console.log("✓ API Secret encrypted, length:", encryptedApiSecret.length);
+
+      console.log("Encrypting Access Token...");
+      const encryptedAccessToken = encrypt(validatedData.accessToken);
+      console.log("✓ Access Token encrypted, length:", encryptedAccessToken.length);
+
       const encryptedCredentials = {
         storeUrl: validatedData.storeUrl,
-        apiKey: encrypt(validatedData.apiKey),
-        apiSecret: encrypt(validatedData.apiSecret),
-        accessToken: encrypt(validatedData.accessToken),
+        apiKey: encryptedApiKey,
+        apiSecret: encryptedApiSecret,
+        accessToken: encryptedAccessToken,
         webhookSecret: validatedData.webhookSecret ? encrypt(validatedData.webhookSecret) : undefined,
         isActive: true,
       };
+      console.log("✓ All encryption complete");
 
+      // Save to database
+      console.log("\nStep 4: Saving to database...");
       const savedCredentials = await storage.saveShopifyCredentials(encryptedCredentials);
+      console.log("✓ Database save successful, ID:", savedCredentials.id);
 
       // Test the connection immediately
+      console.log("\nStep 5: Testing Shopify connection...");
       try {
+        console.log("Decrypting credentials for test...");
         const decryptedKey = decrypt(savedCredentials.apiKey);
         const decryptedSecret = decrypt(savedCredentials.apiSecret);
         const decryptedToken = decrypt(savedCredentials.accessToken);
+        console.log("✓ Decryption successful");
 
-        // Test by fetching shop info
+        console.log("Calling shopifyClient.getShopInfo...");
         const shopInfo = await shopifyClient.getShopInfo({
           storeUrl: savedCredentials.storeUrl,
           apiKey: decryptedKey,
           apiSecret: decryptedSecret,
           accessToken: decryptedToken,
         });
+        console.log("✓ Shopify connection successful!");
+        console.log("Shop name:", shopInfo.name);
 
+        console.log("Updating test status to 'success'...");
         await storage.updateCredentialTestStatus(
           savedCredentials.id,
           'success',
           `Connected to ${shopInfo.name || savedCredentials.storeUrl}`,
         );
+        console.log("✓ Test status updated");
 
+        console.log("\n=== SUCCESS: Sending 200 response ===\n");
         res.json({
           success: true,
           message: "Credentials saved and tested successfully",
@@ -371,12 +410,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           shopName: shopInfo.name,
         });
       } catch (testError: any) {
+        console.log("⚠ Shopify connection test failed");
+        console.log("Test Error:", testError.message);
+        
+        console.log("Updating test status to 'failed'...");
         await storage.updateCredentialTestStatus(
           savedCredentials.id,
           'failed',
           testError.message || "Connection test failed",
         );
+        console.log("✓ Test status updated");
 
+        console.log("\n=== PARTIAL SUCCESS: Sending 200 response with test failure ===\n");
         res.json({
           success: true,
           message: "Credentials saved but connection test failed",
@@ -384,12 +429,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           testError: testError.message,
         });
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error("\n=== CREDENTIAL SAVE ERROR ===");
+      console.error("Error type:", error.constructor.name);
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+      
       if (error instanceof ZodError) {
+        console.error("Validation errors:", JSON.stringify(error.errors, null, 2));
+        console.log("\n=== Sending 400 validation error response ===\n");
         return res.status(400).json({ error: "Validation error", details: error.errors });
       }
-      console.error("Error saving credentials:", error);
-      res.status(500).json({ error: "Failed to save credentials" });
+      
+      console.error("Full error object:", error);
+      console.log("\n=== Sending 500 error response ===\n");
+      res.status(500).json({ 
+        error: "Failed to save credentials",
+        details: error.message 
+      });
     }
   });
 

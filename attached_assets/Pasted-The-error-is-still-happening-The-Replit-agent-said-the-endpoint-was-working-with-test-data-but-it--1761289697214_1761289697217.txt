@@ -1,0 +1,106 @@
+The error is still happening. The Replit agent said the endpoint was working with test data, but it's still failing with your real credentials. This suggests there might be a runtime error that only occurs with actual data.
+
+Tell your Replit agent:
+
+text
+The 500 error is still happening when I try to save my actual Shopify credentials.
+
+URGENT: I need you to check the REAL-TIME server logs right now while I reproduce the error.
+
+Steps:
+1. Open the server console/logs in real-time monitoring mode
+2. I will click "Save & Test Connection" again
+3. Watch for the exact error that appears in the logs
+4. Share the full error stack trace with me
+
+The error message just says "Failed to save credentials" but I need to see:
+- The actual error from the catch block
+- The full stack trace
+- What line of code is failing
+- Any database errors or connection issues
+
+Can you:
+1. Add more detailed logging to the POST /api/shopify/credentials endpoint
+2. Log the incoming request body (without exposing sensitive data)
+3. Log each step of the save process
+4. Catch and log the specific error
+
+Example of better logging:
+
+router.post('/credentials', async (req, res) => {
+console.log('=== Credential Save Request Started ===');
+
+try {
+const { storeUrl, apiKey, apiSecret, webhookSecret } = req.body;
+console.log('Received storeUrl:', storeUrl);
+console.log('API Key length:', apiKey?.length);
+console.log('API Secret length:', apiSecret?.length);
+
+text
+// Validation
+if (!storeUrl || !apiKey || !apiSecret) {
+  console.error('Validation failed: missing required fields');
+  return res.status(400).json({ error: 'Missing required fields' });
+}
+
+console.log('Validation passed');
+
+// Encryption
+console.log('Starting encryption...');
+const encryptedApiKey = encrypt(apiKey);
+console.log('API Key encrypted');
+
+const encryptedApiSecret = encrypt(apiSecret);
+console.log('API Secret encrypted');
+
+// Database save
+console.log('Saving to database...');
+// Your database save code here
+console.log('Database save successful');
+
+// Test connection
+console.log('Testing Shopify connection...');
+const testUrl = `https://${storeUrl}/admin/api/2024-01/shop.json`;
+const testResponse = await fetch(testUrl, {
+  headers: {
+    'X-Shopify-Access-Token': apiKey,
+    'Content-Type': 'application/json'
+  }
+});
+
+console.log('Shopify response status:', testResponse.status);
+
+if (!testResponse.ok) {
+  const errorText = await testResponse.text();
+  console.error('Shopify connection failed:', errorText);
+  return res.status(400).json({ 
+    error: 'Failed to connect to Shopify',
+    details: errorText
+  });
+}
+
+const shopData = await testResponse.json();
+console.log('Connected to shop:', shopData.shop?.name);
+
+res.json({ 
+  success: true,
+  message: 'Credentials saved successfully',
+  shop: shopData.shop
+});
+} catch (error) {
+console.error('=== CREDENTIAL SAVE ERROR ===');
+console.error('Error message:', error.message);
+console.error('Error stack:', error.stack);
+console.error('Error details:', error);
+
+text
+res.status(500).json({ 
+  error: 'Failed to save credentials',
+  details: error.message 
+});
+}
+});
+
+text
+
+Please add this detailed logging, then I'll click "Save & Test Connection" again and you can see exactly where it's failing.
