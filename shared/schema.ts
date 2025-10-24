@@ -255,7 +255,12 @@ export const leaveRequests = pgTable("leave_requests", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertLeaveRequestSchema = createInsertSchema(leaveRequests)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  .extend({
+    startDate: z.union([z.date(), z.string().transform((str) => new Date(str))]),
+    endDate: z.union([z.date(), z.string().transform((str) => new Date(str))]),
+  });
 export type InsertLeaveRequest = z.infer<typeof insertLeaveRequestSchema>;
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 

@@ -48,7 +48,7 @@ interface DisplayLeaveRequest {
   type: string;
   startDate: Date;
   endDate: Date;
-  reason: string;
+  reason: string | null;
   status: "pending" | "approved" | "rejected";
   requestedAt: Date;
   reviewedBy?: string;
@@ -116,7 +116,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Create leave request mutation
   const createMutation = useMutation({
     mutationFn: async (data: LeaveFormValues) => {
-      return apiRequest("POST", "/api/leave-requests", {
+      const res = await apiRequest("POST", "/api/leave-requests", {
         userId: currentUserId,
         leaveType: data.leaveType,
         startDate: data.startDate.toISOString(),
@@ -124,6 +124,7 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
         reason: data.reason,
         status: "pending",
       });
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
@@ -146,10 +147,11 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Approve leave request mutation
   const approveMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest("PATCH", `/api/leave-requests/${id}`, {
+      const res = await apiRequest("PATCH", `/api/leave-requests/${id}`, {
         status: "approved",
         reviewedBy: currentUserId,
       });
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
@@ -170,10 +172,11 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   // Reject leave request mutation
   const rejectMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest("PATCH", `/api/leave-requests/${id}`, {
+      const res = await apiRequest("PATCH", `/api/leave-requests/${id}`, {
         status: "rejected",
         reviewedBy: currentUserId,
       });
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
