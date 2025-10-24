@@ -153,6 +153,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update order (e.g., tags)
+  app.patch("/api/orders/:id", async (req, res) => {
+    try {
+      const { tags } = req.body;
+
+      const existingOrder = await storage.getOrder(req.params.id);
+      if (!existingOrder) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Update order
+      const order = await storage.updateOrder(req.params.id, { tags });
+
+      res.json(order);
+    } catch (error) {
+      console.error("Error updating order:", error);
+      res.status(500).json({ error: "Failed to update order" });
+    }
+  });
+
   // ============================================================================
   // ORDER ASSIGNMENT API
   // ============================================================================

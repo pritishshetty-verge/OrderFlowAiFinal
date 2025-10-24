@@ -3,11 +3,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Mail, Phone, Edit, CheckCircle2, Circle } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import type { Order } from "@/components/orders-table";
 import type { Order as BackendOrder, OrderItem as BackendOrderItem, OrderStatusHistory } from "@shared/schema";
 import { format } from "date-fns";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface OrderQuickPreviewProps {
   order: Order | null;
@@ -28,6 +33,10 @@ export function OrderQuickPreview({
   onRefund,
   onEditOrder,
 }: OrderQuickPreviewProps) {
+  const { toast } = useToast();
+  const [showAddTagDialog, setShowAddTagDialog] = useState(false);
+  const [newTag, setNewTag] = useState("");
+
   // Fetch full order details from backend
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
@@ -46,9 +55,61 @@ export function OrderQuickPreview({
     enabled: open && !!order?.id,
   });
 
+  // Tags management mutation - must be before any early returns
+  const updateTagsMutation = useMutation({
+    mutationFn: async (tags: string[]) => {
+      if (!order?.id) return;
+      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { tags });
+      return res.json();
+    },
+    onSuccess: () => {
+      if (!order?.id) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", order.id] });
+      toast({
+        title: "Tags Updated",
+        description: "Order tags have been updated successfully.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update tags. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Early return after all hooks
   if (!order) return null;
 
   const isLoading = orderLoading || itemsLoading || historyLoading;
+
+  // Tags data
+  const currentTags = orderDetails?.tags || [];
+
+  const handleAddTag = () => {
+    if (!newTag.trim()) return;
+    const updatedTags = [...currentTags, newTag.trim()];
+    updateTagsMutation.mutate(updatedTags);
+    setNewTag("");
+    setShowAddTagDialog(false);
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    const updatedTags = currentTags.filter((tag) => tag !== tagToRemove);
+    updateTagsMutation.mutate(updatedTags);
+  };
+
+  const getTagColor = (index: number) => {
+    const colors = [
+      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+      "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+      "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400",
+      "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+      "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    ];
+    return colors[index % colors.length];
+  };
 
   // Generate random colors for items (for visual consistency)
   const colors = ["#fbbf24", "#60a5fa", "#f87171", "#a78bfa", "#34d399"];
@@ -119,6 +180,49 @@ export function OrderQuickPreview({
               <Badge variant={getStatusColor(order.status) as any}>
                 {order.status}
               </Badge>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Tags Section */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-sm font-medium text-muted-foreground">Tags:</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {isLoading ? (
+                  <Skeleton className="h-6 w-24" />
+                ) : (
+                  <>
+                    {currentTags.map((tag, index) => (
+                      <Badge
+                        key={tag}
+                        className={`${getTagColor(index)} border-0 font-medium text-xs px-3 py-1 no-default-hover-elevate group`}
+                        data-testid={`badge-tag-${index}`}
+                      >
+                        {tag}
+                        <button
+                          onClick={() => handleRemoveTag(tag)}
+                          className="ml-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          data-testid={`button-remove-tag-${index}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowAddTagDialog(true)}
+                      data-testid="button-add-tag"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -337,6 +441,47 @@ export function OrderQuickPreview({
           </div>
         </div>
       </SheetContent>
+
+      {/* Add Tag Dialog */}
+      <Dialog open={showAddTagDialog} onOpenChange={setShowAddTagDialog}>
+        <DialogContent data-testid="dialog-add-tag">
+          <DialogHeader>
+            <DialogTitle>Add Tag</DialogTitle>
+            <DialogDescription>
+              Add a tag to help organize and categorize this order.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              placeholder="Enter tag name"
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleAddTag();
+                }
+              }}
+              data-testid="input-tag-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowAddTagDialog(false)}
+              data-testid="button-cancel-tag"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddTag}
+              disabled={!newTag.trim() || updateTagsMutation.isPending}
+              data-testid="button-submit-tag"
+            >
+              {updateTagsMutation.isPending ? "Adding..." : "Add Tag"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }
