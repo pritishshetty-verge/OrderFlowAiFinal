@@ -5,7 +5,8 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Order } from "@/components/orders-table";
@@ -86,6 +87,10 @@ export function OrderQuickPreview({
 
   // Tags data
   const currentTags = orderDetails?.tags || [];
+  const VISIBLE_TAG_LIMIT = 3;
+  const visibleTags = currentTags.slice(0, VISIBLE_TAG_LIMIT);
+  const hiddenTags = currentTags.slice(VISIBLE_TAG_LIMIT);
+  const hasMoreTags = hiddenTags.length > 0;
 
   const handleAddTag = () => {
     if (!newTag.trim()) return;
@@ -187,17 +192,17 @@ export function OrderQuickPreview({
 
           {/* Tags Section */}
           <div>
-            <div className="flex items-start gap-3">
-              <p className="text-sm font-semibold text-foreground pt-1.5">Tags:</p>
-              <div className="flex flex-wrap items-center gap-2 flex-1">
+            <div className="flex items-center gap-3">
+              <p className="text-sm font-semibold text-foreground whitespace-nowrap">Tags:</p>
+              <div className="flex items-center gap-2 flex-1 overflow-hidden">
                 {isLoading ? (
                   <Skeleton className="h-7 w-24 rounded-full" />
                 ) : (
                   <>
-                    {currentTags.map((tag, index) => (
+                    {visibleTags.map((tag, index) => (
                       <span
                         key={tag}
-                        className={`${getTagColor(index)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default`}
+                        className={`${getTagColor(index)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default flex-shrink-0`}
                         data-testid={`badge-tag-${index}`}
                       >
                         {tag}
@@ -210,9 +215,45 @@ export function OrderQuickPreview({
                         </button>
                       </span>
                     ))}
+                    {hasMoreTags && (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 flex-shrink-0 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
+                            data-testid="button-more-tags"
+                          >
+                            <MoreHorizontal className="h-3 w-3" />
+                            {hiddenTags.length} more
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-3" align="start">
+                          <div className="flex flex-col gap-2">
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">All Tags</p>
+                            <div className="flex flex-wrap gap-2 max-w-xs">
+                              {hiddenTags.map((tag, index) => (
+                                <span
+                                  key={tag}
+                                  className={`${getTagColor(index + VISIBLE_TAG_LIMIT)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default`}
+                                  data-testid={`badge-hidden-tag-${index}`}
+                                >
+                                  {tag}
+                                  <button
+                                    onClick={() => handleRemoveTag(tag)}
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
+                                    data-testid={`button-remove-hidden-tag-${index}`}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                     <button
                       onClick={() => setShowAddTagDialog(true)}
-                      className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
+                      className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 flex-shrink-0 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
                       data-testid="button-add-tag"
                     >
                       <Plus className="h-3 w-3" />
