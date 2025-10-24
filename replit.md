@@ -35,6 +35,11 @@ Preferred communication style: Simple, everyday language.
   - CodeBlock: Code display with syntax highlighting and copy button
 - Feature-specific components for orders, analytics, team management
 - Page-level components with protected routing based on user roles (admin, manager, agent)
+- OrderQuickPreview drawer component with:
+  - Customer details including shipping address
+  - Discount code badge (high-contrast indigo badge when discount code exists)
+  - Order timeline and item details
+  - Payment breakdown with subtotal, discount, shipping, and tax
 
 **State Management:**
 - Local state with React hooks
