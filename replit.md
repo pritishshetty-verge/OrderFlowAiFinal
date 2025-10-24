@@ -35,11 +35,14 @@ Preferred communication style: Simple, everyday language.
   - CodeBlock: Code display with syntax highlighting and copy button
 - Feature-specific components for orders, analytics, team management
 - Page-level components with protected routing based on user roles (admin, manager, agent)
-- OrderQuickPreview drawer component with:
-  - Customer details including shipping address
+- OrderQuickPreview drawer component with dynamic data fetching:
+  - Real customer details including email and shipping address
   - Discount code badge (high-contrast indigo badge when discount code exists)
-  - Order timeline and item details
-  - Payment breakdown with subtotal, discount, shipping, and tax
+  - Real order items with product names, variants, quantities, and prices
+  - Real payment breakdown with subtotal, discount, shipping, tax, and total
+  - Order timeline from status history
+  - Loading states with skeleton loaders
+  - Three parallel API queries: order details, order items, order history
 
 **State Management:**
 - Local state with React hooks
