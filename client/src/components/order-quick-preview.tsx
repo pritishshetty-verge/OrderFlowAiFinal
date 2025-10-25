@@ -156,32 +156,32 @@ export function OrderQuickPreview({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-[500px] sm:w-[600px] overflow-y-auto p-0">
-        <SheetHeader className="p-6 pb-4">
+        <SheetHeader className="p-4 pb-3">
           <div className="flex items-center justify-between">
             <div>
               <SheetTitle className="text-2xl">#{order.shopifyOrderId}</SheetTitle>
-              <p className="text-sm text-muted-foreground mt-1">Order details</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Order details</p>
             </div>
           </div>
         </SheetHeader>
 
-        <div className="px-6 space-y-6 pb-6">
+        <div className="px-4 space-y-3 pb-4">
           {/* Order Info */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Created at</p>
+              <p className="text-xs text-muted-foreground mb-0.5">Created at</p>
               <p className="text-sm font-medium">
                 {format(order.createdAt, "MMM dd, yyyy 'at' h:mm a")}
               </p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Payment</p>
+              <p className="text-xs text-muted-foreground mb-0.5">Payment</p>
               <Badge variant={order.paymentMethod === "prepaid" ? "default" : "secondary"}>
                 {getPaymentStatus(order.paymentMethod)}
               </Badge>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Status</p>
+              <p className="text-xs text-muted-foreground mb-0.5">Status</p>
               <Badge variant={getStatusColor(order.status) as any}>
                 {order.status}
               </Badge>
@@ -192,8 +192,8 @@ export function OrderQuickPreview({
 
           {/* Tags Section */}
           <div>
-            <div className="flex items-center gap-3">
-              <p className="text-sm font-semibold text-foreground whitespace-nowrap">Tags:</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-foreground whitespace-nowrap">Tags:</p>
               <div className="flex items-center gap-2 flex-1 overflow-hidden">
                 {isLoading ? (
                   <Skeleton className="h-7 w-24 rounded-full" />
@@ -269,8 +269,8 @@ export function OrderQuickPreview({
 
           {/* Customer Section */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-medium text-muted-foreground">Customer</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-muted-foreground">Customer</p>
               <Button
                 variant="ghost"
                 size="icon"
@@ -281,31 +281,31 @@ export function OrderQuickPreview({
                 <Edit className="h-4 w-4" />
               </Button>
             </div>
-            <div className="space-y-2">
-              <p className="font-medium">{order.customerName}</p>
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">{order.customerName}</p>
               {isLoading ? (
-                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-4 w-48" />
               ) : orderDetails?.customerEmail ? (
                 <a
                   href={`mailto:${orderDetails.customerEmail}`}
-                  className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
                   data-testid="link-customer-email"
                 >
-                  <Mail className="h-4 w-4" />
+                  <Mail className="h-3.5 w-3.5" />
                   {orderDetails.customerEmail}
                 </a>
               ) : null}
               <a
                 href={`tel:${order.customerPhone}`}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:underline"
+                className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
                 data-testid="link-customer-phone"
               >
-                <Phone className="h-4 w-4" />
+                <Phone className="h-3.5 w-3.5" />
                 {order.customerPhone}
               </a>
               {order.shippingAddress && (
-                <div className="flex items-start gap-2 text-sm text-muted-foreground pt-1" data-testid="text-shipping-address">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="flex items-start gap-1.5 text-xs text-muted-foreground pt-0.5" data-testid="text-shipping-address">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
@@ -321,26 +321,26 @@ export function OrderQuickPreview({
           {timelineEvents.length > 0 && (
             <>
               <div>
-                <p className="text-sm font-medium text-muted-foreground mb-4">Timeline</p>
-                <div className="space-y-4">
+                <p className="text-xs font-medium text-muted-foreground mb-2">Timeline</p>
+                <div className="space-y-2">
                   {timelineEvents.map((event, index) => (
-                    <div key={event.id} className="flex gap-3">
+                    <div key={event.id} className="flex gap-2">
                       <div className="flex flex-col items-center">
                         {event.completed ? (
-                          <CheckCircle2 className="h-5 w-5 text-green-600" />
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
                         ) : (
-                          <Circle className="h-5 w-5 text-muted-foreground" />
+                          <Circle className="h-4 w-4 text-muted-foreground" />
                         )}
                         {index < timelineEvents.length - 1 && (
-                          <div className="w-px h-8 bg-border mt-1" />
+                          <div className="w-px h-6 bg-border mt-1" />
                         )}
                       </div>
-                      <div className="flex-1 pb-4">
-                        <p className="text-sm font-medium">{event.description}</p>
+                      <div className="flex-1 pb-2">
+                        <p className="text-xs font-medium">{event.description}</p>
                         {event.detail && (
-                          <p className="text-xs text-muted-foreground mt-1">{event.detail}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{event.detail}</p>
                         )}
-                        <p className="text-xs text-muted-foreground mt-1">
+                        <p className="text-xs text-muted-foreground mt-0.5">
                           {format(event.date, "MMM dd, yyyy 'at' h:mm a")}
                         </p>
                       </div>
@@ -354,26 +354,26 @@ export function OrderQuickPreview({
 
           {/* Items */}
           <div>
-            <p className="text-sm font-medium text-muted-foreground mb-4">Items</p>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Items</p>
             {isLoading ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {[1, 2].map((i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <Skeleton className="w-12 h-12 rounded-md" />
+                  <div key={i} className="flex items-center gap-2">
+                    <Skeleton className="w-10 h-10 rounded-md" />
                     <div className="flex-1">
-                      <Skeleton className="h-4 w-32 mb-2" />
+                      <Skeleton className="h-3 w-32 mb-1" />
                       <Skeleton className="h-3 w-24" />
                     </div>
-                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-3 w-20" />
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {orderItems.map((item, index) => (
-                  <div key={item.id} className="flex items-center gap-3">
+                  <div key={item.id} className="flex items-center gap-2">
                     <div
-                      className="w-12 h-12 rounded-md flex items-center justify-center"
+                      className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
                       style={{
                         background: `linear-gradient(135deg, ${getItemColor(index)} 0%, ${getItemColor(index)}dd 100%)`,
                       }}
@@ -383,13 +383,13 @@ export function OrderQuickPreview({
                       ) : null}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{item.productName}</p>
+                      <p className="text-xs font-medium">{item.productName}</p>
                       {item.variantTitle && (
                         <p className="text-xs text-muted-foreground">{item.variantTitle}</p>
                       )}
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium">₹{parseFloat(item.price).toLocaleString()}</p>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xs font-medium">₹{parseFloat(item.price).toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">Qty: {item.quantity}</p>
                     </div>
                   </div>
@@ -402,24 +402,24 @@ export function OrderQuickPreview({
 
           {/* Payment Summary */}
           <div>
-            <p className="text-sm font-medium text-muted-foreground mb-4">Payment</p>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Payment</p>
             {isLoading ? (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {[1, 2, 3, 4].map((i) => (
                   <div key={i} className="flex justify-between">
-                    <Skeleton className="h-4 w-20" />
-                    <Skeleton className="h-4 w-16" />
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-3 w-16" />
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs">
                   <span className="text-muted-foreground">Subtotal</span>
                   <span>₹{subtotal.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <div className="flex items-center gap-2">
+                <div className="flex justify-between text-xs">
+                  <div className="flex items-center gap-1.5">
                     <span className="text-muted-foreground">Discount</span>
                     {order.discountCode && (
                       <Badge 
@@ -432,16 +432,16 @@ export function OrderQuickPreview({
                   </div>
                   <span>₹{discount.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs">
                   <span className="text-muted-foreground">Shipping cost</span>
                   <span>₹{shipping.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs">
                   <span className="text-muted-foreground">Tax</span>
                   <span>₹{tax.toLocaleString()}</span>
                 </div>
-                <Separator className="my-2" />
-                <div className="flex justify-between text-base font-semibold">
+                <Separator className="my-1.5" />
+                <div className="flex justify-between text-sm font-semibold">
                   <span>Total</span>
                   <span>₹{total.toLocaleString()}</span>
                 </div>
@@ -452,9 +452,10 @@ export function OrderQuickPreview({
           <Separator />
 
           {/* Action Buttons - At the very bottom */}
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-2 pt-1">
             <Button
               variant="secondary"
+              size="sm"
               className="flex-1"
               onClick={onInvoice}
               data-testid="button-invoice"
@@ -463,6 +464,7 @@ export function OrderQuickPreview({
             </Button>
             <Button
               variant="secondary"
+              size="sm"
               className="flex-1"
               onClick={onRefund}
               data-testid="button-refund"
@@ -471,6 +473,7 @@ export function OrderQuickPreview({
             </Button>
             <Button
               variant="secondary"
+              size="sm"
               className="flex-1"
               onClick={onEditOrder}
               data-testid="button-edit-order"
