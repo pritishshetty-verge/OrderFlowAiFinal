@@ -50,6 +50,7 @@ interface OrdersTableProps {
   onViewDetails?: (order: Order) => void;
   onAssignOrder?: (order: Order) => void;
   onCallStatusChange?: (orderId: string, newStatus: string) => void;
+  showAgentColumn?: boolean;
 }
 
 export function OrdersTable({
@@ -59,6 +60,7 @@ export function OrdersTable({
   onViewDetails,
   onAssignOrder,
   onCallStatusChange,
+  showAgentColumn = true,
 }: OrdersTableProps) {
   const { toast } = useToast();
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -205,7 +207,7 @@ export function OrdersTable({
             </TableHead>
             <TableHead className="w-[120px]">Order ID</TableHead>
             <TableHead>Customer</TableHead>
-            <TableHead>Agent</TableHead>
+            {showAgentColumn && <TableHead>Agent</TableHead>}
             <TableHead>Items</TableHead>
             <TableHead className="text-right">Total</TableHead>
             <TableHead>Payment</TableHead>
@@ -241,9 +243,11 @@ export function OrdersTable({
                   </span>
                 </div>
               </TableCell>
-              <TableCell className="text-sm" data-testid={`agent-${order.id}`} onClick={(e) => e.stopPropagation()}>
-                {order.assignedTo || <span className="text-muted-foreground">Unassigned</span>}
-              </TableCell>
+              {showAgentColumn && (
+                <TableCell className="text-sm" data-testid={`agent-${order.id}`} onClick={(e) => e.stopPropagation()}>
+                  {order.assignedTo || <span className="text-muted-foreground">Unassigned</span>}
+                </TableCell>
+              )}
               <TableCell className="text-sm">{order.items}</TableCell>
               <TableCell className="text-right font-medium">
                 ₹{order.total.toLocaleString("en-IN")}
