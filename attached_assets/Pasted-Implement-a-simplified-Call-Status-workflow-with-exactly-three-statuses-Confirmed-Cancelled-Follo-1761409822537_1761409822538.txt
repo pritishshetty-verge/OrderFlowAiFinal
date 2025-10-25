@@ -1,0 +1,129 @@
+Implement a simplified Call Status workflow with exactly three statuses: Confirmed, Cancelled, Follow Up.
+
+Requirements:
+
+Status Actions UI
+
+Allow updating status from the order row and order detail page
+
+#1.Confirmed
+
+On click, set order.call_status = 'confirmed'
+
+Move the order to a new Fulfil section (see #3)
+
+Add timestamp and agent to order timeline
+
+Optional note field on save
+
+#2.Cancelled
+
+On click, open a clean modal:
+
+Dropdown of reasons:
+
+Customer changed mind
+
+Found better price elsewhere
+
+Wrong item/size/color
+
+Delivery time too long
+
+Family member disapproved
+
+Fake/test order
+
+Customer unreachable
+
+Address issues
+
+Other
+
+Optional notes textarea
+
+Actions: Cancel, Confirm Cancel
+
+- On confirm:
+
+Set order.call_status = 'cancelled'
+
+Save cancelled_reason and cancelled_notes
+
+Add timeline entry
+
+Show toast “Order marked as Cancelled”
+
+#3.Fulfil Section (subsection under Orders)
+
+In sidebar: Orders > Fulfil
+
+Create a Fulfil page that lists all orders with call_status = 'confirmed' across all agents
+
+Table columns: Order ID, Customer, Phone, Value, Payment Method (COD/Prepaid), Confirmed At, Agent, Actions
+
+Filters: date range, agent, payment method
+
+Bulk selection with basic bulk actions (placeholder for future “Create Label/Ship”)
+
+Clicking a row opens the order detail
+
+#4. Follow Up
+
+On click, open modal “Schedule Follow Up”:
+
+Quick presets (radio tiles): 10 minutes, 30 minutes, 45 minutes
+
+Custom option:
+
+Date picker
+
+Time picker
+
+Optional notes field
+
+Actions: Cancel, Schedule
+
+- After confirm:
+
+Set order.call_status = 'followup'
+
+Save followup_at (single datetime), followup_notes
+
+Increment follow_up_attempts
+
+Add timeline entry
+
+Trigger an in-app notification reminder at followup_at for the assigned agent
+
+If we already have a notification system, use it
+
+If not, add a minimal in-app notifier:
+
+Server cron/interval checks due followups every minute
+
+Creates a notification record for agent when due
+
+UI shows a bell icon badge and toast with a link to the order
+
+#5. Navigation and Visibility
+
+Sidebar:
+
+Orders
+
+All Orders (existing)
+
+Fulfil (new) → shows all confirmed orders
+
+#6. UX/Copy
+
+Toasts:
+
+Confirmed: “Order moved to Fulfil”
+
+Cancelled: “Order marked as Cancelled”
+
+Follow Up: “Follow-up scheduled for [date time]”
+
+Modals must be keyboard accessible and mobile-friendly
