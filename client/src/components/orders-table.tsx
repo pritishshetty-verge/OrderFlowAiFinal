@@ -109,6 +109,7 @@ export function OrdersTable({
             </TableHead>
             <TableHead className="w-[120px]">Order ID</TableHead>
             <TableHead>Customer</TableHead>
+            <TableHead>Agent</TableHead>
             <TableHead>Items</TableHead>
             <TableHead className="text-right">Total</TableHead>
             <TableHead>Payment</TableHead>
@@ -143,6 +144,9 @@ export function OrdersTable({
                     {order.customerPhone}
                   </span>
                 </div>
+              </TableCell>
+              <TableCell className="text-sm" data-testid={`agent-${order.id}`} onClick={(e) => e.stopPropagation()}>
+                {order.assignedTo || <span className="text-muted-foreground">Unassigned</span>}
               </TableCell>
               <TableCell className="text-sm">{order.items}</TableCell>
               <TableCell className="text-right font-medium">
