@@ -7,6 +7,19 @@ import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUs
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
 import { OrderAssignmentEngine } from "./assignment";
+import {
+  canAssignOrders,
+  canBulkAssignOrders,
+  canTriggerAutoAssignment,
+  canEditProfiles,
+  canManageShopify,
+  canManageLeaveRequests,
+  canInviteTeamMembers,
+  canInviteAdmins,
+  canAssignExtensions,
+  canManageIVR,
+  isFullControlAdmin,
+} from "./permissions";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -98,6 +111,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "userId is required" });
       }
 
+      if (!assignedBy) {
+        return res.status(400).json({ error: "assignedBy is required" });
+      }
+
+      // Check permission
+      const currentUser = await storage.getUser(assignedBy);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      if (!canAssignOrders(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to assign orders" });
+      }
+
       // Update order assignment
       const order = await storage.assignOrder(req.params.id, userId);
 
@@ -185,6 +212,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auto-assign a COD order using round-robin algorithm
   app.post("/api/orders/:id/auto-assign", async (req, res) => {
     try {
+      const { requestedBy } = req.body;
+
+      if (!requestedBy) {
+        return res.status(400).json({ error: "requestedBy is required" });
+      }
+
+      // Check permission
+      const currentUser = await storage.getUser(requestedBy);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      if (!canTriggerAutoAssignment(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to trigger auto-assignment" });
+      }
+
       const assignmentEngine = new OrderAssignmentEngine(storage);
       const success = await assignmentEngine.autoAssignOrder(req.params.id);
 
@@ -210,6 +253,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!agentId || !assignedBy) {
         return res.status(400).json({ error: "agentId and assignedBy are required" });
+      }
+
+      // Check permission
+      const currentUser = await storage.getUser(assignedBy);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      if (!canAssignOrders(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to assign orders" });
       }
 
       const assignmentEngine = new OrderAssignmentEngine(storage);
@@ -239,6 +292,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!agentId || !assignedBy) {
         return res.status(400).json({ error: "agentId and assignedBy are required" });
+      }
+
+      // Check permission
+      const currentUser = await storage.getUser(assignedBy);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      if (!canBulkAssignOrders(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to bulk assign orders" });
       }
 
       const assignmentEngine = new OrderAssignmentEngine(storage);
@@ -453,6 +516,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     console.log("Timestamp:", new Date().toISOString());
     
     try {
+      // Check permission
+      const { currentUserId } = req.body;
+      if (!currentUserId) {
+        return res.status(400).json({ error: "currentUserId is required" });
+      }
+
+      const currentUser = await storage.getUser(currentUserId);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      if (!canManageShopify(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to manage Shopify settings" });
+      }
+
       // Log incoming data (without sensitive values)
       console.log("Step 1: Received request body fields:", Object.keys(req.body));
       console.log("Store URL:", req.body.storeUrl);
@@ -701,13 +779,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/users/:id", async (req, res) => {
     try {
+      const { currentUserId } = req.body;
+      
+      if (!currentUserId) {
+        return res.status(400).json({ error: "currentUserId is required" });
+      }
+
       const validatedData = updateUserSchema.parse(req.body);
       
-      // If updating agentExtension, check for uniqueness
-      if (validatedData.agentExtension) {
-        const existingUserWithExtension = await storage.getUserByAgentExtension(validatedData.agentExtension);
-        if (existingUserWithExtension && existingUserWithExtension.id !== req.params.id) {
-          return res.status(400).json({ error: "This extension is already assigned to another agent" });
+      // Get current user to check permissions
+      const currentUser = await storage.getUser(currentUserId);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      // Check if editing another user (not self)
+      if (req.params.id !== currentUserId) {
+        if (!canEditProfiles(currentUser)) {
+          return res.status(403).json({ error: "You don't have permission to edit user profiles" });
+        }
+      }
+
+      // If updating agentExtension, check permissions
+      if (validatedData.agentExtension !== undefined) {
+        if (!canAssignExtensions(currentUser) && req.params.id !== currentUserId) {
+          return res.status(403).json({ error: "You don't have permission to assign extensions" });
+        }
+        
+        // Check for uniqueness
+        if (validatedData.agentExtension) {
+          const existingUserWithExtension = await storage.getUserByAgentExtension(validatedData.agentExtension);
+          if (existingUserWithExtension && existingUserWithExtension.id !== req.params.id) {
+            return res.status(400).json({ error: "This extension is already assigned to another agent" });
+          }
+        }
+      }
+
+      // If updating permissions or adminType, only full control admins can do this
+      if ((validatedData.permissions !== undefined || validatedData.adminType !== undefined) && req.params.id !== currentUserId) {
+        if (!isFullControlAdmin(currentUser)) {
+          return res.status(403).json({ error: "Only full control admins can edit admin permissions" });
         }
       }
       
@@ -1263,7 +1374,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send user invite
   app.post("/api/invites", async (req, res) => {
     try {
+      const { invitedBy } = req.body;
+      
+      if (!invitedBy) {
+        return res.status(400).json({ error: "invitedBy is required" });
+      }
+
       const validatedData = insertInviteSchema.parse(req.body);
+      
+      // Get current user to check permissions
+      const currentUser = await storage.getUser(invitedBy);
+      if (!currentUser) {
+        return res.status(404).json({ error: "Current user not found" });
+      }
+
+      // Check if user has permission to invite team members
+      if (!canInviteTeamMembers(currentUser)) {
+        return res.status(403).json({ error: "You don't have permission to invite team members" });
+      }
+
+      // If inviting an admin, only full control admins can do this
+      if (validatedData.role === "admin" && !canInviteAdmins(currentUser)) {
+        return res.status(403).json({ error: "Only full control admins can invite other admins" });
+      }
+
+      // If inviting an admin with partial control, ensure permissions are provided
+      if (validatedData.role === "admin" && validatedData.adminType === "partial_control") {
+        if (!validatedData.permissions) {
+          return res.status(400).json({ error: "Permissions are required for partial control admins" });
+        }
+      }
       
       // Check if email already has a pending invite
       const existingInvite = await storage.getInviteByEmail(validatedData.email);
@@ -1291,8 +1431,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...validatedData,
         token,
         expiresAt,
-        // TODO: Get invitedBy from authenticated user session
-        invitedBy: undefined,
+        invitedBy,
       });
       
       // TODO: Send email via SendGrid/Resend integration
