@@ -256,6 +256,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         id: user.id,
         name: user.fullName,
         role: user.role as TeamMember["role"],
+        adminType: user.adminType || undefined,
         email: user.email,
         phone: user.phone || "N/A",
         agentExtension: user.agentExtension || undefined,
