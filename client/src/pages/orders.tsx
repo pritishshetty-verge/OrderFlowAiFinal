@@ -123,13 +123,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     if (activeTab === "assigned") {
       filtered = filtered.filter((order) => order.status === "assigned");
     } else if (activeTab === "confirmed") {
-      filtered = filtered.filter((order) => order.status === "confirmed");
+      filtered = filtered.filter((order) => order.callStatus === "Confirmed");
     } else if (activeTab === "cancelled") {
-      filtered = filtered.filter((order) => order.status === "cancelled");
+      filtered = filtered.filter((order) => order.callStatus === "Cancelled");
     } else if (activeTab === "followup") {
-      filtered = filtered.filter(
-        (order) => order.status === "pending" || order.status === "shipped"
-      );
+      filtered = filtered.filter((order) => order.callStatus === "Follow Up");
     } else if (activeTab === "failed") {
       filtered = filtered.filter((order) => order.status === "ndr");
     }
@@ -208,18 +206,17 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       },
       {
         label: "Confirmed",
-        count: allOrders.filter((o) => o.status === "confirmed").length,
+        count: allOrders.filter((o) => o.callStatus === "Confirmed").length,
         status: "confirmed" as const,
       },
       {
         label: "Cancelled",
-        count: allOrders.filter((o) => o.status === "cancelled").length,
+        count: allOrders.filter((o) => o.callStatus === "Cancelled").length,
         status: "cancelled" as const,
       },
       {
         label: "Follow-Up",
-        count: allOrders.filter((o) => o.status === "pending" || o.status === "shipped")
-          .length,
+        count: allOrders.filter((o) => o.callStatus === "Follow Up").length,
         status: "followup" as const,
       },
       {
