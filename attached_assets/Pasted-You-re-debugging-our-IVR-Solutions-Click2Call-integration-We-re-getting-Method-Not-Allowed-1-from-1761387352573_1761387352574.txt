@@ -1,0 +1,124 @@
+You’re debugging our IVR Solutions Click2Call integration. We’re getting “Method Not Allowed 1” from the IVR Solutions API. Per IVR Solutions API docs, this corresponds to a 405 Access Denied. Fix our call to match the official spec below, then verify with a live test call to a safe test number.
+
+Authoritative spec to implement:
+
+Method: POST
+
+URL: https://api.ivrsolutions.in/api/c2c_post
+
+Headers:
+
+Content-Type: application/json
+
+Authorization: Bearer {OUR_API_TOKEN} ← ensure the word Bearer and a space precede the token
+
+JSON body:
+{
+"did": "<OUR_DID>",
+"ext_no": "<AGENT_EXTENSION>",
+"phone": "<DESTINATION_MSISDN>"
+}
+
+Expected codes:
+
+200 = success
+
+400 = invalid parameters
+
+405 = access denied (auth/headers issue)
+
+500 = server error
+
+Tasks:
+
+Audit current code for these common issues and fix:
+
+Missing or incorrect Authorization header (must be “Bearer <token>”).
+
+Wrong Content-Type (must be application/json).
+
+Body not sent as JSON or wrong field names (must be did, ext_no, phone).
+
+Token passed in query/body instead of Authorization header.
+
+Trailing spaces or case errors in header names/values.
+
+Refactor the API client to:
+
+Centralize baseURL and headers.
+
+Read the API token from a secure env var (e.g., IVR_API_TOKEN).
+
+Validate inputs (E.164 for phone, non-empty did/ext_no).
+
+Log requestId, status, and concise error details without leaking the token.
+
+Implement robust error handling:
+
+If 405: log “Access Denied” and check Authorization header and token presence.
+
+If 400: surface which parameter failed validation.
+
+If 5xx: retry with exponential backoff (max 3 attempts).
+
+Add a minimal integration test (or Postman check) that:
+
+Uses a safe test number (mock or whitelisted).
+
+Confirms we receive status=200.
+
+Prints sanitized request/response.
+
+Provide a runnable code snippet for Node.js and Python (requests/axios), and replace placeholders with our env vars. Example Node.js (axios):
+const axios = require('axios');
+
+const client = axios.create({
+baseURL: 'https://api.ivrsolutions.in',
+headers: {
+'Content-Type': 'application/json',
+'Authorization': Bearer ${process.env.IVR_API_TOKEN},
+},
+timeout: 10000,
+});
+
+async function clickToCall({ did, ext_no, phone }) {
+if (!process.env.IVR_API_TOKEN) throw new Error('Missing IVR_API_TOKEN');
+if (!did || !ext_no || !phone) throw new Error('Missing did/ext_no/phone');
+try {
+const res = await client.post('/api/c2c_post', { did, ext_no, phone });
+return res.data;
+} catch (err) {
+if (err.response) {
+const { status, data } = err.response;
+console.error('IVR API error', { status, data: data?.message || data });
+if (status === 405) throw new Error('Access Denied (check Bearer token/auth header)');
+throw new Error(IVR API failed: ${status} ${data?.message || ''}.trim());
+}
+throw err;
+}
+}
+
+(async () => {
+const result = await clickToCall({
+did: process.env.IVR_DID,
+ext_no: process.env.IVR_AGENT_EXT,
+phone: process.env.IVR_TEST_MSISDN,
+});
+console.log('Click2Call success:', result);
+})().catch(e => { console.error(e.message); process.exit(1); });
+
+After fix, run an end-to-end test and paste the sanitized logs showing a 200 response and the API’s status/message.
+
+Reference for Replit agent:
+
+Endpoint and header requirements are from IVR Solutions API docs: “POST https://api.ivrsolutions.in/api/c2c_post” with Authorization: Bearer token; body requires did, ext_no, phone; 405 means “Access Denied”. Evidence captured from the docs page.​
+
+Deliverables:
+
+Patched code with env-based config.
+
+Test run output proving 200 success.
+
+Short README note: setup, required env vars, and common 405 causes and remedies.
+
+</answer>

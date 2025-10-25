@@ -930,28 +930,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Validate IVR API credentials
+      if (!process.env.IVR_API_TOKEN) {
+        console.error("IVR_API_TOKEN not configured");
+        return res.status(500).json({ 
+          success: false, 
+          error: "IVR service not configured. Please contact admin." 
+        });
+      }
+
+      if (!process.env.IVR_DID_NUMBER) {
+        console.error("IVR_DID_NUMBER not configured");
+        return res.status(500).json({ 
+          success: false, 
+          error: "IVR service not configured. Please contact admin." 
+        });
+      }
+
       // Call IVR Solutions API
       const ivrApiUrl = "https://api.ivrsolutions.in/api/c2c_post";
+      
+      // Request body - only did, ext_no, and phone (token goes in header)
       const ivrPayload = {
-        token: process.env.IVR_API_TOKEN,
         did: process.env.IVR_DID_NUMBER,
         ext_no: user.agentExtension,
         phone: customerPhone,
       };
 
-      console.log("Initiating IVR call:", { orderId, agentExtension: user.agentExtension, customerPhone });
+      console.log("Initiating IVR call:", { 
+        orderId, 
+        agentExtension: user.agentExtension, 
+        customerPhone,
+        did: process.env.IVR_DID_NUMBER 
+      });
 
       const ivrResponse = await fetch(ivrApiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.IVR_API_TOKEN}`,
         },
         body: JSON.stringify(ivrPayload),
       });
 
       const ivrData = await ivrResponse.json();
 
-      // Handle IVR API response
+      // Handle IVR API response with specific error codes
       if (ivrResponse.status === 200) {
         // Create call record in database
         const call = await storage.createCall({
@@ -961,15 +985,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           callStatus: "initiated",
         });
 
-        console.log("Call initiated successfully:", call.id);
+        console.log("✓ Call initiated successfully:", { callId: call.id, orderId });
 
         return res.json({ 
           success: true, 
           message: "Call initiated successfully",
           call 
         });
+      } else if (ivrResponse.status === 400) {
+        // Invalid parameters
+        console.error("IVR API validation error:", { status: 400, data: ivrData });
+        return res.status(400).json({ 
+          success: false, 
+          error: ivrData.message || "Invalid call parameters. Please check phone number and extension." 
+        });
+      } else if (ivrResponse.status === 405) {
+        // Access denied (authentication issue)
+        console.error("IVR API access denied:", { 
+          status: 405, 
+          message: "Check Authorization header and API token",
+          data: ivrData 
+        });
+        return res.status(400).json({ 
+          success: false, 
+          error: "IVR service authentication failed. Please contact admin." 
+        });
+      } else if (ivrResponse.status >= 500) {
+        // Server error
+        console.error("IVR API server error:", { status: ivrResponse.status, data: ivrData });
+        return res.status(503).json({ 
+          success: false, 
+          error: "IVR service temporarily unavailable. Please try again later." 
+        });
       } else {
-        // IVR API returned an error
+        // Other errors
         console.error("IVR API error:", { status: ivrResponse.status, data: ivrData });
         return res.status(400).json({ 
           success: false, 
