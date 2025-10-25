@@ -23,7 +23,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2 } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash } from "lucide-react";
 import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -34,6 +34,7 @@ interface TeamMember {
   role: "admin" | "manager" | "agent";
   email: string;
   phone: string;
+  agentExtension?: string;
   status: "active" | "on-leave" | "offline";
   assignedOrders: number;
   completedOrders: number;
@@ -165,6 +166,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         role: user.role as TeamMember["role"],
         email: user.email,
         phone: user.phone || "N/A",
+        agentExtension: user.agentExtension || undefined,
         status: user.isActive ? "active" : "offline",
         assignedOrders: userOrders.filter(
           (o) => o.status !== "delivered" && o.status !== "cancelled"
@@ -281,6 +283,14 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <Phone className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-muted-foreground text-xs">{member.phone}</span>
                 </div>
+                {member.role === "agent" && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground text-xs font-mono" data-testid={`text-extension-${member.id}`}>
+                      {member.agentExtension ? `Ext ${member.agentExtension}` : "No extension"}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 text-sm">
                   <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="text-muted-foreground text-xs">
