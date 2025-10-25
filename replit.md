@@ -197,9 +197,14 @@ Preferred communication style: Simple, everyday language.
 - Request body: `{ userId, orderId, customerPhone }`
 - Validates agent has extension configured before initiating call
 - Integrates with IVR Solutions API (https://api.ivrsolutions.in/api/c2c_post)
+- **CRITICAL**: Uses `application/x-www-form-urlencoded` format (NOT JSON)
+  - Body formatted as URLSearchParams: `did=X&ext_no=Y&phone=Z`
+  - Authorization header: `Bearer {IVR_API_TOKEN}`
+  - This format requirement discovered through working Airtable implementation
 - Creates call record in database with status tracking (initiated, connected, failed, completed)
 - Returns success/error responses with appropriate messages
 - Enhanced error logging with masked credentials and detailed IVR API responses
+- Comprehensive error handling for 200/400/404/405/500+ status codes
 - Additional endpoints:
   - GET `/api/calls/order/:orderId` - Get all calls for an order
   - GET `/api/calls/agent/:agentId` - Get all calls for an agent
