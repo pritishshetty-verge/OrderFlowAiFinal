@@ -363,3 +363,26 @@ export const insertAttendanceSchema = createInsertSchema(attendance).omit({
 
 export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
 export type Attendance = typeof attendance.$inferSelect;
+
+// ============================================================================
+// CALLS (IVR Click-to-Call Tracking)
+// ============================================================================
+
+export const calls = pgTable("calls", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  agentId: varchar("agent_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerPhone: text("customer_phone").notNull(),
+  callStatus: text("call_status").notNull().default("initiated"), // initiated, connected, failed, completed
+  calledAt: timestamp("called_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertCallSchema = createInsertSchema(calls).omit({ 
+  id: true, 
+  calledAt: true,
+  createdAt: true 
+});
+
+export type InsertCall = z.infer<typeof insertCallSchema>;
+export type Call = typeof calls.$inferSelect;

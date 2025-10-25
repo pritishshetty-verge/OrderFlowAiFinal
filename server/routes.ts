@@ -897,6 +897,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // CALLS API (IVR Click-to-Call Integration)
+  // ============================================================================
+
+  // Initiate call to customer
+  app.post("/api/calls/initiate", async (req, res) => {
+    try {
+      const { userId, orderId, customerPhone } = req.body;
+
+      // Validate required fields
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+      if (!orderId) {
+        return res.status(400).json({ error: "orderId is required" });
+      }
+      if (!customerPhone) {
+        return res.status(400).json({ error: "customerPhone is required" });
+      }
+
+      // Look up user
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Check if user has agent extension configured
+      if (!user.agentExtension) {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Agent extension not configured. Please contact admin." 
+        });
+      }
+
+      // Call IVR Solutions API
+      const ivrApiUrl = "https://api.ivrsolutions.in/api/c2c_post";
+      const ivrPayload = {
+        token: process.env.IVR_API_TOKEN,
+        did: process.env.IVR_DID_NUMBER,
+        ext_no: user.agentExtension,
+        phone: customerPhone,
+      };
+
+      console.log("Initiating IVR call:", { orderId, agentExtension: user.agentExtension, customerPhone });
+
+      const ivrResponse = await fetch(ivrApiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(ivrPayload),
+      });
+
+      const ivrData = await ivrResponse.json();
+
+      // Handle IVR API response
+      if (ivrResponse.status === 200) {
+        // Create call record in database
+        const call = await storage.createCall({
+          orderId,
+          agentId: userId,
+          customerPhone,
+          callStatus: "initiated",
+        });
+
+        console.log("Call initiated successfully:", call.id);
+
+        return res.json({ 
+          success: true, 
+          message: "Call initiated successfully",
+          call 
+        });
+      } else {
+        // IVR API returned an error
+        console.error("IVR API error:", { status: ivrResponse.status, data: ivrData });
+        return res.status(400).json({ 
+          success: false, 
+          error: ivrData.message || "Failed to initiate call. Please try again." 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error initiating call:", error);
+      return res.status(500).json({ 
+        success: false, 
+        error: "Failed to initiate call. Please try again." 
+      });
+    }
+  });
+
+  // Get calls for an order
+  app.get("/api/calls/order/:orderId", async (req, res) => {
+    try {
+      const calls = await storage.getCallsByOrderId(req.params.orderId);
+      res.json(calls);
+    } catch (error) {
+      console.error("Error fetching calls:", error);
+      res.status(500).json({ error: "Failed to fetch calls" });
+    }
+  });
+
+  // Get calls for an agent
+  app.get("/api/calls/agent/:agentId", async (req, res) => {
+    try {
+      const calls = await storage.getCallsByAgentId(req.params.agentId);
+      res.json(calls);
+    } catch (error) {
+      console.error("Error fetching calls:", error);
+      res.status(500).json({ error: "Failed to fetch calls" });
+    }
+  });
+
+  // ============================================================================
   // INVITES API
   // ============================================================================
 

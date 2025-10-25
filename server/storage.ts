@@ -26,6 +26,8 @@ import {
   type InsertShopifyCredentials,
   type Attendance,
   type InsertAttendance,
+  type Call,
+  type InsertCall,
   users,
   invites,
   customers,
@@ -38,6 +40,7 @@ import {
   webhookLogs,
   shopifyCredentials,
   attendance,
+  calls,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -124,6 +127,11 @@ export interface IStorage {
     startDate?: Date;
     endDate?: Date;
   }): Promise<Attendance[]>;
+
+  // Calls
+  createCall(call: InsertCall): Promise<Call>;
+  getCallsByOrderId(orderId: string): Promise<Call[]>;
+  getCallsByAgentId(agentId: string): Promise<Call[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -724,6 +732,34 @@ export class DbStorage implements IStorage {
     }
 
     return await query;
+  }
+
+  // ============================================================================
+  // CALLS
+  // ============================================================================
+
+  async createCall(call: InsertCall): Promise<Call> {
+    const [createdCall] = await db
+      .insert(calls)
+      .values(call)
+      .returning();
+    return createdCall;
+  }
+
+  async getCallsByOrderId(orderId: string): Promise<Call[]> {
+    return await db
+      .select()
+      .from(calls)
+      .where(eq(calls.orderId, orderId))
+      .orderBy(desc(calls.calledAt));
+  }
+
+  async getCallsByAgentId(agentId: string): Promise<Call[]> {
+    return await db
+      .select()
+      .from(calls)
+      .where(eq(calls.agentId, agentId))
+      .orderBy(desc(calls.calledAt));
   }
 }
 
