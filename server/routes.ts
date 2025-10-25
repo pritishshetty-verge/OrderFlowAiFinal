@@ -961,7 +961,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderId, 
         agentExtension: user.agentExtension, 
         customerPhone,
-        did: process.env.IVR_DID_NUMBER 
+        did: process.env.IVR_DID_NUMBER,
+        url: ivrApiUrl,
+        hasToken: !!process.env.IVR_API_TOKEN,
+        tokenLength: process.env.IVR_API_TOKEN?.length || 0
       });
 
       const ivrResponse = await fetch(ivrApiUrl, {
