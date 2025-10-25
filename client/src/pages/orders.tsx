@@ -96,38 +96,42 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     queryKey: ["/api/users"],
   });
 
-  // Transform backend orders to frontend format
-  const allOrders = useMemo(() => {
-    if (!ordersResponse?.orders || !usersData) return [];
-    return ordersResponse.orders.map((order) => transformOrder(order, usersData));
-  }, [ordersResponse, usersData]);
-
   // Get current user's real ID from database for agent filtering
   const userEmail = localStorage.getItem("userEmail");
   const currentUser = usersData?.find(u => u.email === userEmail);
   const currentUserId = currentUser?.id;
 
-  // Apply filters to orders
-  const filteredOrders = useMemo(() => {
-    let filtered = [...allOrders];
-
-    // Role-based filtering for agents
+  // BASE FILTER: Apply role-based filtering first (agents see only their assigned orders)
+  const baseFilteredOrders = useMemo(() => {
+    if (!ordersResponse?.orders || !usersData) return [];
+    
+    // Filter backend orders based on role
+    let filteredBackendOrders = ordersResponse.orders;
+    
     if (userRole === "agent" && currentUserId) {
-      const backendFiltered = ordersResponse?.orders?.filter(
+      // Agents see only orders assigned to them
+      filteredBackendOrders = ordersResponse.orders.filter(
         (order) => order.assignedTo === currentUserId
       );
-      filtered = backendFiltered
-        ? backendFiltered.map((order) => transformOrder(order, usersData || []))
-        : [];
     }
+    // Admins see all orders (no filter)
+    
+    // Transform filtered orders to frontend format
+    return filteredBackendOrders.map((order) => transformOrder(order, usersData));
+  }, [ordersResponse, usersData, userRole, currentUserId]);
 
-    // Progress step-based filtering
+  // Apply tab filters and search/payment filters on top of base filtered orders
+  const filteredOrders = useMemo(() => {
+    let filtered = [...baseFilteredOrders];
+
+    // Tab-based filtering (call status)
     if (activeTab === "all") {
-      // Show all orders, no additional filtering
-    } else if (activeTab === "assigned") {
-      filtered = filtered.filter((order) => order.status === "assigned");
+      // Show all assigned orders, no additional filtering
     } else if (activeTab === "pending") {
-      filtered = filtered.filter((order) => order.callStatus === "Pending");
+      // Pending includes orders with "Pending" status OR null/undefined callStatus
+      filtered = filtered.filter((order) => 
+        order.callStatus === "Pending" || !order.callStatus
+      );
     } else if (activeTab === "confirmed") {
       filtered = filtered.filter((order) => order.callStatus === "Confirmed");
     } else if (activeTab === "cancelled") {
@@ -136,6 +140,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       filtered = filtered.filter((order) => order.callStatus === "Follow Up");
     }
 
+    // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -146,16 +151,18 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       );
     }
 
+    // Status filter (Shopify order status)
     if (statusFilter !== "all") {
       filtered = filtered.filter((order) => order.status === statusFilter);
     }
 
+    // Payment method filter
     if (paymentFilter !== "all") {
       filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
     }
 
     return filtered;
-  }, [allOrders, userRole, currentUserId, ordersResponse, usersData, activeTab, searchQuery, statusFilter, paymentFilter]);
+  }, [baseFilteredOrders, activeTab, searchQuery, statusFilter, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 
@@ -200,36 +207,36 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     updateCallStatusMutation.mutate({ orderId, callStatus });
   };
 
-  // Calculate stats for progress bar
+  // Calculate stats for progress bar using base-filtered orders (respects agent/admin role)
   const progressSteps = useMemo(
     () => [
       {
         label: "Total Orders",
-        count: allOrders.length,
+        count: baseFilteredOrders.length,
         status: "all" as const,
       },
       {
         label: "Pending",
-        count: allOrders.filter((o) => o.callStatus === "Pending").length,
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Pending" || !o.callStatus).length,
         status: "pending" as const,
       },
       {
         label: "Confirmed",
-        count: allOrders.filter((o) => o.callStatus === "Confirmed").length,
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Confirmed").length,
         status: "confirmed" as const,
       },
       {
         label: "Cancelled",
-        count: allOrders.filter((o) => o.callStatus === "Cancelled").length,
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Cancelled").length,
         status: "cancelled" as const,
       },
       {
         label: "Follow-Up",
-        count: allOrders.filter((o) => o.callStatus === "Follow Up").length,
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Follow Up").length,
         status: "followup" as const,
       },
     ],
-    [allOrders]
+    [baseFilteredOrders]
   );
 
   return (
@@ -266,8 +273,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                     <Package className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-lg font-medium">No orders found</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {allOrders.length === 0
-                        ? "No orders have been synced from Shopify yet"
+                      {baseFilteredOrders.length === 0
+                        ? userRole === "agent" 
+                          ? "No orders have been assigned to you yet"
+                          : "No orders have been synced from Shopify yet"
                         : "Try adjusting your filters or search query"}
                     </p>
                   </CardContent>
