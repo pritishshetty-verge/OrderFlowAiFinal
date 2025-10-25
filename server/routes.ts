@@ -978,6 +978,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const ivrData = await ivrResponse.json();
 
+      // Log detailed IVR API response for debugging
+      console.log("📞 IVR API Response:", {
+        status: ivrResponse.status,
+        statusText: ivrResponse.statusText,
+        data: ivrData,
+        requestPayload: {
+          did: ivrPayload.did,
+          ext_no: ivrPayload.ext_no,
+          phone: ivrPayload.phone
+        },
+        maskedToken: process.env.IVR_API_TOKEN?.substring(0, 8) + "...",
+        headers: {
+          contentType: ivrResponse.headers.get('content-type'),
+          server: ivrResponse.headers.get('server')
+        }
+      });
+
       // Handle IVR API response with specific error codes
       if (ivrResponse.status === 200) {
         // Create call record in database
@@ -1056,6 +1073,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching calls:", error);
       res.status(500).json({ error: "Failed to fetch calls" });
+    }
+  });
+
+  // Test IVR credentials and connection
+  app.get("/api/ivr/test-credentials", async (req, res) => {
+    try {
+      const token = process.env.IVR_API_TOKEN;
+      const did = process.env.IVR_DID_NUMBER;
+
+      // Check if credentials are configured
+      if (!token || !did) {
+        return res.status(500).json({
+          success: false,
+          configured: false,
+          error: "IVR credentials not configured",
+          details: {
+            hasToken: !!token,
+            hasDid: !!did,
+          },
+          nextSteps: [
+            "Add IVR_API_TOKEN to Replit Secrets",
+            "Add IVR_DID_NUMBER to Replit Secrets",
+            "Restart the application"
+          ]
+        });
+      }
+
+      // Mask the token for security
+      const maskedToken = token.substring(0, 8) + "..." + token.substring(token.length - 4);
+
+      // Get a test agent extension
+      const agents = await storage.listUsers({ role: 'agent' });
+      const testAgent = agents.find(u => u.agentExtension);
+
+      const credentialsInfo = {
+        configured: true,
+        credentials: {
+          apiToken: maskedToken,
+          tokenLength: token.length,
+          didNumber: did,
+          testExtension: testAgent?.agentExtension || "No agent extensions configured"
+        }
+      };
+
+      // Make a test API call to validate credentials
+      const ivrApiUrl = "https://api.ivrsolutions.in/api/c2c_post";
+      
+      // Use a test phone number that won't actually call
+      const testPayload = {
+        did: did,
+        ext_no: testAgent?.agentExtension || "101",
+        phone: "0000000000", // Invalid test number
+      };
+
+      console.log("🧪 Testing IVR credentials:", {
+        url: ivrApiUrl,
+        maskedToken,
+        did,
+        testExtension: testPayload.ext_no
+      });
+
+      const ivrResponse = await fetch(ivrApiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(testPayload),
+      });
+
+      const ivrData = await ivrResponse.json();
+
+      console.log("🧪 IVR API test response:", {
+        status: ivrResponse.status,
+        data: ivrData
+      });
+
+      // Analyze the response
+      if (ivrResponse.status === 200) {
+        return res.json({
+          success: true,
+          ...credentialsInfo,
+          connectionTest: {
+            status: "success",
+            message: "IVR credentials are valid and working!",
+            statusCode: 200,
+            response: ivrData
+          }
+        });
+      } else if (ivrResponse.status === 400) {
+        // This is actually good - means auth worked but params invalid
+        return res.json({
+          success: true,
+          ...credentialsInfo,
+          connectionTest: {
+            status: "authenticated",
+            message: "Credentials are valid! (Got 400 error as expected with test data)",
+            statusCode: 400,
+            response: ivrData,
+            note: "400 error is expected when using test phone number. Your credentials are working correctly."
+          }
+        });
+      } else if (ivrResponse.status === 405) {
+        return res.json({
+          success: false,
+          ...credentialsInfo,
+          connectionTest: {
+            status: "access_denied",
+            message: "Access Denied - Authentication failed",
+            statusCode: 405,
+            response: ivrData,
+            possibleCauses: [
+              "API token is incorrect or expired",
+              "API token doesn't have permission for this DID number",
+              "Authorization header format is wrong",
+              "Account suspended or not activated"
+            ],
+            nextSteps: [
+              "Verify API token in IVR Solutions dashboard",
+              "Check if DID number matches your account",
+              "Contact IVR Solutions support if issue persists"
+            ]
+          }
+        });
+      } else {
+        return res.json({
+          success: false,
+          ...credentialsInfo,
+          connectionTest: {
+            status: "error",
+            message: `Unexpected error: ${ivrResponse.status}`,
+            statusCode: ivrResponse.status,
+            response: ivrData
+          }
+        });
+      }
+    } catch (error: any) {
+      console.error("Error testing IVR credentials:", error);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to test IVR credentials",
+        details: error.message
+      });
     }
   });
 

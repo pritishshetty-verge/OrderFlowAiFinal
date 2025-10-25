@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle } from "lucide-react";
+import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -213,6 +213,9 @@ export function ShopifySettingsMain() {
         )}
       </SettingsCard>
 
+      {/* IVR Connection Status */}
+      <IVRConnectionStatus />
+
       {/* Help Section */}
       <SettingsCard
         title="Need Help?"
@@ -235,5 +238,172 @@ export function ShopifySettingsMain() {
         </div>
       </SettingsCard>
     </div>
+  );
+}
+
+function IVRConnectionStatus() {
+  const { toast } = useToast();
+  const [testResult, setTestResult] = useState<any>(null);
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/ivr/test-credentials");
+      const data = await response.json();
+      
+      // Always return the data, even on non-200 responses
+      // The data contains diagnostic information we want to display
+      return data;
+    },
+    onSuccess: (data) => {
+      setTestResult(data);
+      if (data.success) {
+        toast({
+          title: "IVR Connection Successful",
+          description: data.connectionTest?.message || "IVR credentials are valid!",
+        });
+      } else {
+        toast({
+          title: "IVR Connection Failed",
+          description: data.connectionTest?.message || data.error || "Failed to connect to IVR service",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Test Failed",
+        description: error.message || "Failed to test IVR connection",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const isConfigured = testResult?.configured ?? false;
+  const isConnected = testResult?.connectionTest?.status === "success" || testResult?.connectionTest?.status === "authenticated";
+
+  return (
+    <SettingsCard
+      icon={Phone}
+      title="IVR Connection"
+      description="Click-to-Call integration status"
+      testId="card-ivr-status"
+      action={
+        testResult ? (
+          <StatusBadge 
+            status={isConnected ? "connected" : "disconnected"} 
+            label={isConnected ? "Connected" : "Not Connected"}
+          />
+        ) : null
+      }
+    >
+      <div className="space-y-4">
+        {!testResult ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Test your IVR credentials to verify the Click-to-Call integration is working correctly.
+            </p>
+            <Button
+              onClick={() => testMutation.mutate()}
+              disabled={testMutation.isPending}
+              data-testid="button-test-ivr"
+              className="gap-2"
+            >
+              {testMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Testing Connection...
+                </>
+              ) : (
+                <>
+                  <Phone className="h-4 w-4" />
+                  Test IVR Connection
+                </>
+              )}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Credentials Info */}
+            {testResult.credentials && (
+              <div className="grid gap-3 sm:grid-cols-2 text-sm">
+                <div>
+                  <p className="text-muted-foreground">API Token</p>
+                  <p className="font-mono">{testResult.credentials.apiToken}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">DID Number</p>
+                  <p className="font-mono">{testResult.credentials.didNumber}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Connection Test Result */}
+            <div className={`rounded-lg border p-4 ${
+              isConnected 
+                ? "bg-green-500/5 border-green-500/20" 
+                : "bg-red-500/5 border-red-500/20"
+            }`}>
+              <div className="flex items-start gap-3">
+                {isConnected ? (
+                  <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500 mt-0.5" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-500 mt-0.5" />
+                )}
+                <div className="flex-1 space-y-2">
+                  <p className="text-sm font-medium">
+                    {testResult.connectionTest?.message || testResult.error}
+                  </p>
+                  {testResult.connectionTest?.note && (
+                    <p className="text-xs text-muted-foreground">
+                      {testResult.connectionTest.note}
+                    </p>
+                  )}
+                  {testResult.connectionTest?.possibleCauses && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium mb-1">Possible causes:</p>
+                      <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
+                        {testResult.connectionTest.possibleCauses.map((cause: string, idx: number) => (
+                          <li key={idx}>{cause}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {testResult.connectionTest?.nextSteps && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium mb-1">Next steps:</p>
+                      <ul className="text-xs text-muted-foreground list-disc list-inside space-y-0.5">
+                        {testResult.connectionTest.nextSteps.map((step: string, idx: number) => (
+                          <li key={idx}>{step}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <Button
+              onClick={() => testMutation.mutate()}
+              disabled={testMutation.isPending}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              {testMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Retesting...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Test Again
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+      </div>
+    </SettingsCard>
   );
 }
