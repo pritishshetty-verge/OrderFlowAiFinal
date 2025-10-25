@@ -98,6 +98,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [editExtensionDialogOpen, setEditExtensionDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<TeamMember | null>(null);
   const [userToEditExtension, setUserToEditExtension] = useState<TeamMember | null>(null);
+  const [selectedRole, setSelectedRole] = useState<"admin" | "agent">("agent");
+  const [selectedAdminType, setSelectedAdminType] = useState<"full_control" | "partial_control">("full_control");
   const { toast } = useToast();
 
   // Fetch users and orders from backend
@@ -119,6 +121,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       firstName: "",
       lastName: "",
       role: "agent",
+      adminType: "full_control",
+      permissions: DEFAULT_MANAGER_PERMISSIONS,
     },
   });
 
@@ -499,7 +503,23 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Role</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <Select 
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        setSelectedRole(value as "admin" | "agent");
+                        // Reset admin-specific fields when switching to agent
+                        if (value === "agent") {
+                          form.setValue("adminType", undefined);
+                          form.setValue("permissions", undefined);
+                        } else {
+                          // Set defaults for admin
+                          form.setValue("adminType", "full_control");
+                          form.setValue("permissions", DEFAULT_MANAGER_PERMISSIONS);
+                          setSelectedAdminType("full_control");
+                        }
+                      }} 
+                      defaultValue={field.value}
+                    >
                       <FormControl>
                         <SelectTrigger data-testid="select-role">
                           <SelectValue placeholder="Select role" />
@@ -507,7 +527,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="agent">Agent</SelectItem>
-                        <SelectItem value="manager">Manager</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                       </SelectContent>
                     </Select>
@@ -515,6 +534,71 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   </FormItem>
                 )}
               />
+
+              {/* Admin Type Selector - only show when role is admin */}
+              {selectedRole === "admin" && (
+                <FormField
+                  control={form.control}
+                  name="adminType"
+                  render={({ field }) => (
+                    <FormItem className="space-y-3">
+                      <FormLabel>Admin Type</FormLabel>
+                      <FormControl>
+                        <RadioGroup
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            setSelectedAdminType(value as "full_control" | "partial_control");
+                            // Set default permissions for partial control
+                            if (value === "partial_control") {
+                              form.setValue("permissions", DEFAULT_MANAGER_PERMISSIONS);
+                            } else {
+                              form.setValue("permissions", undefined);
+                            }
+                          }}
+                          value={field.value}
+                          className="flex flex-col space-y-2"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="full_control" id="full_control" data-testid="radio-full-control" />
+                            <label htmlFor="full_control" className="text-sm font-normal cursor-pointer">
+                              <div>Full Control</div>
+                              <div className="text-xs text-muted-foreground">Unrestricted access to all features</div>
+                            </label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="partial_control" id="partial_control" data-testid="radio-partial-control" />
+                            <label htmlFor="partial_control" className="text-sm font-normal cursor-pointer">
+                              <div>Partial Control</div>
+                              <div className="text-xs text-muted-foreground">Customizable permissions</div>
+                            </label>
+                          </div>
+                        </RadioGroup>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              {/* Permission Checklist - only show when admin type is partial_control */}
+              {selectedRole === "admin" && selectedAdminType === "partial_control" && (
+                <FormField
+                  control={form.control}
+                  name="permissions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Permissions</FormLabel>
+                      <FormControl>
+                        <PermissionChecklist
+                          value={field.value || DEFAULT_MANAGER_PERMISSIONS}
+                          onChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
               <DialogFooter>
                 <Button
