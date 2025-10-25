@@ -702,6 +702,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/users/:id", async (req, res) => {
     try {
       const validatedData = updateUserSchema.parse(req.body);
+      
+      // If updating agentExtension, check for uniqueness
+      if (validatedData.agentExtension) {
+        const existingUserWithExtension = await storage.getUserByAgentExtension(validatedData.agentExtension);
+        if (existingUserWithExtension && existingUserWithExtension.id !== req.params.id) {
+          return res.status(400).json({ error: "This extension is already assigned to another agent" });
+        }
+      }
+      
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
