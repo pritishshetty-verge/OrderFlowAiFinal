@@ -16,7 +16,7 @@ import logoUrl from "@assets/image_1761228744572.png";
 
 const menuItems = [
   {
-    title: "Dashboard",
+    title: "Overview",
     url: "/",
     icon: Home,
   },

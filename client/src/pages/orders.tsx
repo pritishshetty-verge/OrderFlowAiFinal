@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
@@ -9,6 +9,8 @@ import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Package } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Transform backend order to frontend order format
@@ -40,6 +42,7 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
     total: parseFloat(order.totalPrice),
     paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
     status: order.status as Order["status"],
+    callStatus: order.callStatus as Order["callStatus"],
     assignedTo: assignedUser?.fullName,
     discountCode: order.discountCode || undefined,
     createdAt: new Date(order.shopifyCreatedAt),
@@ -51,6 +54,7 @@ interface OrdersPageProps {
 }
 
 export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
+  const { toast } = useToast();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
@@ -63,6 +67,28 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
+  });
+
+  // Mutation for updating call status
+  const updateCallStatusMutation = useMutation({
+    mutationFn: async ({ orderId, callStatus }: { orderId: string; callStatus: string }) => {
+      const res = await apiRequest("PATCH", `/api/orders/${orderId}`, { callStatus });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({
+        title: "Call Status Updated",
+        description: "Order call status has been updated successfully.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update call status. Please try again.",
+        variant: "destructive",
+      });
+    },
   });
 
   // Fetch users for assignment display
@@ -168,6 +194,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setActiveTab(status);
   };
 
+  const handleCallStatusChange = (orderId: string, callStatus: string) => {
+    updateCallStatusMutation.mutate({ orderId, callStatus });
+  };
+
   // Calculate stats for progress bar
   const progressSteps = useMemo(
     () => [
@@ -248,6 +278,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                   onCallCustomer={handleCallCustomer}
                   onViewDetails={handleViewDetails}
                   onAssignOrder={handleAssignOrder}
+                  onCallStatusChange={handleCallStatusChange}
                 />
               )}
             </div>

@@ -120,6 +120,7 @@ export const orders = pgTable("orders", {
   
   // Order details
   status: text("status").notNull().default("pending"), // pending, assigned, confirmed, shipped, delivered, cancelled, ndr
+  callStatus: text("call_status").notNull().default("Pending"), // Pending, Confirmed, Cancelled, Follow Up
   fulfillmentStatus: text("fulfillment_status"), // Shopify fulfillment status
   fulfilledAt: timestamp("fulfilled_at"),
   financialStatus: text("financial_status"), // Shopify financial status

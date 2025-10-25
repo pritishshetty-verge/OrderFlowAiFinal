@@ -153,18 +153,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update order (e.g., tags)
+  // Update order (e.g., tags, callStatus)
   app.patch("/api/orders/:id", async (req, res) => {
     try {
-      const { tags } = req.body;
+      const { tags, callStatus } = req.body;
 
       const existingOrder = await storage.getOrder(req.params.id);
       if (!existingOrder) {
         return res.status(404).json({ error: "Order not found" });
       }
 
+      // Build update object with only provided fields
+      const updateData: any = {};
+      if (tags !== undefined) updateData.tags = tags;
+      if (callStatus !== undefined) updateData.callStatus = callStatus;
+
       // Update order
-      const order = await storage.updateOrder(req.params.id, { tags });
+      const order = await storage.updateOrder(req.params.id, updateData);
 
       res.json(order);
     } catch (error) {
