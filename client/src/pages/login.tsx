@@ -9,26 +9,19 @@ export default function LoginPage() {
     
     // Fetch actual user from database by email to get real userId
     try {
-      const response = await fetch("/api/users");
+      const response = await fetch(`/api/users/by-email/${encodeURIComponent(email)}`);
       if (response.ok) {
-        const users = await response.json();
-        const user = users.find((u: any) => u.email === email);
-        
-        if (user) {
-          // Use the actual user ID from the database
-          localStorage.setItem("userRole", user.role);
-          localStorage.setItem("userId", user.id);
-          localStorage.setItem("userEmail", user.email);
-        } else {
-          // Fallback: use a default admin user if email not found
-          // This helps with testing when logging in with arbitrary emails
-          const defaultAdmin = users.find((u: any) => u.role === "admin");
-          if (defaultAdmin) {
-            localStorage.setItem("userRole", defaultAdmin.role);
-            localStorage.setItem("userId", defaultAdmin.id);
-            localStorage.setItem("userEmail", defaultAdmin.email);
-          }
-        }
+        const user = await response.json();
+        // Use the actual user ID and role from the database
+        localStorage.setItem("userRole", user.role);
+        localStorage.setItem("userId", user.id);
+        localStorage.setItem("userEmail", user.email);
+      } else {
+        // If user not found, use the provided role and a mock ID
+        console.warn("User not found in database, using mock data");
+        localStorage.setItem("userRole", role);
+        localStorage.setItem("userId", crypto.randomUUID());
+        localStorage.setItem("userEmail", email);
       }
     } catch (error) {
       console.error("Failed to fetch user:", error);

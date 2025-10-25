@@ -1,5 +1,6 @@
 import { ConnectionStatus } from "@/components/connection-status";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationsBell } from "@/components/notifications-bell";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
@@ -38,6 +39,7 @@ export function PageLayout({ children, title, description, actions }: PageLayout
         <div className="flex items-center gap-3">
           {actions}
           <ConnectionStatus connected={isConnected} />
+          <NotificationsBell />
           <ThemeToggle />
           <Button
             variant="ghost"

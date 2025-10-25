@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp } from "lucide-react";
+import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -8,10 +8,19 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ChevronDown } from "lucide-react";
 import logoUrl from "@assets/image_1761228744572.png";
 
 const menuItems = [
@@ -22,8 +31,19 @@ const menuItems = [
   },
   {
     title: "Orders",
-    url: "/orders",
     icon: Package,
+    items: [
+      {
+        title: "All Orders",
+        url: "/orders",
+        icon: List,
+      },
+      {
+        title: "Fulfil",
+        url: "/fulfil",
+        icon: PackageCheck,
+      },
+    ],
   },
   {
     title: "Analytics",
@@ -65,14 +85,42 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild data-testid={`link-${item.title.toLowerCase()}`}>
-                    <a href={item.url} className="hover-elevate">
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <Collapsible key={item.title} defaultOpen className="group/collapsible">
+                  <SidebarMenuItem>
+                    {item.items ? (
+                      <>
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton data-testid={`link-${item.title.toLowerCase()}`}>
+                            <item.icon className="h-4 w-4" />
+                            <span>{item.title}</span>
+                            <ChevronDown className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {item.items.map((subItem) => (
+                              <SidebarMenuSubItem key={subItem.title}>
+                                <SidebarMenuSubButton asChild data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                                  <a href={subItem.url} className="hover-elevate">
+                                    <subItem.icon className="h-4 w-4" />
+                                    <span>{subItem.title}</span>
+                                  </a>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </>
+                    ) : (
+                      <SidebarMenuButton asChild data-testid={`link-${item.title.toLowerCase()}`}>
+                        <a href={item.url} className="hover-elevate">
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </a>
+                      </SidebarMenuButton>
+                    )}
+                  </SidebarMenuItem>
+                </Collapsible>
               ))}
             </SidebarMenu>
           </SidebarGroupContent>

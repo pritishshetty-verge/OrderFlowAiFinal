@@ -28,6 +28,8 @@ import {
   type InsertAttendance,
   type Call,
   type InsertCall,
+  type Notification,
+  type InsertNotification,
   users,
   invites,
   customers,
@@ -41,6 +43,7 @@ import {
   shopifyCredentials,
   attendance,
   calls,
+  notifications,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -76,12 +79,18 @@ export interface IStorage {
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
   listOrders(filters?: {
     status?: string;
+    callStatus?: string;
     paymentMethod?: string;
     assignedTo?: string;
     limit?: number;
     offset?: number;
   }): Promise<{ orders: Order[]; total: number }>;
   assignOrder(orderId: string, userId: string): Promise<Order | undefined>;
+  
+  // Call Status Actions
+  confirmOrder(orderId: string, userId: string, notes?: string): Promise<Order | undefined>;
+  cancelOrder(orderId: string, userId: string, reason: string, notes?: string): Promise<Order | undefined>;
+  scheduleFollowup(orderId: string, userId: string, followupAt: Date, notes?: string): Promise<Order | undefined>;
 
   // Order Items
   getOrderItems(orderId: string): Promise<OrderItem[]>;
@@ -134,6 +143,14 @@ export interface IStorage {
   createCall(call: InsertCall): Promise<Call>;
   getCallsByOrderId(orderId: string): Promise<Call[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
+
+  // Notifications
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  getUserNotifications(userId: string, unreadOnly?: boolean): Promise<Notification[]>;
+  markNotificationAsRead(id: string): Promise<Notification | undefined>;
+  markAllNotificationsAsRead(userId: string): Promise<void>;
+  getUnreadNotificationCount(userId: string): Promise<number>;
+  getDueFollowups(): Promise<Order[]>; // Get orders with followup_at <= now and not notified yet
 }
 
 export class DbStorage implements IStorage {
@@ -328,6 +345,7 @@ export class DbStorage implements IStorage {
 
   async listOrders(filters?: {
     status?: string;
+    callStatus?: string;
     paymentMethod?: string;
     assignedTo?: string;
     limit?: number;
@@ -335,6 +353,7 @@ export class DbStorage implements IStorage {
   }): Promise<{ orders: Order[]; total: number }> {
     const conditions = [];
     if (filters?.status) conditions.push(eq(orders.status, filters.status));
+    if (filters?.callStatus) conditions.push(eq(orders.callStatus, filters.callStatus));
     if (filters?.paymentMethod)
       conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
     if (filters?.assignedTo)
@@ -375,6 +394,57 @@ export class DbStorage implements IStorage {
       .set({
         assignedTo: userId,
         assignedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return order;
+  }
+
+  // Call Status Actions
+  async confirmOrder(orderId: string, userId: string, notes?: string): Promise<Order | undefined> {
+    const [order] = await db
+      .update(orders)
+      .set({
+        callStatus: 'Confirmed',
+        confirmedAt: new Date(),
+        confirmedBy: userId,
+        confirmedNotes: notes,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return order;
+  }
+
+  async cancelOrder(orderId: string, userId: string, reason: string, notes?: string): Promise<Order | undefined> {
+    const [order] = await db
+      .update(orders)
+      .set({
+        callStatus: 'Cancelled',
+        cancelledAt: new Date(),
+        cancelledBy: userId,
+        cancelledReason: reason,
+        cancelledNotes: notes,
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+    return order;
+  }
+
+  async scheduleFollowup(orderId: string, userId: string, followupAt: Date, notes?: string): Promise<Order | undefined> {
+    // Get current order to increment follow up attempts
+    const currentOrder = await this.getOrder(orderId);
+    const currentAttempts = currentOrder?.followUpAttempts || 0;
+
+    const [order] = await db
+      .update(orders)
+      .set({
+        callStatus: 'Follow Up',
+        followupAt,
+        followupNotes: notes,
+        followUpAttempts: currentAttempts + 1,
         updatedAt: new Date(),
       })
       .where(eq(orders.id, orderId))
@@ -779,6 +849,74 @@ export class DbStorage implements IStorage {
       .from(calls)
       .where(eq(calls.agentId, agentId))
       .orderBy(desc(calls.calledAt));
+  }
+
+  // ============================================================================
+  // NOTIFICATIONS
+  // ============================================================================
+
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const [created] = await db
+      .insert(notifications)
+      .values(notification)
+      .returning();
+    return created;
+  }
+
+  async getUserNotifications(userId: string, unreadOnly: boolean = false): Promise<Notification[]> {
+    const conditions = [eq(notifications.userId, userId)];
+    
+    if (unreadOnly) {
+      conditions.push(eq(notifications.isRead, false));
+    }
+
+    return await db
+      .select()
+      .from(notifications)
+      .where(and(...conditions))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+    const [updated] = await db
+      .update(notifications)
+      .set({ isRead: true, readAt: new Date() })
+      .where(eq(notifications.id, id))
+      .returning();
+    return updated;
+  }
+
+  async markAllNotificationsAsRead(userId: string): Promise<void> {
+    await db
+      .update(notifications)
+      .set({ isRead: true, readAt: new Date() })
+      .where(and(
+        eq(notifications.userId, userId),
+        eq(notifications.isRead, false)
+      ));
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const result = await db
+      .select({ count: count() })
+      .from(notifications)
+      .where(and(
+        eq(notifications.userId, userId),
+        eq(notifications.isRead, false)
+      ));
+    return result[0]?.count || 0;
+  }
+
+  async getDueFollowups(): Promise<Order[]> {
+    // Get orders that have a follow-up scheduled and it's due now
+    const now = new Date();
+    return await db
+      .select()
+      .from(orders)
+      .where(and(
+        lte(orders.followupAt, now),
+        eq(orders.callStatus, "Follow Up")
+      ));
   }
 }
 

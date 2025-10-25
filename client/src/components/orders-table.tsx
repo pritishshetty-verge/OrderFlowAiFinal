@@ -8,20 +8,14 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
+import { CallStatusActions } from "@/components/call-status-actions";
 import { Phone, UserPlus, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 export interface Order {
@@ -69,15 +63,8 @@ export function OrdersTable({
   const allSelected = orders.length > 0 && selectedOrders.size === orders.length;
   const someSelected = selectedOrders.size > 0 && !allSelected;
 
-  // Fetch current user's real ID from database
-  const userEmail = localStorage.getItem("userEmail");
-  const { data: users } = useQuery<any[]>({
-    queryKey: ["/api/users"],
-    enabled: !!userEmail,
-  });
-
-  const currentUser = users?.find(u => u.email === userEmail);
-  const currentUserId = currentUser?.id;
+  // Get current user ID from localStorage (set during login)
+  const currentUserId = localStorage.getItem("userId");
 
   // Mutation to initiate call
   const initiateCallMutation = useMutation({
@@ -137,6 +124,134 @@ export function OrdersTable({
     },
   });
 
+  // Mutation to confirm order
+  const confirmOrderMutation = useMutation({
+    mutationFn: async ({ orderId, notes }: { orderId: string; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/confirm`, { 
+        userId: currentUserId, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({
+        title: "Order confirmed",
+        description: "The order has been successfully confirmed.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to confirm order. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation to cancel order
+  const cancelOrderMutation = useMutation({
+    mutationFn: async ({ orderId, reason, notes }: { orderId: string; reason: string; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/cancel`, { 
+        userId: currentUserId, 
+        reason, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({
+        title: "Order cancelled",
+        description: "The order has been successfully cancelled.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to cancel order. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation to schedule followup
+  const followupOrderMutation = useMutation({
+    mutationFn: async ({ orderId, followupAt, notes }: { orderId: string; followupAt: Date; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/followup`, { 
+        userId: currentUserId, 
+        followupAt, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({
+        title: "Follow-up scheduled",
+        description: "The follow-up has been successfully scheduled.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to schedule follow-up. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleCallCustomer = (order: Order) => {
     if (!currentUserId) {
       toast({
@@ -177,19 +292,17 @@ export function OrdersTable({
     setSelectedOrders(newSelected);
   };
 
-  const getCallStatusColor = (status: string) => {
-    switch (status) {
-      case "Confirmed":
-        return "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800";
-      case "Pending":
-        return "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800";
-      case "Follow Up":
-        return "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400 dark:border-yellow-800";
-      case "Cancelled":
-        return "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800";
-      default:
-        return "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 dark:border-purple-800";
-    }
+  // Handler functions for CallStatusActions
+  const handleConfirmOrder = async (orderId: string, notes?: string) => {
+    await confirmOrderMutation.mutateAsync({ orderId, notes });
+  };
+
+  const handleCancelOrder = async (orderId: string, reason: string, notes?: string) => {
+    await cancelOrderMutation.mutateAsync({ orderId, reason, notes });
+  };
+
+  const handleFollowupOrder = async (orderId: string, followupAt: Date, notes?: string) => {
+    await followupOrderMutation.mutateAsync({ orderId, followupAt, notes });
   };
 
   return (
@@ -256,23 +369,15 @@ export function OrdersTable({
                 <PaymentBadge method={order.paymentMethod} />
               </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
-                <Select
-                  value={order.callStatus || "Pending"}
-                  onValueChange={(value) => onCallStatusChange?.(order.id, value)}
-                >
-                  <SelectTrigger 
-                    className={`h-8 w-[140px] rounded-full border text-xs font-medium ${getCallStatusColor(order.callStatus || "Pending")}`}
-                    data-testid={`select-call-status-${order.id}`}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Confirmed">Confirmed</SelectItem>
-                    <SelectItem value="Cancelled">Cancelled</SelectItem>
-                    <SelectItem value="Follow Up">Follow Up</SelectItem>
-                  </SelectContent>
-                </Select>
+                <CallStatusActions
+                  orderId={order.id}
+                  orderNumber={order.shopifyOrderId}
+                  currentStatus={order.callStatus}
+                  onConfirm={handleConfirmOrder}
+                  onCancel={handleCancelOrder}
+                  onFollowup={handleFollowupOrder}
+                  disabled={confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending}
+                />
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">
                 {formatDistanceToNow(order.createdAt, { addSuffix: true })}

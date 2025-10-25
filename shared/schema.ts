@@ -198,6 +198,20 @@ export const orders = pgTable("orders", {
   financialStatus: text("financial_status"), // Shopify financial status
   paymentMethod: text("payment_method").notNull(), // prepaid, cod
   
+  // Call status tracking
+  confirmedAt: timestamp("confirmed_at"),
+  confirmedBy: varchar("confirmed_by").references(() => users.id),
+  confirmedNotes: text("confirmed_notes"),
+  
+  cancelledAt: timestamp("cancelled_at"),
+  cancelledBy: varchar("cancelled_by").references(() => users.id),
+  cancelledReason: text("cancelled_reason"),
+  cancelledNotes: text("cancelled_notes"),
+  
+  followupAt: timestamp("followup_at"),
+  followupNotes: text("followup_notes"),
+  followUpAttempts: integer("follow_up_attempts").default(0),
+  
   // Amounts
   totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
@@ -455,3 +469,28 @@ export const insertCallSchema = createInsertSchema(calls).omit({
 
 export type InsertCall = z.infer<typeof insertCallSchema>;
 export type Call = typeof calls.$inferSelect;
+
+// ============================================================================
+// NOTIFICATIONS (In-app notifications for follow-ups and alerts)
+// ============================================================================
+
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id").references(() => orders.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // followup_reminder, order_assigned, status_change
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
+  readAt: timestamp("read_at"),
+  actionUrl: text("action_url"), // URL to navigate when clicked
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;

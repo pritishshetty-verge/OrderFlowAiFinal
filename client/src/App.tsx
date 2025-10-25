@@ -9,6 +9,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import OrdersPage from "@/pages/orders";
+import FulfilPage from "@/pages/fulfil";
 import AnalyticsPage from "@/pages/analytics";
 import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
@@ -45,6 +46,9 @@ function Router() {
       </Route>
       <Route path="/orders">
         {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole} />} />}
+      </Route>
+      <Route path="/fulfil">
+        {() => <ProtectedRoute component={FulfilPage} />}
       </Route>
       <Route path="/analytics">
         {() => <ProtectedRoute component={AnalyticsPage} />}

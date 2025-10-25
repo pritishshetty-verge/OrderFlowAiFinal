@@ -336,6 +336,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // CALL STATUS ACTIONS API
+  // ============================================================================
+
+  // Confirm order (moves to Fulfil section)
+  app.post("/api/orders/:id/confirm", async (req, res) => {
+    try {
+      const { userId, notes } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const order = await storage.confirmOrder(req.params.id, userId, notes);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Create order status history entry
+      await storage.createOrderStatus({
+        orderId: req.params.id,
+        status: 'confirmed',
+        changedBy: userId,
+        note: notes || `Order confirmed${notes ? ': ' + notes : ''}`,
+      });
+
+      res.json({ success: true, order });
+    } catch (error) {
+      console.error("Error confirming order:", error);
+      res.status(500).json({ error: "Failed to confirm order" });
+    }
+  });
+
+  // Cancel order with reason
+  app.post("/api/orders/:id/cancel", async (req, res) => {
+    try {
+      const { userId, reason, notes } = req.body;
+
+      if (!userId || !reason) {
+        return res.status(400).json({ error: "userId and reason are required" });
+      }
+
+      const order = await storage.cancelOrder(req.params.id, userId, reason, notes);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Create order status history entry
+      await storage.createOrderStatus({
+        orderId: req.params.id,
+        status: 'cancelled',
+        changedBy: userId,
+        note: `Order cancelled: ${reason}${notes ? ' - ' + notes : ''}`,
+      });
+
+      res.json({ success: true, order });
+    } catch (error) {
+      console.error("Error cancelling order:", error);
+      res.status(500).json({ error: "Failed to cancel order" });
+    }
+  });
+
+  // Schedule follow-up for order
+  app.post("/api/orders/:id/followup", async (req, res) => {
+    try {
+      const { userId, followupAt, notes } = req.body;
+
+      if (!userId || !followupAt) {
+        return res.status(400).json({ error: "userId and followupAt are required" });
+      }
+
+      const followupDate = new Date(followupAt);
+      const order = await storage.scheduleFollowup(req.params.id, userId, followupDate, notes);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Create order status history entry
+      await storage.createOrderStatus({
+        orderId: req.params.id,
+        status: 'followup_scheduled',
+        changedBy: userId,
+        note: `Follow-up scheduled for ${followupDate.toLocaleString()}${notes ? ': ' + notes : ''}`,
+      });
+
+      res.json({ success: true, order });
+    } catch (error) {
+      console.error("Error scheduling follow-up:", error);
+      res.status(500).json({ error: "Failed to schedule follow-up" });
+    }
+  });
+
+  // ============================================================================
   // SHOPIFY SYNC API
   // ============================================================================
 
@@ -721,6 +813,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   // USERS API
   // ============================================================================
+
+  // Get current authenticated user
+  app.get("/api/me", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      res.json(req.user);
+    } catch (error) {
+      console.error("Error fetching current user:", error);
+      res.status(500).json({ error: "Failed to fetch current user" });
+    }
+  });
+
+  // Get user by email (public endpoint for login)
+  app.get("/api/users/by-email/:email", async (req, res) => {
+    try {
+      const user = await storage.getUserByEmail(req.params.email);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      // Return only safe user info (no sensitive data)
+      res.json({
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        isActive: user.isActive,
+      });
+    } catch (error) {
+      console.error("Error fetching user by email:", error);
+      res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
 
   app.get("/api/users", async (req, res) => {
     try {
@@ -1627,6 +1753,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch unread count" });
     }
   });
+
+  // ============================================================================
+  // NOTIFICATIONS API
+  // ============================================================================
+
+  // Get all notifications for the logged-in user
+  app.get("/api/notifications", async (req, res) => {
+    try {
+      const userId = req.query.userId as string;
+      if (!userId) {
+        return res.status(400).json({ error: "userId query parameter is required" });
+      }
+
+      const unreadOnly = req.query.unreadOnly === "true";
+      
+      const notifications = await storage.getUserNotifications(userId, unreadOnly);
+      res.json(notifications);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ error: "Failed to fetch notifications" });
+    }
+  });
+
+  // Get count of unread notifications
+  app.get("/api/notifications/unread-count", async (req, res) => {
+    try {
+      const userId = req.query.userId as string;
+      if (!userId) {
+        return res.status(400).json({ error: "userId query parameter is required" });
+      }
+
+      const count = await storage.getUnreadNotificationCount(userId);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error fetching unread notification count:", error);
+      res.status(500).json({ error: "Failed to fetch unread notification count" });
+    }
+  });
+
+  // Mark a notification as read
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    try {
+
+      const notification = await storage.markNotificationAsRead(req.params.id);
+      if (!notification) {
+        return res.status(404).json({ error: "Notification not found" });
+      }
+
+      res.json(notification);
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+      res.status(500).json({ error: "Failed to mark notification as read" });
+    }
+  });
+
+  // Mark all user's notifications as read
+  app.patch("/api/notifications/read-all", async (req, res) => {
+    try {
+      const userId = req.body.userId as string;
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required in request body" });
+      }
+
+      await storage.markAllNotificationsAsRead(userId);
+      res.json({ message: "All notifications marked as read" });
+    } catch (error) {
+      console.error("Error marking all notifications as read:", error);
+      res.status(500).json({ error: "Failed to mark all notifications as read" });
+    }
+  });
+
+  // ============================================================================
+  // BACKGROUND TASKS
+  // ============================================================================
+
+  // Background checker for due follow-ups
+  const notifiedFollowups = new Set<string>();
+
+  async function checkDueFollowups() {
+    try {
+      const dueOrders = await storage.getDueFollowups();
+      
+      for (const order of dueOrders) {
+        const followupKey = `${order.id}-${order.followupAt?.getTime()}`;
+        
+        if (!notifiedFollowups.has(followupKey)) {
+          await storage.createNotification({
+            userId: order.assignedTo!,
+            orderId: order.id,
+            type: "followup_reminder",
+            title: "Follow-up Reminder",
+            message: `Order #${order.shopifyOrderId} follow-up is due`,
+            actionUrl: "/orders",
+            isRead: false,
+          });
+          
+          notifiedFollowups.add(followupKey);
+        }
+      }
+    } catch (error) {
+      console.error("Error checking due follow-ups:", error);
+    }
+  }
+
+  // Run follow-up checker every 60 seconds
+  setInterval(checkDueFollowups, 60000);
+
+  // Run immediately on startup
+  checkDueFollowups();
 
   const httpServer = createServer(app);
 

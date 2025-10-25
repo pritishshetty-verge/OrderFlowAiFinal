@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CallStatusActions } from "@/components/call-status-actions";
 import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
@@ -80,6 +81,143 @@ export function OrderQuickPreview({
     },
   });
 
+  // Get current user ID from localStorage (set during login)
+  const currentUserId = localStorage.getItem("userId");
+
+  // Mutation to confirm order
+  const confirmOrderMutation = useMutation({
+    mutationFn: async ({ orderId, notes }: { orderId: string; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/confirm`, { 
+        userId: currentUserId, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      if (!order?.id) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", order.id] });
+      toast({
+        title: "Order confirmed",
+        description: "The order has been successfully confirmed.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to confirm order. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation to cancel order
+  const cancelOrderMutation = useMutation({
+    mutationFn: async ({ orderId, reason, notes }: { orderId: string; reason: string; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/cancel`, { 
+        userId: currentUserId, 
+        reason, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      if (!order?.id) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", order.id] });
+      toast({
+        title: "Order cancelled",
+        description: "The order has been successfully cancelled.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to cancel order. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation to schedule followup
+  const followupOrderMutation = useMutation({
+    mutationFn: async ({ orderId, followupAt, notes }: { orderId: string; followupAt: Date; notes?: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/followup`, { 
+        userId: currentUserId, 
+        followupAt, 
+        notes 
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      if (!order?.id) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/orders", order.id] });
+      toast({
+        title: "Follow-up scheduled",
+        description: "The follow-up has been successfully scheduled.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to schedule follow-up. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Early return after all hooks
   if (!order) return null;
 
@@ -103,6 +241,19 @@ export function OrderQuickPreview({
   const handleRemoveTag = (tagToRemove: string) => {
     const updatedTags = currentTags.filter((tag) => tag !== tagToRemove);
     updateTagsMutation.mutate(updatedTags);
+  };
+
+  // Handler functions for CallStatusActions
+  const handleConfirmOrder = async (orderId: string, notes?: string) => {
+    await confirmOrderMutation.mutateAsync({ orderId, notes });
+  };
+
+  const handleCancelOrder = async (orderId: string, reason: string, notes?: string) => {
+    await cancelOrderMutation.mutateAsync({ orderId, reason, notes });
+  };
+
+  const handleFollowupOrder = async (orderId: string, followupAt: Date, notes?: string) => {
+    await followupOrderMutation.mutateAsync({ orderId, followupAt, notes });
   };
 
   const getTagColor = (index: number) => {
@@ -186,6 +337,22 @@ export function OrderQuickPreview({
                 {order.status}
               </Badge>
             </div>
+          </div>
+
+          <Separator />
+
+          {/* Call Status Section */}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Call Status</p>
+            <CallStatusActions
+              orderId={order.id}
+              orderNumber={order.shopifyOrderId}
+              currentStatus={order.callStatus}
+              onConfirm={handleConfirmOrder}
+              onCancel={handleCancelOrder}
+              onFollowup={handleFollowupOrder}
+              disabled={confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending}
+            />
           </div>
 
           <Separator />
