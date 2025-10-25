@@ -17,6 +17,7 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("agent"), // admin, manager, agent
   department: text("department").default("Operations"),
   employeeId: text("employee_id").unique(),
+  agentExtension: varchar("agent_extension", { length: 10 }), // IVR phone extension for agents
   presenceStatus: text("presence_status").notNull().default("present"), // present, onleave, inactive
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -31,6 +32,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
   phone: true,
   role: true,
   department: true,
+  agentExtension: true,
 });
 
 export const updateUserSchema = createInsertSchema(users).pick({
@@ -41,6 +43,7 @@ export const updateUserSchema = createInsertSchema(users).pick({
   role: true,
   department: true,
   employeeId: true,
+  agentExtension: true,
   presenceStatus: true,
   isActive: true,
 }).partial();
