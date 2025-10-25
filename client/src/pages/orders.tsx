@@ -102,8 +102,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return ordersResponse.orders.map((order) => transformOrder(order, usersData));
   }, [ordersResponse, usersData]);
 
-  // Get current user ID for agent filtering
-  const currentUserId = localStorage.getItem("userId");
+  // Get current user's real ID from database for agent filtering
+  const userEmail = localStorage.getItem("userEmail");
+  const currentUser = usersData?.find(u => u.email === userEmail);
+  const currentUserId = currentUser?.id;
 
   // Apply filters to orders
   const filteredOrders = useMemo(() => {

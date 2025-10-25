@@ -17,9 +17,12 @@ import {
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
-import { Phone, UserPlus } from "lucide-react";
+import { Phone, UserPlus, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export interface Order {
   id: string;
@@ -57,9 +60,102 @@ export function OrdersTable({
   onAssignOrder,
   onCallStatusChange,
 }: OrdersTableProps) {
+  const { toast } = useToast();
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [callingOrderId, setCallingOrderId] = useState<string | null>(null);
+  const [cooldownOrders, setCooldownOrders] = useState<Set<string>>(new Set());
   const allSelected = orders.length > 0 && selectedOrders.size === orders.length;
   const someSelected = selectedOrders.size > 0 && !allSelected;
+
+  // Fetch current user's real ID from database
+  const userEmail = localStorage.getItem("userEmail");
+  const { data: users } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: !!userEmail,
+  });
+
+  const currentUser = users?.find(u => u.email === userEmail);
+  const currentUserId = currentUser?.id;
+
+  // Mutation to initiate call
+  const initiateCallMutation = useMutation({
+    mutationFn: async ({ userId, orderId, customerPhone }: { userId: string; orderId: string; customerPhone: string }) => {
+      const res = await apiRequest("POST", "/api/calls/initiate", { userId, orderId, customerPhone });
+      const data = await res.json();
+      return data;
+    },
+    onSuccess: (data, variables) => {
+      toast({
+        title: "Call initiated!",
+        description: "Your phone will ring shortly.",
+      });
+      setCallingOrderId(null);
+      
+      // Add to cooldown set
+      setCooldownOrders(prev => new Set(prev).add(variables.orderId));
+      
+      // Remove from cooldown after 5 seconds
+      setTimeout(() => {
+        setCooldownOrders(prev => {
+          const next = new Set(prev);
+          next.delete(variables.orderId);
+          return next;
+        });
+      }, 5000);
+    },
+    onError: (error: any, variables) => {
+      let errorMessage = "Failed to initiate call. Please try again.";
+      
+      // Extract error message from various error formats
+      if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.message) {
+        // Error thrown by apiRequest contains full response text
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      } else if (error?.error) {
+        errorMessage = error.error;
+      }
+      
+      toast({
+        title: "Call failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+      setCallingOrderId(null);
+    },
+  });
+
+  const handleCallCustomer = (order: Order) => {
+    if (!currentUserId) {
+      toast({
+        title: "Authentication required",
+        description: "Please log in to make calls.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (callingOrderId || cooldownOrders.has(order.id)) {
+      return;
+    }
+
+    setCallingOrderId(order.id);
+    initiateCallMutation.mutate({
+      userId: currentUserId,
+      orderId: order.id,
+      customerPhone: order.customerPhone,
+    });
+  };
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -185,11 +281,16 @@ export function OrdersTable({
                       size="icon"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onCallCustomer?.(order);
+                        handleCallCustomer(order);
                       }}
+                      disabled={callingOrderId === order.id || cooldownOrders.has(order.id)}
                       data-testid={`button-call-${order.id}`}
                     >
-                      <Phone className="h-4 w-4" />
+                      {callingOrderId === order.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Phone className="h-4 w-4" />
+                      )}
                     </Button>
                   )}
                   {userRole !== "agent" && !order.assignedTo && (
