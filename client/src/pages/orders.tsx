@@ -278,6 +278,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                   onViewDetails={handleViewDetails}
                   onAssignOrder={handleAssignOrder}
                   onCallStatusChange={handleCallStatusChange}
+                  showAgentColumn={false}
                 />
               )}
             </div>
