@@ -1020,6 +1020,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           success: false, 
           error: ivrData.message || "Invalid call parameters. Please check phone number and extension." 
         });
+      } else if (ivrResponse.status === 404) {
+        // Extension not found - but auth worked
+        console.log("IVR extension config issue:", { 
+          status: 404, 
+          message: "Extension may need configuration in IVR dashboard",
+          data: ivrData,
+          extension: user.agentExtension 
+        });
+        return res.status(400).json({ 
+          success: false, 
+          error: ivrData.message || `Extension ${user.agentExtension} may need to be configured in your IVR Solutions account. Please verify in IVR dashboard.` 
+        });
       } else if (ivrResponse.status === 405) {
         // Access denied (authentication issue)
         console.error("IVR API access denied:", { 
@@ -1175,6 +1187,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
             statusCode: 400,
             response: ivrData,
             note: "400 error is expected when using test phone number. Your credentials are working correctly."
+          }
+        });
+      } else if (ivrResponse.status === 404) {
+        // Extension or resource not found - auth worked but config issue
+        return res.json({
+          success: true,  // Auth worked, just need config
+          ...credentialsInfo,
+          connectionTest: {
+            status: "extension_invalid",
+            message: "Authentication successful! Extension needs configuration",
+            statusCode: 404,
+            response: ivrData,
+            note: "Your API credentials are working correctly. The extension may need to be configured in your IVR Solutions account.",
+            possibleCauses: [
+              "Extension not configured in IVR Solutions account",
+              "DID number doesn't have this extension assigned",
+              "Extension format mismatch (check IVR dashboard)"
+            ],
+            nextSteps: [
+              "Log into IVR Solutions dashboard",
+              "Verify extensions are configured for DID: " + did,
+              "Test with a real customer call - it may work despite this message"
+            ]
           }
         });
       } else if (ivrResponse.status === 405) {
