@@ -124,11 +124,28 @@ A simplified three-status workflow for systematic customer verification: **Confi
 - Shows order details with confirmation timestamps
 - Accessible via sidebar: Orders > Fulfil
 
-### Agent Filtering
-- Agents see only orders assigned to them (`assignedTo = userId`)
-- Orders page defaults to showing all assigned orders (activeTab = "all")
-- Progress bar "Total Orders" counts all orders visible to the user
-- Agents cannot take actions on unassigned orders
+### Orders Page Filtering Logic
+
+**Base Filter (applies to all tabs):**
+- **Agents**: See ONLY orders assigned to them (`assignedTo = userId`)
+- **Admins**: See ALL orders (no assignedTo filter)
+
+**Tab Filters (applied on top of base filter):**
+1. **"All Orders"** (default): Shows all base-filtered orders, no call_status filter
+2. **"Pending"**: Shows orders where `callStatus = "Pending" OR callStatus IS NULL`
+3. **"Confirmed"**: Shows orders where `callStatus = "Confirmed"`
+4. **"Cancelled"**: Shows orders where `callStatus = "Cancelled"`
+5. **"Follow Up"**: Shows orders where `callStatus = "Follow Up"`
+
+**Progress Bar:**
+- Counts are calculated from base-filtered orders (respects agent/admin role)
+- "Total Orders" shows total count of orders visible to current user
+- Each status count includes only orders matching that call status
+
+**Important Notes:**
+- Default active tab is "All Orders" so users see all their assigned orders immediately
+- Agents cannot take actions on orders not assigned to them
+- Fulfil page shows ALL confirmed orders from ALL agents (not filtered by assignedTo)
 
 ### Recent Fixes (October 2025)
 1. **Authentication**: Created public `/api/users/by-email/:email` endpoint for login, updated all components to use localStorage userId
