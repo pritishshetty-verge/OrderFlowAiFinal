@@ -146,7 +146,31 @@ export const insertInviteSchema = createInsertSchema(invites).pick({
   role: z.enum(["admin", "agent"]).default("agent"),
   adminType: z.enum(["full_control", "partial_control"]).optional(),
   permissions: z.record(z.any()).optional(),
-});
+}).refine(
+  (data) => {
+    // If role is admin, adminType must be provided
+    if (data.role === "admin" && !data.adminType) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: "Admin type is required for admin users",
+    path: ["adminType"],
+  }
+).refine(
+  (data) => {
+    // If role is admin and adminType is partial_control, permissions must be provided
+    if (data.role === "admin" && data.adminType === "partial_control" && !data.permissions) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: "Permissions are required for partial control admins",
+    path: ["permissions"],
+  }
+);
 
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
 export type Invite = typeof invites.$inferSelect;

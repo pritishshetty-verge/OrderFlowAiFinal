@@ -24,14 +24,18 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil } from "lucide-react";
-import type { User, Order as BackendOrder } from "@shared/schema";
+import type { User, Order as BackendOrder, AdminPermissions } from "@shared/schema";
+import { DEFAULT_MANAGER_PERMISSIONS } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PermissionChecklist } from "@/components/permission-checklist";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 interface TeamMember {
   id: string;
   name: string;
-  role: "admin" | "manager" | "agent";
+  role: "admin" | "agent";
+  adminType?: "full_control" | "partial_control";
   email: string;
   phone: string;
   agentExtension?: string;
@@ -42,16 +46,42 @@ interface TeamMember {
 }
 
 interface TeamDirectoryProps {
-  userRole: "admin" | "manager" | "agent";
+  userRole: "admin" | "agent";
 }
 
-// Invite user form schema
+// Invite user form schema with conditional validation
 const inviteUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
-  role: z.enum(["admin", "manager", "agent"]).default("agent"),
-});
+  role: z.enum(["admin", "agent"]).default("agent"),
+  adminType: z.enum(["full_control", "partial_control"]).optional(),
+  permissions: z.record(z.any()).optional(),
+}).refine(
+  (data) => {
+    // If role is admin, adminType must be provided
+    if (data.role === "admin" && !data.adminType) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: "Admin type is required for admin users",
+    path: ["adminType"],
+  }
+).refine(
+  (data) => {
+    // If role is admin and adminType is partial_control, permissions must be provided
+    if (data.role === "admin" && data.adminType === "partial_control" && !data.permissions) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: "Permissions are required for partial control admins",
+    path: ["permissions"],
+  }
+);
 
 type InviteUserFormData = z.infer<typeof inviteUserSchema>;
 
@@ -258,8 +288,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     switch (role) {
       case "admin":
         return "default";
-      case "manager":
-        return "secondary";
       case "agent":
         return "outline";
     }
@@ -290,7 +318,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
             {teamMembers.length} total members
           </p>
         </div>
-        {(userRole === "admin" || userRole === "manager") && (
+        {userRole === "admin" && (
           <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-member">
             <UserPlus className="h-4 w-4 mr-2" />
             Invite User
@@ -349,7 +377,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         {member.agentExtension ? `Ext ${member.agentExtension}` : "No extension"}
                       </span>
                     </div>
-                    {(userRole === "admin" || userRole === "manager") && (
+                    {userRole === "admin" && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -398,7 +426,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 >
                   Call
                 </Button>
-                {(userRole === "admin" || userRole === "manager") && (
+                {userRole === "admin" && (
                   <Button
                     variant="outline"
                     size="sm"
