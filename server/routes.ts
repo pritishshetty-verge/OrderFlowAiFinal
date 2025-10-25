@@ -950,12 +950,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Call IVR Solutions API
       const ivrApiUrl = "https://api.ivrsolutions.in/api/c2c_post";
       
-      // Request body - only did, ext_no, and phone (token goes in header)
-      const ivrPayload = {
-        did: process.env.IVR_DID_NUMBER,
+      // Format request body as URL-encoded form data (required by IVR Solutions API)
+      const formData = new URLSearchParams({
+        did: process.env.IVR_DID_NUMBER!,
         ext_no: user.agentExtension,
         phone: customerPhone,
-      };
+      });
 
       console.log("Initiating IVR call:", { 
         orderId, 
@@ -964,16 +964,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         did: process.env.IVR_DID_NUMBER,
         url: ivrApiUrl,
         hasToken: !!process.env.IVR_API_TOKEN,
-        tokenLength: process.env.IVR_API_TOKEN?.length || 0
+        tokenLength: process.env.IVR_API_TOKEN?.length || 0,
+        contentType: "application/x-www-form-urlencoded"
       });
 
       const ivrResponse = await fetch(ivrApiUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
           "Authorization": `Bearer ${process.env.IVR_API_TOKEN}`,
         },
-        body: JSON.stringify(ivrPayload),
+        body: formData.toString(),
       });
 
       const ivrData = await ivrResponse.json();
@@ -984,9 +985,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         statusText: ivrResponse.statusText,
         data: ivrData,
         requestPayload: {
-          did: ivrPayload.did,
-          ext_no: ivrPayload.ext_no,
-          phone: ivrPayload.phone
+          did: process.env.IVR_DID_NUMBER,
+          ext_no: user.agentExtension,
+          phone: customerPhone
         },
         maskedToken: process.env.IVR_API_TOKEN?.substring(0, 8) + "...",
         headers: {
@@ -1120,27 +1121,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Make a test API call to validate credentials
       const ivrApiUrl = "https://api.ivrsolutions.in/api/c2c_post";
       
-      // Use a test phone number that won't actually call
-      const testPayload = {
+      // Format as URL-encoded form data (required by IVR Solutions API)
+      const formData = new URLSearchParams({
         did: did,
         ext_no: testAgent?.agentExtension || "101",
         phone: "0000000000", // Invalid test number
-      };
+      });
 
       console.log("🧪 Testing IVR credentials:", {
         url: ivrApiUrl,
         maskedToken,
         did,
-        testExtension: testPayload.ext_no
+        testExtension: testAgent?.agentExtension || "101",
+        contentType: "application/x-www-form-urlencoded"
       });
 
       const ivrResponse = await fetch(ivrApiUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
           "Authorization": `Bearer ${token}`,
         },
-        body: JSON.stringify(testPayload),
+        body: formData.toString(),
       });
 
       const ivrData = await ivrResponse.json();
