@@ -104,6 +104,9 @@ export async function handleOrderCreated(req: Request, res: Response) {
                   rawPaymentMethod.toLowerCase() === "cash on delivery";
     const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
 
+    // Extract shipment status from fulfillments
+    const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
+
     // Create order
     const orderData: InsertOrder = {
       shopifyOrderId: shopifyOrder.id.toString(),
@@ -112,7 +115,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       customerName: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() || shopifyOrder.billing_address?.name || "Guest",
       customerEmail: shopifyOrder.email || null,
       customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
-      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status),
+      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, shipmentStatus),
       fulfillmentStatus: shopifyOrder.fulfillment_status || null,
       fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
       financialStatus: shopifyOrder.financial_status || null,
@@ -135,7 +138,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       itemsSummary: shopifyOrder.line_items?.map((item: any) => item.name).join(", ") || null,
       assignedTo: null,
       assignedAt: null,
-      shipmentStatus: shopifyOrder.fulfillments?.[0]?.shipment_status || null,
+      shipmentStatus: shipmentStatus,
       rawShopifyData: shopifyOrder,
       shopifyCreatedAt: new Date(shopifyOrder.created_at),
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
@@ -247,10 +250,14 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       await storage.updateCustomer(existingOrder.customerId, customerData);
     }
 
+    // Extract shipment status from fulfillments
+    const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
+
     // Update order
     const newStatus = mapShopifyStatus(
       shopifyOrder.financial_status,
       shopifyOrder.fulfillment_status,
+      shipmentStatus,
     );
 
     const orderData: Partial<InsertOrder> = {
@@ -265,7 +272,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shippingAddress: shopifyOrder.shipping_address || null,
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
-      shipmentStatus: shopifyOrder.fulfillments?.[0]?.shipment_status || null,
+      shipmentStatus: shipmentStatus,
       rawShopifyData: shopifyOrder,
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
     };
@@ -357,15 +364,21 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 function mapShopifyStatus(
   financialStatus?: string,
   fulfillmentStatus?: string,
+  shipmentStatus?: string | null,
 ): string {
   // Cancelled is highest priority
   if (financialStatus === "refunded" || financialStatus === "voided") {
     return "Cancelled";
   }
 
+  // Only mark as Delivered if shipment is actually delivered
+  if (shipmentStatus === "delivered") {
+    return "Delivered";
+  }
+
   // Check fulfillment status
   if (fulfillmentStatus === "fulfilled") {
-    return "Delivered";
+    return "Shipped";
   }
   if (fulfillmentStatus === "partial") {
     return "Shipped";
