@@ -24,7 +24,13 @@ The system uses **PostgreSQL** via Neon with **Drizzle ORM**. Key tables include
 
 ### Authentication & Authorization
 
-A 2-role permission system (Admin and Agent) is used. Admins can be "Full Control" (unrestricted) or "Partial Control" (customizable permissions across Team Management, Order Management, Analytics & Reports, and System Settings). Permissions are stored as JSONB and validated server-side. An email-based team invite system with secure, expiring tokens allows role and permission assignment during onboarding. Security considerations include backend route protection, conditional validation, webhook signature verification, and planned session-based authentication with HTTP-only cookies and CSRF protection.
+A 2-role permission system (Admin and Agent) is used. Admins can be "Full Control" (unrestricted) or "Partial Control" (customizable permissions across Team Management, Order Management, Analytics & Reports, and System Settings). Permissions are stored as JSONB and validated server-side. 
+
+**Team Invite System**: A two-modal email-based invite flow with secure, expiring tokens:
+1. **Initial Invite Modal**: Captures basic information (email, name, role). Created via `POST /api/invites` with invitedBy field tracking the inviter.
+2. **Configure Permissions Modal**: Opens automatically for admin invites. Allows selection of admin type (Full/Partial Control) and granular permissions. Updates via `PATCH /api/invites/:id/permissions`.
+
+This separation provides a cleaner UX by deferring complex permission configuration until after the invite is sent. The login flow fetches real user data from the database to ensure invitedBy references are valid. Security considerations include backend route protection, conditional validation, permission-based access control, webhook signature verification, and planned session-based authentication with HTTP-only cookies and CSRF protection.
 
 ### Real-Time Capabilities
 
