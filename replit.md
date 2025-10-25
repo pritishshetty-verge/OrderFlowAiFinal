@@ -74,8 +74,10 @@ Preferred communication style: Simple, everyday language.
 **Current Implementation:**
 - PostgreSQL database via Neon Serverless with WebSocket constructor for real-time capabilities
 - Drizzle ORM for schema definition and migrations
-- User table with UUID primary keys, username, password, first name, last name, and role fields
+- User table with UUID primary keys, username, password, first name, last name, role, and agent_extension fields
+  - **Agent Extension**: IVR phone extension field for agents (VARCHAR(10), nullable, unique across agents)
 - Invites table for managing team member invitation workflow with email, token, expiration, and status tracking
+- Orders, order items, customers, and supporting tables for full order management
 - Schema definitions in `shared/schema.ts` for type sharing between client and server
 
 **Planned Schema Extensions:**
@@ -170,12 +172,26 @@ Preferred communication style: Simple, everyday language.
 - Tailwind integration with CSS variables
 - Custom border radius and color system
 
-### Telephony Integration (Planned)
+### Telephony Integration
 
-**Providers:**
-- Twilio or Exotel for customer calling functionality
+**IVR Configuration:**
+- Environment variables for IVR integration:
+  - `IVR_API_TOKEN`: API token for IVR service authentication
+  - `IVR_DID_NUMBER`: DID number for outbound calling
+- Agent extensions stored in database (users.agent_extension field)
+- Admins/managers can assign extensions via Team Directory interface
+
+**Agent Extension Management:**
+- Each agent can have a unique phone extension (e.g., "101", "102")
+- Extensions displayed in team member cards in Team Directory
+- Edit dialog allows admins to set/update extensions
+- Backend validation ensures extensions are unique across all agents
+- Used for routing IVR calls to specific agents
+
+**Future Enhancements:**
 - Click-to-call from order details
 - Call logging and sentiment analysis
+- Integration with Twilio or Exotel for actual calling
 
 ### Styling & Design
 
