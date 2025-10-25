@@ -356,7 +356,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   </div>
                 </div>
                 <Badge variant={getRoleBadgeVariant(member.role)} className="capitalize">
-                  {member.role}
+                  {member.role === "admin" && member.adminType
+                    ? member.adminType === "full_control"
+                      ? "Full Control Admin"
+                      : "Partial Control Admin"
+                    : member.role}
                 </Badge>
               </div>
             </CardHeader>
