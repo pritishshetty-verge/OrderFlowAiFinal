@@ -153,3 +153,5 @@ A simplified three-status workflow for systematic customer verification: **Confi
 3. **Orders Page**: Fixed activeTab default from "assigned" to "all" so agents see all their orders
 4. **Progress Bar**: Fixed "Total Orders" count to show actual total instead of only assigned
 5. **Background Task**: Added check to skip notifications for unassigned orders (prevents null user_id errors)
+6. **Test Data Cleanup**: Removed 6 test orders, related items, history entries, and assignments from database
+7. **Order Assignment Fix**: Fixed AssignOrderDialog to include `assignedBy` field in assignment requests, resolving 400 error when admins assign orders from dashboard
