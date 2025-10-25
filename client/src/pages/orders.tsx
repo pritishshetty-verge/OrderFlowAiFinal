@@ -124,14 +124,14 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     // Progress step-based filtering
     if (activeTab === "assigned") {
       filtered = filtered.filter((order) => order.status === "assigned");
+    } else if (activeTab === "pending") {
+      filtered = filtered.filter((order) => order.callStatus === "Pending");
     } else if (activeTab === "confirmed") {
       filtered = filtered.filter((order) => order.callStatus === "Confirmed");
     } else if (activeTab === "cancelled") {
       filtered = filtered.filter((order) => order.callStatus === "Cancelled");
     } else if (activeTab === "followup") {
       filtered = filtered.filter((order) => order.callStatus === "Follow Up");
-    } else if (activeTab === "failed") {
-      filtered = filtered.filter((order) => order.status === "ndr");
     }
 
     if (searchQuery) {
@@ -207,6 +207,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         status: "assigned" as const,
       },
       {
+        label: "Pending",
+        count: allOrders.filter((o) => o.callStatus === "Pending").length,
+        status: "pending" as const,
+      },
+      {
         label: "Confirmed",
         count: allOrders.filter((o) => o.callStatus === "Confirmed").length,
         status: "confirmed" as const,
@@ -220,11 +225,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         label: "Follow-Up",
         count: allOrders.filter((o) => o.callStatus === "Follow Up").length,
         status: "followup" as const,
-      },
-      {
-        label: "Failed Delivery",
-        count: allOrders.filter((o) => o.status === "ndr").length,
-        status: "failed" as const,
       },
     ],
     [allOrders]

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 interface ProgressStep {
   label: string;
   count: number;
-  status: "assigned" | "confirmed" | "cancelled" | "followup" | "failed";
+  status: "assigned" | "pending" | "confirmed" | "cancelled" | "followup";
 }
 
 interface OrderProgressBarProps {
@@ -57,10 +57,10 @@ export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgre
                       className={cn(
                         "h-full rounded-full transition-all duration-200",
                         step.status === "assigned" && "bg-blue-500",
+                        step.status === "pending" && "bg-purple-500",
                         step.status === "confirmed" && "bg-green-500",
                         step.status === "cancelled" && "bg-gray-400",
-                        step.status === "followup" && "bg-amber-500",
-                        step.status === "failed" && "bg-red-500"
+                        step.status === "followup" && "bg-amber-500"
                       )}
                       style={{ width: `${fillPercentage}%` }}
                     />
