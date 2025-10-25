@@ -61,7 +61,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState("assigned");
+  const [activeTab, setActiveTab] = useState("all");
 
   // Fetch orders from backend with auto-refresh every 30 seconds
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
@@ -122,7 +122,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     }
 
     // Progress step-based filtering
-    if (activeTab === "assigned") {
+    if (activeTab === "all") {
+      // Show all orders, no additional filtering
+    } else if (activeTab === "assigned") {
       filtered = filtered.filter((order) => order.status === "assigned");
     } else if (activeTab === "pending") {
       filtered = filtered.filter((order) => order.callStatus === "Pending");
@@ -203,8 +205,8 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     () => [
       {
         label: "Total Orders",
-        count: allOrders.filter((o) => o.status === "assigned").length,
-        status: "assigned" as const,
+        count: allOrders.length,
+        status: "all" as const,
       },
       {
         label: "Pending",

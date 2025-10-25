@@ -1836,11 +1836,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const dueOrders = await storage.getDueFollowups();
       
       for (const order of dueOrders) {
+        // Skip orders without an assignedTo value
+        if (!order.assignedTo) {
+          continue;
+        }
+
         const followupKey = `${order.id}-${order.followupAt?.getTime()}`;
         
         if (!notifiedFollowups.has(followupKey)) {
           await storage.createNotification({
-            userId: order.assignedTo!,
+            userId: order.assignedTo,
             orderId: order.id,
             type: "followup_reminder",
             title: "Follow-up Reminder",

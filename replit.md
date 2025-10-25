@@ -26,11 +26,18 @@ The system uses **PostgreSQL** via Neon with **Drizzle ORM**. Key tables include
 
 A 2-role permission system (Admin and Agent) is used. Admins can be "Full Control" (unrestricted) or "Partial Control" (customizable permissions across Team Management, Order Management, Analytics & Reports, and System Settings). Permissions are stored as JSONB and validated server-side. 
 
+**Current Authentication Flow** (localStorage-based, temporary solution):
+- Login page calls public endpoint `GET /api/users/by-email/:email` which returns user data for both admins and agents
+- Upon successful login, userId, userEmail, and userRole are stored in localStorage
+- All frontend components read userId directly from localStorage for API calls
+- Notification endpoints (`/api/notifications`, `/api/notifications/unread-count`) accept userId as query parameter
+- Proper JWT/session-based authentication planned for future milestone
+
 **Team Invite System**: A two-modal email-based invite flow with secure, expiring tokens:
 1. **Initial Invite Modal**: Captures basic information (email, name, role). Created via `POST /api/invites` with invitedBy field tracking the inviter.
 2. **Configure Permissions Modal**: Opens automatically for admin invites. Allows selection of admin type (Full/Partial Control) and granular permissions. Updates via `PATCH /api/invites/:id/permissions`.
 
-This separation provides a cleaner UX by deferring complex permission configuration until after the invite is sent. The login flow fetches real user data from the database to ensure invitedBy references are valid. Security considerations include backend route protection, conditional validation, permission-based access control, webhook signature verification, and planned session-based authentication with HTTP-only cookies and CSRF protection.
+This separation provides a cleaner UX by deferring complex permission configuration until after the invite is sent. Security considerations include backend route protection, conditional validation, permission-based access control, webhook signature verification, and planned session-based authentication with HTTP-only cookies and CSRF protection.
 
 ### Real-Time Capabilities
 
@@ -65,3 +72,67 @@ OAuth is used for secure store connection and access token management. The **Sho
 ### Date Handling
 
 **date-fns** is used for date formatting, manipulation, and relative time displays.
+
+## Call Status Workflow
+
+### Overview
+A simplified three-status workflow for systematic customer verification: **Confirmed**, **Cancelled**, and **Follow Up**. Each status action includes modals for data capture and automatically creates order history entries.
+
+### Status Actions
+
+**1. Confirmed**
+- Endpoint: `POST /api/orders/:id/confirm`
+- Sets `confirmed_at` timestamp
+- Direct action with optional note
+- Order appears in Fulfil page (`/fulfil`)
+- Creates order history entry with event type "confirmed"
+
+**2. Cancelled**
+- Endpoint: `POST /api/orders/:id/cancel`
+- Opens CancelOrderModal with required reason selection
+- 8 cancellation reasons: Wrong Number, Customer Denied, Address Issue, Payment Issue, Duplicate Order, Product Unavailable, Changed Mind, Other
+- Optional notes field
+- Sets `cancelled_at` timestamp and stores reason
+- Creates order history entry with event type "cancelled"
+
+**3. Follow Up**
+- Endpoint: `POST /api/orders/:id/followup`
+- Opens FollowUpModal with time selection
+- Quick presets: 30 Minutes, 1 Hour, 2 Hours, 4 Hours, Tomorrow
+- Custom date/time picker available
+- Optional notes field
+- Sets `followupAt` timestamp
+- Creates order history entry with event type "followup_scheduled"
+- Background task creates notification when follow-up is due
+
+### UI Components
+- **CallStatusActions**: Reusable component with three action buttons, integrated into orders table and order detail drawer
+- **CancelOrderModal**: Form with reason dropdown and notes textarea
+- **FollowUpOrderModal**: Form with quick presets, custom datetime picker, and notes textarea
+- **Order History Timeline**: Displays all status changes with timestamps, agent names, and action details
+
+### Notifications System
+- Bell icon in header with unread count badge
+- Background checker runs every 60 seconds
+- Creates `followup_reminder` notifications when `followupAt` time is reached
+- Only creates notifications for orders with `assignedTo` value (skips unassigned orders)
+- Endpoints: `GET /api/notifications?userId=X`, `GET /api/notifications/unread-count?userId=X`, `PATCH /api/notifications/:id/read`, `PATCH /api/notifications/read-all`
+
+### Fulfil Page
+- Displays confirmed orders only (`confirmed_at IS NOT NULL`)
+- Filters: Date range (from/to), Agent dropdown, Payment method (COD/Prepaid)
+- Shows order details with confirmation timestamps
+- Accessible via sidebar: Orders > Fulfil
+
+### Agent Filtering
+- Agents see only orders assigned to them (`assignedTo = userId`)
+- Orders page defaults to showing all assigned orders (activeTab = "all")
+- Progress bar "Total Orders" counts all orders visible to the user
+- Agents cannot take actions on unassigned orders
+
+### Recent Fixes (October 2025)
+1. **Authentication**: Created public `/api/users/by-email/:email` endpoint for login, updated all components to use localStorage userId
+2. **Notifications API**: Updated to accept userId from query params instead of req.user
+3. **Orders Page**: Fixed activeTab default from "assigned" to "all" so agents see all their orders
+4. **Progress Bar**: Fixed "Total Orders" count to show actual total instead of only assigned
+5. **Background Task**: Added check to skip notifications for unassigned orders (prevents null user_id errors)

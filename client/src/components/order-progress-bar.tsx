@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 interface ProgressStep {
   label: string;
   count: number;
-  status: "assigned" | "pending" | "confirmed" | "cancelled" | "followup";
+  status: "all" | "assigned" | "pending" | "confirmed" | "cancelled" | "followup";
 }
 
 interface OrderProgressBarProps {
@@ -13,19 +13,21 @@ interface OrderProgressBarProps {
 }
 
 export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgressBarProps) {
-  // Find the baseline (Assigned count)
-  const assignedCount = steps.find(s => s.status === "assigned")?.count || 1;
+  // Find the baseline (Total or Assigned count)
+  const baselineCount = steps.find(s => s.status === "all")?.count || 
+                        steps.find(s => s.status === "assigned")?.count || 
+                        1;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         {steps.map((step, index) => {
-          // Assigned is always 100%, others are relative to Assigned count
+          // All and Assigned are always 100%, others are relative to baseline count
           let fillPercentage: number;
-          if (step.status === "assigned") {
+          if (step.status === "all" || step.status === "assigned") {
             fillPercentage = 100;
           } else {
-            fillPercentage = assignedCount > 0 ? Math.min((step.count / assignedCount) * 100, 100) : 0;
+            fillPercentage = baselineCount > 0 ? Math.min((step.count / baselineCount) * 100, 100) : 0;
           }
           
           const isActive = activeStep === step.status;
@@ -56,6 +58,7 @@ export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgre
                     <div
                       className={cn(
                         "h-full rounded-full transition-all duration-200",
+                        step.status === "all" && "bg-blue-500",
                         step.status === "assigned" && "bg-blue-500",
                         step.status === "pending" && "bg-purple-500",
                         step.status === "confirmed" && "bg-green-500",
