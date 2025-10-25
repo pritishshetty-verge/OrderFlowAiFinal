@@ -78,6 +78,10 @@ Preferred communication style: Simple, everyday language.
   - **Agent Extension**: IVR phone extension field for agents (VARCHAR(10), nullable, unique across agents)
 - Invites table for managing team member invitation workflow with email, token, expiration, and status tracking
 - Orders, order items, customers, and supporting tables for full order management
+- **Calls table** for IVR Click-to-Call tracking with fields: order_id, agent_id, customer_phone, call_status, called_at, created_at
+  - Tracks all call attempts made through the IVR system
+  - Foreign keys to orders and users tables with cascade delete
+  - Call status: initiated, connected, failed, completed
 - Schema definitions in `shared/schema.ts` for type sharing between client and server
 
 **Planned Schema Extensions:**
@@ -188,10 +192,21 @@ Preferred communication style: Simple, everyday language.
 - Backend validation ensures extensions are unique across all agents
 - Used for routing IVR calls to specific agents
 
+**Click-to-Call API:**
+- Endpoint: POST `/api/calls/initiate`
+- Request body: `{ userId, orderId, customerPhone }`
+- Validates agent has extension configured before initiating call
+- Integrates with IVR Solutions API (https://api.ivrsolutions.in/api/c2c_post)
+- Creates call record in database with status tracking (initiated, connected, failed, completed)
+- Returns success/error responses with appropriate messages
+- Additional endpoints:
+  - GET `/api/calls/order/:orderId` - Get all calls for an order
+  - GET `/api/calls/agent/:agentId` - Get all calls for an agent
+
 **Future Enhancements:**
-- Click-to-call from order details
-- Call logging and sentiment analysis
-- Integration with Twilio or Exotel for actual calling
+- Frontend UI for click-to-call from order details
+- Call duration tracking and sentiment analysis
+- WebSocket notifications for call status updates
 
 ### Styling & Design
 
