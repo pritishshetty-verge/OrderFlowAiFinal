@@ -199,9 +199,11 @@ Preferred communication style: Simple, everyday language.
 - Integrates with IVR Solutions API (https://api.ivrsolutions.in/api/c2c_post)
 - Creates call record in database with status tracking (initiated, connected, failed, completed)
 - Returns success/error responses with appropriate messages
+- Enhanced error logging with masked credentials and detailed IVR API responses
 - Additional endpoints:
   - GET `/api/calls/order/:orderId` - Get all calls for an order
   - GET `/api/calls/agent/:agentId` - Get all calls for an agent
+  - GET `/api/ivr/test-credentials` - Test IVR credentials and connection status
 
 **Click-to-Call Frontend:**
 - Phone button in orders table Actions column for assigned COD orders
@@ -212,6 +214,25 @@ Preferred communication style: Simple, everyday language.
 - User ID resolution: fetches real user ID from /api/users using email from localStorage
 - Error message parsing from API responses with fallback to generic message
 - Button re-enables immediately on error, stays disabled during cooldown on success
+
+**IVR Diagnostic Tools:**
+- **Settings Page Widget**: IVR Connection Status card on Settings → Shopify tab
+  - Test IVR Connection button with loading states
+  - Displays masked API token (first 8 + last 4 chars visible)
+  - Shows DID number from configuration
+  - Connection status badge (Connected/Not Connected)
+  - Color-coded result box (green for success, red for errors)
+  - For 405 errors: Lists possible causes and next steps
+  - "Test Again" button for retrying
+- **Backend Endpoint**: GET `/api/ivr/test-credentials`
+  - Safely displays masked IVR credentials
+  - Makes test call to IVR API with dummy phone number
+  - Returns comprehensive diagnostic information
+  - Expected responses:
+    - 200/400: Credentials valid (400 expected with test phone)
+    - 405: Authentication failed (invalid token or DID)
+    - 500+: IVR server errors
+- **Documentation**: IVR_SETUP.md with setup checklist and troubleshooting guide
 
 **Future Enhancements:**
 - Call duration tracking and sentiment analysis
