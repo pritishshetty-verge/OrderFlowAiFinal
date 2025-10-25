@@ -814,18 +814,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // USERS API
   // ============================================================================
 
-  // Get current authenticated user
-  app.get("/api/me", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-      res.json(req.user);
-    } catch (error) {
-      console.error("Error fetching current user:", error);
-      res.status(500).json({ error: "Failed to fetch current user" });
-    }
-  });
+  // Get current authenticated user (disabled - using localStorage auth temporarily)
+  // TODO: Re-enable when proper JWT/session auth is implemented
+  // app.get("/api/me", async (req, res) => {
+  //   try {
+  //     if (!req.user) {
+  //       return res.status(401).json({ error: "Not authenticated" });
+  //     }
+  //     res.json(req.user);
+  //   } catch (error) {
+  //     console.error("Error fetching current user:", error);
+  //     res.status(500).json({ error: "Failed to fetch current user" });
+  //   }
+  // });
 
   // Get user by email (public endpoint for login)
   app.get("/api/users/by-email/:email", async (req, res) => {

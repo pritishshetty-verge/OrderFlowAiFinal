@@ -31,25 +31,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { Order as BackendOrder } from "@shared/schema";
+import type { Order } from "@/components/orders-table";
 import { cn } from "@/lib/utils";
-
-// Order type for display in quick preview
-interface DisplayOrder {
-  id: string;
-  shopifyOrderId: string;
-  customerName: string;
-  customerPhone: string;
-  items: string;
-  total: number;
-  paymentMethod: "cod" | "prepaid";
-  status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr";
-  callStatus?: string;
-  createdAt: Date;
-}
 
 export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
-  const [selectedOrder, setSelectedOrder] = useState<DisplayOrder | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
@@ -131,8 +118,7 @@ export default function FulfilPage() {
   };
 
   const handleViewOrder = (order: BackendOrder) => {
-    // Convert BackendOrder to DisplayOrder format
-    const displayOrder: DisplayOrder = {
+    const displayOrder: Order = {
       id: order.id,
       shopifyOrderId: order.shopifyOrderId,
       customerName: order.customerName,
@@ -141,7 +127,8 @@ export default function FulfilPage() {
       total: Number(order.totalPrice),
       paymentMethod: order.paymentMethod as "cod" | "prepaid",
       status: order.status as "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr",
-      callStatus: order.callStatus || undefined,
+      callStatus: order.callStatus as "Pending" | "Confirmed" | "Cancelled" | "Follow Up" | undefined,
+      assignedTo: order.assignedTo || undefined,
       createdAt: new Date(order.createdAt),
     };
     setSelectedOrder(displayOrder);
