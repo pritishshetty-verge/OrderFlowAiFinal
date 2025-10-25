@@ -1,0 +1,106 @@
+Consolidate the current 3-role system (Admin, Manager, Agent) into a 2-role system with granular permissions:
+
+NEW ROLE STRUCTURE:
+
+1. ADMIN ROLE (with permission levels):
+
+When inviting/adding an admin, show permission selector with two options:
+
+A) Full Control (Super Admin):
+   ✅ All system settings (Shopify, IVR, webhooks)
+   ✅ Invite/remove admins and agent
+   ✅ Assign custom permissions to other admins
+   ✅ View all orders across system
+   ✅ Manual order assignment and bulk operations
+   ✅ Team management (edit profiles, assign extensions)
+   ✅ Leave management (approve/reject)
+   ✅ Full analytics and reports access
+   ✅ Trigger auto-assignment
+   ✅ Access all settings pages
+
+B) Partial Control (Customizable Admin):
+   Create a permission checklist (like Meta Business Suite) where the inviting admin can toggle:
+   
+   Team Management:
+   [ ] View team directory
+   [ ] Edit agent profiles
+   [ ] Assign agent extensions
+   [ ] Manage leave requests
+   
+   Order Management:
+   [ ] View all orders
+   [ ] Assign orders to agents
+   [ ] Bulk assign orders
+   [ ] Trigger auto-assignment
+   
+   Analytics & Reports:
+   [ ] View team performance
+   [ ] View order analytics
+   [ ] Export reports
+   
+   System Settings:
+   [ ] Manage Shopify integration
+   [ ] Manage IVR settings
+   [ ] Configure webhooks
+   
+   Save these permissions in the database as a JSON object or separate permission flags.
+
+2. Agent ROLE:
+   - View/manage only their assigned orders
+   - Make calls to customers
+   - Update order status for their orders
+   - Manage own attendance/presence
+   - Submit leave requests
+   - Access team messaging
+   - No access to settings or other agents' orders
+
+DATABASE CHANGES NEEDED:
+
+Update the users table:
+- Change role field to ENUM: 'admin', 'agent' (remove 'manager')
+- Add new column: permissions JSON or TEXT (stores custom permission object for partial control admins)
+- Add new column: admin_type ENUM: 'full_control', 'partial_control' (nullable, only for admins)
+
+EUI CHANGES:
+
+1. Update the "Invite Team Member" form:
+   - First select: Role (Admin or Agent)
+   - If Admin selected, show second option: Permission Level
+     - Radio button: Full Control
+     - Radio button: Partial Control
+   - If Partial Control selected, show permission checklist (collapsible sections)
+
+2. Update navigation/sidebar to check permissions:
+   - For partial control admins, hide menu items they don't have permission for
+   - Show "Limited Access" badge next to admin's name if partial control
+
+3. Add permission check middleware:
+   - Create helper functions like: hasPermission(user, 'team_management.edit_profiles')
+   - Block API calls if user lacks required permission
+
+4. Update Team Directory:
+   - Show role as "Admin (Full Control)" or "Admin (Partial Control)" or "Agent"
+   - Add "Edit Permissions" button for admins (only visible to full control admins)
+
+MIGRATION PLAN:
+
+1. Migrate existing "Manager" role users:
+   - Convert to "Admin" with "Partial Control"
+   - Set default permissions based on current manager capabilities:
+     - team_management: all true except assign_extensions
+     - order_management: all true except bulk operations
+     - analytics: all true
+     - settings: all false
+
+PERMISSION DEFAULTS:
+
+For new Partial Control admins, suggest a "Manager Preset" option:
+- Team oversight: ✅
+- Order assignment: ✅
+- Leave management: ✅
+- Analytics: ✅
+- System settings: ❌
+
+This matches the old Manager role capabilities while allowing customization.
+
+Implement this 2-role system with granular permission control similar to Meta Business Suite's admin permission management.

@@ -14,7 +14,9 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   fullName: text("full_name").notNull(),
   phone: text("phone"),
-  role: text("role").notNull().default("agent"), // admin, manager, agent
+  role: text("role").notNull().default("agent"), // admin, agent
+  adminType: text("admin_type"), // full_control, partial_control (nullable, only for admins)
+  permissions: jsonb("permissions"), // Custom permissions for partial_control admins
   department: text("department").default("Operations"),
   employeeId: text("employee_id").unique(),
   agentExtension: varchar("agent_extension", { length: 10 }), // IVR phone extension for agents
@@ -31,6 +33,8 @@ export const insertUserSchema = createInsertSchema(users).pick({
   fullName: true,
   phone: true,
   role: true,
+  adminType: true,
+  permissions: true,
   department: true,
   agentExtension: true,
 });
@@ -41,6 +45,8 @@ export const updateUserSchema = createInsertSchema(users).pick({
   fullName: true,
   phone: true,
   role: true,
+  adminType: true,
+  permissions: true,
   department: true,
   employeeId: true,
   agentExtension: true,
@@ -53,6 +59,60 @@ export type UpdateUser = z.infer<typeof updateUserSchema>;
 export type User = typeof users.$inferSelect;
 
 // ============================================================================
+// PERMISSION TYPES
+// ============================================================================
+
+export type AdminPermissions = {
+  teamManagement?: {
+    viewDirectory?: boolean;
+    editProfiles?: boolean;
+    assignExtensions?: boolean;
+    manageLeaveRequests?: boolean;
+  };
+  orderManagement?: {
+    viewAllOrders?: boolean;
+    assignOrders?: boolean;
+    bulkAssign?: boolean;
+    triggerAutoAssignment?: boolean;
+  };
+  analytics?: {
+    viewTeamPerformance?: boolean;
+    viewOrderAnalytics?: boolean;
+    exportReports?: boolean;
+  };
+  settings?: {
+    manageShopify?: boolean;
+    manageIVR?: boolean;
+    configureWebhooks?: boolean;
+  };
+};
+
+export const DEFAULT_MANAGER_PERMISSIONS: AdminPermissions = {
+  teamManagement: {
+    viewDirectory: true,
+    editProfiles: true,
+    assignExtensions: false,
+    manageLeaveRequests: true,
+  },
+  orderManagement: {
+    viewAllOrders: true,
+    assignOrders: true,
+    bulkAssign: false,
+    triggerAutoAssignment: true,
+  },
+  analytics: {
+    viewTeamPerformance: true,
+    viewOrderAnalytics: true,
+    exportReports: true,
+  },
+  settings: {
+    manageShopify: false,
+    manageIVR: false,
+    configureWebhooks: false,
+  },
+};
+
+// ============================================================================
 // USER INVITATIONS
 // ============================================================================
 
@@ -61,7 +121,9 @@ export const invites = pgTable("invites", {
   email: text("email").notNull().unique(),
   firstName: text("first_name"),
   lastName: text("last_name"),
-  role: text("role").notNull().default("agent"), // admin, manager, agent
+  role: text("role").notNull().default("agent"), // admin, agent
+  adminType: text("admin_type"), // full_control, partial_control (nullable, only for admins)
+  permissions: jsonb("permissions"), // Custom permissions for partial_control admins
   token: text("token").notNull().unique(), // Unique token for invite link
   invitedBy: varchar("invited_by").references(() => users.id),
   status: text("status").notNull().default("pending"), // pending, accepted, expired
@@ -75,11 +137,15 @@ export const insertInviteSchema = createInsertSchema(invites).pick({
   firstName: true,
   lastName: true,
   role: true,
+  adminType: true,
+  permissions: true,
 }).extend({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
-  role: z.enum(["admin", "manager", "agent"]).default("agent"),
+  role: z.enum(["admin", "agent"]).default("agent"),
+  adminType: z.enum(["full_control", "partial_control"]).optional(),
+  permissions: z.record(z.any()).optional(),
 });
 
 export type InsertInvite = z.infer<typeof insertInviteSchema>;
