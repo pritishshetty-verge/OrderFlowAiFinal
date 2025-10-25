@@ -203,10 +203,21 @@ Preferred communication style: Simple, everyday language.
   - GET `/api/calls/order/:orderId` - Get all calls for an order
   - GET `/api/calls/agent/:agentId` - Get all calls for an agent
 
+**Click-to-Call Frontend:**
+- Phone button in orders table Actions column for assigned COD orders
+- TanStack Query mutation with proper error handling
+- Toast notifications for success ("Call initiated!") and error messages
+- Loading states: disabled button with Loader2 spinner during API call
+- 5-second cooldown after successful call to prevent duplicate calls
+- User ID resolution: fetches real user ID from /api/users using email from localStorage
+- Error message parsing from API responses with fallback to generic message
+- Button re-enables immediately on error, stays disabled during cooldown on success
+
 **Future Enhancements:**
-- Frontend UI for click-to-call from order details
 - Call duration tracking and sentiment analysis
 - WebSocket notifications for call status updates
+- Call history panel in order details
+- Share currentUserId from parent to avoid duplicate /api/users fetch
 
 ### Styling & Design
 
