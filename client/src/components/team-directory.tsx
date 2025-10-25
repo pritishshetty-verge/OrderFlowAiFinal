@@ -23,7 +23,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil } from "lucide-react";
 import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -55,10 +55,19 @@ const inviteUserSchema = z.object({
 
 type InviteUserFormData = z.infer<typeof inviteUserSchema>;
 
+// Edit extension form schema
+const editExtensionSchema = z.object({
+  agentExtension: z.string().min(1, "Extension is required").max(10, "Extension must be 10 characters or less"),
+});
+
+type EditExtensionFormData = z.infer<typeof editExtensionSchema>;
+
 export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editExtensionDialogOpen, setEditExtensionDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<TeamMember | null>(null);
+  const [userToEditExtension, setUserToEditExtension] = useState<TeamMember | null>(null);
   const { toast } = useToast();
 
   // Fetch users and orders from backend
@@ -80,6 +89,14 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       firstName: "",
       lastName: "",
       role: "agent",
+    },
+  });
+
+  // Form for editing extension
+  const extensionForm = useForm<EditExtensionFormData>({
+    resolver: zodResolver(editExtensionSchema),
+    defaultValues: {
+      agentExtension: "",
     },
   });
 
@@ -135,6 +152,32 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
+  // Mutation for updating agent extension
+  const updateExtensionMutation = useMutation({
+    mutationFn: async ({ userId, agentExtension }: { userId: string; agentExtension: string }) => {
+      const res = await apiRequest("PATCH", `/api/users/${userId}`, { agentExtension });
+      return await res.json();
+    },
+    onSuccess: () => {
+      // Close dialog and invalidate cache
+      setEditExtensionDialogOpen(false);
+      setUserToEditExtension(null);
+      extensionForm.reset();
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: "Success",
+        description: "Agent extension updated successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update extension",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleInviteUser = (data: InviteUserFormData) => {
     inviteUserMutation.mutate(data);
   };
@@ -147,6 +190,21 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const confirmDelete = () => {
     if (userToDelete) {
       deleteUserMutation.mutate(userToDelete.id);
+    }
+  };
+
+  const handleEditExtension = (member: TeamMember) => {
+    setUserToEditExtension(member);
+    extensionForm.setValue("agentExtension", member.agentExtension || "");
+    setEditExtensionDialogOpen(true);
+  };
+
+  const handleUpdateExtension = (data: EditExtensionFormData) => {
+    if (userToEditExtension) {
+      updateExtensionMutation.mutate({
+        userId: userToEditExtension.id,
+        agentExtension: data.agentExtension,
+      });
     }
   };
 
@@ -284,11 +342,24 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <span className="text-muted-foreground text-xs">{member.phone}</span>
                 </div>
                 {member.role === "agent" && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Hash className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-muted-foreground text-xs font-mono" data-testid={`text-extension-${member.id}`}>
-                      {member.agentExtension ? `Ext ${member.agentExtension}` : "No extension"}
-                    </span>
+                  <div className="flex items-center gap-2 text-sm justify-between">
+                    <div className="flex items-center gap-2">
+                      <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground text-xs font-mono" data-testid={`text-extension-${member.id}`}>
+                        {member.agentExtension ? `Ext ${member.agentExtension}` : "No extension"}
+                      </span>
+                    </div>
+                    {(userRole === "admin" || userRole === "manager") && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        onClick={() => handleEditExtension(member)}
+                        data-testid={`button-edit-extension-${member.id}`}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 )}
                 <div className="flex items-center gap-2 text-sm">
@@ -482,6 +553,71 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Edit Extension Dialog */}
+      <Dialog open={editExtensionDialogOpen} onOpenChange={setEditExtensionDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set Agent Extension</DialogTitle>
+            <DialogDescription>
+              Set the phone extension for {userToEditExtension?.name}. This will be used for IVR calling.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Form {...extensionForm}>
+            <form onSubmit={extensionForm.handleSubmit(handleUpdateExtension)} className="space-y-4">
+              <FormField
+                control={extensionForm.control}
+                name="agentExtension"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Extension Number *</FormLabel>
+                    <FormControl>
+                      <Input 
+                        placeholder="e.g., 101, 102" 
+                        {...field} 
+                        data-testid="input-agent-extension"
+                        className="font-mono"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setEditExtensionDialogOpen(false);
+                    setUserToEditExtension(null);
+                    extensionForm.reset();
+                  }}
+                  disabled={updateExtensionMutation.isPending}
+                  data-testid="button-cancel-extension"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={updateExtensionMutation.isPending}
+                  data-testid="button-submit-extension"
+                >
+                  {updateExtensionMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Extension"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
