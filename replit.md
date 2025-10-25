@@ -148,6 +148,16 @@ Preferred communication style: Simple, everyday language.
   - Initial Setup Guide (/settings/shopify/setup): 3-step wizard for Shopify connection
   - Webhook Setup Guide (/settings/shopify/webhooks): Tabbed guide with detailed n8n configuration
 
+**Order Status Mapping:**
+- **Three Status Fields**: The system tracks order progress using three separate status fields:
+  - `status`: Application workflow status (Pending → Assigned → Shipped → Delivered)
+  - `shipmentStatus`: Real-time courier tracking status (in_transit, out_for_delivery, delivered, etc.)
+  - `fulfillmentStatus`: Shopify's fulfillment status (unfulfilled, fulfilled, partial)
+- **Status Logic**: Orders are marked "Delivered" ONLY when shipmentStatus = "delivered" (actual courier confirmation)
+- **Shipped vs Delivered**: When Shopify reports fulfillmentStatus = "fulfilled", status is set to "Shipped" (not "Delivered")
+- **Prevents Confusion**: This ensures users see accurate delivery status instead of confusing "Delivered" for orders still in transit
+- **Implementation**: mapShopifyStatus function in server/webhooks.ts handles the status mapping logic
+
 ### UI Component Libraries
 
 **Radix UI Primitives:**
