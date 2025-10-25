@@ -202,7 +202,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const progressSteps = useMemo(
     () => [
       {
-        label: "Assigned",
+        label: "Total Orders",
         count: allOrders.filter((o) => o.status === "assigned").length,
         status: "assigned" as const,
       },
