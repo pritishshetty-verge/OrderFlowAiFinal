@@ -51,10 +51,10 @@ export function AssignOrderDialog({
     enabled: open,
   });
 
-  // Calculate workload for each user
+  // Calculate workload for each user (count only orders needing agent action)
   const workloadMap = new Map<string, number>();
   ordersResponse?.orders?.forEach((o) => {
-    if (o.assignedTo && o.status !== "delivered" && o.status !== "cancelled") {
+    if (o.assignedTo && (o.callStatus === 'Pending' || o.callStatus === 'Follow Up')) {
       const current = workloadMap.get(o.assignedTo) || 0;
       workloadMap.set(o.assignedTo, current + 1);
     }
