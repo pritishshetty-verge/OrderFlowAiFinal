@@ -108,7 +108,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   // Mutation for sending invites
   const inviteUserMutation = useMutation({
     mutationFn: async (data: InviteUserFormData) => {
-      const res = await apiRequest("POST", "/api/invites", data);
+      const userId = localStorage.getItem("userId");
+      const res = await apiRequest("POST", "/api/invites", {
+        ...data,
+        invitedBy: userId,
+      });
       return await res.json();
     },
     onSuccess: (responseData, variables) => {
@@ -121,7 +125,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       
       // If role is admin, open permissions configuration modal
       if (variables.role === "admin") {
-        setPendingInviteId(responseData.id);
+        // Response structure: { message, invite: { id, email, role, expiresAt } }
+        setPendingInviteId(responseData.invite.id);
         setPendingInviteEmail(variables.email);
         setPermissionsModalOpen(true);
       } else {
