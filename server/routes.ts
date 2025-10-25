@@ -1398,12 +1398,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Only full control admins can invite other admins" });
       }
 
-      // If inviting an admin with partial control, ensure permissions are provided
-      if (validatedData.role === "admin" && validatedData.adminType === "partial_control") {
-        if (!validatedData.permissions) {
-          return res.status(400).json({ error: "Permissions are required for partial control admins" });
-        }
-      }
+      // Note: adminType and permissions are now configured in a separate step via the permissions modal
+      // after the invite is created, so we don't validate them here
       
       // Check if email already has a pending invite
       const existingInvite = await storage.getInviteByEmail(validatedData.email);
@@ -1463,6 +1459,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error creating invite:", error);
       res.status(500).json({ error: "Failed to send invite" });
+    }
+  });
+
+  // Update invite permissions (admin type and permissions)
+  app.patch("/api/invites/:inviteId/permissions", async (req, res) => {
+    try {
+      const { inviteId } = req.params;
+      const { adminType, permissions } = req.body;
+
+      if (!inviteId) {
+        return res.status(400).json({ error: "Invite ID is required" });
+      }
+
+      // Validate admin type
+      const validAdminTypes = ["full_control", "partial_control"];
+      if (adminType && !validAdminTypes.includes(adminType)) {
+        return res.status(400).json({ error: "Invalid admin type" });
+      }
+
+      // Get the invite
+      const invite = await storage.getInvite(inviteId);
+      if (!invite) {
+        return res.status(404).json({ error: "Invite not found" });
+      }
+
+      // Only allow updating admin invites
+      if (invite.role !== "admin") {
+        return res.status(400).json({ error: "Can only set permissions for admin invites" });
+      }
+
+      // If setting partial control, ensure permissions are provided
+      if (adminType === "partial_control" && !permissions) {
+        return res.status(400).json({ error: "Permissions are required for partial control admins" });
+      }
+
+      // Update the invite
+      const updatedInvite = await storage.updateInvitePermissions(
+        inviteId,
+        adminType,
+        adminType === "partial_control" ? permissions : null
+      );
+
+      res.json({
+        message: "Permissions updated successfully",
+        invite: updatedInvite,
+      });
+    } catch (error) {
+      console.error("Error updating invite permissions:", error);
+      res.status(500).json({ error: "Failed to update invite permissions" });
     }
   });
 

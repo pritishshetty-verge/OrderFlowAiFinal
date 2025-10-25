@@ -24,12 +24,10 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil } from "lucide-react";
-import type { User, Order as BackendOrder, AdminPermissions } from "@shared/schema";
-import { DEFAULT_MANAGER_PERMISSIONS } from "@shared/schema";
+import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { PermissionChecklist } from "@/components/permission-checklist";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ConfigurePermissionsModal } from "@/components/configure-permissions-modal";
 
 interface TeamMember {
   id: string;
@@ -49,39 +47,13 @@ interface TeamDirectoryProps {
   userRole: "admin" | "agent";
 }
 
-// Invite user form schema with conditional validation
+// Invite user form schema - simplified (permissions configured in separate modal)
 const inviteUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   role: z.enum(["admin", "agent"]).default("agent"),
-  adminType: z.enum(["full_control", "partial_control"]).optional(),
-  permissions: z.record(z.any()).optional(),
-}).refine(
-  (data) => {
-    // If role is admin, adminType must be provided
-    if (data.role === "admin" && !data.adminType) {
-      return false;
-    }
-    return true;
-  },
-  {
-    message: "Admin type is required for admin users",
-    path: ["adminType"],
-  }
-).refine(
-  (data) => {
-    // If role is admin and adminType is partial_control, permissions must be provided
-    if (data.role === "admin" && data.adminType === "partial_control" && !data.permissions) {
-      return false;
-    }
-    return true;
-  },
-  {
-    message: "Permissions are required for partial control admins",
-    path: ["permissions"],
-  }
-);
+});
 
 type InviteUserFormData = z.infer<typeof inviteUserSchema>;
 
@@ -96,10 +68,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editExtensionDialogOpen, setEditExtensionDialogOpen] = useState(false);
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
+  const [pendingInviteId, setPendingInviteId] = useState<string | null>(null);
+  const [pendingInviteEmail, setPendingInviteEmail] = useState<string | null>(null);
   const [userToDelete, setUserToDelete] = useState<TeamMember | null>(null);
   const [userToEditExtension, setUserToEditExtension] = useState<TeamMember | null>(null);
-  const [selectedRole, setSelectedRole] = useState<"admin" | "agent">("agent");
-  const [selectedAdminType, setSelectedAdminType] = useState<"full_control" | "partial_control">("full_control");
   const { toast } = useToast();
 
   // Fetch users and orders from backend
@@ -121,8 +94,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       firstName: "",
       lastName: "",
       role: "agent",
-      adminType: "full_control",
-      permissions: DEFAULT_MANAGER_PERMISSIONS,
     },
   });
 
@@ -140,17 +111,26 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       const res = await apiRequest("POST", "/api/invites", data);
       return await res.json();
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (responseData, variables) => {
       // Close dialog and reset form
       form.reset();
       setIsDialogOpen(false);
       
-      // Invalidate invites cache and show toast
+      // Invalidate invites cache
       queryClient.invalidateQueries({ queryKey: ["/api/invites"] });
-      toast({
-        title: "Success",
-        description: `Invite sent to ${variables.email}`,
-      });
+      
+      // If role is admin, open permissions configuration modal
+      if (variables.role === "admin") {
+        setPendingInviteId(responseData.id);
+        setPendingInviteEmail(variables.email);
+        setPermissionsModalOpen(true);
+      } else {
+        // For agents, just show success toast
+        toast({
+          title: "Success",
+          description: `Invite sent to ${variables.email}`,
+        });
+      }
     },
     onError: (error: any) => {
       toast({
@@ -256,7 +236,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         id: user.id,
         name: user.fullName,
         role: user.role as TeamMember["role"],
-        adminType: user.adminType || undefined,
+        adminType: (user.adminType as "full_control" | "partial_control") || undefined,
         email: user.email,
         phone: user.phone || "N/A",
         agentExtension: user.agentExtension || undefined,
@@ -508,23 +488,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Role</FormLabel>
-                    <Select 
-                      onValueChange={(value) => {
-                        field.onChange(value);
-                        setSelectedRole(value as "admin" | "agent");
-                        // Reset admin-specific fields when switching to agent
-                        if (value === "agent") {
-                          form.setValue("adminType", undefined);
-                          form.setValue("permissions", undefined);
-                        } else {
-                          // Set defaults for admin
-                          form.setValue("adminType", "full_control");
-                          form.setValue("permissions", DEFAULT_MANAGER_PERMISSIONS);
-                          setSelectedAdminType("full_control");
-                        }
-                      }} 
-                      defaultValue={field.value}
-                    >
+                    <Select onValueChange={field.onChange} defaultValue={field.value}>
                       <FormControl>
                         <SelectTrigger data-testid="select-role">
                           <SelectValue placeholder="Select role" />
@@ -539,71 +503,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   </FormItem>
                 )}
               />
-
-              {/* Admin Type Selector - only show when role is admin */}
-              {selectedRole === "admin" && (
-                <FormField
-                  control={form.control}
-                  name="adminType"
-                  render={({ field }) => (
-                    <FormItem className="space-y-3">
-                      <FormLabel>Admin Type</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          onValueChange={(value) => {
-                            field.onChange(value);
-                            setSelectedAdminType(value as "full_control" | "partial_control");
-                            // Set default permissions for partial control
-                            if (value === "partial_control") {
-                              form.setValue("permissions", DEFAULT_MANAGER_PERMISSIONS);
-                            } else {
-                              form.setValue("permissions", undefined);
-                            }
-                          }}
-                          value={field.value}
-                          className="flex flex-col space-y-2"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="full_control" id="full_control" data-testid="radio-full-control" />
-                            <label htmlFor="full_control" className="text-sm font-normal cursor-pointer">
-                              <div>Full Control</div>
-                              <div className="text-xs text-muted-foreground">Unrestricted access to all features</div>
-                            </label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="partial_control" id="partial_control" data-testid="radio-partial-control" />
-                            <label htmlFor="partial_control" className="text-sm font-normal cursor-pointer">
-                              <div>Partial Control</div>
-                              <div className="text-xs text-muted-foreground">Customizable permissions</div>
-                            </label>
-                          </div>
-                        </RadioGroup>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              {/* Permission Checklist - only show when admin type is partial_control */}
-              {selectedRole === "admin" && selectedAdminType === "partial_control" && (
-                <FormField
-                  control={form.control}
-                  name="permissions"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Permissions</FormLabel>
-                      <FormControl>
-                        <PermissionChecklist
-                          value={field.value || DEFAULT_MANAGER_PERMISSIONS}
-                          onChange={field.onChange}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
 
               <DialogFooter>
                 <Button
@@ -735,6 +634,14 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* Configure Permissions Modal - shown after inviting an admin */}
+      <ConfigurePermissionsModal
+        open={permissionsModalOpen}
+        onOpenChange={setPermissionsModalOpen}
+        inviteId={pendingInviteId}
+        inviteEmail={pendingInviteEmail}
+      />
     </div>
   );
 }

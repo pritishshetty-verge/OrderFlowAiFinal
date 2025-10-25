@@ -56,9 +56,11 @@ export interface IStorage {
 
   // Invites
   createInvite(invite: InsertInvite & { token: string; expiresAt: Date; invitedBy?: string }): Promise<Invite>;
+  getInvite(id: string): Promise<Invite | undefined>;
   getInviteByToken(token: string): Promise<Invite | undefined>;
   getInviteByEmail(email: string): Promise<Invite | undefined>;
   updateInviteStatus(id: string, status: 'accepted' | 'expired'): Promise<void>;
+  updateInvitePermissions(id: string, adminType: string, permissions: any): Promise<Invite | undefined>;
   listPendingInvites(): Promise<Invite[]>;
 
   // Customers
@@ -217,6 +219,11 @@ export class DbStorage implements IStorage {
     return invite;
   }
 
+  async getInvite(id: string): Promise<Invite | undefined> {
+    const [invite] = await db.select().from(invites).where(eq(invites.id, id));
+    return invite;
+  }
+
   async updateInviteStatus(id: string, status: 'accepted' | 'expired'): Promise<void> {
     await db
       .update(invites)
@@ -225,6 +232,18 @@ export class DbStorage implements IStorage {
         acceptedAt: status === 'accepted' ? new Date() : undefined 
       })
       .where(eq(invites.id, id));
+  }
+
+  async updateInvitePermissions(id: string, adminType: string, permissions: any): Promise<Invite | undefined> {
+    const [invite] = await db
+      .update(invites)
+      .set({ 
+        adminType,
+        permissions 
+      })
+      .where(eq(invites.id, id))
+      .returning();
+    return invite;
   }
 
   async listPendingInvites(): Promise<Invite[]> {
