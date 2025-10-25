@@ -63,7 +63,14 @@ export function AssignOrderDialog({
   // Manual assignment mutation
   const assignMutation = useMutation({
     mutationFn: async ({ orderId, userId }: { orderId: string; userId: string }) => {
-      return await apiRequest("POST", `/api/orders/${orderId}/assign`, { userId });
+      const assignedBy = localStorage.getItem("userId");
+      if (!assignedBy) {
+        throw new Error("User not authenticated");
+      }
+      return await apiRequest("POST", `/api/orders/${orderId}/assign`, { 
+        userId, 
+        assignedBy 
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
