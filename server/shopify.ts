@@ -311,16 +311,22 @@ export class ShopifyClient {
 
     // STEP 2: Proceed with cancellation
     const query = `
-      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!, $restock: Boolean!) {
-        orderCancel(orderId: $orderId, reason: $reason, notifyCustomer: $notifyCustomer, restock: $restock) {
-          order {
+      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!, $restock: Boolean!, $refund: Boolean!) {
+        orderCancel(
+          orderId: $orderId
+          notifyCustomer: $notifyCustomer
+          restock: $restock
+          reason: $reason
+          refund: $refund
+        ) {
+          job {
             id
-            cancelledAt
-            cancelReason
+            done
           }
-          userErrors {
+          orderCancelUserErrors {
             field
             message
+            code
           }
         }
       }
@@ -346,15 +352,16 @@ export class ShopifyClient {
       reason: shopifyReason,
       notifyCustomer: notifyCustomer,
       restock: restock,
+      refund: true,
     };
 
     const data = await this.graphqlRequest(query, variables);
     
-    if (data.orderCancel.userErrors.length > 0) {
-      throw new Error(`Order cancellation failed: ${JSON.stringify(data.orderCancel.userErrors)}`);
+    if (data.orderCancel.orderCancelUserErrors && data.orderCancel.orderCancelUserErrors.length > 0) {
+      throw new Error(`Order cancellation failed: ${JSON.stringify(data.orderCancel.orderCancelUserErrors)}`);
     }
 
-    return data.orderCancel.order;
+    return data.orderCancel.job;
   }
 
   async updateMetafield(
