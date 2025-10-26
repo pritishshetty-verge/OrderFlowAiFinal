@@ -382,12 +382,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "userId and reason are required" });
       }
 
+      // STEP 1: Get order from DB to retrieve shopifyOrderId
+      const existingOrder = await storage.getOrder(req.params.id);
+      if (!existingOrder) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      if (!existingOrder.shopifyOrderId) {
+        return res.status(400).json({ error: "Order has no Shopify ID" });
+      }
+
+      // STEP 2: Validate and cancel in Shopify FIRST (this includes all validation checks)
+      try {
+        const { updateShopifyClient } = await import("./shopify");
+        const client = await updateShopifyClient();
+        
+        // This method validates order state and cancels in Shopify (with refund, email, restock)
+        await client.cancelOrder(
+          existingOrder.shopifyOrderId,
+          reason,
+          true,  // notifyCustomer
+          true   // restock
+        );
+      } catch (shopifyError: any) {
+        // Return user-friendly error messages for validation failures
+        const errorMessage = shopifyError.message || String(shopifyError);
+        
+        if (errorMessage.includes("already cancelled")) {
+          return res.status(400).json({ error: "Order already cancelled" });
+        }
+        if (errorMessage.includes("fulfilled") || errorMessage.includes("FULFILLED")) {
+          return res.status(400).json({ error: "Cannot cancel fulfilled or partially fulfilled orders" });
+        }
+        if (errorMessage.includes("closed") || errorMessage.includes("archived")) {
+          return res.status(400).json({ error: "Cannot cancel closed orders" });
+        }
+        if (errorMessage.includes("VOIDED") || errorMessage.includes("REFUNDED")) {
+          return res.status(400).json({ error: "Cannot cancel already refunded orders" });
+        }
+        
+        // Generic Shopify error
+        console.error("Shopify cancellation error:", shopifyError);
+        return res.status(400).json({ error: `Shopify error: ${errorMessage}` });
+      }
+
+      // STEP 3: Update local DB only after Shopify validation passes
       const order = await storage.cancelOrder(req.params.id, userId, reason, notes);
       if (!order) {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Create order status history entry
+      // STEP 4: Create order status history entry
       await storage.createOrderStatus({
         orderId: req.params.id,
         status: 'cancelled',
@@ -395,7 +440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         note: `Order cancelled: ${reason}${notes ? ' - ' + notes : ''}`,
       });
 
-      // Sync to Shopify (non-blocking)
+      // STEP 5: Sync tags and notes to Shopify (non-blocking)
       const { shopifySyncService } = await import("./services/shopifySync");
       shopifySyncService.syncToShopify(req.params.id, 'cancelled', { userId, reason, notes })
         .catch((err) => console.error('[Shopify Sync] Background sync failed:', err));
