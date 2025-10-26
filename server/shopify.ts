@@ -280,10 +280,39 @@ export class ShopifyClient {
     return data.orderUpdate.order;
   }
 
-  async cancelOrder(shopifyOrderId: string, reason: string, notifyCustomer: boolean = false): Promise<any> {
+  async cancelOrder(
+    shopifyOrderId: string, 
+    reason: string, 
+    notifyCustomer: boolean = true,
+    restock: boolean = true
+  ): Promise<any> {
+    // STEP 1: Validate order state before cancellation
+    const orderState = await this.getOrderState(shopifyOrderId);
+    
+    // Check if already cancelled
+    if (orderState.cancelledAt !== null) {
+      throw new Error("Order already cancelled");
+    }
+    
+    // Check if voided or refunded
+    if (orderState.displayFinancialStatus === "VOIDED" || orderState.displayFinancialStatus === "REFUNDED") {
+      throw new Error("Order already cancelled/refunded");
+    }
+    
+    // Check if fulfilled
+    if (orderState.displayFulfillmentStatus === "FULFILLED" || orderState.displayFulfillmentStatus === "PARTIALLY_FULFILLED") {
+      throw new Error("Cannot cancel fulfilled orders");
+    }
+    
+    // Check if archived
+    if (orderState.closed === true) {
+      throw new Error("Cannot cancel archived orders");
+    }
+
+    // STEP 2: Proceed with cancellation
     const query = `
-      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!) {
-        orderCancel(orderId: $orderId, reason: $reason, notifyCustomer: $notifyCustomer) {
+      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!, $restock: Boolean!) {
+        orderCancel(orderId: $orderId, reason: $reason, notifyCustomer: $notifyCustomer, restock: $restock) {
           order {
             id
             cancelledAt
@@ -316,6 +345,7 @@ export class ShopifyClient {
       orderId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
       reason: shopifyReason,
       notifyCustomer: notifyCustomer,
+      restock: restock,
     };
 
     const data = await this.graphqlRequest(query, variables);
