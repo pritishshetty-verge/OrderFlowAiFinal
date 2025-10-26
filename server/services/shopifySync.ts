@@ -114,23 +114,27 @@ export class ShopifySyncService {
     });
 
     try {
-      // 1. Add verification-confirmed tag
+      // 1. Add OF:confirmed tag
       const existingTags = order.tags || [];
-      const newTags = Array.from(new Set([...existingTags, 'verification-confirmed']));
+      const newTags = Array.from(new Set([...existingTags, 'OF:confirmed']));
       actions.push(
         client.updateOrderTags(shopifyOrderId, newTags)
-          .then(() => console.log(`[Shopify Sync] Added 'verification-confirmed' tag`))
+          .then(() => console.log(`[Shopify Sync] Added 'OF:confirmed' tag`))
       );
 
       // 2. Add note with agent and timestamp
       const timestamp = new Date().toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
-        dateStyle: 'medium',
-        timeStyle: 'short'
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
       });
       const noteText = notes 
-        ? `✓ Order verified by ${agentName} on ${timestamp}\nNotes: ${notes}`
-        : `✓ Order verified by ${agentName} on ${timestamp}`;
+        ? `Confirmed by ${agentName} • ${timestamp}\n${notes}`
+        : `Confirmed by ${agentName} • ${timestamp}`;
       
       actions.push(
         client.addOrderNote(shopifyOrderId, noteText)
@@ -204,23 +208,27 @@ export class ShopifySyncService {
     });
 
     try {
-      // 1. Add verification-cancelled tag
+      // 1. Add OF:cancelled tag
       const existingTags = order.tags || [];
-      const newTags = Array.from(new Set([...existingTags, 'verification-cancelled']));
+      const newTags = Array.from(new Set([...existingTags, 'OF:cancelled']));
       actions.push(
         client.updateOrderTags(shopifyOrderId, newTags)
-          .then(() => console.log(`[Shopify Sync] Added 'verification-cancelled' tag`))
+          .then(() => console.log(`[Shopify Sync] Added 'OF:cancelled' tag`))
       );
 
       // 2. Add cancellation note
       const timestamp = new Date().toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
-        dateStyle: 'medium',
-        timeStyle: 'short'
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
       });
       const noteText = notes
-        ? `✗ Order cancelled by ${agentName} on ${timestamp}\nReason: ${reason}\nNotes: ${notes}`
-        : `✗ Order cancelled by ${agentName} on ${timestamp}\nReason: ${reason}`;
+        ? `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}\n${notes}`
+        : `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}`;
       
       actions.push(
         client.addOrderNote(shopifyOrderId, noteText)
@@ -302,25 +310,29 @@ export class ShopifySyncService {
     });
 
     try {
-      // 1. Add followup-scheduled tag
+      // 1. Add OF:followup tag
       const existingTags = order.tags || [];
-      const newTags = Array.from(new Set([...existingTags, 'followup-scheduled']));
+      const newTags = Array.from(new Set([...existingTags, 'OF:followup']));
       actions.push(
         client.updateOrderTags(shopifyOrderId, newTags)
-          .then(() => console.log(`[Shopify Sync] Added 'followup-scheduled' tag`))
+          .then(() => console.log(`[Shopify Sync] Added 'OF:followup' tag`))
       );
 
       // 2. Add follow-up note
       const followupDateObj = followupDate || order.followupAt || new Date();
       const followupTime = followupDateObj.toLocaleString('en-IN', { 
         timeZone: 'Asia/Kolkata',
-        dateStyle: 'medium',
-        timeStyle: 'short'
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
       });
       
       const noteText = notes
-        ? `📞 Follow-up scheduled by ${agentName} for ${followupTime}\nNotes: ${notes}`
-        : `📞 Follow-up scheduled by ${agentName} for ${followupTime}`;
+        ? `Follow-up by ${agentName} • ${followupTime}\n${notes}`
+        : `Follow-up by ${agentName} • ${followupTime}`;
       
       actions.push(
         client.addOrderNote(shopifyOrderId, noteText)
