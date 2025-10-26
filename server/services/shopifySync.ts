@@ -235,23 +235,16 @@ export class ShopifySyncService {
           .then(() => console.log(`[Shopify Sync] Added cancellation note`))
       );
 
-      // 3. Cancel order in Shopify (only if unfulfilled)
-      if (order.fulfillmentStatus !== 'fulfilled') {
-        actions.push(
-          client.cancelOrder(shopifyOrderId, reason, false)
-            .then(() => console.log(`[Shopify Sync] Cancelled order in Shopify`))
-            .catch((err: Error) => {
-              // Don't fail entire sync if already cancelled
-              if (err.message.includes('already') || err.message.includes('cancel')) {
-                console.log(`[Shopify Sync] Order already cancelled in Shopify, skipping`);
-              } else {
-                throw err;
-              }
-            })
-        );
-      } else {
-        console.log(`[Shopify Sync] Order already fulfilled, skipping cancellation`);
-      }
+      // 3. Cancel order in Shopify with email notification and restock
+      actions.push(
+        client.cancelOrder(shopifyOrderId, reason, true, true)
+          .then(() => console.log(`[Shopify Sync] Cancelled order in Shopify (notified customer, restocked inventory)`))
+          .catch((err: Error) => {
+            // Log validation errors but continue with tags/notes
+            console.log(`[Shopify Sync] Cancellation validation: ${err.message}`);
+            // Don't re-throw - we still want to add tags and notes even if order can't be cancelled
+          })
+      );
 
       // 4. Set metafields
       actions.push(
