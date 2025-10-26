@@ -163,7 +163,24 @@ export class ShopifyClient {
   // ============================================================================
 
   private async graphqlRequest(query: string, variables?: any): Promise<any> {
-    const url = `https://${this.config.storeUrl}/admin/api/2024-01/graphql.json`;
+    // Sanitize store URL: remove https://, http://, and trailing slashes
+    const sanitizedStoreUrl = this.config.storeUrl
+      .replace(/^https?:\/\//, '')
+      .replace(/\/$/, '');
+    
+    const url = `https://${sanitizedStoreUrl}/admin/api/2025-01/graphql.json`;
+    
+    // Log the request for debugging
+    console.log('[Shopify GraphQL] Request:', {
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shopify-Access-Token': this.config.apiKey.substring(0, 10) + '...' // Mask token
+      },
+      query: query.substring(0, 100) + '...', // Truncate query
+      variables: JSON.stringify(variables)
+    });
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -175,13 +192,25 @@ export class ShopifyClient {
 
     if (!response.ok) {
       const errorBody = await response.text();
+      console.error('[Shopify GraphQL] HTTP Error:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorBody
+      });
       throw new Error(`Shopify GraphQL error: ${response.statusText} - ${errorBody}`);
     }
 
     const result = await response.json();
     
     if (result.errors) {
+      console.error('[Shopify GraphQL] GraphQL Errors:', JSON.stringify(result.errors, null, 2));
       throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
+    }
+
+    // Log userErrors if present in the response
+    const mutationKey = Object.keys(result.data || {})[0];
+    if (mutationKey && result.data[mutationKey]?.userErrors?.length > 0) {
+      console.warn('[Shopify GraphQL] User Errors:', JSON.stringify(result.data[mutationKey].userErrors, null, 2));
     }
 
     return result.data;
