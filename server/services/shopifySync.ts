@@ -187,7 +187,40 @@ export class ShopifySyncService {
   }
 
   /**
+   * Retry helper with exponential backoff
+   */
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    actionName: string,
+    maxRetries: number = 3
+  ): Promise<T> {
+    let lastError: any;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[Shopify Sync] ${actionName} - Attempt ${attempt}/${maxRetries}`);
+        const result = await fn();
+        console.log(`[Shopify Sync] ✓ ${actionName} succeeded on attempt ${attempt}`);
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        const errorDetails = error instanceof Error ? error.message : JSON.stringify(error);
+        console.error(`[Shopify Sync] ✗ ${actionName} failed on attempt ${attempt}:`, errorDetails);
+        
+        if (attempt < maxRetries) {
+          const backoffMs = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          console.log(`[Shopify Sync] Retrying ${actionName} in ${backoffMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+        }
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
    * Sync cancelled order status to Shopify
+   * NOTE: Order is already cancelled via route handler, this only adds tags/notes
    */
   private async syncCancelled(
     client: any,
@@ -197,86 +230,155 @@ export class ShopifySyncService {
     notes?: string
   ): Promise<void> {
     const shopifyOrderId = order.shopifyOrderId;
-    const actions: Promise<any>[] = [];
+    const orderNumber = order.shopifyOrderNumber;
+
+    console.log(`[Shopify Sync] ========================================`);
+    console.log(`[Shopify Sync] Starting cancellation sync for order #${orderNumber}`);
+    console.log(`[Shopify Sync] Order ID: ${order.id}`);
+    console.log(`[Shopify Sync] Shopify Order ID: ${shopifyOrderId}`);
+    console.log(`[Shopify Sync] Agent: ${agentName}`);
+    console.log(`[Shopify Sync] Reason: ${reason}`);
+    console.log(`[Shopify Sync] ========================================`);
 
     const syncLog = await storage.createSyncLog({
       orderId: order.id,
       shopifyOrderId,
       syncType: 'cancelled',
-      syncAction: 'cancel_order',
+      syncAction: 'add_tags_notes',
       syncStatus: 'pending',
     });
 
+    let retryCount = 0;
+    const errors: string[] = [];
+
     try {
-      // 1. Add OF:cancelled tag
-      const existingTags = order.tags || [];
-      const newTags = Array.from(new Set([...existingTags, 'OF:cancelled']));
-      actions.push(
-        client.updateOrderTags(shopifyOrderId, newTags)
-          .then(() => console.log(`[Shopify Sync] Added 'OF:cancelled' tag`))
-      );
+      // 1. Add OF:cancelled tag with retry
+      try {
+        const existingTags = order.tags || [];
+        const newTags = Array.from(new Set([...existingTags, 'OF:cancelled']));
+        
+        console.log(`[Shopify Sync] Current tags:`, existingTags);
+        console.log(`[Shopify Sync] New tags to set:`, newTags);
+        
+        await this.retryWithBackoff(
+          async () => {
+            const result = await client.updateOrderTags(shopifyOrderId, newTags);
+            console.log(`[Shopify Sync] Tag update response:`, JSON.stringify(result, null, 2));
+            return result;
+          },
+          `Adding 'OF:cancelled' tag to order #${orderNumber}`
+        );
+      } catch (tagError: any) {
+        const errorMsg = `Failed to add tag after 3 retries: ${tagError instanceof Error ? tagError.message : JSON.stringify(tagError)}`;
+        console.error(`[Shopify Sync] ✗✗✗ ${errorMsg}`);
+        errors.push(errorMsg);
+        retryCount++;
+      }
 
-      // 2. Add cancellation note
-      const timestamp = new Date().toLocaleString('en-IN', { 
-        timeZone: 'Asia/Kolkata',
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-      const noteText = notes
-        ? `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}\n${notes}`
-        : `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}`;
+      // 2. Add cancellation note with retry
+      try {
+        const timestamp = new Date().toLocaleString('en-IN', { 
+          timeZone: 'Asia/Kolkata',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        });
+        const noteText = notes
+          ? `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}\n${notes}`
+          : `Cancelled by ${agentName} • ${timestamp}\nReason: ${reason}`;
+        
+        console.log(`[Shopify Sync] Note to add:`, noteText);
+        
+        await this.retryWithBackoff(
+          async () => {
+            const result = await client.addOrderNote(shopifyOrderId, noteText);
+            console.log(`[Shopify Sync] Note update response:`, JSON.stringify(result, null, 2));
+            return result;
+          },
+          `Adding cancellation note to order #${orderNumber}`
+        );
+      } catch (noteError: any) {
+        const errorMsg = `Failed to add note after 3 retries: ${noteError instanceof Error ? noteError.message : JSON.stringify(noteError)}`;
+        console.error(`[Shopify Sync] ✗✗✗ ${errorMsg}`);
+        errors.push(errorMsg);
+        retryCount++;
+      }
+
+      // 3. Set verification_status metafield with retry
+      try {
+        await this.retryWithBackoff(
+          async () => {
+            const result = await client.updateMetafield(
+              shopifyOrderId,
+              'verification_status',
+              'cancelled',
+              'single_line_text_field'
+            );
+            console.log(`[Shopify Sync] Verification metafield response:`, JSON.stringify(result, null, 2));
+            return result;
+          },
+          `Setting verification_status metafield for order #${orderNumber}`
+        );
+      } catch (metaError: any) {
+        const errorMsg = `Failed to set verification metafield: ${metaError instanceof Error ? metaError.message : JSON.stringify(metaError)}`;
+        console.error(`[Shopify Sync] ✗ ${errorMsg}`);
+        errors.push(errorMsg);
+      }
+
+      // 4. Set cancellation_reason metafield with retry
+      try {
+        await this.retryWithBackoff(
+          async () => {
+            const result = await client.updateMetafield(
+              shopifyOrderId,
+              'cancellation_reason',
+              reason,
+              'single_line_text_field'
+            );
+            console.log(`[Shopify Sync] Cancellation reason metafield response:`, JSON.stringify(result, null, 2));
+            return result;
+          },
+          `Setting cancellation_reason metafield for order #${orderNumber}`
+        );
+      } catch (metaError: any) {
+        const errorMsg = `Failed to set cancellation_reason metafield: ${metaError instanceof Error ? metaError.message : JSON.stringify(metaError)}`;
+        console.error(`[Shopify Sync] ✗ ${errorMsg}`);
+        errors.push(errorMsg);
+      }
+
+      // Determine final status
+      if (errors.length === 0) {
+        console.log(`[Shopify Sync] ✓✓✓ Sync completed successfully for order #${orderNumber}`);
+        await storage.updateSyncLog(syncLog.id, {
+          syncStatus: 'success',
+          syncedAt: new Date(),
+        });
+      } else {
+        const errorMessage = `Partial sync failure (${errors.length} errors):\n${errors.join('\n')}`;
+        console.error(`[Shopify Sync] ✗✗✗ ${errorMessage}`);
+        await storage.updateSyncLog(syncLog.id, {
+          syncStatus: 'failed',
+          errorMessage,
+          retryCount,
+        });
+        throw new Error(errorMessage);
+      }
       
-      actions.push(
-        client.addOrderNote(shopifyOrderId, noteText)
-          .then(() => console.log(`[Shopify Sync] Added cancellation note`))
-      );
-
-      // 3. Cancel order in Shopify with email notification and restock
-      actions.push(
-        client.cancelOrder(shopifyOrderId, reason, true, true)
-          .then(() => console.log(`[Shopify Sync] Cancelled order in Shopify (notified customer, restocked inventory)`))
-          .catch((err: Error) => {
-            // Log validation errors but continue with tags/notes
-            console.log(`[Shopify Sync] Cancellation validation: ${err.message}`);
-            // Don't re-throw - we still want to add tags and notes even if order can't be cancelled
-          })
-      );
-
-      // 4. Set metafields
-      actions.push(
-        client.updateMetafield(
-          shopifyOrderId,
-          'verification_status',
-          'cancelled',
-          'single_line_text_field'
-        ).then(() => console.log(`[Shopify Sync] Set verification metafield`))
-      );
-
-      actions.push(
-        client.updateMetafield(
-          shopifyOrderId,
-          'cancellation_reason',
-          reason,
-          'single_line_text_field'
-        ).then(() => console.log(`[Shopify Sync] Set cancellation_reason metafield`))
-      );
-
-      // Execute all actions in parallel
-      await Promise.all(actions);
-
-      await storage.updateSyncLog(syncLog.id, {
-        syncStatus: 'success',
-        syncedAt: new Date(),
-      });
-    } catch (error) {
+      console.log(`[Shopify Sync] ======================================== END`);
+    } catch (error: any) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[Shopify Sync] ✗✗✗ FATAL ERROR during cancellation sync for order #${orderNumber}:`, errorMessage);
+      console.error(`[Shopify Sync] Full error object:`, error);
+      
       await storage.updateSyncLog(syncLog.id, {
         syncStatus: 'failed',
-        errorMessage: error instanceof Error ? error.message : String(error),
+        errorMessage,
+        retryCount,
       });
+      
       throw error;
     }
   }
