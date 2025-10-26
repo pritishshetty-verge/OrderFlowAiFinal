@@ -205,7 +205,7 @@ export class ShopifyClient {
 
     const variables = {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId}`,
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
         tags: tags,
       },
     };
@@ -237,7 +237,7 @@ export class ShopifyClient {
 
     const variables = {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId}`,
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
         note: note,
       },
     };
@@ -284,7 +284,7 @@ export class ShopifyClient {
     const shopifyReason = shopifyReasonMap[reason] || "OTHER";
 
     const variables = {
-      orderId: `gid://shopify/Order/${shopifyOrderId}`,
+      orderId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
       reason: shopifyReason,
       notifyCustomer: notifyCustomer,
     };
@@ -324,7 +324,7 @@ export class ShopifyClient {
     const variables = {
       metafields: [
         {
-          ownerId: `gid://shopify/Order/${shopifyOrderId}`,
+          ownerId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
           namespace: "orderflowai",
           key: key,
           value: value,
