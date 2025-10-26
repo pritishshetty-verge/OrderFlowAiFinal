@@ -1,12 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { CheckCircle2, XCircle, Clock, ChevronDown, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
 import { CancelOrderModal } from "@/components/cancel-order-modal";
 import { FollowupOrderModal } from "@/components/followup-order-modal";
 import {
@@ -115,45 +109,41 @@ export function CallStatusActions({
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={disabled}
-            className="gap-1"
-            data-testid="button-call-status-actions"
-          >
-            <span className={getStatusColor(currentStatus)}>
-              {currentStatus || "Pending"}
-            </span>
-            <ChevronDown className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            onClick={handleConfirmClick}
-            data-testid="menu-item-confirm"
-          >
-            <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-            Confirmed
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleCancelClick}
-            data-testid="menu-item-cancel"
-          >
-            <XCircle className="h-4 w-4 mr-2 text-red-600" />
-            Cancelled
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleFollowupClick}
-            data-testid="menu-item-followup"
-          >
-            <Clock className="h-4 w-4 mr-2 text-yellow-600" />
-            Follow Up
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          onClick={handleConfirmClick}
+          className="gap-1 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800"
+          data-testid="button-confirm"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          Confirm
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          onClick={handleCancelClick}
+          className="gap-1 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800"
+          data-testid="button-cancel"
+        >
+          <XCircle className="h-4 w-4" />
+          Cancel
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={disabled}
+          onClick={handleFollowupClick}
+          className="gap-1 text-yellow-600 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800"
+          data-testid="button-followup"
+        >
+          <Clock className="h-4 w-4" />
+          Follow Up
+        </Button>
+      </div>
 
       {/* Confirm Dialog */}
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
