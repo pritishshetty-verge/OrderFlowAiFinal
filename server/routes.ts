@@ -361,6 +361,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         note: notes || `Order confirmed${notes ? ': ' + notes : ''}`,
       });
 
+      // Sync to Shopify (non-blocking)
+      const { shopifySyncService } = await import("./services/shopifySync");
+      shopifySyncService.syncToShopify(req.params.id, 'confirmed', { userId, notes })
+        .catch((err) => console.error('[Shopify Sync] Background sync failed:', err));
+
       res.json({ success: true, order });
     } catch (error) {
       console.error("Error confirming order:", error);
@@ -389,6 +394,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         changedBy: userId,
         note: `Order cancelled: ${reason}${notes ? ' - ' + notes : ''}`,
       });
+
+      // Sync to Shopify (non-blocking)
+      const { shopifySyncService } = await import("./services/shopifySync");
+      shopifySyncService.syncToShopify(req.params.id, 'cancelled', { userId, reason, notes })
+        .catch((err) => console.error('[Shopify Sync] Background sync failed:', err));
 
       res.json({ success: true, order });
     } catch (error) {
@@ -419,6 +429,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         changedBy: userId,
         note: `Follow-up scheduled for ${followupDate.toLocaleString()}${notes ? ': ' + notes : ''}`,
       });
+
+      // Sync to Shopify (non-blocking)
+      const { shopifySyncService } = await import("./services/shopifySync");
+      shopifySyncService.syncToShopify(req.params.id, 'followup', { userId, followupDate, notes })
+        .catch((err) => console.error('[Shopify Sync] Background sync failed:', err));
 
       res.json({ success: true, order });
     } catch (error) {

@@ -30,6 +30,8 @@ import {
   type InsertCall,
   type Notification,
   type InsertNotification,
+  type ShopifySyncLog,
+  type InsertShopifySyncLog,
   users,
   invites,
   customers,
@@ -44,6 +46,7 @@ import {
   attendance,
   calls,
   notifications,
+  shopifySyncLogs,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -917,6 +920,62 @@ export class DbStorage implements IStorage {
         lte(orders.followupAt, now),
         eq(orders.callStatus, "Follow Up")
       ));
+  }
+
+  // ============================================================================
+  // SHOPIFY SYNC LOGS
+  // ============================================================================
+
+  async createSyncLog(log: InsertShopifySyncLog): Promise<ShopifySyncLog> {
+    const [syncLog] = await db.insert(shopifySyncLogs).values(log).returning();
+    return syncLog;
+  }
+
+  async updateSyncLog(id: string, updates: Partial<InsertShopifySyncLog>): Promise<ShopifySyncLog | undefined> {
+    const [updated] = await db
+      .update(shopifySyncLogs)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(shopifySyncLogs.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getSyncLog(id: string): Promise<ShopifySyncLog | undefined> {
+    const [log] = await db
+      .select()
+      .from(shopifySyncLogs)
+      .where(eq(shopifySyncLogs.id, id));
+    return log;
+  }
+
+  async getSyncLogsByOrder(orderId: string): Promise<ShopifySyncLog[]> {
+    return await db
+      .select()
+      .from(shopifySyncLogs)
+      .where(eq(shopifySyncLogs.orderId, orderId))
+      .orderBy(desc(shopifySyncLogs.createdAt));
+  }
+
+  async getFailedSyncs(): Promise<ShopifySyncLog[]> {
+    return await db
+      .select()
+      .from(shopifySyncLogs)
+      .where(eq(shopifySyncLogs.syncStatus, "failed"))
+      .orderBy(desc(shopifySyncLogs.createdAt));
+  }
+
+  async updateOrderSyncStatus(orderId: string, syncStatus: string, lastSyncedAt?: Date): Promise<Order | undefined> {
+    const updateData: any = { syncStatus };
+    if (lastSyncedAt) {
+      updateData.lastSyncedAt = lastSyncedAt;
+    }
+    
+    const [updated] = await db
+      .update(orders)
+      .set(updateData)
+      .where(eq(orders.id, orderId))
+      .returning();
+    return updated;
   }
 }
 

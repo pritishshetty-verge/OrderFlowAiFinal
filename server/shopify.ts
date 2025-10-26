@@ -157,6 +157,190 @@ export class ShopifyClient {
 
     return await response.json();
   }
+
+  // ============================================================================
+  // GRAPHQL MUTATIONS FOR SHOPIFY SYNC
+  // ============================================================================
+
+  private async graphqlRequest(query: string, variables?: any): Promise<any> {
+    const url = `https://${this.config.storeUrl}/admin/api/2024-01/graphql.json`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": this.config.apiKey,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Shopify GraphQL error: ${response.statusText} - ${errorBody}`);
+    }
+
+    const result = await response.json();
+    
+    if (result.errors) {
+      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
+    }
+
+    return result.data;
+  }
+
+  async updateOrderTags(shopifyOrderId: string, tags: string[]): Promise<any> {
+    const query = `
+      mutation orderUpdate($input: OrderInput!) {
+        orderUpdate(input: $input) {
+          order {
+            id
+            tags
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        id: `gid://shopify/Order/${shopifyOrderId}`,
+        tags: tags,
+      },
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (data.orderUpdate.userErrors.length > 0) {
+      throw new Error(`Order update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+    }
+
+    return data.orderUpdate.order;
+  }
+
+  async addOrderNote(shopifyOrderId: string, note: string): Promise<any> {
+    const query = `
+      mutation orderUpdate($input: OrderInput!) {
+        orderUpdate(input: $input) {
+          order {
+            id
+            note
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        id: `gid://shopify/Order/${shopifyOrderId}`,
+        note: note,
+      },
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (data.orderUpdate.userErrors.length > 0) {
+      throw new Error(`Order note update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+    }
+
+    return data.orderUpdate.order;
+  }
+
+  async cancelOrder(shopifyOrderId: string, reason: string, notifyCustomer: boolean = false): Promise<any> {
+    const query = `
+      mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!) {
+        orderCancel(orderId: $orderId, reason: $reason, notifyCustomer: $notifyCustomer) {
+          order {
+            id
+            cancelledAt
+            cancelReason
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    // Map our cancellation reasons to Shopify's enum values
+    const shopifyReasonMap: Record<string, string> = {
+      "Customer changed mind": "CUSTOMER",
+      "Found better price elsewhere": "CUSTOMER",
+      "Wrong item/size/color": "INVENTORY",
+      "Delivery time too long": "CUSTOMER",
+      "Family member disapproved": "CUSTOMER",
+      "Fake/test order": "FRAUD",
+      "Customer unreachable": "CUSTOMER",
+      "Address issues": "CUSTOMER",
+      "Other": "OTHER",
+    };
+
+    const shopifyReason = shopifyReasonMap[reason] || "OTHER";
+
+    const variables = {
+      orderId: `gid://shopify/Order/${shopifyOrderId}`,
+      reason: shopifyReason,
+      notifyCustomer: notifyCustomer,
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (data.orderCancel.userErrors.length > 0) {
+      throw new Error(`Order cancellation failed: ${JSON.stringify(data.orderCancel.userErrors)}`);
+    }
+
+    return data.orderCancel.order;
+  }
+
+  async updateMetafield(
+    shopifyOrderId: string, 
+    key: string, 
+    value: string, 
+    type: string = "single_line_text_field"
+  ): Promise<any> {
+    const query = `
+      mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields {
+            id
+            namespace
+            key
+            value
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      metafields: [
+        {
+          ownerId: `gid://shopify/Order/${shopifyOrderId}`,
+          namespace: "orderflowai",
+          key: key,
+          value: value,
+          type: type,
+        },
+      ],
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (data.metafieldsSet.userErrors.length > 0) {
+      throw new Error(`Metafield update failed: ${JSON.stringify(data.metafieldsSet.userErrors)}`);
+    }
+
+    return data.metafieldsSet.metafields;
+  }
 }
 
 // Load credentials dynamically from DB or environment variables

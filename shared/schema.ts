@@ -249,6 +249,10 @@ export const orders = pgTable("orders", {
   notes: text("notes"),
   rawShopifyData: jsonb("raw_shopify_data"), // Store full Shopify order data
   
+  // Shopify Sync Tracking
+  lastSyncedAt: timestamp("last_synced_at"),
+  syncStatus: text("sync_status").notNull().default("not_synced"), // not_synced, synced, failed
+  
   // Timestamps
   shopifyCreatedAt: timestamp("shopify_created_at").notNull(),
   shopifyUpdatedAt: timestamp("shopify_updated_at").notNull(),
@@ -322,6 +326,30 @@ export const orderStatusHistory = pgTable("order_status_history", {
 export const insertOrderStatusHistorySchema = createInsertSchema(orderStatusHistory).omit({ id: true, createdAt: true });
 export type InsertOrderStatusHistory = z.infer<typeof insertOrderStatusHistorySchema>;
 export type OrderStatusHistory = typeof orderStatusHistory.$inferSelect;
+
+// ============================================================================
+// SHOPIFY SYNC LOGS
+// ============================================================================
+
+export const shopifySyncLogs = pgTable("shopify_sync_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  shopifyOrderId: text("shopify_order_id").notNull(),
+  syncType: text("sync_type").notNull(), // confirmed, cancelled, followup
+  syncAction: text("sync_action").notNull(), // add_tag, add_note, cancel_order, update_metafield
+  syncStatus: text("sync_status").notNull().default("pending"), // pending, success, failed
+  requestPayload: jsonb("request_payload"),
+  responseData: jsonb("response_data"),
+  errorMessage: text("error_message"),
+  retryCount: integer("retry_count").notNull().default(0),
+  syncedAt: timestamp("synced_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertShopifySyncLogSchema = createInsertSchema(shopifySyncLogs).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertShopifySyncLog = z.infer<typeof insertShopifySyncLogSchema>;
+export type ShopifySyncLog = typeof shopifySyncLogs.$inferSelect;
 
 // ============================================================================
 // LEAVE REQUESTS
