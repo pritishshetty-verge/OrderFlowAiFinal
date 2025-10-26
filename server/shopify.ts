@@ -370,6 +370,42 @@ export class ShopifyClient {
 
     return data.metafieldsSet.metafields;
   }
+
+  async getOrderState(shopifyOrderId: string): Promise<{
+    cancelledAt: string | null;
+    displayFinancialStatus: string;
+    displayFulfillmentStatus: string;
+    closed: boolean;
+  }> {
+    const query = `
+      query getOrder($id: ID!) {
+        order(id: $id) {
+          id
+          cancelledAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          closed
+        }
+      }
+    `;
+
+    const variables = {
+      id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (!data.order) {
+      throw new Error(`Order not found: ${shopifyOrderId}`);
+    }
+
+    return {
+      cancelledAt: data.order.cancelledAt,
+      displayFinancialStatus: data.order.displayFinancialStatus,
+      displayFulfillmentStatus: data.order.displayFulfillmentStatus,
+      closed: data.order.closed,
+    };
+  }
 }
 
 // Load credentials dynamically from DB or environment variables
