@@ -1,0 +1,75 @@
+We need to sync order status changes FROM our app TO Shopify. You've correctly identified what's missing.
+
+Here's what to build:
+
+1. Extend ShopifyClient (server/shopify.ts)
+Add these 4 GraphQL mutation methods:
+
+updateOrderTags() - Use GraphQL orderUpdate mutation to modify tags array
+
+addOrderNote() - Use GraphQL orderUpdate mutation to append notes
+
+cancelOrder() - Use GraphQL orderCancel mutation (only for unfulfilled orders)
+
+updateMetafield() - Use GraphQL metafieldsSet mutation with namespace "orderflowai"
+
+Use API version 2024-01 (already configured). All methods should use GraphQL, not REST.
+
+2. Create Sync Service (server/services/shopifySync.ts)
+Build a ShopifySyncService class with method:
+
+text
+syncToShopify(orderId, syncType, context)
+Logic for each sync type:
+
+confirmed: Add tag verification-confirmed, add note with user + timestamp, set metafield
+
+cancelled: Add tag verification-cancelled, cancel order if unfulfilled, add note with reason, set metafield
+
+followup: Add tag followup-scheduled, add note with datetime, set metafield
+
+Make it async/non-blocking. If Shopify sync fails, log error but don't throw (user action should succeed even if sync fails).
+
+3. Add Sync Tracking
+Create new table shopify_sync_logs in schema with fields:
+
+orderId, shopifyOrderId, syncType, syncStatus, syncError, retryCount, syncedAt, createdAt, updatedAt
+
+Add to orders table:
+
+lastSyncedAt (timestamp)
+
+syncStatus (varchar: 'not_synced', 'synced', 'failed')
+
+4. Integrate into Endpoints (server/routes.ts)
+After each database update in these endpoints:
+
+POST /api/orders/:id/confirm (line ~343)
+
+POST /api/orders/:id/cancel (line ~372)
+
+POST /api/orders/:id/followup (line ~401)
+
+Add one line: Call syncService.syncToShopify() with appropriate syncType and context, wrapped in .catch() to prevent blocking.
+
+5. Error Handling
+
+Log all sync operations to shopify_sync_logs table
+
+Mark sync status as 'pending' → 'success' or 'failed'
+
+Console.error on failures but don't break user flow
+
+Use try-catch in each sync method
+
+Key Requirements:
+
+Use existing shopifyOrderId from orders table for lookups
+
+Sync should complete within 10 seconds
+
+Non-blocking: User sees success immediately, sync happens in background
+
+Proper error logging for debugging failed syncs
+
+Build this now with proper TypeScript types and error handling.
