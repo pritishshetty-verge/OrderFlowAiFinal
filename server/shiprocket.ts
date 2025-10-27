@@ -186,6 +186,8 @@ interface ShiprocketCourierPartner {
   is_custom_rate: number;
   weight_cases: number;
   child_courier_id: number | null;
+  others?: string; // JSON string containing additional courier metadata including courier_logo_url
+  courier_logo_url?: string; // Extracted from 'others' JSON field
   is_recommended?: boolean;
   is_serviceable?: boolean;
   non_serviceable_reason?: string;
@@ -647,6 +649,17 @@ class ShiprocketService {
           const total_charge = courier.rate;
           const rating = parseFloat(courier.rating) || 0;
           
+          // Extract logo URL from 'others' JSON field
+          let courierLogoUrl: string | undefined;
+          try {
+            if (courier.others && typeof courier.others === 'string') {
+              const othersData = JSON.parse(courier.others);
+              courierLogoUrl = othersData.courier_logo_url;
+            }
+          } catch (e) {
+            // Silently ignore JSON parse errors
+          }
+          
           // Determine courier category based on blocking status and rating
           let category: 'serviceable' | 'low_rated' | 'non_serviceable' = 'serviceable';
           let nonServiceableReason = '';
@@ -698,6 +711,7 @@ class ShiprocketService {
           return {
             ...courier,
             total_charge, // Add total_charge for backward compatibility with frontend
+            courier_logo_url: courierLogoUrl, // Add extracted logo URL
             is_recommended: courier.courier_company_id === recommendedId,
             category,
             non_serviceable_reason: nonServiceableReason,
