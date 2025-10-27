@@ -524,6 +524,243 @@ export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Notification = typeof notifications.$inferSelect;
 
 // ============================================================================
+// LEARNING CENTER - COURSES
+// ============================================================================
+
+export const courses = pgTable("courses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description").notNull(),
+  thumbnail: text("thumbnail"), // URL to course thumbnail image
+  category: text("category").notNull(), // Onboarding, Advanced Techniques, Policy & Compliance, Product Training, Soft Skills
+  tags: text("tags").array().default(sql`ARRAY[]::text[]`),
+  authorId: varchar("author_id").references(() => users.id),
+  
+  // Prerequisite system
+  prerequisiteCourseIds: text("prerequisite_course_ids").array().default(sql`ARRAY[]::text[]`), // Course IDs that must be completed first
+  
+  // Metadata
+  estimatedDuration: integer("estimated_duration"), // In minutes
+  difficulty: text("difficulty").default("beginner"), // beginner, intermediate, advanced
+  isPublished: boolean("is_published").notNull().default(false),
+  order: integer("order").default(0), // Display order within category
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertCourseSchema = createInsertSchema(courses).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertCourse = z.infer<typeof insertCourseSchema>;
+export type Course = typeof courses.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - LESSONS
+// ============================================================================
+
+export const lessons = pgTable("lessons", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  courseId: varchar("course_id").notNull().references(() => courses.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description"),
+  
+  // Content
+  content: text("content"), // Rich text/markdown content (from WYSIWYG editor)
+  videoUrl: text("video_url"), // YouTube/Vimeo embed URL
+  videoDuration: integer("video_duration"), // In seconds
+  
+  // Prerequisite system
+  prerequisiteLessonIds: text("prerequisite_lesson_ids").array().default(sql`ARRAY[]::text[]`), // Lesson IDs that must be completed first
+  
+  // Metadata
+  order: integer("order").notNull().default(0), // Order within course
+  estimatedDuration: integer("estimated_duration"), // In minutes
+  isPublished: boolean("is_published").notNull().default(false),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertLessonSchema = createInsertSchema(lessons).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertLesson = z.infer<typeof insertLessonSchema>;
+export type Lesson = typeof lessons.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - USER LESSON PROGRESS
+// ============================================================================
+
+export const userLessonProgress = pgTable("user_lesson_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  lessonId: varchar("lesson_id").notNull().references(() => lessons.id, { onDelete: "cascade" }),
+  
+  // Progress tracking
+  completionPercentage: integer("completion_percentage").notNull().default(0), // 0-100
+  isCompleted: boolean("is_completed").notNull().default(false),
+  completedAt: timestamp("completed_at"),
+  
+  // Engagement tracking
+  timeSpent: integer("time_spent").default(0), // In seconds
+  lastAccessedAt: timestamp("last_accessed_at"),
+  isBookmarked: boolean("is_bookmarked").notNull().default(false),
+  
+  // Video progress
+  videoProgress: integer("video_progress").default(0), // In seconds - how far into the video they watched
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertUserLessonProgressSchema = createInsertSchema(userLessonProgress).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertUserLessonProgress = z.infer<typeof insertUserLessonProgressSchema>;
+export type UserLessonProgress = typeof userLessonProgress.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - LESSON ANALYTICS
+// ============================================================================
+
+export const lessonAnalytics = pgTable("lesson_analytics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  lessonId: varchar("lesson_id").notNull().unique().references(() => lessons.id, { onDelete: "cascade" }),
+  
+  // Aggregate metrics
+  totalViews: integer("total_views").notNull().default(0),
+  uniqueViews: integer("unique_views").notNull().default(0),
+  totalCompletions: integer("total_completions").notNull().default(0),
+  averageCompletionTime: integer("average_completion_time").default(0), // In seconds
+  averageTimeSpent: integer("average_time_spent").default(0), // In seconds
+  
+  // Completion rate
+  completionRate: decimal("completion_rate", { precision: 5, scale: 2 }).default("0"), // Percentage
+  
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertLessonAnalyticsSchema = createInsertSchema(lessonAnalytics).omit({ 
+  id: true, 
+  updatedAt: true 
+});
+export type InsertLessonAnalytics = z.infer<typeof insertLessonAnalyticsSchema>;
+export type LessonAnalytics = typeof lessonAnalytics.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - RESOURCES
+// ============================================================================
+
+export const resources = pgTable("resources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  type: text("type").notNull(), // video, pdf, template, sop, checklist
+  category: text("category").notNull(), // Same as courses: Onboarding, Advanced Techniques, etc.
+  
+  // File details
+  fileUrl: text("file_url").notNull(), // URL to the file (S3, local storage, etc.)
+  fileSize: integer("file_size"), // In bytes
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type"),
+  
+  // Optional lesson association
+  lessonId: varchar("lesson_id").references(() => lessons.id, { onDelete: "set null" }),
+  
+  // Metadata
+  tags: text("tags").array().default(sql`ARRAY[]::text[]`),
+  authorId: varchar("author_id").references(() => users.id),
+  downloadCount: integer("download_count").notNull().default(0),
+  isPublished: boolean("is_published").notNull().default(true),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertResourceSchema = createInsertSchema(resources).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertResource = z.infer<typeof insertResourceSchema>;
+export type Resource = typeof resources.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - ONBOARDING CHECKLISTS
+// ============================================================================
+
+export const onboardingChecklists = pgTable("onboarding_checklists", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  role: text("role").notNull(), // admin, agent - role-specific checklists
+  
+  // Milestones (stored as JSONB array)
+  // Each milestone: { id, title, description, type, resourceId, order, isRequired }
+  milestones: jsonb("milestones").notNull(),
+  
+  isActive: boolean("is_active").notNull().default(true),
+  order: integer("order").default(0),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertOnboardingChecklistSchema = createInsertSchema(onboardingChecklists).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertOnboardingChecklist = z.infer<typeof insertOnboardingChecklistSchema>;
+export type OnboardingChecklist = typeof onboardingChecklists.$inferSelect;
+
+// ============================================================================
+// LEARNING CENTER - USER ONBOARDING PROGRESS
+// ============================================================================
+
+export const userOnboardingProgress = pgTable("user_onboarding_progress", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  checklistId: varchar("checklist_id").notNull().references(() => onboardingChecklists.id, { onDelete: "cascade" }),
+  
+  // Progress tracking (stored as JSONB)
+  // { milestoneId: { completed: boolean, completedAt: timestamp, signedOffBy: userId } }
+  progress: jsonb("progress").notNull().default('{}'),
+  
+  // Aggregate metrics
+  completionPercentage: integer("completion_percentage").notNull().default(0),
+  isCompleted: boolean("is_completed").notNull().default(false),
+  completedAt: timestamp("completed_at"),
+  
+  // Manager sign-off
+  signedOffBy: varchar("signed_off_by").references(() => users.id),
+  signedOffAt: timestamp("signed_off_at"),
+  
+  // Time tracking
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertUserOnboardingProgressSchema = createInsertSchema(userOnboardingProgress).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+export type InsertUserOnboardingProgress = z.infer<typeof insertUserOnboardingProgressSchema>;
+export type UserOnboardingProgress = typeof userOnboardingProgress.$inferSelect;
+
+// ============================================================================
 // SHIPMENTS (Shiprocket Integration)
 // ============================================================================
 
