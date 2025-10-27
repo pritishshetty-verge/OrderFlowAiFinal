@@ -37,8 +37,8 @@ const lessonFormSchema = z.object({
   content: z.string().min(10, "Content must be at least 10 characters"),
   videoUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   courseId: z.string(),
-  order: z.number().min(0),
-  estimatedDuration: z.number().min(1, "Duration must be at least 1 minute"),
+  order: z.coerce.number().min(0),
+  estimatedDuration: z.coerce.number().min(1, "Duration must be at least 1 minute"),
   prerequisiteLessonIds: z.array(z.string()).default([]),
 });
 

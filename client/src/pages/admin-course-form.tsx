@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation } from "wouter";
 import { useForm } from "react-hook-form";
@@ -36,8 +37,8 @@ const courseFormSchema = z.object({
   thumbnail: z.string().url("Must be a valid URL").optional().or(z.literal("")),
   category: z.enum(["onboarding", "operations", "training"]),
   difficulty: z.enum(["beginner", "intermediate", "advanced"]),
-  estimatedDuration: z.number().min(1, "Duration must be at least 1 minute"),
-  order: z.number().min(0),
+  estimatedDuration: z.coerce.number().min(1, "Duration must be at least 1 minute"),
+  order: z.coerce.number().min(0),
   isPublished: z.boolean(),
 });
 
@@ -62,30 +63,34 @@ export default function AdminCourseForm() {
 
   const form = useForm<CourseFormValues>({
     resolver: zodResolver(courseFormSchema),
-    defaultValues: courseId && courseData?.course
-      ? {
-          title: courseData.course.title,
-          slug: courseData.course.slug,
-          description: courseData.course.description,
-          thumbnail: courseData.course.thumbnail || "",
-          category: courseData.course.category,
-          difficulty: courseData.course.difficulty,
-          estimatedDuration: courseData.course.estimatedDuration,
-          order: courseData.course.order,
-          isPublished: courseData.course.isPublished,
-        }
-      : {
-          title: "",
-          slug: "",
-          description: "",
-          thumbnail: "",
-          category: "onboarding",
-          difficulty: "beginner",
-          estimatedDuration: 30,
-          order: 0,
-          isPublished: false,
-        },
+    defaultValues: {
+      title: "",
+      slug: "",
+      description: "",
+      thumbnail: "",
+      category: "onboarding",
+      difficulty: "beginner",
+      estimatedDuration: 30,
+      order: 0,
+      isPublished: false,
+    },
   });
+
+  useEffect(() => {
+    if (courseData?.course) {
+      form.reset({
+        title: courseData.course.title,
+        slug: courseData.course.slug,
+        description: courseData.course.description,
+        thumbnail: courseData.course.thumbnail || "",
+        category: courseData.course.category,
+        difficulty: courseData.course.difficulty,
+        estimatedDuration: courseData.course.estimatedDuration,
+        order: courseData.course.order,
+        isPublished: courseData.course.isPublished,
+      });
+    }
+  }, [courseData, form]);
 
   const saveMutation = useMutation({
     mutationFn: async (data: CourseFormValues) => {
