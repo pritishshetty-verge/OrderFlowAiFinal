@@ -1800,10 +1800,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Get shipment for this order
-      const shipment = await storage.getShipmentByOrderId(orderId);
-      if (!shipment) {
-        return res.status(404).json({ error: "Shipment not found for this order. Please create a shipment first." });
+      // Try to get existing shipment from local DB first
+      let shipment = await storage.getShipmentByOrderId(orderId);
+      let shiprocketShipmentId: number | null = null;
+
+      if (shipment && shipment.shiprocketShipmentId) {
+        // We have local shipment record with Shiprocket ID
+        shiprocketShipmentId = parseInt(shipment.shiprocketShipmentId);
+      } else {
+        // No local shipment - query Shiprocket for existing order
+        const shiprocketOrder = await shiprocketService.getOrderDetails(order.shopifyOrderNumber);
+        
+        if (!shiprocketOrder) {
+          return res.status(404).json({ 
+            error: "Order not found in Shiprocket. Please ensure the order has been synced from Shopify." 
+          });
+        }
+
+        shiprocketShipmentId = shiprocketOrder.shipment_id;
+
+        // Cache the shipment_id in our database for future use
+        if (!shipment) {
+          shipment = await storage.createShipment({
+            orderId,
+            shopifyOrderId: order.shopifyOrderNumber,
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+            status: "created",
+            weight: "0.5", // Default weight
+          });
+        } else {
+          await storage.updateShipment(shipment.id, {
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+          });
+        }
       }
 
       // Prepare serviceability check payload
@@ -1818,7 +1847,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get available couriers from Shiprocket
       const couriers = await shiprocketService.getAvailableCouriers(serviceabilityPayload);
 
-      res.json({ couriers });
+      res.json({ couriers, shipmentId: shiprocketShipmentId });
     } catch (error: any) {
       console.error("Error fetching available couriers:", error);
       res.status(500).json({ error: error.message || "Failed to fetch available couriers" });
@@ -1841,10 +1870,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Get shipment
-      const shipment = await storage.getShipmentByOrderId(orderId);
-      if (!shipment) {
-        return res.status(404).json({ error: "Shipment not found for this order" });
+      // Try to get existing shipment from local DB first
+      let shipment = await storage.getShipmentByOrderId(orderId);
+      let shiprocketShipmentId: number | null = null;
+
+      if (shipment && shipment.shiprocketShipmentId) {
+        // We have local shipment record with Shiprocket ID
+        shiprocketShipmentId = parseInt(shipment.shiprocketShipmentId);
+      } else {
+        // No local shipment - query Shiprocket for existing order
+        const shiprocketOrder = await shiprocketService.getOrderDetails(order.shopifyOrderNumber);
+        
+        if (!shiprocketOrder) {
+          return res.status(404).json({ 
+            error: "Order not found in Shiprocket. Please ensure the order has been synced from Shopify." 
+          });
+        }
+
+        shiprocketShipmentId = shiprocketOrder.shipment_id;
+
+        // Cache the shipment_id in our database for future use
+        if (!shipment) {
+          shipment = await storage.createShipment({
+            orderId,
+            shopifyOrderId: order.shopifyOrderNumber,
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+            status: "created",
+            weight: "0.5", // Default weight
+          });
+        } else {
+          await storage.updateShipment(shipment.id, {
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+          });
+        }
       }
 
       // Check if AWB is already assigned
@@ -1854,7 +1912,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Assign courier and get AWB from Shiprocket
       const assignmentResult = await shiprocketService.assignCourierAndShip({
-        shipment_id: parseInt(shipment.shiprocketShipmentId!),
+        shipment_id: shiprocketShipmentId,
         courier_id: parseInt(courierId),
       });
 

@@ -24,7 +24,6 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar as CalendarIcon, Filter, PackageCheck, Search, Package } from "lucide-react";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
-import { CreateShipmentModal } from "@/components/create-shipment-modal";
 import { CourierSelectionModal } from "@/components/courier-selection-modal";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -40,9 +39,7 @@ export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
-  const [shipmentModalOpen, setShipmentModalOpen] = useState(false);
   const [courierSelectionModalOpen, setCourierSelectionModalOpen] = useState(false);
-  const [selectedOrderForShipment, setSelectedOrderForShipment] = useState<BackendOrder | null>(null);
   const [selectedOrderForCourier, setSelectedOrderForCourier] = useState<BackendOrder | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
@@ -145,12 +142,6 @@ export default function FulfilPage() {
     if (!agentId) return "Unassigned";
     const agent = users?.find((u) => u.id === agentId);
     return agent?.username || agent?.email || "Unknown";
-  };
-
-  const handleCreateShipment = (order: BackendOrder, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSelectedOrderForShipment(order);
-    setShipmentModalOpen(true);
   };
 
   const handleShipNow = (order: BackendOrder, e: React.MouseEvent) => {
@@ -413,21 +404,6 @@ export default function FulfilPage() {
         open={isQuickPreviewOpen}
         onOpenChange={setIsQuickPreviewOpen}
       />
-
-      {/* Create Shipment Modal */}
-      {selectedOrderForShipment && (
-        <CreateShipmentModal
-          open={shipmentModalOpen}
-          onOpenChange={setShipmentModalOpen}
-          orderId={selectedOrderForShipment.id}
-          orderDetails={{
-            shopifyOrderId: selectedOrderForShipment.shopifyOrderId,
-            customerName: selectedOrderForShipment.customerName,
-            customerPhone: selectedOrderForShipment.customerPhone,
-            total: Number(selectedOrderForShipment.totalPrice),
-          }}
-        />
-      )}
 
       {/* Courier Selection Modal */}
       {selectedOrderForCourier && (

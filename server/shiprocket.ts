@@ -385,6 +385,43 @@ class ShiprocketService {
     }
   }
 
+  async getOrderDetails(shopifyOrderNumber: string): Promise<{ shipment_id: number; order_id: number } | null> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const response = await this.axiosInstance.get(
+        '/orders',
+        { 
+          headers,
+          params: {
+            filter_by_order_id: shopifyOrderNumber
+          }
+        }
+      );
+
+      if (response.data.data && response.data.data.length > 0) {
+        const order = response.data.data[0];
+        console.log('[Shiprocket] Order found:', {
+          orderId: order.id,
+          shipmentId: order.shipments?.[0]?.id,
+          shopifyOrderNumber
+        });
+        
+        if (order.shipments && order.shipments.length > 0) {
+          return {
+            shipment_id: order.shipments[0].id,
+            order_id: order.id
+          };
+        }
+      }
+      
+      console.log('[Shiprocket] No order found for:', shopifyOrderNumber);
+      return null;
+    } catch (error: any) {
+      console.error('[Shiprocket] Get order details failed:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get order details');
+    }
+  }
+
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
       await this.authenticate();
