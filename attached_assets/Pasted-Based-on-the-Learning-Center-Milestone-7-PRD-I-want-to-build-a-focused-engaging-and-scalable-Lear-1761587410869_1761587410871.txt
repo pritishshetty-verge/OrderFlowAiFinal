@@ -1,0 +1,97 @@
+Based on the Learning Center Milestone 7 PRD, I want to build a focused, engaging, and scalable Learning Center. Please implement the following:
+
+User-Facing Features (Core):
+
+Dashboard:
+
+Circular progress ring showing course completion (e.g., "You're 40% done with NDR Mastery")
+
+Personalized course recommendations based on user role/activity
+
+"Continue where you left off" carousel
+
+Courses & Lessons:
+
+Browse courses with cards: thumbnail, title, description, progress bar, tags, author, duration, CTA
+
+Lock icon on courses/lessons with unmet prerequisites
+
+Lesson page with: breadcrumb, progress indicator, embedded video (YouTube/Vimeo), rich text body, downloadable resources (PDFs, templates, SOPs)
+
+"Next Lesson" button, bookmark/like, and optional inline discussion/feedback
+
+Prerequisite-based unlock system
+
+Resource Library:
+
+Filter by type: Videos, PDFs, Templates, SOPs, Checklists
+
+One-click download with tracking
+
+Preview before download
+
+Onboarding Checklist (New Hire Flow):
+
+Structured checklist with role-based milestones
+
+Progress tracking dashboard
+
+Auto-assigned tasks based on user role
+
+Admin Features:
+
+Content Management CMS:
+
+WYSIWYG editor (TipTap/Lexical) with drag-and-drop images/videos
+
+Embed YouTube/Vimeo links easily
+
+Add downloadable attachments (PDF, DOCX, ZIP)
+
+Lesson builder: title, description, category/tags, thumbnail, course arrangement, prerequisite setting
+
+Bulk upload for PDFs/videos
+
+Draft/publish toggle
+
+Analytics Dashboard:
+
+Views, completion rates, average time spent per lesson
+
+Display: "This lesson has 78% completion rate"
+
+Completion tracking per user
+
+Gamification:
+
+Prerequisites unlock advanced lessons
+
+Visual lock/unlock on cards
+
+Smooth unlock animations when prerequisites are met
+
+Database:
+
+courses, lessons, resources, resource_categories
+
+user_resource_progress (completion, bookmarks)
+
+onboarding_checklists, user_onboarding_progress
+
+lesson_analytics
+
+Frontend Routes:
+
+/learning (Dashboard)
+
+/learning/courses (Browse)
+
+/learning/courses/:slug (Course detail)
+
+/learning/lessons/:slug (Lesson)
+
+/learning/resources (Resource library)
+
+/learning/onboarding (New hire checklist)
+
+/admin/learning (CMS)
