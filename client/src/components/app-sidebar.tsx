@@ -57,8 +57,21 @@ const menuItems = [
   },
   {
     title: "Learning Center",
-    url: "/learning",
     icon: GraduationCap,
+    items: [
+      {
+        title: "Browse Courses",
+        url: "/learning",
+        icon: List,
+      },
+    ],
+    adminItems: [
+      {
+        title: "Manage Courses",
+        url: "/learning/admin",
+        icon: Settings,
+      },
+    ],
   },
   {
     title: "Team",
@@ -114,6 +127,16 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                                   <a href={subItem.url} className="hover-elevate">
                                     <subItem.icon className="h-4 w-4" />
                                     <span>{subItem.title}</span>
+                                  </a>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                            {userRole === "admin" && item.adminItems && item.adminItems.map((adminItem) => (
+                              <SidebarMenuSubItem key={adminItem.title}>
+                                <SidebarMenuSubButton asChild data-testid={`link-${adminItem.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                                  <a href={adminItem.url} className="hover-elevate">
+                                    <adminItem.icon className="h-4 w-4" />
+                                    <span>{adminItem.title}</span>
                                   </a>
                                 </SidebarMenuSubButton>
                               </SidebarMenuSubItem>

@@ -2582,6 +2582,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin: Delete course
+  app.delete("/api/admin/learning/courses/:courseId", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      await storage.deleteCourse(courseId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting course:", error);
+      res.status(500).json({ error: "Failed to delete course" });
+    }
+  });
+
   // Admin: Create lesson
   app.post("/api/admin/learning/lessons", async (req, res) => {
     try {

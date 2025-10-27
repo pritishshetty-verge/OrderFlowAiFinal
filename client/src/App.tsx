@@ -19,6 +19,9 @@ import ShopifyWebhooksPage from "@/pages/shopify-webhooks";
 import LearningCenterPage from "@/pages/learning-center";
 import CourseDetailPage from "@/pages/course-detail";
 import LessonPage from "@/pages/lesson";
+import AdminLearningDashboard from "@/pages/admin-learning-dashboard";
+import AdminCourseForm from "@/pages/admin-course-form";
+import AdminLessonForm from "@/pages/admin-lesson-form";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -80,6 +83,15 @@ function Router() {
       </Route>
       <Route path="/learning/lessons/:slug">
         {() => <ProtectedRoute component={LessonPage} />}
+      </Route>
+      <Route path="/learning/admin">
+        {() => <ProtectedRoute component={AdminLearningDashboard} />}
+      </Route>
+      <Route path="/learning/admin/courses/:id">
+        {() => <ProtectedRoute component={AdminCourseForm} />}
+      </Route>
+      <Route path="/learning/admin/lessons/:id">
+        {() => <ProtectedRoute component={AdminLessonForm} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
