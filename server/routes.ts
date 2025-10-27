@@ -29,6 +29,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/orders/create", handleOrderCreated);
   app.post("/api/webhooks/orders/update", handleOrderUpdated);
   app.post("/api/webhooks/orders/cancelled", handleOrderCancelled);
+  
+  // Shiprocket webhook
+  const { handleShiprocketWebhook } = await import("./shiprocketWebhook");
+  app.post("/api/webhooks/shiprocket", handleShiprocketWebhook);
 
   // ============================================================================
   // ORDERS API
