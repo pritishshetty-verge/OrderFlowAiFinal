@@ -2554,6 +2554,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin: Get course by ID
+  app.get("/api/admin/learning/courses/:courseId", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const course = await storage.getCourse(courseId);
+      
+      if (!course) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      res.json({ course });
+    } catch (error) {
+      console.error("Error fetching course:", error);
+      res.status(500).json({ error: "Failed to fetch course" });
+    }
+  });
+
+  // Admin: Get lessons in a course
+  app.get("/api/admin/learning/courses/:courseId/lessons", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const lessons = await storage.getLessonsByCourse(courseId);
+      res.json({ lessons });
+    } catch (error) {
+      console.error("Error fetching lessons:", error);
+      res.status(500).json({ error: "Failed to fetch lessons" });
+    }
+  });
+
   // Admin: Create course
   app.post("/api/admin/learning/courses", async (req, res) => {
     try {
