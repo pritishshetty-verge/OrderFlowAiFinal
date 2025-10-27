@@ -1953,9 +1953,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courier_id: parseInt(courierId),
       });
 
+      // Check for Shiprocket error response (they sometimes return errors with HTTP 200)
+      if ((assignmentResult as any).message) {
+        throw new Error((assignmentResult as any).message);
+      }
+
       // Validate response data
       if (!assignmentResult.response?.data) {
-        throw new Error("Invalid response from Shiprocket");
+        // Check if there's an error message in the response
+        const errorMessage = (assignmentResult as any).errors || (assignmentResult as any).error || "Invalid response from Shiprocket";
+        throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
       }
 
       const awbCode = assignmentResult.response.data.awb_code;
@@ -1963,7 +1970,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const pickupDate = assignmentResult.response.data.pickup_scheduled_date;
 
       if (!awbCode) {
-        throw new Error("AWB code not received from Shiprocket");
+        // Check for error message in response before using generic fallback
+        const errorMessage = (assignmentResult as any).message || (assignmentResult as any).error || "AWB code not received from Shiprocket";
+        throw new Error(typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage));
       }
 
       // Update local shipment with AWB and courier info
