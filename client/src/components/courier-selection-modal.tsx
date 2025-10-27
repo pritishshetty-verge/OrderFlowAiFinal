@@ -255,16 +255,16 @@ export function CourierSelectionModal({
                           <div>
                             <p className="text-muted-foreground text-xs">Charges</p>
                             <p className="font-semibold text-base" data-testid={`charge-${courier.courier_company_id}`}>
-                              ₹{courier.total_charge.toFixed(2)}
+                              ₹{(courier.total_charge || 0).toFixed(2)}
                             </p>
                           </div>
                         </div>
 
                         {/* Charge breakdown */}
                         <div className="mt-2 text-xs text-muted-foreground">
-                          Freight: ₹{courier.freight_charge} • 
-                          COD: ₹{courier.cod_charges} • 
-                          Other: ₹{courier.other_charges}
+                          Freight: ₹{courier.freight_charge || 0} • 
+                          COD: ₹{courier.cod_charges || 0} • 
+                          Other: ₹{courier.other_charges || 0}
                         </div>
                       </div>
 

@@ -1858,20 +1858,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courier_id: parseInt(courierId),
       });
 
+      // Validate response data
+      if (!assignmentResult.response?.data) {
+        throw new Error("Invalid response from Shiprocket");
+      }
+
+      const awbCode = assignmentResult.response.data.awb_code;
+      const courierName = assignmentResult.response.data.courier_name;
+      const pickupDate = assignmentResult.response.data.pickup_scheduled_date;
+
+      if (!awbCode) {
+        throw new Error("AWB code not received from Shiprocket");
+      }
+
       // Update local shipment with AWB and courier info
       await storage.updateShipment(shipment.id, {
-        awb: assignmentResult.response.data.awb_code,
-        courierName: assignmentResult.response.data.courier_name,
+        awb: awbCode,
+        courierName: courierName,
         courierId: assignmentResult.response.data.courier_company_id.toString(),
-        pickupScheduledDate: new Date(assignmentResult.response.data.pickup_scheduled_date),
+        pickupScheduledDate: new Date(pickupDate),
         status: "pickup_scheduled",
       });
 
       res.json({
         success: true,
-        awb: assignmentResult.response.data.awb_code,
-        courierName: assignmentResult.response.data.courier_name,
-        pickupScheduledDate: assignmentResult.response.data.pickup_scheduled_date,
+        awb: awbCode,
+        courierName: courierName,
+        pickupScheduledDate: pickupDate,
       });
     } catch (error: any) {
       console.error("Error assigning courier:", error);
