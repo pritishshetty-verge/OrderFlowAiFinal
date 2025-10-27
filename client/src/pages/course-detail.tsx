@@ -56,6 +56,14 @@ export default function CourseDetailPage() {
     lessonProgress: any[];
   }>({
     queryKey: ["/api/learning/courses", slug, userId],
+    queryFn: async () => {
+      const url = userId 
+        ? `/api/learning/courses/${slug}?userId=${userId}`
+        : `/api/learning/courses/${slug}`;
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch course");
+      return response.json();
+    },
     enabled: !!slug,
   });
 
