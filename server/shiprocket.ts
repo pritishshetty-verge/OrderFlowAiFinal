@@ -628,21 +628,23 @@ class ShiprocketService {
         const processedCouriers = rawCouriers.map(courier => {
           // Add total_charge as computed field for backward compatibility
           const total_charge = courier.rate;
-          // Determine if courier is truly non-serviceable based on Shiprocket's blocking logic
+          
+          // Determine if courier is truly non-serviceable based on Shiprocket's actual blocking logic
+          // Shiprocket ONLY marks couriers as non-serviceable if they have operational blocks, NOT based on ratings
           let isServiceable = true;
           let nonServiceableReason = '';
           let hasWarning = false;
           let warningMessage = '';
           
-          // Check if courier is blocked
+          // Check if courier is blocked (blocked = 1 means courier cannot deliver to this location)
           if (courier.blocked === 1) {
             isServiceable = false;
             nonServiceableReason = courier.suppress_text || 'Courier services are currently unavailable for this location';
             console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: blocked=1, reason="${nonServiceableReason}"`);
           }
           
-          // Check for actual blocking dates in suppression_dates
-          if (courier.suppression_dates && 
+          // Check for actual blocking dates in suppression_dates (indicates temporary suspension)
+          if (isServiceable && courier.suppression_dates && 
               (courier.suppression_dates.blocked_fm || courier.suppression_dates.blocked_lm)) {
             isServiceable = false;
             nonServiceableReason = courier.suppress_text || 
@@ -650,33 +652,21 @@ class ShiprocketService {
             console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: has blocking dates, reason="${nonServiceableReason}"`);
           }
           
-          // SHIPROCKET HIDDEN FILTER: Rating threshold
-          // Shiprocket hides couriers with rating < 3.6 from the UI
-          const rating = parseFloat(courier.rating);
-          if (isServiceable && !isNaN(rating) && rating < 3.6) {
-            isServiceable = false;
-            nonServiceableReason = `Courier rating (${rating}) is below quality threshold`;
-            console.log(`[Shiprocket] Hidden due to low rating: ${courier.courier_name} (${rating})`);
-          }
-          
-          // SHIPROCKET HIDDEN FILTER: Network Stress couriers
-          // Shiprocket hides couriers with "Network Stress" in the name from the UI
-          if (isServiceable && (courier.courier_name.includes('Network Stress') || 
-              courier.courier_name.includes('_Network Stress'))) {
-            isServiceable = false;
-            nonServiceableReason = courier.suppress_text || 
-              'This courier is facing operational stress on this particular lane. Deliveries may be significantly delayed.';
-            console.log(`[Shiprocket] Hidden due to Network Stress: ${courier.courier_name}`);
-          }
-          
-          // Check for warnings (courier is serviceable but has operational issues)
+          // Check for warnings (courier is serviceable but has operational delays/issues)
           if (isServiceable) {
+            // Check for pickup/delivery delays
             if (courier.suppression_dates?.delay_remark && 
                 !courier.suppression_dates.blocked_fm && 
                 !courier.suppression_dates.blocked_lm) {
-              // Has delay but not blocked - this is a warning
               hasWarning = true;
               warningMessage = `Delivery may be delayed due to ${courier.suppression_dates.delay_remark.toLowerCase()}`;
+              console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
+            }
+            
+            // Check for operational stress indicators
+            if (courier.suppress_text && courier.suppress_text.trim() !== '') {
+              hasWarning = true;
+              warningMessage = courier.suppress_text;
               console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
             }
           }
