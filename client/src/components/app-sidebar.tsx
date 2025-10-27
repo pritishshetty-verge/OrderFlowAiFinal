@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle } from "lucide-react";
+import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -54,6 +54,11 @@ const menuItems = [
     title: "Analytics",
     url: "/analytics",
     icon: TrendingUp,
+  },
+  {
+    title: "Learning Center",
+    url: "/learning",
+    icon: GraduationCap,
   },
   {
     title: "Team",

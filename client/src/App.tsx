@@ -16,6 +16,9 @@ import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
 import ShopifySetupPage from "@/pages/shopify-setup";
 import ShopifyWebhooksPage from "@/pages/shopify-webhooks";
+import LearningCenterPage from "@/pages/learning-center";
+import CourseDetailPage from "@/pages/course-detail";
+import LessonPage from "@/pages/lesson";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -68,6 +71,15 @@ function Router() {
       </Route>
       <Route path="/settings/shopify/webhooks">
         {() => <ProtectedRoute component={ShopifyWebhooksPage} />}
+      </Route>
+      <Route path="/learning">
+        {() => <ProtectedRoute component={LearningCenterPage} />}
+      </Route>
+      <Route path="/learning/courses/:slug">
+        {() => <ProtectedRoute component={CourseDetailPage} />}
+      </Route>
+      <Route path="/learning/lessons/:slug">
+        {() => <ProtectedRoute component={LessonPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
