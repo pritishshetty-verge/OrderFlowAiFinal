@@ -2623,6 +2623,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin: Get lesson by ID
+  app.get("/api/admin/learning/lessons/:lessonId", async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+      const lesson = await storage.getLesson(lessonId);
+      
+      if (!lesson) {
+        return res.status(404).json({ error: "Lesson not found" });
+      }
+
+      res.json({ lesson });
+    } catch (error) {
+      console.error("Error fetching lesson:", error);
+      res.status(500).json({ error: "Failed to fetch lesson" });
+    }
+  });
+
   // Admin: Create lesson
   app.post("/api/admin/learning/lessons", async (req, res) => {
     try {
