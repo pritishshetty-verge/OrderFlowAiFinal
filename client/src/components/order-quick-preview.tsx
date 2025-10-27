@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CallStatusActions } from "@/components/call-status-actions";
-import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal } from "lucide-react";
+import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Order } from "@/components/orders-table";
@@ -54,6 +54,15 @@ export function OrderQuickPreview({
   // Fetch order history/timeline
   const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
     queryKey: ["/api/orders", order?.id, "history"],
+    enabled: open && !!order?.id,
+  });
+
+  // Fetch shipment information
+  const { data: shipmentData, isLoading: shipmentLoading } = useQuery<{
+    shipment?: any;
+    ndrEvents?: any[];
+  }>({
+    queryKey: ["/api/orders", order?.id, "shipment"],
     enabled: open && !!order?.id,
   });
 
@@ -483,6 +492,65 @@ export function OrderQuickPreview({
           </div>
 
           <Separator />
+
+          {/* Shipment Tracking Section */}
+          {(shipmentData?.shipment || orderDetails?.callStatus === "Confirmed") && (
+            <>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Shipment Tracking</p>
+                {shipmentLoading ? (
+                  <Skeleton className="h-20 w-full rounded-lg" />
+                ) : shipmentData?.shipment ? (
+                  <div className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Truck className="h-4 w-4 text-blue-600" />
+                        <span className="text-sm font-medium">{shipmentData.shipment.courierName || "Courier"}</span>
+                      </div>
+                      <Badge variant="default" data-testid="badge-shipment-status">
+                        {shipmentData.shipment.status || "Created"}
+                      </Badge>
+                    </div>
+                    {shipmentData.shipment.awb && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">AWB:</span>
+                        <span className="font-mono font-medium" data-testid="text-awb">{shipmentData.shipment.awb}</span>
+                      </div>
+                    )}
+                    {shipmentData.shipment.trackingUrl && (
+                      <a
+                        href={shipmentData.shipment.trackingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
+                        data-testid="link-track-shipment"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Track Shipment
+                      </a>
+                    )}
+                    {shipmentData.ndrEvents && shipmentData.ndrEvents.length > 0 && (
+                      <div className="mt-2 pt-2 border-t">
+                        <p className="text-xs font-medium text-destructive mb-1">NDR Events</p>
+                        {shipmentData.ndrEvents.map((ndr: any, idx: number) => (
+                          <div key={idx} className="text-xs text-muted-foreground">
+                            {ndr.ndrReason} - {format(new Date(ndr.ndrDate), "MMM dd, yyyy")}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : orderDetails?.callStatus === "Confirmed" ? (
+                  <div className="rounded-lg border border-dashed p-3 text-center">
+                    <Package className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-xs text-muted-foreground">No shipment created yet</p>
+                    <p className="text-xs text-muted-foreground">Go to Fulfil page to create shipment</p>
+                  </div>
+                ) : null}
+              </div>
+              <Separator />
+            </>
+          )}
 
           {/* Timeline */}
           {timelineEvents.length > 0 && (

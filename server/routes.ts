@@ -106,6 +106,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get shipment and NDR data for an order
+  app.get("/api/orders/:id/shipment", async (req, res) => {
+    try {
+      const order = await storage.getOrder(req.params.id);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      const shipment = await storage.getShipmentByOrderId(req.params.id);
+      let ndrEvents: any[] = [];
+      
+      if (shipment) {
+        ndrEvents = await storage.getNDREventsByShipmentId(shipment.id);
+      }
+
+      res.json({ shipment, ndrEvents });
+    } catch (error) {
+      console.error("Error fetching shipment data:", error);
+      res.status(500).json({ error: "Failed to fetch shipment data" });
+    }
+  });
+
   // Assign order to user
   app.post("/api/orders/:id/assign", async (req, res) => {
     try {
