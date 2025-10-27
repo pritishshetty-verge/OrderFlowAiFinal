@@ -30,9 +30,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/orders/update", handleOrderUpdated);
   app.post("/api/webhooks/orders/cancelled", handleOrderCancelled);
   
-  // Shiprocket webhook
+  // Courier webhook (Shiprocket)
+  // Note: Renamed from /api/webhooks/shiprocket to /api/webhooks/courier-events
+  // because Shiprocket prohibits keywords "shiprocket", "kartrocket", "sr", "kr" in webhook URLs
   const { handleShiprocketWebhook } = await import("./shiprocketWebhook");
-  app.post("/api/webhooks/shiprocket", handleShiprocketWebhook);
+  app.post("/api/webhooks/courier-events", handleShiprocketWebhook);
 
   // ============================================================================
   // ORDERS API
