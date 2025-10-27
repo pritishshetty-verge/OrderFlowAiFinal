@@ -392,21 +392,36 @@ class ShiprocketService {
   async assignCourierAndShip(payload: ShiprocketAssignCourierPayload): Promise<ShiprocketAssignCourierResponse> {
     try {
       const headers = await this.getAuthHeaders();
+      
+      console.log('[Shiprocket] Assigning courier with payload:', payload);
+      
       const response = await this.axiosInstance.post<ShiprocketAssignCourierResponse>(
         '/courier/assign/awb',
         payload,
         { headers }
       );
 
-      console.log('[Shiprocket] Courier assigned:', {
+      console.log('[Shiprocket] FULL AWB Assignment Response:', 
+        JSON.stringify(response.data, null, 2)
+      );
+
+      console.log('[Shiprocket] Courier assignment result:', {
         shipmentId: payload.shipment_id,
         courierId: payload.courier_id,
-        awb: response.data.response?.data?.awb_code,
+        awbAssignStatus: response.data.awb_assign_status,
+        awbCode: response.data.response?.data?.awb_code,
+        courierName: response.data.response?.data?.courier_name,
+        pickupDate: response.data.response?.data?.pickup_scheduled_date,
+        hasResponseData: !!response.data.response?.data,
       });
 
       return response.data;
     } catch (error: any) {
-      console.error('[Shiprocket] Assign courier failed:', error.response?.data || error.message);
+      console.error('[Shiprocket] Assign courier failed:', {
+        error: error.response?.data || error.message,
+        payload,
+        statusCode: error.response?.status
+      });
       throw new Error(error.response?.data?.message || 'Failed to assign courier');
     }
   }
