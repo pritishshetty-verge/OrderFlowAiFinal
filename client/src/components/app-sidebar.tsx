@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List } from "lucide-react";
+import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -42,6 +42,11 @@ const menuItems = [
         title: "Fulfil",
         url: "/fulfil",
         icon: PackageCheck,
+      },
+      {
+        title: "NDR Management",
+        url: "/ndr",
+        icon: AlertTriangle,
       },
     ],
   },
