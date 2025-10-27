@@ -1555,6 +1555,213 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // SHIPROCKET API
+  // ============================================================================
+
+  // Import Shiprocket service (we'll add this at the top later)
+  const { shiprocketService } = await import("./shiprocket");
+
+  // Create shipment for confirmed order
+  app.post("/api/shiprocket/orders/:id/create-shipment", async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      const { weight, length, breadth, height, pickupLocation } = req.body;
+
+      // Get order details
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Check if order is confirmed
+      if (!order.confirmedAt) {
+        return res.status(400).json({ error: "Order must be confirmed before creating shipment" });
+      }
+
+      // Check if shipment already exists
+      const existingShipment = await storage.getShipmentByOrderId(orderId);
+      if (existingShipment) {
+        return res.status(400).json({ error: "Shipment already exists for this order" });
+      }
+
+      // Get order items for shipment
+      const orderItems = await storage.getOrderItems(orderId);
+
+      // Prepare Shiprocket payload
+      const shipmentPayload = {
+        order_id: order.shopifyOrderNumber,
+        order_date: order.shopifyCreatedAt.toISOString().split('T')[0],
+        pickup_location: pickupLocation || "Primary",
+        billing_customer_name: order.customerName.split(' ')[0] || order.customerName,
+        billing_last_name: order.customerName.split(' ').slice(1).join(' ') || "",
+        billing_address: order.shippingAddressLine1 || "",
+        billing_address_2: order.shippingAddressLine2 || "",
+        billing_city: order.shippingCity || "",
+        billing_pincode: order.shippingPincode || "",
+        billing_state: order.shippingState || "",
+        billing_country: order.shippingCountry || "India",
+        billing_email: order.customerEmail || "",
+        billing_phone: order.customerPhone,
+        shipping_is_billing: true,
+        order_items: orderItems.map(item => ({
+          name: item.productName,
+          sku: item.sku || `SKU-${item.id}`,
+          units: item.quantity,
+          selling_price: item.price.toString(),
+          discount: "0",
+          tax: "0",
+        })),
+        payment_method: order.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
+        sub_total: parseFloat(order.subtotal.toString()),
+        length: length || 10,
+        breadth: breadth || 10,
+        height: height || 10,
+        weight: weight || 0.5,
+      };
+
+      // Create shipment in Shiprocket
+      const shiprocketResponse = await shiprocketService.createShipment(shipmentPayload);
+
+      // Store shipment in database
+      const shipment = await storage.createShipment({
+        orderId,
+        shopifyOrderId: order.shopifyOrderId,
+        shiprocketOrderId: shiprocketResponse.order_id?.toString(),
+        shiprocketShipmentId: shiprocketResponse.shipment_id?.toString(),
+        awb: shiprocketResponse.awb_code,
+        courierName: shiprocketResponse.courier_name,
+        courierId: shiprocketResponse.courier_company_id?.toString(),
+        status: "created",
+        weight: weight?.toString(),
+        length: length?.toString(),
+        breadth: breadth?.toString(),
+        height: height?.toString(),
+        rawShiprocketData: shiprocketResponse,
+      });
+
+      // Update order with shipment info
+      await storage.updateOrder(orderId, {
+        status: "shipped",
+        courierName: shiprocketResponse.courier_name,
+        trackingNumber: shiprocketResponse.awb_code,
+      });
+
+      res.json({ success: true, shipment });
+    } catch (error: any) {
+      console.error("Error creating shipment:", error);
+      res.status(500).json({ error: error.message || "Failed to create shipment" });
+    }
+  });
+
+  // Track shipment by AWB
+  app.get("/api/shiprocket/shipments/:awb/track", async (req, res) => {
+    try {
+      const { awb } = req.params;
+
+      // Get tracking data from Shiprocket
+      const trackingData = await shiprocketService.trackShipment(awb);
+
+      // Update shipment in database
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (shipment && trackingData.tracking_data.shipment_track[0]) {
+        const latestTrack = trackingData.tracking_data.shipment_track[0];
+        await storage.updateShipment(shipment.id, {
+          currentStatus: latestTrack.current_status,
+          statusUpdatedAt: new Date(),
+          deliveredAt: latestTrack.delivered_date ? new Date(latestTrack.delivered_date) : undefined,
+        });
+      }
+
+      res.json({ success: true, trackingData });
+    } catch (error: any) {
+      console.error("Error tracking shipment:", error);
+      res.status(500).json({ error: error.message || "Failed to track shipment" });
+    }
+  });
+
+  // Get all NDR shipments
+  app.get("/api/shiprocket/ndr", async (req, res) => {
+    try {
+      const { limit, offset } = req.query;
+
+      // Get NDR events from database
+      const result = await storage.listUnresolvedNDREvents({
+        limit: limit ? parseInt(limit as string) : 50,
+        offset: offset ? parseInt(offset as string) : 0,
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error fetching NDR events:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+    }
+  });
+
+  // Reattempt delivery for NDR shipment
+  app.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
+    try {
+      const { awb } = req.params;
+      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+
+      if (!address1 || !phone) {
+        return res.status(400).json({ error: "Address and phone are required" });
+      }
+
+      // Get shipment
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found" });
+      }
+
+      // Schedule reattempt in Shiprocket
+      const result = await shiprocketService.reattemptDelivery({
+        awb,
+        address1,
+        address2,
+        phone,
+        deferred_date: deferredDate,
+      });
+
+      // Get NDR events for this shipment
+      const ndrEvents = await storage.getNDREventsByShipmentId(shipment.id);
+      const latestNdr = ndrEvents[0];
+
+      if (latestNdr) {
+        // Update NDR event with reattempt info
+        await storage.updateNDREvent(latestNdr.id, {
+          actionTaken: "reattempt_scheduled",
+          actionBy,
+          actionNotes: notes,
+          actionAt: new Date(),
+          reattemptScheduled: true,
+          reattemptDate: deferredDate ? new Date(deferredDate) : new Date(),
+          updatedPhone: phone,
+          updatedAddress: { address1, address2 },
+        });
+      }
+
+      res.json({ success: true, message: "Reattempt scheduled successfully" });
+    } catch (error: any) {
+      console.error("Error scheduling reattempt:", error);
+      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+    }
+  });
+
+  // Test Shiprocket connection
+  app.get("/api/shiprocket/test-connection", async (req, res) => {
+    try {
+      const result = await shiprocketService.testConnection();
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error testing Shiprocket connection:", error);
+      res.status(500).json({ 
+        success: false, 
+        message: error.message || "Failed to test connection" 
+      });
+    }
+  });
+
+  // ============================================================================
   // INVITES API
   // ============================================================================
 
