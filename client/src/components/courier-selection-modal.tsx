@@ -30,6 +30,10 @@ interface CourierPartner {
   is_surface: boolean;
   is_hyperlocal: boolean;
   is_recommended: boolean;
+  is_serviceable: boolean;
+  non_serviceable_reason?: string;
+  has_warning?: boolean;
+  warning_message?: string;
 }
 
 interface CourierSelectionModalProps {
@@ -123,18 +127,36 @@ export function CourierSelectionModal({
 
     switch (selectedTab) {
       case "air":
-        return couriers.filter(c => !c.is_surface);
+        // Only serviceable Air couriers
+        return couriers.filter(c => c.is_serviceable && !c.is_surface);
       case "surface":
-        return couriers.filter(c => c.is_surface);
-      case "self-fulfilled":
-        return couriers.filter(c => c.courier_type === "self");
+        // Only serviceable Surface couriers
+        return couriers.filter(c => c.is_serviceable && c.is_surface);
       case "non-serviceable":
-        // This tab would show if there are issues, but typically if API returns couriers, they're serviceable
-        return [];
+        // Only non-serviceable couriers
+        return couriers.filter(c => !c.is_serviceable);
       default:
-        return couriers;
+        // "all" tab - show ALL serviceable couriers (both Air and Surface)
+        return couriers.filter(c => c.is_serviceable);
     }
   };
+
+  // Get counts for each tab
+  const getTabCounts = () => {
+    if (!couriersData?.couriers) {
+      return { all: 0, air: 0, surface: 0, nonServiceable: 0 };
+    }
+
+    const couriers = couriersData.couriers;
+    return {
+      all: couriers.filter(c => c.is_serviceable).length,
+      air: couriers.filter(c => c.is_serviceable && !c.is_surface).length,
+      surface: couriers.filter(c => c.is_serviceable && c.is_surface).length,
+      nonServiceable: couriers.filter(c => !c.is_serviceable).length,
+    };
+  };
+
+  const tabCounts = getTabCounts();
 
   const filteredCouriers = getFilteredCouriers();
   const sortedCouriers = [...filteredCouriers].sort((a, b) => {
@@ -175,12 +197,18 @@ export function CourierSelectionModal({
 
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="flex-1 flex flex-col overflow-hidden">
           <TabsList className="w-full justify-start">
-            <TabsTrigger value="all" data-testid="tab-all-couriers">All</TabsTrigger>
-            <TabsTrigger value="air" data-testid="tab-air-couriers">Air</TabsTrigger>
-            <TabsTrigger value="surface" data-testid="tab-surface-couriers">Surface</TabsTrigger>
-            <TabsTrigger value="self-fulfilled" data-testid="tab-self-fulfilled">Self-Fulfilled</TabsTrigger>
+            <TabsTrigger value="all" data-testid="tab-all-couriers">
+              All {!isLoading && tabCounts.all > 0 && `(${tabCounts.all})`}
+            </TabsTrigger>
+            <TabsTrigger value="air" data-testid="tab-air-couriers">
+              Air {!isLoading && tabCounts.air > 0 && `(${tabCounts.air})`}
+            </TabsTrigger>
+            <TabsTrigger value="surface" data-testid="tab-surface-couriers">
+              Surface {!isLoading && tabCounts.surface > 0 && `(${tabCounts.surface})`}
+            </TabsTrigger>
             <TabsTrigger value="non-serviceable" data-testid="tab-non-serviceable">
-              Non-Serviceable <AlertTriangle className="h-3 w-3 ml-1" />
+              Non-Serviceable {!isLoading && tabCounts.nonServiceable > 0 && `(${tabCounts.nonServiceable})`}
+              {tabCounts.nonServiceable > 0 && <AlertTriangle className="h-3 w-3 ml-1" />}
             </TabsTrigger>
           </TabsList>
 
@@ -214,6 +242,15 @@ export function CourierSelectionModal({
                   {sortedCouriers.length} Courier{sortedCouriers.length !== 1 ? 's' : ''} Found
                 </p>
 
+                {selectedTab !== "non-serviceable" && tabCounts.nonServiceable > 0 && (
+                  <div className="bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg p-3 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-orange-800 dark:text-orange-200">
+                      Some of your frequently used courier partners are non-serviceable. Please check the Non-Serviceable tab for more details.
+                    </p>
+                  </div>
+                )}
+
                 {sortedCouriers.map((courier) => (
                   <div
                     key={courier.courier_company_id}
@@ -223,7 +260,7 @@ export function CourierSelectionModal({
                     <div className="flex items-start justify-between gap-4">
                       {/* Left: Courier Info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
                           <h3 className="font-semibold text-base" data-testid={`courier-name-${courier.courier_company_id}`}>
                             {courier.courier_name}
                           </h3>
@@ -232,61 +269,97 @@ export function CourierSelectionModal({
                               Recommended
                             </Badge>
                           )}
-                          <Badge 
-                            variant={getRatingBadgeVariant(courier.rating)}
-                            className="text-xs"
-                            data-testid={`rating-badge-${courier.courier_company_id}`}
-                          >
-                            <Star className="h-3 w-3 mr-1 fill-current" />
-                            {courier.rating}
-                          </Badge>
+                          {courier.is_serviceable && (
+                            <Badge 
+                              variant={getRatingBadgeVariant(courier.rating)}
+                              className="text-xs"
+                              data-testid={`rating-badge-${courier.courier_company_id}`}
+                            >
+                              <Star className="h-3 w-3 mr-1 fill-current" />
+                              {courier.rating}
+                            </Badge>
+                          )}
                           <Badge variant="outline" className="text-xs">
                             {courier.is_surface ? "Surface" : "Air"}
                           </Badge>
                         </div>
 
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                          <div>
-                            <p className="text-muted-foreground text-xs">Expected Pickup</p>
-                            <p className="font-medium" data-testid={`pickup-date-${courier.courier_company_id}`}>
-                              {courier.pickup_availability}
+                        {/* Warning message for serviceable couriers with operational stress */}
+                        {courier.is_serviceable && courier.has_warning && courier.warning_message && (
+                          <div className="mb-3 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-2 flex items-start gap-2">
+                            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                            <p className="text-xs text-amber-800 dark:text-amber-200" data-testid={`warning-${courier.courier_company_id}`}>
+                              {courier.warning_message}
                             </p>
                           </div>
-                          <div>
-                            <p className="text-muted-foreground text-xs">Estimated Delivery</p>
-                            <p className="font-medium" data-testid={`delivery-date-${courier.courier_company_id}`}>
-                              {courier.etd}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground text-xs">Delivery Days</p>
-                            <p className="font-medium">{courier.estimated_delivery_days} days</p>
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground text-xs">Charges</p>
-                            <p className="font-semibold text-base" data-testid={`charge-${courier.courier_company_id}`}>
-                              ₹{calculatePrice(courier).toFixed(2)}
-                            </p>
-                          </div>
-                        </div>
+                        )}
 
-                        {/* Charge breakdown */}
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Freight: ₹{courier.freight_charge || 0} • 
-                          COD: ₹{courier.cod_charges || 0} • 
-                          Other: ₹{courier.other_charges || 0}
-                        </div>
+                        {/* Non-serviceable reason */}
+                        {!courier.is_serviceable && courier.non_serviceable_reason && (
+                          <div className="mb-3">
+                            <p className="text-sm font-medium text-muted-foreground mb-1">Reason for Non-Serviceability:</p>
+                            <p className="text-sm text-destructive" data-testid={`non-serviceable-reason-${courier.courier_company_id}`}>
+                              {courier.non_serviceable_reason}
+                            </p>
+                          </div>
+                        )}
+
+                        {courier.is_serviceable && (
+                          <>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                              <div>
+                                <p className="text-muted-foreground text-xs">Expected Pickup</p>
+                                <p className="font-medium" data-testid={`pickup-date-${courier.courier_company_id}`}>
+                                  {courier.pickup_availability}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground text-xs">Estimated Delivery</p>
+                                <p className="font-medium" data-testid={`delivery-date-${courier.courier_company_id}`}>
+                                  {courier.etd}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground text-xs">Delivery Days</p>
+                                <p className="font-medium">{courier.estimated_delivery_days} days</p>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground text-xs">Charges</p>
+                                <p className="font-semibold text-base" data-testid={`charge-${courier.courier_company_id}`}>
+                                  ₹{calculatePrice(courier).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Charge breakdown */}
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              Freight: ₹{courier.freight_charge || 0} • 
+                              COD: ₹{courier.cod_charges || 0} • 
+                              Other: ₹{courier.other_charges || 0}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Right: Ship Button */}
                       <div className="flex-shrink-0">
-                        <Button
-                          onClick={() => handleShipNow(courier)}
-                          disabled={assignCourierMutation.isPending}
-                          data-testid={`button-ship-${courier.courier_company_id}`}
-                        >
-                          {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
-                        </Button>
+                        {courier.is_serviceable ? (
+                          <Button
+                            onClick={() => handleShipNow(courier)}
+                            disabled={assignCourierMutation.isPending}
+                            data-testid={`button-ship-${courier.courier_company_id}`}
+                          >
+                            {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            disabled
+                            data-testid={`button-unavailable-${courier.courier_company_id}`}
+                          >
+                            Unavailable
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
