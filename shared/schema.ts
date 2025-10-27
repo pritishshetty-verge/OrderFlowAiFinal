@@ -522,3 +522,108 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Notification = typeof notifications.$inferSelect;
+
+// ============================================================================
+// SHIPMENTS (Shiprocket Integration)
+// ============================================================================
+
+export const shipments = pgTable("shipments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  shopifyOrderId: text("shopify_order_id").notNull(),
+  
+  // Shiprocket shipment data
+  shiprocketOrderId: text("shiprocket_order_id").unique(),
+  shiprocketShipmentId: text("shiprocket_shipment_id").unique(),
+  awb: text("awb").unique(), // Airway Bill Number (tracking number)
+  
+  // Courier details
+  courierName: text("courier_name"),
+  courierId: text("courier_id"),
+  
+  // Shipment status
+  status: text("status").notNull().default("created"), // created, pickup_scheduled, in_transit, out_for_delivery, delivered, ndr, rto, cancelled
+  currentStatus: text("current_status"), // Latest status from courier
+  statusUpdatedAt: timestamp("status_updated_at"),
+  
+  // Tracking
+  trackingUrl: text("tracking_url"),
+  estimatedDeliveryDate: timestamp("estimated_delivery_date"),
+  
+  // Shipping details
+  pickupScheduledDate: timestamp("pickup_scheduled_date"),
+  pickedUpAt: timestamp("picked_up_at"),
+  deliveredAt: timestamp("delivered_at"),
+  
+  // Weight and dimensions
+  weight: decimal("weight", { precision: 10, scale: 2 }), // in kg
+  length: decimal("length", { precision: 10, scale: 2 }), // in cm
+  breadth: decimal("breadth", { precision: 10, scale: 2 }), // in cm
+  height: decimal("height", { precision: 10, scale: 2 }), // in cm
+  
+  // Metadata
+  rawShiprocketData: jsonb("raw_shiprocket_data"), // Full response from Shiprocket
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertShipmentSchema = createInsertSchema(shipments).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export type InsertShipment = z.infer<typeof insertShipmentSchema>;
+export type Shipment = typeof shipments.$inferSelect;
+
+// ============================================================================
+// NDR EVENTS (Non-Delivery Report Events)
+// ============================================================================
+
+export const ndrEvents = pgTable("ndr_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  shipmentId: varchar("shipment_id").notNull().references(() => shipments.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  awb: text("awb").notNull(),
+  
+  // NDR Details
+  ndrStatus: text("ndr_status").notNull(), // customer_unavailable, address_issue, refused, other
+  ndrReason: text("ndr_reason").notNull(), // Detailed reason from courier
+  ndrDate: timestamp("ndr_date").notNull(),
+  
+  // Action taken
+  actionTaken: text("action_taken"), // reattempt_scheduled, customer_contacted, rto_initiated, resolved
+  actionBy: varchar("action_by").references(() => users.id),
+  actionNotes: text("action_notes"),
+  actionAt: timestamp("action_at"),
+  
+  // Reattempt details
+  reattemptScheduled: boolean("reattempt_scheduled").notNull().default(false),
+  reattemptDate: timestamp("reattempt_date"),
+  reattemptAwb: text("reattempt_awb"), // New AWB if rescheduled
+  
+  // Updated delivery details (if customer provided new info)
+  updatedPhone: text("updated_phone"),
+  updatedAddress: jsonb("updated_address"),
+  
+  // Resolution
+  resolved: boolean("resolved").notNull().default(false),
+  resolvedAt: timestamp("resolved_at"),
+  resolution: text("resolution"), // delivered, returned, cancelled
+  
+  // Metadata
+  rawNdrData: jsonb("raw_ndr_data"), // Full NDR webhook payload
+  
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertNdrEventSchema = createInsertSchema(ndrEvents).omit({ 
+  id: true, 
+  createdAt: true, 
+  updatedAt: true 
+});
+
+export type InsertNdrEvent = z.infer<typeof insertNdrEventSchema>;
+export type NdrEvent = typeof ndrEvents.$inferSelect;
