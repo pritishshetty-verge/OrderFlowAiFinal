@@ -29,6 +29,14 @@ export default function LearningCenterPage() {
 
   const { data, isLoading } = useQuery<{ courses: Course[] }>({
     queryKey: ["/api/learning/courses", userId],
+    queryFn: async () => {
+      const url = userId 
+        ? `/api/learning/courses?userId=${userId}`
+        : `/api/learning/courses`;
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch courses");
+      return response.json();
+    },
   });
 
   const courses = data?.courses || [];
