@@ -44,6 +44,7 @@ interface CourierPartner {
   delivery_performance?: number;
   rto_performance?: number;
   tracking_performance?: number;
+  courier_logo_url?: string;
 }
 
 interface CategorizedCouriersResponse {
@@ -430,7 +431,7 @@ export function CourierSelectionModal({
 
                       <div className="flex items-center gap-4 p-4">
                         {/* Logo */}
-                        <CourierLogo name={courier.courier_name} />
+                        <CourierLogo name={courier.courier_name} logoUrl={courier.courier_logo_url} />
 
                         {/* Courier Details */}
                         <div className="flex-1 min-w-0">
