@@ -2328,6 +2328,300 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // LEARNING CENTER API
+  // ============================================================================
+
+  // List all courses (with optional filters)
+  app.get("/api/learning/courses", async (req, res) => {
+    try {
+      const { category, isPublished } = req.query;
+      
+      const courses = await storage.listCourses({
+        category: category as string | undefined,
+        isPublished: isPublished === 'true' ? true : isPublished === 'false' ? false : undefined,
+      });
+
+      // Get user's progress for each course (if user is logged in)
+      const userId = req.query.userId as string;
+      const coursesWithProgress = await Promise.all(
+        courses.map(async (course) => {
+          if (!userId) return course;
+          
+          const progress = await storage.getUserCourseProgress(userId, course.id);
+          return { ...course, progress };
+        })
+      );
+
+      res.json({ courses: coursesWithProgress });
+    } catch (error) {
+      console.error("Error listing courses:", error);
+      res.status(500).json({ error: "Failed to fetch courses" });
+    }
+  });
+
+  // Get course by slug
+  app.get("/api/learning/courses/:slug", async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const userId = req.query.userId as string;
+      
+      const course = await storage.getCourseBySlug(slug);
+      if (!course) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      // Get lessons for this course
+      const lessons = await storage.getLessonsByCourse(course.id);
+
+      // Get user's progress if logged in
+      let userProgress = null;
+      let lessonProgress: any[] = [];
+      
+      if (userId) {
+        userProgress = await storage.getUserCourseProgress(userId, course.id);
+        
+        // Get progress for each lesson
+        lessonProgress = await Promise.all(
+          lessons.map(async (lesson) => {
+            const progress = await storage.getUserLessonProgress(userId, lesson.id);
+            return progress || null;
+          })
+        );
+      }
+
+      res.json({
+        course,
+        lessons,
+        userProgress,
+        lessonProgress,
+      });
+    } catch (error) {
+      console.error("Error fetching course:", error);
+      res.status(500).json({ error: "Failed to fetch course" });
+    }
+  });
+
+  // Get lesson by slug
+  app.get("/api/learning/lessons/:slug", async (req, res) => {
+    try {
+      const { slug } = req.params;
+      const userId = req.query.userId as string;
+      
+      const lesson = await storage.getLessonBySlug(slug);
+      if (!lesson) {
+        return res.status(404).json({ error: "Lesson not found" });
+      }
+
+      // Get course info
+      const course = await storage.getCourse(lesson.courseId);
+
+      // Get user's progress if logged in
+      let userProgress = null;
+      if (userId) {
+        userProgress = await storage.getUserLessonProgress(userId, lesson.id);
+        
+        // Increment view count
+        await storage.incrementLessonView(lesson.id, userId);
+      }
+
+      // Get lesson analytics
+      const analytics = await storage.getLessonAnalytics(lesson.id);
+
+      res.json({
+        lesson,
+        course,
+        userProgress,
+        analytics,
+      });
+    } catch (error) {
+      console.error("Error fetching lesson:", error);
+      res.status(500).json({ error: "Failed to fetch lesson" });
+    }
+  });
+
+  // Update lesson progress
+  app.post("/api/learning/lessons/:lessonId/progress", async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+      const { userId, completionPercentage, timeSpent, videoProgress, isCompleted } = req.body;
+
+      if (!userId || !lessonId) {
+        return res.status(400).json({ error: "userId and lessonId are required" });
+      }
+
+      const progress = await storage.createOrUpdateLessonProgress({
+        userId,
+        lessonId,
+        completionPercentage: completionPercentage || 0,
+        timeSpent: timeSpent || 0,
+        videoProgress: videoProgress || 0,
+        isCompleted: isCompleted || false,
+        completedAt: isCompleted ? new Date() : undefined,
+        lastAccessedAt: new Date(),
+      });
+
+      res.json({ progress });
+    } catch (error) {
+      console.error("Error updating progress:", error);
+      res.status(500).json({ error: "Failed to update progress" });
+    }
+  });
+
+  // Toggle bookmark
+  app.post("/api/learning/lessons/:lessonId/bookmark", async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const progress = await storage.toggleBookmark(userId, lessonId);
+      res.json({ progress });
+    } catch (error) {
+      console.error("Error toggling bookmark:", error);
+      res.status(500).json({ error: "Failed to toggle bookmark" });
+    }
+  });
+
+  // List resources
+  app.get("/api/learning/resources", async (req, res) => {
+    try {
+      const { type, category } = req.query;
+      
+      const resources = await storage.listResources({
+        type: type as string | undefined,
+        category: category as string | undefined,
+      });
+
+      res.json({ resources });
+    } catch (error) {
+      console.error("Error listing resources:", error);
+      res.status(500).json({ error: "Failed to fetch resources" });
+    }
+  });
+
+  // Download resource (increment download count)
+  app.post("/api/learning/resources/:resourceId/download", async (req, res) => {
+    try {
+      const { resourceId } = req.params;
+      
+      await storage.incrementResourceDownload(resourceId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error tracking download:", error);
+      res.status(500).json({ error: "Failed to track download" });
+    }
+  });
+
+  // Get user's onboarding progress
+  app.get("/api/learning/onboarding/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      
+      const progress = await storage.getUserOnboardingProgress(userId);
+      
+      if (!progress) {
+        // Auto-assign checklist based on user role
+        const user = await storage.getUser(userId);
+        if (!user) {
+          return res.status(404).json({ error: "User not found" });
+        }
+
+        const checklist = await storage.getOnboardingChecklistByRole(user.role);
+        if (checklist) {
+          const newProgress = await storage.createUserOnboardingProgress({
+            userId,
+            checklistId: checklist.id,
+            progress: {},
+            completionPercentage: 0,
+          });
+
+          return res.json({ progress: newProgress, checklist });
+        }
+
+        return res.json({ progress: null, checklist: null });
+      }
+
+      // Get checklist details
+      const checklist = await storage.getOnboardingChecklist(progress.checklistId);
+
+      res.json({ progress, checklist });
+    } catch (error) {
+      console.error("Error fetching onboarding progress:", error);
+      res.status(500).json({ error: "Failed to fetch onboarding progress" });
+    }
+  });
+
+  // Admin: Create course
+  app.post("/api/admin/learning/courses", async (req, res) => {
+    try {
+      const course = await storage.createCourse(req.body);
+      res.json({ course });
+    } catch (error) {
+      console.error("Error creating course:", error);
+      res.status(500).json({ error: "Failed to create course" });
+    }
+  });
+
+  // Admin: Update course
+  app.patch("/api/admin/learning/courses/:courseId", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const course = await storage.updateCourse(courseId, req.body);
+      
+      if (!course) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+
+      res.json({ course });
+    } catch (error) {
+      console.error("Error updating course:", error);
+      res.status(500).json({ error: "Failed to update course" });
+    }
+  });
+
+  // Admin: Create lesson
+  app.post("/api/admin/learning/lessons", async (req, res) => {
+    try {
+      const lesson = await storage.createLesson(req.body);
+      res.json({ lesson });
+    } catch (error) {
+      console.error("Error creating lesson:", error);
+      res.status(500).json({ error: "Failed to create lesson" });
+    }
+  });
+
+  // Admin: Update lesson
+  app.patch("/api/admin/learning/lessons/:lessonId", async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+      const lesson = await storage.updateLesson(lessonId, req.body);
+      
+      if (!lesson) {
+        return res.status(404).json({ error: "Lesson not found" });
+      }
+
+      res.json({ lesson });
+    } catch (error) {
+      console.error("Error updating lesson:", error);
+      res.status(500).json({ error: "Failed to update lesson" });
+    }
+  });
+
+  // Admin: Create resource
+  app.post("/api/admin/learning/resources", async (req, res) => {
+    try {
+      const resource = await storage.createResource(req.body);
+      res.json({ resource });
+    } catch (error) {
+      console.error("Error creating resource:", error);
+      res.status(500).json({ error: "Failed to create resource" });
+    }
+  });
+
+  // ============================================================================
   // BACKGROUND TASKS
   // ============================================================================
 
