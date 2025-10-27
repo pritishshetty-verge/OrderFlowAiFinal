@@ -132,8 +132,9 @@ function RatingBadge({ courier }: { courier: CourierPartner }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="relative cursor-pointer"
+          className="relative cursor-pointer transition-transform hover:scale-110 active:scale-95"
           style={{ width: 48, height: 48 }}
+          onClick={() => setOpen(!open)}
           data-testid={`rating-badge-${courier.courier_company_id}`}
         >
           <svg className="transform -rotate-90" width={48} height={48}>
@@ -157,7 +158,7 @@ function RatingBadge({ courier }: { courier: CourierPartner }) {
               strokeLinecap="round"
             />
           </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="text-sm font-bold" style={{ color: getColor() }}>
               {rating.toFixed(1)}
             </span>
@@ -165,7 +166,11 @@ function RatingBadge({ courier }: { courier: CourierPartner }) {
         </button>
       </PopoverTrigger>
       {hasBreakdown && (
-        <PopoverContent className="w-auto p-4" align="center">
+        <PopoverContent 
+          className="w-auto p-4 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2" 
+          align="center"
+          data-testid={`rating-breakdown-${courier.courier_company_id}`}
+        >
           <div className="grid grid-cols-4 gap-4">
             <RatingCircle 
               value={courier.pickup_performance || 0} 
@@ -190,8 +195,11 @@ function RatingBadge({ courier }: { courier: CourierPartner }) {
   );
 }
 
-// Courier logo placeholder (circular with initials)
-function CourierLogo({ name }: { name: string }) {
+// Courier logo component - supports both image URLs and initials fallback
+// Ideal logo size: 64px × 64px (1:1 aspect ratio, PNG or SVG format)
+function CourierLogo({ name, logoUrl }: { name: string; logoUrl?: string }) {
+  const [imageError, setImageError] = useState(false);
+  
   const initials = name
     .split(' ')
     .slice(0, 2)
@@ -199,9 +207,22 @@ function CourierLogo({ name }: { name: string }) {
     .join('')
     .toUpperCase();
 
+  if (logoUrl && !imageError) {
+    return (
+      <div className="w-16 h-16 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100 dark:bg-gray-800 flex-shrink-0 border border-gray-200 dark:border-gray-700">
+        <img 
+          src={logoUrl} 
+          alt={`${name} logo`}
+          className="w-full h-full object-contain"
+          onError={() => setImageError(true)}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-      <span className="text-white font-bold text-sm">{initials}</span>
+    <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+      <span className="text-white font-bold text-base">{initials}</span>
     </div>
   );
 }
@@ -353,7 +374,7 @@ export function CourierSelectionModal({
               <div className="space-y-3">
                 {/* Warning banner for Low Rated tab */}
                 {selectedTab === "low-rated" && (
-                  <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3" data-testid="low-rated-warning">
+                  <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3 animate-in fade-in-50 slide-in-from-top-1" data-testid="low-rated-warning">
                     <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                     <div>
                       <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">
@@ -369,7 +390,7 @@ export function CourierSelectionModal({
 
                 {/* Info banner for Non-Serviceable tab */}
                 {selectedTab === "non-serviceable" && (
-                  <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3" data-testid="non-serviceable-info">
+                  <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3 animate-in fade-in-50 slide-in-from-top-1" data-testid="non-serviceable-info">
                     <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
                     <div>
                       <p className="font-medium text-red-900 dark:text-red-100 mb-1">
@@ -382,20 +403,24 @@ export function CourierSelectionModal({
                   </div>
                 )}
 
-                {sortedCouriers.map((courier) => (
-                  <div key={courier.courier_company_id}>
+                {sortedCouriers.map((courier, index) => (
+                  <div 
+                    key={courier.courier_company_id}
+                    className="animate-in fade-in-50 slide-in-from-bottom-2"
+                    style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
+                  >
                     {/* Courier Card - Shiprocket Style */}
                     <div
-                      className={`relative border rounded-lg bg-white dark:bg-gray-900 ${
-                        selectedTab === 'non-serviceable' ? 'opacity-60' : ''
-                      } ${courier.is_recommended ? 'border-l-4 border-l-indigo-600' : ''}`}
+                      className={`relative border rounded-lg bg-white dark:bg-gray-900 transition-all ${
+                        selectedTab === 'non-serviceable' ? 'opacity-60' : 'hover:shadow-md'
+                      } ${courier.is_recommended ? 'border-l-4 border-l-indigo-600 pt-6' : ''}`}
                       data-testid={`courier-option-${courier.courier_company_id}`}
                     >
                       {/* Recommended Badge */}
                       {courier.is_recommended && selectedTab !== 'non-serviceable' && (
-                        <div className="absolute -top-3 left-4">
+                        <div className="absolute -top-2 left-4 z-10">
                           <Badge 
-                            className="bg-indigo-600 text-white hover:bg-indigo-700 text-xs px-2 py-1"
+                            className="bg-indigo-600 text-white hover:bg-indigo-700 text-xs px-3 py-1 shadow-sm"
                             data-testid={`recommended-badge-${courier.courier_company_id}`}
                           >
                             ✓ Recommended
@@ -458,12 +483,12 @@ export function CourierSelectionModal({
                               </p>
                             </div>
 
-                            {/* Ship Now Button - Shiprocket Purple */}
+                            {/* Ship Now Button - Default Theme */}
                             <div className="flex-shrink-0 ml-2">
                               <Button
                                 onClick={() => handleShipNow(courier)}
                                 disabled={assignCourierMutation.isPending}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white min-w-[110px]"
+                                className="min-w-[110px]"
                                 data-testid={`button-ship-${courier.courier_company_id}`}
                               >
                                 {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
@@ -491,7 +516,7 @@ export function CourierSelectionModal({
 
                     {/* Warning Banner (if applicable) */}
                     {selectedTab !== 'non-serviceable' && courier.has_warning && courier.warning_message && (
-                      <div className="mt-2 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3 flex items-start gap-2">
+                      <div className="mt-2 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3 flex items-start gap-2 animate-in fade-in-50">
                         <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                         <p className="text-sm text-amber-800 dark:text-amber-200" data-testid={`warning-${courier.courier_company_id}`}>
                           {courier.warning_message}
@@ -501,7 +526,7 @@ export function CourierSelectionModal({
 
                     {/* Non-serviceable reason */}
                     {selectedTab === 'non-serviceable' && courier.non_serviceable_reason && (
-                      <div className="mt-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                      <div className="mt-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3 animate-in fade-in-50">
                         <p className="text-xs font-medium text-red-900 dark:text-red-100 mb-1">
                           Reason for Non-Serviceability:
                         </p>
