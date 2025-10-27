@@ -32,6 +32,10 @@ import {
   type InsertNotification,
   type ShopifySyncLog,
   type InsertShopifySyncLog,
+  type Shipment,
+  type InsertShipment,
+  type NdrEvent,
+  type InsertNdrEvent,
   users,
   invites,
   customers,
@@ -47,6 +51,8 @@ import {
   calls,
   notifications,
   shopifySyncLogs,
+  shipments,
+  ndrEvents,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -154,6 +160,22 @@ export interface IStorage {
   markAllNotificationsAsRead(userId: string): Promise<void>;
   getUnreadNotificationCount(userId: string): Promise<number>;
   getDueFollowups(): Promise<Order[]>; // Get orders with followup_at <= now and not notified yet
+
+  // Shipments
+  createShipment(shipment: InsertShipment): Promise<Shipment>;
+  getShipment(id: string): Promise<Shipment | undefined>;
+  getShipmentByAWB(awb: string): Promise<Shipment | undefined>;
+  getShipmentByOrderId(orderId: string): Promise<Shipment | undefined>;
+  updateShipment(id: string, data: Partial<InsertShipment>): Promise<Shipment | undefined>;
+  listShipments(filters?: { status?: string; limit?: number }): Promise<Shipment[]>;
+
+  // NDR Events
+  createNDREvent(ndrEvent: InsertNdrEvent): Promise<NdrEvent>;
+  getNDREvent(id: string): Promise<NdrEvent | undefined>;
+  getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]>;
+  getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
+  updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
+  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number }): Promise<{ events: NdrEvent[]; total: number }>;
 }
 
 export class DbStorage implements IStorage {
@@ -976,6 +998,118 @@ export class DbStorage implements IStorage {
       .where(eq(orders.id, orderId))
       .returning();
     return updated;
+  }
+
+  // ============================================================================
+  // SHIPMENTS
+  // ============================================================================
+
+  async createShipment(insertShipment: InsertShipment): Promise<Shipment> {
+    const [shipment] = await db.insert(shipments).values(insertShipment).returning();
+    return shipment;
+  }
+
+  async getShipment(id: string): Promise<Shipment | undefined> {
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.id, id));
+    return shipment;
+  }
+
+  async getShipmentByAWB(awb: string): Promise<Shipment | undefined> {
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.awb, awb));
+    return shipment;
+  }
+
+  async getShipmentByOrderId(orderId: string): Promise<Shipment | undefined> {
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.orderId, orderId));
+    return shipment;
+  }
+
+  async updateShipment(id: string, data: Partial<InsertShipment>): Promise<Shipment | undefined> {
+    const [updated] = await db
+      .update(shipments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(shipments.id, id))
+      .returning();
+    return updated;
+  }
+
+  async listShipments(filters?: { status?: string; limit?: number }): Promise<Shipment[]> {
+    let query = db.select().from(shipments).orderBy(desc(shipments.createdAt));
+
+    if (filters?.status) {
+      query = query.where(eq(shipments.status, filters.status)) as any;
+    }
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+
+    return await query;
+  }
+
+  // ============================================================================
+  // NDR EVENTS
+  // ============================================================================
+
+  async createNDREvent(insertNdrEvent: InsertNdrEvent): Promise<NdrEvent> {
+    const [ndrEvent] = await db.insert(ndrEvents).values(insertNdrEvent).returning();
+    return ndrEvent;
+  }
+
+  async getNDREvent(id: string): Promise<NdrEvent | undefined> {
+    const [ndrEvent] = await db.select().from(ndrEvents).where(eq(ndrEvents.id, id));
+    return ndrEvent;
+  }
+
+  async getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]> {
+    return await db
+      .select()
+      .from(ndrEvents)
+      .where(eq(ndrEvents.shipmentId, shipmentId))
+      .orderBy(desc(ndrEvents.createdAt));
+  }
+
+  async getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]> {
+    return await db
+      .select()
+      .from(ndrEvents)
+      .where(eq(ndrEvents.orderId, orderId))
+      .orderBy(desc(ndrEvents.createdAt));
+  }
+
+  async updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined> {
+    const [updated] = await db
+      .update(ndrEvents)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(ndrEvents.id, id))
+      .returning();
+    return updated;
+  }
+
+  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number }): Promise<{ events: NdrEvent[]; total: number }> {
+    const baseQuery = db.select().from(ndrEvents).where(eq(ndrEvents.resolved, false));
+
+    let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+
+    if (filters?.offset) {
+      query = query.offset(filters.offset) as any;
+    }
+
+    const events = await query;
+
+    const countResult = await db
+      .select({ count: count() })
+      .from(ndrEvents)
+      .where(eq(ndrEvents.resolved, false));
+
+    return {
+      events,
+      total: countResult[0]?.count || 0,
+    };
   }
 }
 
