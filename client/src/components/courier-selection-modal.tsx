@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import {
@@ -12,8 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Truck, Star, AlertTriangle, Package } from "lucide-react";
-import { format } from "date-fns";
+import { Truck, Star, AlertTriangle, Package, XCircle } from "lucide-react";
 
 interface CourierPartner {
   courier_company_id: number;
@@ -30,10 +29,17 @@ interface CourierPartner {
   is_surface: boolean;
   is_hyperlocal: boolean;
   is_recommended: boolean;
-  is_serviceable: boolean;
   non_serviceable_reason?: string;
   has_warning?: boolean;
   warning_message?: string;
+  category?: 'serviceable' | 'low_rated' | 'non_serviceable';
+}
+
+interface CategorizedCouriersResponse {
+  serviceable: CourierPartner[];
+  lowRated: CourierPartner[];
+  nonServiceable: CourierPartner[];
+  qualityRatingThreshold: number;
 }
 
 interface CourierSelectionModalProps {
@@ -55,15 +61,14 @@ export function CourierSelectionModal({
   orderDetails,
 }: CourierSelectionModalProps) {
   const { toast } = useToast();
-  const [selectedTab, setSelectedTab] = useState("all");
+  const [selectedTab, setSelectedTab] = useState("serviceable");
 
   // Price display: Shiprocket uses total_charge field directly
   const calculatePrice = (courier: CourierPartner) => {
-    // Shiprocket displays total_charge directly from the API
     return courier.total_charge || 0;
   };
 
-  // Fetch available couriers
+  // Fetch available couriers (categorized response)
   const { data: couriersData, isLoading, error } = useQuery({
     queryKey: ["/api/orders", orderId, "couriers"],
     queryFn: async () => {
@@ -72,7 +77,7 @@ export function CourierSelectionModal({
         const error = await response.json();
         throw new Error(error.error || "Failed to fetch couriers");
       }
-      return response.json() as Promise<{ couriers: CourierPartner[] }>;
+      return response.json() as Promise<{ couriers: CategorizedCouriersResponse }>;
     },
     enabled: open,
   });
@@ -115,51 +120,28 @@ export function CourierSelectionModal({
     assignCourierMutation.mutate(courier.courier_company_id);
   };
 
-  // Filter couriers based on selected tab
-  const getFilteredCouriers = () => {
+  // Get couriers for selected tab
+  const getTabCouriers = () => {
     if (!couriersData?.couriers) return [];
 
-    const couriers = couriersData.couriers;
-
     switch (selectedTab) {
-      case "air":
-        // Only serviceable Air couriers
-        return couriers.filter(c => c.is_serviceable && !c.is_surface);
-      case "surface":
-        // Only serviceable Surface couriers
-        return couriers.filter(c => c.is_serviceable && c.is_surface);
+      case "serviceable":
+        return couriersData.couriers.serviceable;
+      case "low-rated":
+        return couriersData.couriers.lowRated;
       case "non-serviceable":
-        // Only non-serviceable couriers
-        return couriers.filter(c => !c.is_serviceable);
+        return couriersData.couriers.nonServiceable;
       default:
-        // "all" tab - show ALL serviceable couriers (both Air and Surface)
-        return couriers.filter(c => c.is_serviceable);
+        return [];
     }
   };
 
-  // Get counts for each tab
-  const getTabCounts = () => {
-    if (!couriersData?.couriers) {
-      return { all: 0, air: 0, surface: 0, nonServiceable: 0 };
-    }
-
-    const couriers = couriersData.couriers;
-    return {
-      all: couriers.filter(c => c.is_serviceable).length,
-      air: couriers.filter(c => c.is_serviceable && !c.is_surface).length,
-      surface: couriers.filter(c => c.is_serviceable && c.is_surface).length,
-      nonServiceable: couriers.filter(c => !c.is_serviceable).length,
-    };
-  };
-
-  const tabCounts = getTabCounts();
-
-  const filteredCouriers = getFilteredCouriers();
-  const sortedCouriers = [...filteredCouriers].sort((a, b) => {
-    // Recommended first
+  const tabCouriers = getTabCouriers();
+  
+  // Sort couriers: recommended first, then by price
+  const sortedCouriers = [...tabCouriers].sort((a, b) => {
     if (a.is_recommended && !b.is_recommended) return -1;
     if (!a.is_recommended && b.is_recommended) return 1;
-    // Then by calculated price (matching Shiprocket logic)
     return calculatePrice(a) - calculatePrice(b);
   });
 
@@ -193,18 +175,20 @@ export function CourierSelectionModal({
 
         <Tabs value={selectedTab} onValueChange={setSelectedTab} className="flex-1 flex flex-col overflow-hidden">
           <TabsList className="w-full justify-start">
-            <TabsTrigger value="all" data-testid="tab-all-couriers">
-              All {!isLoading && tabCounts.all > 0 && `(${tabCounts.all})`}
+            <TabsTrigger value="serviceable" data-testid="tab-serviceable">
+              Serviceable {!isLoading && couriersData?.couriers.serviceable && `(${couriersData.couriers.serviceable.length})`}
             </TabsTrigger>
-            <TabsTrigger value="air" data-testid="tab-air-couriers">
-              Air {!isLoading && tabCounts.air > 0 && `(${tabCounts.air})`}
-            </TabsTrigger>
-            <TabsTrigger value="surface" data-testid="tab-surface-couriers">
-              Surface {!isLoading && tabCounts.surface > 0 && `(${tabCounts.surface})`}
+            <TabsTrigger value="low-rated" data-testid="tab-low-rated">
+              Low Rated {!isLoading && couriersData?.couriers.lowRated && `(${couriersData.couriers.lowRated.length})`}
+              {couriersData?.couriers.lowRated && couriersData.couriers.lowRated.length > 0 && (
+                <AlertTriangle className="h-3 w-3 ml-1 text-amber-500" />
+              )}
             </TabsTrigger>
             <TabsTrigger value="non-serviceable" data-testid="tab-non-serviceable">
-              Non-Serviceable {!isLoading && tabCounts.nonServiceable > 0 && `(${tabCounts.nonServiceable})`}
-              {tabCounts.nonServiceable > 0 && <AlertTriangle className="h-3 w-3 ml-1" />}
+              Non-Serviceable {!isLoading && couriersData?.couriers.nonServiceable && `(${couriersData.couriers.nonServiceable.length})`}
+              {couriersData?.couriers.nonServiceable && couriersData.couriers.nonServiceable.length > 0 && (
+                <XCircle className="h-3 w-3 ml-1 text-destructive" />
+              )}
             </TabsTrigger>
           </TabsList>
 
@@ -227,30 +211,52 @@ export function CourierSelectionModal({
             {!isLoading && !error && sortedCouriers.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground" data-testid="no-couriers">
                 <Package className="h-12 w-12 mb-2" />
-                <p className="font-medium">No couriers available</p>
+                <p className="font-medium">No couriers in this category</p>
                 <p className="text-sm">Try selecting a different tab</p>
               </div>
             )}
 
             {!isLoading && !error && sortedCouriers.length > 0 && (
               <div className="space-y-3">
+                {/* Warning banner for Low Rated tab */}
+                {selectedTab === "low-rated" && (
+                  <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4 flex items-start gap-3" data-testid="low-rated-warning">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-amber-900 dark:text-amber-100 mb-1">
+                        Below-Average Couriers
+                      </p>
+                      <p className="text-sm text-amber-800 dark:text-amber-200">
+                        Couriers here have ratings below {couriersData?.couriers.qualityRatingThreshold || 3.8}. 
+                        Select only for special cases or cost constraints. These couriers may have slower delivery times or higher RTO rates.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Info banner for Non-Serviceable tab */}
+                {selectedTab === "non-serviceable" && (
+                  <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-start gap-3" data-testid="non-serviceable-info">
+                    <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-red-900 dark:text-red-100 mb-1">
+                        Unavailable Couriers
+                      </p>
+                      <p className="text-sm text-red-800 dark:text-red-200">
+                        These couriers cannot deliver to this destination currently due to operational restrictions or service suspensions.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-sm text-muted-foreground" data-testid="couriers-count">
                   {sortedCouriers.length} Courier{sortedCouriers.length !== 1 ? 's' : ''} Found
                 </p>
 
-                {selectedTab !== "non-serviceable" && tabCounts.nonServiceable > 0 && (
-                  <div className="bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg p-3 flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm text-orange-800 dark:text-orange-200">
-                      Some of your frequently used courier partners are non-serviceable. Please check the Non-Serviceable tab for more details.
-                    </p>
-                  </div>
-                )}
-
                 {sortedCouriers.map((courier) => (
                   <div
                     key={courier.courier_company_id}
-                    className="border rounded-lg p-4 hover-elevate"
+                    className={`border rounded-lg p-4 ${selectedTab === 'non-serviceable' ? 'opacity-60' : 'hover-elevate'}`}
                     data-testid={`courier-option-${courier.courier_company_id}`}
                   >
                     <div className="flex items-start justify-between gap-4">
@@ -260,12 +266,12 @@ export function CourierSelectionModal({
                           <h3 className="font-semibold text-base" data-testid={`courier-name-${courier.courier_company_id}`}>
                             {courier.courier_name}
                           </h3>
-                          {courier.is_recommended && (
+                          {courier.is_recommended && selectedTab !== 'non-serviceable' && (
                             <Badge variant="default" className="text-xs" data-testid={`recommended-badge-${courier.courier_company_id}`}>
                               Recommended
                             </Badge>
                           )}
-                          {courier.is_serviceable && (
+                          {courier.rating && (
                             <Badge 
                               variant={getRatingBadgeVariant(courier.rating)}
                               className="text-xs"
@@ -280,8 +286,8 @@ export function CourierSelectionModal({
                           </Badge>
                         </div>
 
-                        {/* Warning message for serviceable couriers with operational stress */}
-                        {courier.is_serviceable && courier.has_warning && courier.warning_message && (
+                        {/* Warning message for serviceable/low-rated couriers with operational stress */}
+                        {selectedTab !== 'non-serviceable' && courier.has_warning && courier.warning_message && (
                           <div className="mb-3 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-2 flex items-start gap-2">
                             <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
                             <p className="text-xs text-amber-800 dark:text-amber-200" data-testid={`warning-${courier.courier_company_id}`}>
@@ -291,16 +297,18 @@ export function CourierSelectionModal({
                         )}
 
                         {/* Non-serviceable reason */}
-                        {!courier.is_serviceable && courier.non_serviceable_reason && (
-                          <div className="mb-3">
-                            <p className="text-sm font-medium text-muted-foreground mb-1">Reason for Non-Serviceability:</p>
-                            <p className="text-sm text-destructive" data-testid={`non-serviceable-reason-${courier.courier_company_id}`}>
+                        {selectedTab === 'non-serviceable' && courier.non_serviceable_reason && (
+                          <div className="mb-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-md p-3">
+                            <p className="text-xs font-medium text-red-900 dark:text-red-100 mb-1">
+                              Reason for Non-Serviceability:
+                            </p>
+                            <p className="text-sm text-red-700 dark:text-red-300" data-testid={`non-serviceable-reason-${courier.courier_company_id}`}>
                               {courier.non_serviceable_reason}
                             </p>
                           </div>
                         )}
 
-                        {courier.is_serviceable && (
+                        {selectedTab !== 'non-serviceable' ? (
                           <>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                               <div>
@@ -334,12 +342,22 @@ export function CourierSelectionModal({
                               Other: ₹{courier.other_charges || 0}
                             </div>
                           </>
+                        ) : (
+                          <div className="text-sm text-muted-foreground">
+                            <p className="mb-1">
+                              <span className="font-medium">Rating:</span> {courier.rating} • 
+                              <span className="font-medium ml-2">Type:</span> {courier.is_surface ? "Surface" : "Air"}
+                            </p>
+                            <p>
+                              <span className="font-medium">Last Known Price:</span> ₹{calculatePrice(courier).toFixed(2)}
+                            </p>
+                          </div>
                         )}
                       </div>
 
                       {/* Right: Ship Button */}
                       <div className="flex-shrink-0">
-                        {courier.is_serviceable ? (
+                        {selectedTab !== 'non-serviceable' ? (
                           <Button
                             onClick={() => handleShipNow(courier)}
                             disabled={assignCourierMutation.isPending}
