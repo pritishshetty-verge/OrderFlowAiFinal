@@ -18,6 +18,12 @@ import {
 } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { Truck, AlertTriangle, Package, XCircle, AlertCircle } from "lucide-react";
+import amazonShippingLogo from "@assets/amazon-shipping_1761582270710.png";
+import blueDartLogo from "@assets/blue-dart_1761582270715.png";
+import delhiveryLogo from "@assets/delhivery_1761582270716.png";
+import dtdcLogo from "@assets/dtdc_1761582270716.png";
+import ekartLogo from "@assets/ekart_1761582270717.png";
+import shadowfaxLogo from "@assets/shadowfax_1761582270718.png";
 
 interface CourierPartner {
   courier_company_id: number;
@@ -196,10 +202,35 @@ function RatingBadge({ courier }: { courier: CourierPartner }) {
   );
 }
 
-// Courier logo component - supports both image URLs and initials fallback
-// Ideal logo size: 64px × 64px (1:1 aspect ratio, PNG or SVG format)
+// Courier logo mapping for local fallbacks
+const COURIER_LOGO_MAP: Record<string, string> = {
+  "amazon shipping": amazonShippingLogo,
+  "blue dart": blueDartLogo,
+  "delhivery": delhiveryLogo,
+  "dtdc": dtdcLogo,
+  "ekart": ekartLogo,
+  "shadowfax": shadowfaxLogo,
+};
+
+// Theme-based fallback colors for initials
+const FALLBACK_COLORS = [
+  "from-blue-500 to-blue-600",
+  "from-indigo-500 to-indigo-600",
+  "from-purple-500 to-purple-600",
+  "from-pink-500 to-pink-600",
+  "from-green-500 to-green-600",
+  "from-teal-500 to-teal-600",
+  "from-cyan-500 to-cyan-600",
+  "from-violet-500 to-violet-600",
+];
+
+// Courier logo component with 3-tier fallback system
+// Tier 1: Shiprocket API logo_url
+// Tier 2: Local courier logos based on name matching
+// Tier 3: Themed colored circles with initials
 function CourierLogo({ name, logoUrl }: { name: string; logoUrl?: string }) {
-  const [imageError, setImageError] = useState(false);
+  const [apiLogoError, setApiLogoError] = useState(false);
+  const [localLogoError, setLocalLogoError] = useState(false);
   
   const initials = name
     .split(' ')
@@ -208,21 +239,42 @@ function CourierLogo({ name, logoUrl }: { name: string; logoUrl?: string }) {
     .join('')
     .toUpperCase();
 
-  if (logoUrl && !imageError) {
+  // Generate consistent color based on courier name
+  const colorIndex = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) % FALLBACK_COLORS.length;
+  const fallbackColor = FALLBACK_COLORS[colorIndex];
+
+  // Tier 1: Try Shiprocket API logo
+  if (logoUrl && !apiLogoError) {
     return (
-      <div className="w-16 h-16 rounded-lg overflow-hidden flex items-center justify-center bg-gray-100 dark:bg-gray-800 flex-shrink-0 border border-gray-200 dark:border-gray-700">
+      <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center bg-white dark:bg-gray-800 flex-shrink-0 border border-gray-200 dark:border-gray-700 p-2">
         <img 
           src={logoUrl} 
           alt={`${name} logo`}
           className="w-full h-full object-contain"
-          onError={() => setImageError(true)}
+          onError={() => setApiLogoError(true)}
         />
       </div>
     );
   }
 
+  // Tier 2: Try local courier logo
+  const localLogo = COURIER_LOGO_MAP[name.toLowerCase()];
+  if (localLogo && !localLogoError) {
+    return (
+      <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center bg-white dark:bg-gray-800 flex-shrink-0 border border-gray-200 dark:border-gray-700 p-2">
+        <img 
+          src={localLogo} 
+          alt={`${name} logo`}
+          className="w-full h-full object-contain"
+          onError={() => setLocalLogoError(true)}
+        />
+      </div>
+    );
+  }
+
+  // Tier 3: Fallback to themed colored initials
   return (
-    <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+    <div className={`w-16 h-16 rounded-full bg-gradient-to-br ${fallbackColor} flex items-center justify-center flex-shrink-0 shadow-sm`}>
       <span className="text-white font-bold text-base">{initials}</span>
     </div>
   );
