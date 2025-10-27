@@ -131,6 +131,17 @@ interface ShiprocketCourierServiceabilityPayload {
   declared_value?: number;
 }
 
+interface ShiprocketSuppressionDates {
+  action_on?: string;
+  blocked_fm?: string;
+  blocked_lm?: string;
+  delay_remark?: string;
+  pickup_delay_by?: number;
+  pickup_delay_days?: string;
+  pickup_delay_from?: string;
+  pickup_delay_to?: string;
+}
+
 interface ShiprocketCourierPartner {
   courier_company_id: number;
   courier_name: string;
@@ -150,7 +161,10 @@ interface ShiprocketCourierPartner {
   min_weight: number;
   qc_courier: number;
   recommendation_score: number;
-  suppression_dates: string | null;
+  suppression_dates: ShiprocketSuppressionDates | null;
+  suppress_text?: string;
+  suppress_date?: string;
+  blocked?: number;
   base_courier_id: number;
   base_weight: number;
   block_cod: number;
@@ -162,7 +176,11 @@ interface ShiprocketCourierPartner {
   is_custom_rate: number;
   weight_cases: number;
   child_courier_id: number | null;
-  is_recommended: boolean;
+  is_recommended?: boolean;
+  is_serviceable?: boolean;
+  non_serviceable_reason?: string;
+  has_warning?: boolean;
+  warning_message?: string;
 }
 
 interface ShiprocketCourierServiceabilityResponse {
@@ -561,46 +579,85 @@ class ShiprocketService {
         const recommendedId = response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id;
         const rawCouriers = response.data.data.available_courier_companies;
 
-        console.log('[Shiprocket] All couriers before filtering:', rawCouriers.map(c => ({
+        console.log('[Shiprocket] All couriers before processing:', rawCouriers.map(c => ({
           id: c.courier_company_id,
           name: c.courier_name,
           freight: c.freight_charge,
           cod: c.cod_charges,
           total: c.total_charge,
           qc_courier: c.qc_courier,
-          block_cod: c.block_cod,
+          blocked: c.blocked,
+          suppress_text: c.suppress_text,
+          suppression_dates: c.suppression_dates,
           rating: c.rating
         })));
 
-        // Filter couriers based on Shiprocket's availability criteria
-        const availableCouriers = rawCouriers.filter(courier => {
-          // Only include couriers that pass quality control
-          if (courier.qc_courier !== 1) {
-            console.log(`[Shiprocket] Filtering out ${courier.courier_name}: qc_courier=${courier.qc_courier}`);
-            return false;
+        // Process all couriers and determine serviceability
+        const processedCouriers = rawCouriers.map(courier => {
+          // Determine if courier is truly non-serviceable based on Shiprocket's blocking logic
+          let isServiceable = true;
+          let nonServiceableReason = '';
+          let hasWarning = false;
+          let warningMessage = '';
+          
+          // Check if courier is blocked
+          if (courier.blocked === 1) {
+            isServiceable = false;
+            nonServiceableReason = courier.suppress_text || 'Courier services are currently unavailable for this location';
+            console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: blocked=1, reason="${nonServiceableReason}"`);
           }
           
-          // Don't show suppressed couriers
-          if (courier.suppression_dates && courier.suppression_dates !== null) {
-            console.log(`[Shiprocket] Filtering out ${courier.courier_name}: has suppression_dates`);
-            return false;
+          // Check for actual blocking dates in suppression_dates
+          if (courier.suppression_dates && 
+              (courier.suppression_dates.blocked_fm || courier.suppression_dates.blocked_lm)) {
+            isServiceable = false;
+            nonServiceableReason = courier.suppress_text || 
+              `Courier services to the requested pin code are currently suspended${courier.suppression_dates.delay_remark ? ' due to ' + courier.suppression_dates.delay_remark.toLowerCase() : ''}`;
+            console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: has blocking dates, reason="${nonServiceableReason}"`);
           }
           
-          return true;
+          // Check for warnings (courier is serviceable but has operational issues)
+          // Network Stress couriers typically have courier name containing "Network Stress" or similar patterns
+          if (isServiceable) {
+            if (courier.courier_name.includes('Network Stress') || 
+                courier.courier_name.includes('_Network Stress')) {
+              hasWarning = true;
+              warningMessage = courier.suppress_text || 
+                'This courier is facing operational stress on this particular lane. Order might get delayed.';
+              console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
+            } else if (courier.suppression_dates?.delay_remark && 
+                       !courier.suppression_dates.blocked_fm && 
+                       !courier.suppression_dates.blocked_lm) {
+              // Has delay but not blocked - this is a warning
+              hasWarning = true;
+              warningMessage = `Delivery may be delayed due to ${courier.suppression_dates.delay_remark.toLowerCase()}`;
+              console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
+            }
+          }
+          
+          return {
+            ...courier,
+            is_recommended: courier.courier_company_id === recommendedId,
+            is_serviceable: isServiceable,
+            non_serviceable_reason: nonServiceableReason,
+            has_warning: hasWarning,
+            warning_message: warningMessage
+          };
         });
 
-        console.log('[Shiprocket] Filtered couriers (after qc_courier & suppression):', {
-          before: rawCouriers.length,
-          after: availableCouriers.length,
-          filtered: availableCouriers.map(c => c.courier_name)
+        console.log('[Shiprocket] Processed couriers:', {
+          total: processedCouriers.length,
+          serviceable: processedCouriers.filter(c => c.is_serviceable).length,
+          nonServiceable: processedCouriers.filter(c => !c.is_serviceable).length,
+          withWarnings: processedCouriers.filter(c => c.has_warning).length,
+          serviceableList: processedCouriers.filter(c => c.is_serviceable).map(c => c.courier_name),
+          nonServiceableList: processedCouriers.filter(c => !c.is_serviceable).map(c => ({ 
+            name: c.courier_name, 
+            reason: c.non_serviceable_reason 
+          }))
         });
 
-        const couriers = availableCouriers.map(courier => ({
-          ...courier,
-          is_recommended: courier.courier_company_id === recommendedId
-        }));
-
-        return couriers;
+        return processedCouriers;
       }
       
       // Option 2: Fetch shipment details and construct serviceability params
