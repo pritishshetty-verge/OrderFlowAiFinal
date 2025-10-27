@@ -46,6 +46,43 @@ The "Orders" page provides role-based filtering, allowing agents to see only the
 
 The Shiprocket integration manages advanced shipment tracking, failed delivery (NDR) management, and automated reattempt scheduling. It involves creating Shiprocket shipments for confirmed orders, monitoring delivery status via webhooks (at `/api/webhooks/courier-events` - renamed from `/shiprocket` due to Shiprocket URL restrictions), and allowing agents to handle NDR cases with address updates and reattempt scheduling through dedicated UI components and API endpoints. Webhook security is enforced via HMAC-SHA256 signature verification using the `SHIPROCKET_WEBHOOK_SECRET` environment variable.
 
+### Learning Center (LMS)
+
+A comprehensive Learning Management System inspired by Skool.com provides structured training for team members. The system includes:
+
+**Core Features:**
+- Course/Lesson hierarchy with progress tracking
+- Video embedding support (YouTube, Vimeo) via iframe
+- Rich text lesson content with HTML support
+- Lesson prerequisites to enforce learning sequences
+- Progress tracking (completion percentage, time spent, bookmarks)
+- Category-based course organization (onboarding, operations, training)
+- Difficulty levels (beginner, intermediate, advanced)
+
+**Database Schema:**
+- `courses`: Course metadata, categories, difficulty, estimated duration
+- `lessons`: Individual lessons with content, videos, and sequencing
+- `resources`: Downloadable files and reference materials
+- `user_lesson_progress`: Tracks completion, time spent, bookmarks
+- `lesson_analytics`: View counts and engagement metrics
+- `onboarding_checklists`: Role-based onboarding tasks
+- `user_onboarding_progress`: Checklist completion tracking
+
+**API Endpoints:**
+- `GET /api/learning/courses` - List all courses with user progress
+- `GET /api/learning/courses/:slug` - Course details with lessons
+- `GET /api/learning/lessons/:slug` - Individual lesson content
+- `POST /api/learning/lessons/:lessonId/progress` - Update progress
+- `POST /api/learning/lessons/:lessonId/bookmark` - Toggle bookmark
+- `GET /api/learning/resources` - List resources
+- `GET /api/learning/onboarding/:userId` - User's onboarding progress
+- Admin routes for content management
+
+**Frontend Pages:**
+- Learning Dashboard (`/learning`) - Course catalog with progress cards
+- Course Detail (`/learning/courses/:slug`) - Lesson list with prerequisites
+- Lesson View (`/learning/lessons/:slug`) - Video player and content display
+
 ## External Dependencies
 
 ### Shopify Integration

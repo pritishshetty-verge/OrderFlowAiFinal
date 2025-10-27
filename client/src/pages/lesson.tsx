@@ -25,11 +25,10 @@ interface Lesson {
   description: string;
   content: string;
   videoUrl: string | null;
-  estimatedMinutes: number;
-  orderIndex: number;
+  estimatedDuration: number;
+  order: number;
   courseId: string;
-  contentType: string;
-  prerequisiteLessonId: string | null;
+  prerequisiteLessonIds: string[];
 }
 
 interface Course {
@@ -53,8 +52,9 @@ export default function LessonPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
-  const [timeSpent, setTimeSpent] = useState(0);
+  const [sessionTimeSpent, setSessionTimeSpent] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
+  const lastSavedTimeRef = useRef<number>(0);
 
   const { data, isLoading } = useQuery<{
     lesson: Lesson;
@@ -96,23 +96,41 @@ export default function LessonPage() {
   });
 
   useEffect(() => {
-    if (!data?.lesson) return;
+    if (!data?.lesson || !userId) return;
 
+    const initialTimeSpent = data.userProgress?.timeSpent || 0;
+    lastSavedTimeRef.current = initialTimeSpent;
     startTimeRef.current = Date.now();
     
     const interval = setInterval(() => {
       const elapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      setTimeSpent((prev) => prev + 10);
+      const newSessionTime = sessionTimeSpent + elapsedSeconds;
+      const totalTimeSpent = lastSavedTimeRef.current + newSessionTime;
       
-      progressMutation.mutate({
-        timeSpent: (data.userProgress?.timeSpent || 0) + elapsedSeconds,
-      });
+      setSessionTimeSpent(newSessionTime);
       
-      startTimeRef.current = Date.now();
-    }, 10000);
+      if (elapsedSeconds >= 10) {
+        progressMutation.mutate({
+          timeSpent: totalTimeSpent,
+        });
+        
+        lastSavedTimeRef.current = totalTimeSpent;
+        setSessionTimeSpent(0);
+        startTimeRef.current = Date.now();
+      }
+    }, 1000);
 
-    return () => clearInterval(interval);
-  }, [data?.lesson]);
+    return () => {
+      clearInterval(interval);
+      const finalElapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      if (finalElapsedSeconds > 0) {
+        const finalTotalTime = lastSavedTimeRef.current + sessionTimeSpent + finalElapsedSeconds;
+        progressMutation.mutate({
+          timeSpent: finalTotalTime,
+        });
+      }
+    };
+  }, [data?.lesson, userId]);
 
   const handleMarkComplete = () => {
     progressMutation.mutate({
@@ -234,11 +252,11 @@ export default function LessonPage() {
             <div className="flex items-center gap-6 text-sm text-muted-foreground mb-6">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4" />
-                <span>{lesson.estimatedMinutes} min</span>
+                <span>{lesson.estimatedDuration} min</span>
               </div>
               <div className="flex items-center gap-2">
                 <PlayCircle className="h-4 w-4" />
-                <span>{lesson.contentType}</span>
+                <span>{lesson.videoUrl ? 'video' : 'text'}</span>
               </div>
             </div>
 

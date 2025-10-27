@@ -22,11 +22,10 @@ interface Lesson {
   title: string;
   slug: string;
   description: string;
-  orderIndex: number;
-  estimatedMinutes: number;
+  order: number;
+  estimatedDuration: number;
   videoUrl: string | null;
-  contentType: string;
-  prerequisiteLessonId: string | null;
+  prerequisiteLessonIds: string[];
 }
 
 interface Course {
@@ -36,7 +35,7 @@ interface Course {
   thumbnail: string;
   category: string;
   difficulty: string;
-  estimatedHours: number;
+  estimatedDuration: number;
 }
 
 interface UserProgress {
@@ -96,7 +95,7 @@ export default function CourseDetailPage() {
   }
 
   const { course, lessons, userProgress, lessonProgress } = data;
-  const sortedLessons = [...lessons].sort((a, b) => a.orderIndex - b.orderIndex);
+  const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
   const completedLessons = lessonProgress.filter((p) => p?.isCompleted).length;
   const totalLessons = lessons.length;
   const progress = userProgress?.completionPercentage || 0;
@@ -144,7 +143,7 @@ export default function CourseDetailPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4" />
-                <span>{course.estimatedHours}h total</span>
+                <span>{Math.round(course.estimatedDuration / 60)}h total</span>
               </div>
             </div>
           </div>
@@ -194,7 +193,9 @@ export default function CourseDetailPage() {
             {sortedLessons.map((lesson, index) => {
               const lessonProg = lessonProgress[lessons.findIndex((l) => l.id === lesson.id)];
               const isCompleted = lessonProg?.isCompleted || false;
-              const isLocked = !!(lesson.prerequisiteLessonId && !checkPrerequisite(lesson.prerequisiteLessonId, lessonProgress, lessons));
+              const isLocked = lesson.prerequisiteLessonIds && lesson.prerequisiteLessonIds.length > 0 
+                ? !lesson.prerequisiteLessonIds.every(prereqId => checkPrerequisite(prereqId, lessonProgress, lessons))
+                : false;
               
               return (
                 <LessonCard
@@ -274,7 +275,7 @@ function LessonCard({
             )}
             <div className="flex items-center gap-1">
               <Clock className="h-4 w-4" />
-              <span>{lesson.estimatedMinutes} min</span>
+              <span>{lesson.estimatedDuration} min</span>
             </div>
           </div>
         </div>

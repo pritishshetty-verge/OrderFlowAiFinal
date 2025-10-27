@@ -15,9 +15,9 @@ interface Course {
   thumbnail: string;
   category: string;
   difficulty: string;
-  estimatedHours: number;
+  estimatedDuration: number;
   isPublished: boolean;
-  orderIndex: number;
+  order: number;
   progress?: {
     completionPercentage: number;
     isCompleted: boolean;
@@ -159,7 +159,7 @@ function CourseCard({ course }: { course: Course }) {
             </Badge>
             <Badge variant="outline" className="gap-1">
               <Clock className="h-3 w-3" />
-              {course.estimatedHours}h
+              {Math.round(course.estimatedDuration / 60)}h
             </Badge>
           </div>
           
