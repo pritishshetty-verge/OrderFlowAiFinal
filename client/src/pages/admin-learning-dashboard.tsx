@@ -36,6 +36,7 @@ interface Course {
   estimatedDuration: number;
   isPublished: boolean;
   order: number;
+  lessonCount?: number;
 }
 
 export default function AdminLearningDashboard() {
@@ -46,7 +47,17 @@ export default function AdminLearningDashboard() {
     queryFn: async () => {
       const response = await fetch("/api/learning/courses", { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch courses");
-      return response.json();
+      const coursesData = await response.json();
+      
+      const coursesWithLessons = await Promise.all(
+        coursesData.courses.map(async (course: Course) => {
+          const lessonsResponse = await fetch(`/api/admin/learning/courses/${course.id}/lessons`, { credentials: "include" });
+          const lessonsData = await lessonsResponse.json();
+          return { ...course, lessonCount: lessonsData.lessons?.length || 0 };
+        })
+      );
+      
+      return { courses: coursesWithLessons };
     },
   });
 
@@ -132,6 +143,7 @@ export default function AdminLearningDashboard() {
                     <TableHead>Title</TableHead>
                     <TableHead>Category</TableHead>
                     <TableHead>Difficulty</TableHead>
+                    <TableHead>Lessons</TableHead>
                     <TableHead>Duration</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -150,6 +162,19 @@ export default function AdminLearningDashboard() {
                         <Badge variant="secondary" className="capitalize">
                           {course.difficulty}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">
+                            {course.lessonCount || 0} lesson{course.lessonCount !== 1 ? 's' : ''}
+                          </span>
+                          <Link href={`/learning/admin/lessons/new?courseId=${course.id}`}>
+                            <Button variant="ghost" size="sm" data-testid={`button-add-lesson-${course.id}`}>
+                              <Plus className="h-3 w-3 mr-1" />
+                              Add
+                            </Button>
+                          </Link>
+                        </div>
                       </TableCell>
                       <TableCell>{course.estimatedDuration} min</TableCell>
                       <TableCell>
