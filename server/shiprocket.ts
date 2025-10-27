@@ -1,5 +1,11 @@
 import axios, { AxiosInstance } from 'axios';
 
+// Quality rating threshold for courier categorization
+// Couriers with rating >= QUALITY_RATING_THRESHOLD go to "Serviceable" tab
+// Couriers with 0 < rating < QUALITY_RATING_THRESHOLD go to "Low Rated" tab
+// This threshold is easily adjustable based on operational requirements
+const QUALITY_RATING_THRESHOLD = 3.8;
+
 interface ShiprocketAuthResponse {
   token: string;
   expires_in?: number;
@@ -182,6 +188,14 @@ interface ShiprocketCourierPartner {
   non_serviceable_reason?: string;
   has_warning?: boolean;
   warning_message?: string;
+  category?: 'serviceable' | 'low_rated' | 'non_serviceable';
+}
+
+interface CategorizedCouriersResponse {
+  serviceable: ShiprocketCourierPartner[];
+  lowRated: ShiprocketCourierPartner[];
+  nonServiceable: ShiprocketCourierPartner[];
+  qualityRatingThreshold: number;
 }
 
 interface ShiprocketCourierServiceabilityResponse {
@@ -541,7 +555,7 @@ class ShiprocketService {
     }
   }
 
-  async getCouriersForShipment(shipmentId: number, orderId?: number): Promise<ShiprocketCourierPartner[]> {
+  async getCouriersForShipment(shipmentId: number, orderId?: number): Promise<CategorizedCouriersResponse> {
     try {
       // Shiprocket's serviceability API requires either:
       // 1. order_id parameter, OR
@@ -624,36 +638,50 @@ class ShiprocketService {
           rating: c.rating
         })));
 
-        // Process all couriers and determine serviceability
+        // Process all couriers and categorize into three buckets
         const processedCouriers = rawCouriers.map(courier => {
           // Add total_charge as computed field for backward compatibility
           const total_charge = courier.rate;
+          const rating = parseFloat(courier.rating) || 0;
           
-          // Determine if courier is truly non-serviceable based on Shiprocket's actual blocking logic
-          // Shiprocket ONLY marks couriers as non-serviceable if they have operational blocks, NOT based on ratings
-          let isServiceable = true;
+          // Determine courier category based on blocking status and rating
+          let category: 'serviceable' | 'low_rated' | 'non_serviceable' = 'serviceable';
           let nonServiceableReason = '';
           let hasWarning = false;
           let warningMessage = '';
           
-          // Check if courier is blocked (blocked = 1 means courier cannot deliver to this location)
+          // First, check if courier is blocked or suppressed (non-serviceable)
           if (courier.blocked === 1) {
-            isServiceable = false;
+            category = 'non_serviceable';
             nonServiceableReason = courier.suppress_text || 'Courier services are currently unavailable for this location';
             console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: blocked=1, reason="${nonServiceableReason}"`);
           }
-          
-          // Check for actual blocking dates in suppression_dates (indicates temporary suspension)
-          if (isServiceable && courier.suppression_dates && 
+          else if (courier.suppression_dates && 
               (courier.suppression_dates.blocked_fm || courier.suppression_dates.blocked_lm)) {
-            isServiceable = false;
+            category = 'non_serviceable';
             nonServiceableReason = courier.suppress_text || 
               `Courier services to the requested pin code are currently suspended${courier.suppression_dates.delay_remark ? ' due to ' + courier.suppression_dates.delay_remark.toLowerCase() : ''}`;
             console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: has blocking dates, reason="${nonServiceableReason}"`);
           }
+          else if (courier.suppress_text && courier.suppress_text.trim() !== '') {
+            // Suppress_text without blocking dates indicates operational issues but still serviceable
+            category = 'non_serviceable';
+            nonServiceableReason = courier.suppress_text;
+            console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: suppress_text="${nonServiceableReason}"`);
+          }
+          // If not blocked, categorize by rating
+          else if (rating > 0 && rating < QUALITY_RATING_THRESHOLD) {
+            category = 'low_rated';
+            console.log(`[Shiprocket] Low rated ${courier.courier_name}: rating=${rating}`);
+          }
+          // Otherwise, it's serviceable (rating >= QUALITY_RATING_THRESHOLD or no rating)
+          else {
+            category = 'serviceable';
+            console.log(`[Shiprocket] Serviceable ${courier.courier_name}: rating=${rating}`);
+          }
           
-          // Check for warnings (courier is serviceable but has operational delays/issues)
-          if (isServiceable) {
+          // Check for warnings on serviceable/low_rated couriers
+          if (category !== 'non_serviceable') {
             // Check for pickup/delivery delays
             if (courier.suppression_dates?.delay_remark && 
                 !courier.suppression_dates.blocked_fm && 
@@ -662,39 +690,50 @@ class ShiprocketService {
               warningMessage = `Delivery may be delayed due to ${courier.suppression_dates.delay_remark.toLowerCase()}`;
               console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
             }
-            
-            // Check for operational stress indicators
-            if (courier.suppress_text && courier.suppress_text.trim() !== '') {
-              hasWarning = true;
-              warningMessage = courier.suppress_text;
-              console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
-            }
           }
           
           return {
             ...courier,
             total_charge, // Add total_charge for backward compatibility with frontend
             is_recommended: courier.courier_company_id === recommendedId,
-            is_serviceable: isServiceable,
+            category,
             non_serviceable_reason: nonServiceableReason,
             has_warning: hasWarning,
             warning_message: warningMessage
           };
         });
 
-        console.log('[Shiprocket] Processed couriers:', {
+        // Categorize couriers into three arrays
+        const serviceable = processedCouriers
+          .filter(c => c.category === 'serviceable')
+          .sort((a, b) => (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0)); // Sort by rating descending
+        
+        const lowRated = processedCouriers
+          .filter(c => c.category === 'low_rated')
+          .sort((a, b) => (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0)); // Sort by rating descending
+        
+        const nonServiceable = processedCouriers
+          .filter(c => c.category === 'non_serviceable');
+
+        console.log('[Shiprocket] Courier categorization:', {
           total: processedCouriers.length,
-          serviceable: processedCouriers.filter(c => c.is_serviceable).length,
-          nonServiceable: processedCouriers.filter(c => !c.is_serviceable).length,
-          withWarnings: processedCouriers.filter(c => c.has_warning).length,
-          serviceableList: processedCouriers.filter(c => c.is_serviceable).map(c => c.courier_name),
-          nonServiceableList: processedCouriers.filter(c => !c.is_serviceable).map(c => ({ 
+          serviceable: serviceable.length,
+          lowRated: lowRated.length,
+          nonServiceable: nonServiceable.length,
+          serviceableList: serviceable.map(c => `${c.courier_name} (${c.rating})`),
+          lowRatedList: lowRated.map(c => `${c.courier_name} (${c.rating})`),
+          nonServiceableList: nonServiceable.map(c => ({ 
             name: c.courier_name, 
             reason: c.non_serviceable_reason 
           }))
         });
 
-        return processedCouriers;
+        return {
+          serviceable,
+          lowRated,
+          nonServiceable,
+          qualityRatingThreshold: QUALITY_RATING_THRESHOLD
+        };
       }
       
       // Option 2: Fetch shipment details and construct serviceability params
@@ -709,7 +748,25 @@ class ShiprocketService {
         declared_value: shipment.total,
       };
 
-      return await this.getAvailableCouriers(serviceabilityPayload);
+      const couriers = await this.getAvailableCouriers(serviceabilityPayload);
+      
+      // Categorize the couriers (fallback path)
+      const categorizedFallback = {
+        serviceable: couriers.filter(c => {
+          const rating = parseFloat(c.rating as any) || 0;
+          return c.is_serviceable && rating >= QUALITY_RATING_THRESHOLD;
+        }).sort((a, b) => (parseFloat(b.rating as any) || 0) - (parseFloat(a.rating as any) || 0)),
+        
+        lowRated: couriers.filter(c => {
+          const rating = parseFloat(c.rating as any) || 0;
+          return c.is_serviceable && rating > 0 && rating < QUALITY_RATING_THRESHOLD;
+        }).sort((a, b) => (parseFloat(b.rating as any) || 0) - (parseFloat(a.rating as any) || 0)),
+        
+        nonServiceable: couriers.filter(c => !c.is_serviceable),
+        qualityRatingThreshold: QUALITY_RATING_THRESHOLD
+      };
+      
+      return categorizedFallback;
     } catch (error: any) {
       console.error('[Shiprocket] Get couriers for shipment failed:', error.response?.data || error.message);
       throw new Error(error.response?.data?.message || 'Failed to fetch couriers for shipment');
@@ -744,4 +801,5 @@ export type {
   ShiprocketCourierPartner,
   ShiprocketAssignCourierPayload,
   ShiprocketAssignCourierResponse,
+  CategorizedCouriersResponse,
 };
