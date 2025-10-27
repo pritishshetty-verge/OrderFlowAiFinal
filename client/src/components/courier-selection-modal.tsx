@@ -53,6 +53,16 @@ export function CourierSelectionModal({
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState("all");
 
+  // Calculate price matching Shiprocket UI logic
+  const calculatePrice = (courier: CourierPartner) => {
+    const isCOD = orderDetails.paymentMethod.toLowerCase() === 'cod';
+    // For COD: price = freight + cod_charges
+    // For Prepaid: price = freight only
+    return isCOD 
+      ? (courier.freight_charge || 0) + (courier.cod_charges || 0)
+      : (courier.freight_charge || 0);
+  };
+
   // Fetch available couriers
   const { data: couriersData, isLoading, error } = useQuery({
     queryKey: ["/api/orders", orderId, "couriers"],
@@ -131,8 +141,8 @@ export function CourierSelectionModal({
     // Recommended first
     if (a.is_recommended && !b.is_recommended) return -1;
     if (!a.is_recommended && b.is_recommended) return 1;
-    // Then by total charge
-    return a.total_charge - b.total_charge;
+    // Then by calculated price (matching Shiprocket logic)
+    return calculatePrice(a) - calculatePrice(b);
   });
 
   const getRatingColor = (rating: string) => {
@@ -255,7 +265,7 @@ export function CourierSelectionModal({
                           <div>
                             <p className="text-muted-foreground text-xs">Charges</p>
                             <p className="font-semibold text-base" data-testid={`charge-${courier.courier_company_id}`}>
-                              ₹{(courier.total_charge || 0).toFixed(2)}
+                              ₹{calculatePrice(courier).toFixed(2)}
                             </p>
                           </div>
                         </div>

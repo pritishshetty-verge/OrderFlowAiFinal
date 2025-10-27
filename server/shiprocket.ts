@@ -414,33 +414,70 @@ class ShiprocketService {
   async getOrderDetails(shopifyOrderNumber: string): Promise<{ shipment_id: number; order_id: number } | null> {
     try {
       const headers = await this.getAuthHeaders();
+      
+      console.log('[Shiprocket] Querying order by channel_order_id:', shopifyOrderNumber);
+      
+      // Use channel_order_id to search for orders - this matches the Shopify order number
       const response = await this.axiosInstance.get(
         '/orders',
         { 
           headers,
           params: {
-            filter_by_order_id: shopifyOrderNumber
+            channel_order_id: shopifyOrderNumber
           }
         }
       );
 
+      console.log('[Shiprocket] API Response:', {
+        totalResults: response.data.data?.length || 0,
+        meta: response.data.meta,
+        searchedFor: shopifyOrderNumber
+      });
+
       if (response.data.data && response.data.data.length > 0) {
-        const order = response.data.data[0];
-        console.log('[Shiprocket] Order found:', {
-          orderId: order.id,
-          shipmentId: order.shipments?.[0]?.id,
-          shopifyOrderNumber
+        // Log all returned orders to debug
+        console.log('[Shiprocket] Returned orders:', response.data.data.map((o: any) => ({
+          shiprocketOrderId: o.id,
+          channelOrderId: o.channel_order_id,
+          orderNumber: o.order_number,
+          shipmentCount: o.shipments?.length || 0
+        })));
+
+        // Find the exact matching order by channel_order_id (Shopify order number)
+        const matchingOrder = response.data.data.find((o: any) => 
+          o.channel_order_id === shopifyOrderNumber || 
+          o.order_number === shopifyOrderNumber
+        );
+
+        if (!matchingOrder) {
+          console.error('[Shiprocket] No exact match found for order:', shopifyOrderNumber);
+          console.error('[Shiprocket] Available orders:', response.data.data.map((o: any) => o.channel_order_id));
+          return null;
+        }
+
+        console.log('[Shiprocket] Exact order match found:', {
+          shiprocketOrderId: matchingOrder.id,
+          channelOrderId: matchingOrder.channel_order_id,
+          shipmentId: matchingOrder.shipments?.[0]?.id,
+          shipmentCount: matchingOrder.shipments?.length || 0,
+          requestedOrderNumber: shopifyOrderNumber
         });
         
-        if (order.shipments && order.shipments.length > 0) {
+        if (matchingOrder.shipments && matchingOrder.shipments.length > 0) {
           return {
-            shipment_id: order.shipments[0].id,
-            order_id: order.id
+            shipment_id: matchingOrder.shipments[0].id,
+            order_id: matchingOrder.id
           };
+        } else {
+          console.warn('[Shiprocket] Order found but has no shipments:', {
+            orderId: matchingOrder.id,
+            channelOrderId: matchingOrder.channel_order_id
+          });
+          return null;
         }
       }
       
-      console.log('[Shiprocket] No order found for:', shopifyOrderNumber);
+      console.log('[Shiprocket] No orders returned from API for:', shopifyOrderNumber);
       return null;
     } catch (error: any) {
       console.error('[Shiprocket] Get order details failed:', error.response?.data || error.message);
@@ -479,6 +516,9 @@ class ShiprocketService {
       // Option 1: Use order_id if available (simplest and most accurate)
       if (orderId) {
         const headers = await this.getAuthHeaders();
+        
+        console.log('[Shiprocket] Fetching couriers for shipment:', { shipmentId, orderId });
+        
         const response = await this.axiosInstance.get<ShiprocketCourierServiceabilityResponse>(
           '/courier/serviceability',
           { 
@@ -489,10 +529,58 @@ class ShiprocketService {
           }
         );
 
-        console.log('[Shiprocket] Available couriers fetched for order:', orderId);
+        console.log('[Shiprocket] RAW Courier API Response:', {
+          orderId,
+          totalCouriers: response.data.data.available_courier_companies?.length || 0,
+          recommendedCourierId: response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id,
+          responseKeys: Object.keys(response.data.data)
+        });
+
+        // Log first courier in detail to see full structure
+        if (response.data.data.available_courier_companies?.length > 0) {
+          console.log('[Shiprocket] Sample courier data (first courier):', 
+            JSON.stringify(response.data.data.available_courier_companies[0], null, 2)
+          );
+        }
         
         const recommendedId = response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id;
-        const couriers = response.data.data.available_courier_companies.map(courier => ({
+        const rawCouriers = response.data.data.available_courier_companies;
+
+        console.log('[Shiprocket] All couriers before filtering:', rawCouriers.map(c => ({
+          id: c.courier_company_id,
+          name: c.courier_name,
+          freight: c.freight_charge,
+          cod: c.cod_charges,
+          total: c.total_charge,
+          qc_courier: c.qc_courier,
+          block_cod: c.block_cod,
+          rating: c.rating
+        })));
+
+        // Filter couriers based on Shiprocket's availability criteria
+        const availableCouriers = rawCouriers.filter(courier => {
+          // Only include couriers that pass quality control
+          if (courier.qc_courier !== 1) {
+            console.log(`[Shiprocket] Filtering out ${courier.courier_name}: qc_courier=${courier.qc_courier}`);
+            return false;
+          }
+          
+          // Don't show suppressed couriers
+          if (courier.suppression_dates && courier.suppression_dates !== null) {
+            console.log(`[Shiprocket] Filtering out ${courier.courier_name}: has suppression_dates`);
+            return false;
+          }
+          
+          return true;
+        });
+
+        console.log('[Shiprocket] Filtered couriers (after qc_courier & suppression):', {
+          before: rawCouriers.length,
+          after: availableCouriers.length,
+          filtered: availableCouriers.map(c => c.courier_name)
+        });
+
+        const couriers = availableCouriers.map(courier => ({
           ...courier,
           is_recommended: courier.courier_company_id === recommendedId
         }));
