@@ -66,7 +66,7 @@ export default function FulfilPage() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       const matchesSearch =
-        order.shopifyOrderId.toLowerCase().includes(query) ||
+        order.shopifyOrderNumber.toLowerCase().includes(query) ||
         order.customerName.toLowerCase().includes(query) ||
         order.customerPhone.includes(query);
       if (!matchesSearch) return false;
@@ -345,12 +345,12 @@ export default function FulfilPage() {
                         <Checkbox
                           checked={selectedOrders.has(order.id)}
                           onCheckedChange={() => handleSelectOrder(order.id)}
-                          aria-label={`Select order ${order.shopifyOrderId}`}
+                          aria-label={`Select order ${order.shopifyOrderNumber}`}
                           data-testid={`checkbox-order-${order.id}`}
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs font-medium">
-                        #{order.shopifyOrderId}
+                        #{order.shopifyOrderNumber}
                       </TableCell>
                       <TableCell>
                         <span className="font-medium text-sm">{order.customerName}</span>
@@ -412,7 +412,7 @@ export default function FulfilPage() {
           onOpenChange={setCourierSelectionModalOpen}
           orderId={selectedOrderForCourier.id}
           orderDetails={{
-            shopifyOrderNumber: selectedOrderForCourier.shopifyOrderId,
+            shopifyOrderNumber: selectedOrderForCourier.shopifyOrderNumber,
             customerName: selectedOrderForCourier.customerName,
             total: Number(selectedOrderForCourier.totalPrice),
             paymentMethod: selectedOrderForCourier.paymentMethod,
