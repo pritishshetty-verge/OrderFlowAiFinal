@@ -529,13 +529,13 @@ export type Notification = typeof notifications.$inferSelect;
 
 export const shipments = pgTable("shipments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  orderId: varchar("order_id").notNull().unique().references(() => orders.id, { onDelete: "cascade" }), // One shipment per order
   shopifyOrderId: text("shopify_order_id").notNull(),
   
   // Shiprocket shipment data
   shiprocketOrderId: text("shiprocket_order_id").unique(),
   shiprocketShipmentId: text("shiprocket_shipment_id").unique(),
-  awb: text("awb").unique(), // Airway Bill Number (tracking number)
+  awb: text("awb"), // Airway Bill Number (tracking number) - can be null/empty initially, assigned later by courier
   
   // Courier details
   courierName: text("courier_name"),
