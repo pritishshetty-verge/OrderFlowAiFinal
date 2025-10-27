@@ -195,6 +195,32 @@ interface ShiprocketAssignCourierResponse {
   };
 }
 
+interface ShiprocketShipmentDetails {
+  id: number;
+  order_id: number;
+  shipment_id: number;
+  awb: string | null;
+  courier_id: number | null;
+  courier_name: string | null;
+  status: string;
+  weight: string;
+  length: number;
+  breadth: number;
+  height: number;
+  volumetric_weight: number;
+  applied_weight: number;
+  pickup_postcode: string;
+  delivery_postcode: string;
+  cod: number;
+  total: number;
+  customer_name: string;
+  customer_phone: string;
+  customer_address: string;
+  customer_city: string;
+  customer_state: string;
+  customer_pincode: string;
+}
+
 class ShiprocketService {
   private baseUrl = 'https://apiv2.shiprocket.in/v1/external';
   private token: string | null = null;
@@ -419,6 +445,50 @@ class ShiprocketService {
     } catch (error: any) {
       console.error('[Shiprocket] Get order details failed:', error.response?.data || error.message);
       throw new Error(error.response?.data?.message || 'Failed to get order details');
+    }
+  }
+
+  async getShipmentDetails(shipmentId: number): Promise<ShiprocketShipmentDetails> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const response = await this.axiosInstance.get(
+        `/shipments/${shipmentId}`,
+        { headers }
+      );
+
+      const shipment = response.data.data;
+      console.log('[Shiprocket] Shipment details fetched:', {
+        shipmentId,
+        weight: shipment.weight,
+        dimensions: `${shipment.length}x${shipment.breadth}x${shipment.height}`
+      });
+
+      return shipment;
+    } catch (error: any) {
+      console.error('[Shiprocket] Get shipment details failed:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to get shipment details');
+    }
+  }
+
+  async getCouriersForShipment(shipmentId: number): Promise<ShiprocketCourierPartner[]> {
+    try {
+      // First get the shipment details to use accurate weight and dimensions
+      const shipment = await this.getShipmentDetails(shipmentId);
+
+      // Use actual shipment data for serviceability check
+      const serviceabilityPayload: ShiprocketCourierServiceabilityPayload = {
+        pickup_postcode: shipment.pickup_postcode,
+        delivery_postcode: shipment.delivery_postcode || shipment.customer_pincode,
+        cod: shipment.cod as 0 | 1,
+        weight: shipment.applied_weight || parseFloat(shipment.weight),
+        declared_value: shipment.total,
+      };
+
+      // Get available couriers using the shipment's actual data
+      return await this.getAvailableCouriers(serviceabilityPayload);
+    } catch (error: any) {
+      console.error('[Shiprocket] Get couriers for shipment failed:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to fetch couriers for shipment');
     }
   }
 
