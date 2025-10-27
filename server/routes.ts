@@ -1811,7 +1811,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pickup_postcode: "400055", // TODO: Make this configurable from settings
         delivery_postcode: order.shippingPincode || "",
         cod: (order.paymentMethod.toLowerCase() === 'cod' ? 1 : 0) as 0 | 1,
-        weight: shipment.weight || 0.5,
+        weight: parseFloat(shipment.weight?.toString() || '0.5'),
         declared_value: parseFloat(order.subtotal.toString()),
       };
 
@@ -1854,15 +1854,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Assign courier and get AWB from Shiprocket
       const assignmentResult = await shiprocketService.assignCourierAndShip({
-        shipment_id: shipment.shiprocketShipmentId!,
-        courier_id: courierId,
+        shipment_id: parseInt(shipment.shiprocketShipmentId!),
+        courier_id: parseInt(courierId),
       });
 
       // Update local shipment with AWB and courier info
       await storage.updateShipment(shipment.id, {
         awb: assignmentResult.response.data.awb_code,
         courierName: assignmentResult.response.data.courier_name,
-        courierCompanyId: assignmentResult.response.data.courier_company_id,
+        courierId: assignmentResult.response.data.courier_company_id.toString(),
         pickupScheduledDate: new Date(assignmentResult.response.data.pickup_scheduled_date),
         status: "pickup_scheduled",
       });
