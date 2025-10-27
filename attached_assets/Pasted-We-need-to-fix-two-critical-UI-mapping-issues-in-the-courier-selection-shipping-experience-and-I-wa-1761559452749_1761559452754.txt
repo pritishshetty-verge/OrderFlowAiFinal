@@ -1,0 +1,51 @@
+We need to fix two critical UI mapping issues in the courier selection/shipping experience, and I want to avoid unnecessary credit burn by isolating the root cause quickly:
+
+1. Price and Courier Aggregator Mapping is Incorrect
+
+The price should always mimic Shiprocket UI:
+
+If cod_charges is available: Price = freight + cod charges (just like Shiprocket)
+
+If cod_charges is not available: Price = freight (like Shiprocket fallback)
+
+Right now, price sometimes shows as 0 or isn’t correctly calculating the sum.
+
+We’re also seeing “extra” or unavailable courier partners show up in our UI compared to Shiprocket. In Shiprocket, sometimes 4 couriers display, but we show all 11.
+
+This is likely due to not filtering out inactive/unavailable couriers from the Shiprocket API response, or the frontend is retaining a cached/static courier list.
+
+Action:
+
+Please log and share the FULL courier data array received from Shiprocket’s API for one test order (including all pricing fields, courier IDs, etc.).
+
+I’ll tell you exactly how to map and filter in JavaScript/TypeScript, so our UI behaves like Shiprocket’s (not showing extra couriers, always getting the price logic right).
+
+2. Dummy/Inaccurate Data for Orders Not Created from Our App
+
+When an order was not “created” via the app, shipping is still showing dummy data, not live courier details.
+
+Please log the API request being made to Shiprocket in this case (payload/params), and show the RAW response from Shiprocket’s API.
+
+We want to see if you’re requesting with correct order/shipment/ID and all necessary fields (pincode, dimensions, etc).
+
+If you’re requesting shipment-specific couriers, it should match exactly, otherwise we need to know what’s missing/mis-mapped.
+
+If this can’t be fixed fast:
+
+Let’s fallback to the proven "Create Shipment" button on confirmed orders in the Fulfill Orders page.
+
+Once created, the shipment tab flows should be:
+
+Confirmed → Ready to Ship (after create shipment) → Ready to Pick Up (after assign courier)
+
+Each tab shows only relevant orders
+
+Shipping, label, and manifest generation is shown as a step-wise process, like before
+
+Please:
+
+Log/print the exact courier API payload + response, and what the UI receives, for both a “created” order and an unsynced order.
+
+Let me map the responses so we can get accurate UI with minimum further guesswork.
+
+If the above is too slow/burns more credits, let’s rollback and focus on feature delivery—move ahead with “create shipment first” flow and get things stable for ops!
