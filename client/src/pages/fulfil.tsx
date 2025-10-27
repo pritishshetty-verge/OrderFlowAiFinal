@@ -22,8 +22,9 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Calendar as CalendarIcon, Filter, PackageCheck, Search } from "lucide-react";
+import { Calendar as CalendarIcon, Filter, PackageCheck, Search, Package } from "lucide-react";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
+import { CreateShipmentModal } from "@/components/create-shipment-modal";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
@@ -38,6 +39,8 @@ export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
+  const [shipmentModalOpen, setShipmentModalOpen] = useState(false);
+  const [selectedOrderForShipment, setSelectedOrderForShipment] = useState<BackendOrder | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
@@ -139,6 +142,12 @@ export default function FulfilPage() {
     if (!agentId) return "Unassigned";
     const agent = users?.find((u) => u.id === agentId);
     return agent?.username || agent?.email || "Unknown";
+  };
+
+  const handleCreateShipment = (order: BackendOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedOrderForShipment(order);
+    setShipmentModalOpen(true);
   };
 
   return (
@@ -321,6 +330,7 @@ export default function FulfilPage() {
                     <TableHead>Payment</TableHead>
                     <TableHead>Confirmed At</TableHead>
                     <TableHead>Agent</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -368,6 +378,17 @@ export default function FulfilPage() {
                       <TableCell className="text-sm">
                         {getAgentName(order.assignedTo)}
                       </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={(e) => handleCreateShipment(order, e)}
+                          data-testid={`button-create-shipment-${order.id}`}
+                        >
+                          <Package className="h-4 w-4 mr-1" />
+                          Create Shipment
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -383,6 +404,21 @@ export default function FulfilPage() {
         open={isQuickPreviewOpen}
         onOpenChange={setIsQuickPreviewOpen}
       />
+
+      {/* Create Shipment Modal */}
+      {selectedOrderForShipment && (
+        <CreateShipmentModal
+          open={shipmentModalOpen}
+          onOpenChange={setShipmentModalOpen}
+          orderId={selectedOrderForShipment.id}
+          orderDetails={{
+            shopifyOrderId: selectedOrderForShipment.shopifyOrderId,
+            customerName: selectedOrderForShipment.customerName,
+            customerPhone: selectedOrderForShipment.customerPhone,
+            total: Number(selectedOrderForShipment.totalPrice),
+          }}
+        />
+      )}
     </div>
   );
 }
