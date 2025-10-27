@@ -1,0 +1,42 @@
+I tested the shipping flow again and there are still critical issues:
+
+For orders not created from our app (Shopify-native orders, already synced via Shiprocket):
+
+When I click “Ship Now,” I get:
+Failed to load courier partners
+duplicate key value violates unique constraint "shipments_shiprocket_shipment_id_unique"
+(screenshot attached)
+
+The app seems to be trying to insert a new record with a Shiprocket shipment_id that already exists, instead of reusing the existing one.
+
+For orders created from our app (“Create Shipment”):
+
+The courier selection modal shows, but the couriers/pricing don’t match Shiprocket. The app shows more courier partners and different prices compared to the actual Shiprocket UI for the same order (see attached screenshots for side-by-side comparison).
+
+Mapping is off—prices and eligible couriers are NOT consistent with Shiprocket’s real offer for the order.
+
+Core problems:
+
+The system cannot currently fetch and reuse shipment data for Shopify orders that already exist in Shiprocket (without having a prior “Create Shipment” in our app).
+
+Courier options and pricing are not a true match to Shiprocket’s UI, which will cause real operational issues and risk incorrect dispatch/cost calculation.
+
+Is there no way to ship an order directly from the synced Shiprocket/Shopify state, fetching real courier data just-in-time?
+
+My expectation:
+
+I should be able to ship any confirmed Shopify order (already synced to Shiprocket) directly from our app, using the actual Shiprocket shipment and displaying the EXACT same couriers/prices/options as the main Shiprocket UI.
+
+There should be no “duplicate key” DB issues—we must reuse the existing shipment_id for all actions, never insert a duplicate.
+
+Shipping needs to be possible without a separate manual DB “create” step for orders already in Shiprocket.
+
+Please cross-check your courier/price mapping against the real Shiprocket UI for at least one order to ensure accuracy.
+
+Please urgently:
+
+Fix the duplicate key bug—don’t try to re-insert existing shipment_ids, always check and reuse.
+
+Fetch and show genuine, live Shiprocket courier data and pricing for every order, matching the Shiprocket dashboard exactly.
+
+Confirm if it is possible to ship orders without needing a “Create Shipment” step in our DB for already-synced Shopify orders. If not, explain any third-party/API or technical limitation and how this is handled by other production-grade Shopify-Shiprocket integrations.
