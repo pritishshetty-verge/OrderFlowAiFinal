@@ -51,10 +51,10 @@ export default function AdminCourseForm() {
   const { toast } = useToast();
 
   const { data: courseData, isLoading } = useQuery({
-    queryKey: ["/api/learning/courses", courseId],
+    queryKey: ["/api/admin/learning/courses", courseId],
     queryFn: async () => {
       if (!courseId) return null;
-      const response = await fetch(`/api/learning/courses/${courseId}`, { credentials: "include" });
+      const response = await fetch(`/api/admin/learning/courses/${courseId}`, { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch course");
       return response.json();
     },

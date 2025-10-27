@@ -57,10 +57,10 @@ export default function AdminLessonForm() {
   const [content, setContent] = useState("");
 
   const { data: lessonData, isLoading } = useQuery({
-    queryKey: ["/api/learning/lessons", lessonId],
+    queryKey: ["/api/admin/learning/lessons", lessonId],
     queryFn: async () => {
       if (!lessonId) return null;
-      const response = await fetch(`/api/learning/lessons/${lessonId}`, { credentials: "include" });
+      const response = await fetch(`/api/admin/learning/lessons/${lessonId}`, { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch lesson");
       return response.json();
     },
