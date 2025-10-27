@@ -123,6 +123,78 @@ interface ShiprocketReattemptPayload {
   deferred_date?: string;
 }
 
+interface ShiprocketCourierServiceabilityPayload {
+  pickup_postcode: string;
+  delivery_postcode: string;
+  cod: 0 | 1;
+  weight: number;
+  declared_value?: number;
+}
+
+interface ShiprocketCourierPartner {
+  courier_company_id: number;
+  courier_name: string;
+  freight_charge: number;
+  cod_charges: number;
+  other_charges: number;
+  total_charge: number;
+  rating: string;
+  etd: string;
+  estimated_delivery_days: string;
+  pickup_availability: string;
+  pickup_performance: number;
+  delivery_performance: number;
+  courier_type: string;
+  is_surface: boolean;
+  is_hyperlocal: boolean;
+  min_weight: number;
+  qc_courier: number;
+  recommendation_score: number;
+  suppression_dates: string | null;
+  base_courier_id: number;
+  base_weight: number;
+  block_cod: number;
+  call_before_delivery: string;
+  city: string;
+  ship_type: number;
+  delivery_boy_contact: string;
+  pod_available: string;
+  is_custom_rate: number;
+  weight_cases: number;
+  child_courier_id: number | null;
+  is_recommended: boolean;
+}
+
+interface ShiprocketCourierServiceabilityResponse {
+  data: {
+    available_courier_companies: ShiprocketCourierPartner[];
+    recommended_courier_company_id: number;
+    shiprocket_recommended_courier_id: number;
+  };
+}
+
+interface ShiprocketAssignCourierPayload {
+  shipment_id: number;
+  courier_id: number;
+}
+
+interface ShiprocketAssignCourierResponse {
+  awb_assign_status: number;
+  response: {
+    data: {
+      awb_code: string;
+      courier_company_id: number;
+      courier_name: string;
+      shipment_id: number;
+      order_id: number;
+      pickup_scheduled_date: string;
+      routing_code: string;
+      applied_weight: number;
+      charged_weight: number;
+    };
+  };
+}
+
 class ShiprocketService {
   private baseUrl = 'https://apiv2.shiprocket.in/v1/external';
   private token: string | null = null;
@@ -264,6 +336,55 @@ class ShiprocketService {
     }
   }
 
+  async getAvailableCouriers(payload: ShiprocketCourierServiceabilityPayload): Promise<ShiprocketCourierPartner[]> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const response = await this.axiosInstance.get<ShiprocketCourierServiceabilityResponse>(
+        '/courier/serviceability',
+        { 
+          headers,
+          params: payload
+        }
+      );
+
+      console.log('[Shiprocket] Available couriers fetched:', response.data.data.available_courier_companies.length);
+      
+      // Mark the recommended courier
+      const recommendedId = response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id;
+      const couriers = response.data.data.available_courier_companies.map(courier => ({
+        ...courier,
+        is_recommended: courier.courier_company_id === recommendedId
+      }));
+
+      return couriers;
+    } catch (error: any) {
+      console.error('[Shiprocket] Get available couriers failed:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to fetch available couriers');
+    }
+  }
+
+  async assignCourierAndShip(payload: ShiprocketAssignCourierPayload): Promise<ShiprocketAssignCourierResponse> {
+    try {
+      const headers = await this.getAuthHeaders();
+      const response = await this.axiosInstance.post<ShiprocketAssignCourierResponse>(
+        '/courier/assign/awb',
+        payload,
+        { headers }
+      );
+
+      console.log('[Shiprocket] Courier assigned:', {
+        shipmentId: payload.shipment_id,
+        courierId: payload.courier_id,
+        awb: response.data.response?.data?.awb_code,
+      });
+
+      return response.data;
+    } catch (error: any) {
+      console.error('[Shiprocket] Assign courier failed:', error.response?.data || error.message);
+      throw new Error(error.response?.data?.message || 'Failed to assign courier');
+    }
+  }
+
   async testConnection(): Promise<{ success: boolean; message: string }> {
     try {
       await this.authenticate();
@@ -288,4 +409,8 @@ export type {
   ShiprocketTrackResponse,
   ShiprocketNDRShipment,
   ShiprocketReattemptPayload,
+  ShiprocketCourierServiceabilityPayload,
+  ShiprocketCourierPartner,
+  ShiprocketAssignCourierPayload,
+  ShiprocketAssignCourierResponse,
 };
