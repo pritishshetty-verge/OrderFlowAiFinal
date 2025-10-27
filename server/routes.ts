@@ -1800,15 +1800,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Try to get existing shipment from local DB first
+      // Try to get existing shipment from local DB by orderId
       let shipment = await storage.getShipmentByOrderId(orderId);
       let shiprocketShipmentId: number | null = null;
+      let shiprocketOrderId: number | null = null;
 
       if (shipment && shipment.shiprocketShipmentId) {
         // We have local shipment record with Shiprocket ID
         shiprocketShipmentId = parseInt(shipment.shiprocketShipmentId);
-      } else {
-        // No local shipment - query Shiprocket for existing order
+        shiprocketOrderId = shipment.shiprocketOrderId ? parseInt(shipment.shiprocketOrderId) : null;
+      }
+      
+      // If we don't have both IDs, fetch from Shiprocket
+      if (!shiprocketShipmentId || !shiprocketOrderId) {
         const shiprocketOrder = await shiprocketService.getOrderDetails(order.shopifyOrderNumber);
         
         if (!shiprocketOrder) {
@@ -1818,32 +1822,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         shiprocketShipmentId = shiprocketOrder.shipment_id;
+        shiprocketOrderId = shiprocketOrder.order_id;
 
-        // Check if a shipment with this Shiprocket ID already exists
-        const existingShipment = await storage.getShipmentByShiprocketShipmentId(shiprocketShipmentId.toString());
+        // CRITICAL: Check if ANY shipment with this Shiprocket ID already exists (from any order)
+        const existingShipmentByShiprocketId = await storage.getShipmentByShiprocketShipmentId(shiprocketShipmentId.toString());
         
-        if (existingShipment) {
-          // Use the existing shipment record
-          shipment = existingShipment;
-        } else if (!shipment) {
-          // Create new shipment record only if neither exists
+        if (existingShipmentByShiprocketId) {
+          // Reuse the existing shipment record (prevents duplicate key error)
+          shipment = existingShipmentByShiprocketId;
+          // Update with Shiprocket IDs if missing
+          if (!existingShipmentByShiprocketId.shiprocketOrderId) {
+            await storage.updateShipment(existingShipmentByShiprocketId.id, {
+              shiprocketOrderId: shiprocketOrderId.toString(),
+            });
+          }
+        } else if (shipment) {
+          // We have a shipment by orderId but no Shiprocket IDs yet - update it
+          await storage.updateShipment(shipment.id, {
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+            shiprocketOrderId: shiprocketOrderId.toString(),
+          });
+        } else {
+          // No existing shipment at all - create new one
           shipment = await storage.createShipment({
             orderId,
             shopifyOrderId: order.shopifyOrderNumber,
             shiprocketShipmentId: shiprocketShipmentId.toString(),
+            shiprocketOrderId: shiprocketOrderId.toString(),
             status: "created",
             weight: "0.5", // Default weight (will be overridden by Shiprocket data)
-          });
-        } else {
-          // Update existing shipment with Shiprocket ID
-          await storage.updateShipment(shipment.id, {
-            shiprocketShipmentId: shiprocketShipmentId.toString(),
           });
         }
       }
 
       // Use shipment-specific courier fetching with actual Shiprocket data
-      const couriers = await shiprocketService.getCouriersForShipment(shiprocketShipmentId);
+      // Pass the Shiprocket order_id to get exact courier recommendations
+      const couriers = await shiprocketService.getCouriersForShipment(shiprocketShipmentId, shiprocketOrderId || undefined);
 
       res.json({ couriers, shipmentId: shiprocketShipmentId });
     } catch (error: any) {
@@ -1868,15 +1882,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Try to get existing shipment from local DB first
+      // Try to get existing shipment from local DB by orderId
       let shipment = await storage.getShipmentByOrderId(orderId);
       let shiprocketShipmentId: number | null = null;
+      let shiprocketOrderId: number | null = null;
 
       if (shipment && shipment.shiprocketShipmentId) {
         // We have local shipment record with Shiprocket ID
         shiprocketShipmentId = parseInt(shipment.shiprocketShipmentId);
-      } else {
-        // No local shipment - query Shiprocket for existing order
+        shiprocketOrderId = shipment.shiprocketOrderId ? parseInt(shipment.shiprocketOrderId) : null;
+      }
+      
+      // If we don't have both IDs, fetch from Shiprocket
+      if (!shiprocketShipmentId || !shiprocketOrderId) {
         const shiprocketOrder = await shiprocketService.getOrderDetails(order.shopifyOrderNumber);
         
         if (!shiprocketOrder) {
@@ -1886,28 +1904,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         shiprocketShipmentId = shiprocketOrder.shipment_id;
+        shiprocketOrderId = shiprocketOrder.order_id;
 
-        // Check if a shipment with this Shiprocket ID already exists
-        const existingShipment = await storage.getShipmentByShiprocketShipmentId(shiprocketShipmentId.toString());
+        // CRITICAL: Check if ANY shipment with this Shiprocket ID already exists (from any order)
+        const existingShipmentByShiprocketId = await storage.getShipmentByShiprocketShipmentId(shiprocketShipmentId.toString());
         
-        if (existingShipment) {
-          // Use the existing shipment record
-          shipment = existingShipment;
-        } else if (!shipment) {
-          // Create new shipment record only if neither exists
+        if (existingShipmentByShiprocketId) {
+          // Reuse the existing shipment record (prevents duplicate key error)
+          shipment = existingShipmentByShiprocketId;
+          // Update with Shiprocket IDs if missing
+          if (!existingShipmentByShiprocketId.shiprocketOrderId) {
+            await storage.updateShipment(existingShipmentByShiprocketId.id, {
+              shiprocketOrderId: shiprocketOrderId.toString(),
+            });
+          }
+        } else if (shipment) {
+          // We have a shipment by orderId but no Shiprocket IDs yet - update it
+          await storage.updateShipment(shipment.id, {
+            shiprocketShipmentId: shiprocketShipmentId.toString(),
+            shiprocketOrderId: shiprocketOrderId.toString(),
+          });
+        } else {
+          // No existing shipment at all - create new one
           shipment = await storage.createShipment({
             orderId,
             shopifyOrderId: order.shopifyOrderNumber,
             shiprocketShipmentId: shiprocketShipmentId.toString(),
+            shiprocketOrderId: shiprocketOrderId.toString(),
             status: "created",
             weight: "0.5", // Default weight (will be overridden by Shiprocket data)
           });
-        } else {
-          // Update existing shipment with Shiprocket ID
-          await storage.updateShipment(shipment.id, {
-            shiprocketShipmentId: shiprocketShipmentId.toString(),
-          });
         }
+      }
+
+      // Ensure we have a shipment record
+      if (!shipment) {
+        return res.status(500).json({ error: "Failed to create or retrieve shipment record" });
       }
 
       // Check if AWB is already assigned
@@ -1917,7 +1949,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Assign courier and get AWB from Shiprocket
       const assignmentResult = await shiprocketService.assignCourierAndShip({
-        shipment_id: shiprocketShipmentId,
+        shipment_id: shiprocketShipmentId!,
         courier_id: parseInt(courierId),
       });
 

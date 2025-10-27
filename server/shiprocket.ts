@@ -470,12 +470,40 @@ class ShiprocketService {
     }
   }
 
-  async getCouriersForShipment(shipmentId: number): Promise<ShiprocketCourierPartner[]> {
+  async getCouriersForShipment(shipmentId: number, orderId?: number): Promise<ShiprocketCourierPartner[]> {
     try {
-      // First get the shipment details to use accurate weight and dimensions
+      // Shiprocket's serviceability API requires either:
+      // 1. order_id parameter, OR
+      // 2. pickup_postcode, delivery_postcode, cod, and weight parameters
+      
+      // Option 1: Use order_id if available (simplest and most accurate)
+      if (orderId) {
+        const headers = await this.getAuthHeaders();
+        const response = await this.axiosInstance.get<ShiprocketCourierServiceabilityResponse>(
+          '/courier/serviceability',
+          { 
+            headers,
+            params: {
+              order_id: orderId
+            }
+          }
+        );
+
+        console.log('[Shiprocket] Available couriers fetched for order:', orderId);
+        
+        const recommendedId = response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id;
+        const couriers = response.data.data.available_courier_companies.map(courier => ({
+          ...courier,
+          is_recommended: courier.courier_company_id === recommendedId
+        }));
+
+        return couriers;
+      }
+      
+      // Option 2: Fetch shipment details and construct serviceability params
+      // (fallback if order_id not available)
       const shipment = await this.getShipmentDetails(shipmentId);
 
-      // Use actual shipment data for serviceability check
       const serviceabilityPayload: ShiprocketCourierServiceabilityPayload = {
         pickup_postcode: shipment.pickup_postcode,
         delivery_postcode: shipment.delivery_postcode || shipment.customer_pincode,
@@ -484,7 +512,6 @@ class ShiprocketService {
         declared_value: shipment.total,
       };
 
-      // Get available couriers using the shipment's actual data
       return await this.getAvailableCouriers(serviceabilityPayload);
     } catch (error: any) {
       console.error('[Shiprocket] Get couriers for shipment failed:', error.response?.data || error.message);
