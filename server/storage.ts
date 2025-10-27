@@ -1024,6 +1024,11 @@ export class DbStorage implements IStorage {
     return shipment;
   }
 
+  async getShipmentByShiprocketShipmentId(shiprocketShipmentId: string): Promise<Shipment | undefined> {
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.shiprocketShipmentId, shiprocketShipmentId));
+    return shipment;
+  }
+
   async updateShipment(id: string, data: Partial<InsertShipment>): Promise<Shipment | undefined> {
     const [updated] = await db
       .update(shipments)
