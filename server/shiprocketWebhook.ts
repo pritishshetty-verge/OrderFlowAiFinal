@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import crypto from 'crypto';
 import { storage } from './storage';
 
 interface ShiprocketWebhookPayload {
@@ -19,12 +20,61 @@ interface ShiprocketWebhookPayload {
   comment?: string;
 }
 
+/**
+ * Verify Shiprocket webhook signature
+ * Shiprocket uses X-Shiprocket-Signature header with HMAC-SHA256
+ */
+function verifyShiprocketSignature(
+  payload: string,
+  signature: string | undefined,
+  secret: string
+): boolean {
+  if (!signature) {
+    console.error('[Shiprocket Webhook] No signature provided');
+    return false;
+  }
+
+  try {
+    // Create HMAC using the webhook secret
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(payload);
+    const expectedSignature = hmac.digest('hex');
+
+    // Compare signatures using timing-safe comparison
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch (error) {
+    console.error('[Shiprocket Webhook] Signature verification error:', error);
+    return false;
+  }
+}
+
 export async function handleShiprocketWebhook(req: Request, res: Response) {
   try {
     console.log('[Shiprocket Webhook] Received webhook:', {
       headers: req.headers,
       body: req.body,
     });
+
+    // Verify webhook signature
+    const shiprocketWebhookSecret = process.env.SHIPROCKET_WEBHOOK_SECRET;
+    
+    if (!shiprocketWebhookSecret) {
+      console.error('[Shiprocket Webhook] SHIPROCKET_WEBHOOK_SECRET not configured');
+      return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+
+    const signature = req.headers['x-shiprocket-signature'] as string;
+    const rawBody = JSON.stringify(req.body);
+
+    if (!verifyShiprocketSignature(rawBody, signature, shiprocketWebhookSecret)) {
+      console.error('[Shiprocket Webhook] Invalid signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    console.log('[Shiprocket Webhook] Signature verified successfully');
 
     const payload: ShiprocketWebhookPayload = req.body;
 
