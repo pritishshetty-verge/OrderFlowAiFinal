@@ -11,8 +11,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
-import { Truck, Star, AlertTriangle, Package, XCircle } from "lucide-react";
+import { Truck, AlertTriangle, Package, XCircle, AlertCircle } from "lucide-react";
 
 interface CourierPartner {
   courier_company_id: number;
@@ -29,10 +34,16 @@ interface CourierPartner {
   is_surface: boolean;
   is_hyperlocal: boolean;
   is_recommended: boolean;
+  min_weight?: number;
+  rto_charges?: number;
   non_serviceable_reason?: string;
   has_warning?: boolean;
   warning_message?: string;
   category?: 'serviceable' | 'low_rated' | 'non_serviceable';
+  pickup_performance?: number;
+  delivery_performance?: number;
+  rto_performance?: number;
+  tracking_performance?: number;
 }
 
 interface CategorizedCouriersResponse {
@@ -54,6 +65,147 @@ interface CourierSelectionModalProps {
   };
 }
 
+// Rating breakdown circular progress component
+function RatingCircle({ value, label, size = 60 }: { value: number; label: string; size?: number }) {
+  const percentage = (value / 5) * 100;
+  const circumference = 2 * Math.PI * 18;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+  
+  // Color based on rating
+  const getColor = () => {
+    if (value >= 4.0) return "#22c55e"; // green
+    if (value >= 3.0) return "#f59e0b"; // amber
+    return "#ef4444"; // red
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg className="transform -rotate-90" width={size} height={size}>
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={18}
+            stroke="#e5e7eb"
+            strokeWidth="4"
+            fill="none"
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={18}
+            stroke={getColor()}
+            strokeWidth="4"
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-sm font-semibold" style={{ color: getColor() }}>
+            {value.toFixed(1)}
+          </span>
+        </div>
+      </div>
+      <span className="text-xs text-center text-muted-foreground leading-tight max-w-[70px]">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// Rating badge with popover
+function RatingBadge({ courier }: { courier: CourierPartner }) {
+  const rating = parseFloat(courier.rating) || 0;
+  const [open, setOpen] = useState(false);
+  
+  const getColor = () => {
+    if (rating >= 4.0) return "#22c55e";
+    if (rating >= 3.0) return "#f59e0b";
+    return "#ef4444";
+  };
+
+  const hasBreakdown = courier.pickup_performance !== undefined;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="relative cursor-pointer"
+          style={{ width: 48, height: 48 }}
+          data-testid={`rating-badge-${courier.courier_company_id}`}
+        >
+          <svg className="transform -rotate-90" width={48} height={48}>
+            <circle
+              cx={24}
+              cy={24}
+              r={20}
+              stroke="#e5e7eb"
+              strokeWidth="4"
+              fill="white"
+            />
+            <circle
+              cx={24}
+              cy={24}
+              r={20}
+              stroke={getColor()}
+              strokeWidth="4"
+              fill="none"
+              strokeDasharray={2 * Math.PI * 20}
+              strokeDashoffset={2 * Math.PI * 20 * (1 - (rating / 5))}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-sm font-bold" style={{ color: getColor() }}>
+              {rating.toFixed(1)}
+            </span>
+          </div>
+        </button>
+      </PopoverTrigger>
+      {hasBreakdown && (
+        <PopoverContent className="w-auto p-4" align="center">
+          <div className="grid grid-cols-4 gap-4">
+            <RatingCircle 
+              value={courier.pickup_performance || 0} 
+              label="Pickup Performance" 
+            />
+            <RatingCircle 
+              value={courier.delivery_performance || 0} 
+              label="Delivery Performance" 
+            />
+            <RatingCircle 
+              value={courier.rto_performance || 0} 
+              label="NDR Performance" 
+            />
+            <RatingCircle 
+              value={courier.tracking_performance || 0} 
+              label="SLA" 
+            />
+          </div>
+        </PopoverContent>
+      )}
+    </Popover>
+  );
+}
+
+// Courier logo placeholder (circular with initials)
+function CourierLogo({ name }: { name: string }) {
+  const initials = name
+    .split(' ')
+    .slice(0, 2)
+    .map(word => word[0])
+    .join('')
+    .toUpperCase();
+
+  return (
+    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+      <span className="text-white font-bold text-sm">{initials}</span>
+    </div>
+  );
+}
+
 export function CourierSelectionModal({
   open,
   onOpenChange,
@@ -62,11 +214,6 @@ export function CourierSelectionModal({
 }: CourierSelectionModalProps) {
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState("serviceable");
-
-  // Price display: Shiprocket uses total_charge field directly
-  const calculatePrice = (courier: CourierPartner) => {
-    return courier.total_charge || 0;
-  };
 
   // Fetch available couriers (categorized response)
   const { data: couriersData, isLoading, error } = useQuery({
@@ -142,26 +289,12 @@ export function CourierSelectionModal({
   const sortedCouriers = [...tabCouriers].sort((a, b) => {
     if (a.is_recommended && !b.is_recommended) return -1;
     if (!a.is_recommended && b.is_recommended) return 1;
-    return calculatePrice(a) - calculatePrice(b);
+    return (a.total_charge || 0) - (b.total_charge || 0);
   });
-
-  const getRatingColor = (rating: string) => {
-    const ratingNum = parseFloat(rating);
-    if (ratingNum >= 4.0) return "text-green-600 dark:text-green-400";
-    if (ratingNum >= 3.0) return "text-yellow-600 dark:text-yellow-400";
-    return "text-red-600 dark:text-red-400";
-  };
-
-  const getRatingBadgeVariant = (rating: string) => {
-    const ratingNum = parseFloat(rating);
-    if (ratingNum >= 4.0) return "default";
-    if (ratingNum >= 3.0) return "secondary";
-    return "destructive";
-  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Truck className="h-5 w-5" />
@@ -249,133 +382,134 @@ export function CourierSelectionModal({
                   </div>
                 )}
 
-                <p className="text-sm text-muted-foreground" data-testid="couriers-count">
-                  {sortedCouriers.length} Courier{sortedCouriers.length !== 1 ? 's' : ''} Found
-                </p>
-
                 {sortedCouriers.map((courier) => (
-                  <div
-                    key={courier.courier_company_id}
-                    className={`border rounded-lg p-4 ${selectedTab === 'non-serviceable' ? 'opacity-60' : 'hover-elevate'}`}
-                    data-testid={`courier-option-${courier.courier_company_id}`}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      {/* Left: Courier Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <h3 className="font-semibold text-base" data-testid={`courier-name-${courier.courier_company_id}`}>
-                            {courier.courier_name}
-                          </h3>
-                          {courier.is_recommended && selectedTab !== 'non-serviceable' && (
-                            <Badge variant="default" className="text-xs" data-testid={`recommended-badge-${courier.courier_company_id}`}>
-                              Recommended
-                            </Badge>
-                          )}
-                          {courier.rating && (
-                            <Badge 
-                              variant={getRatingBadgeVariant(courier.rating)}
-                              className="text-xs"
-                              data-testid={`rating-badge-${courier.courier_company_id}`}
-                            >
-                              <Star className="h-3 w-3 mr-1 fill-current" />
-                              {courier.rating}
-                            </Badge>
-                          )}
-                          <Badge variant="outline" className="text-xs">
-                            {courier.is_surface ? "Surface" : "Air"}
+                  <div key={courier.courier_company_id}>
+                    {/* Courier Card - Shiprocket Style */}
+                    <div
+                      className={`relative border rounded-lg bg-white dark:bg-gray-900 ${
+                        selectedTab === 'non-serviceable' ? 'opacity-60' : ''
+                      } ${courier.is_recommended ? 'border-l-4 border-l-indigo-600' : ''}`}
+                      data-testid={`courier-option-${courier.courier_company_id}`}
+                    >
+                      {/* Recommended Badge */}
+                      {courier.is_recommended && selectedTab !== 'non-serviceable' && (
+                        <div className="absolute -top-3 left-4">
+                          <Badge 
+                            className="bg-indigo-600 text-white hover:bg-indigo-700 text-xs px-2 py-1"
+                            data-testid={`recommended-badge-${courier.courier_company_id}`}
+                          >
+                            ✓ Recommended
                           </Badge>
                         </div>
+                      )}
 
-                        {/* Warning message for serviceable/low-rated couriers with operational stress */}
-                        {selectedTab !== 'non-serviceable' && courier.has_warning && courier.warning_message && (
-                          <div className="mb-3 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-2 flex items-start gap-2">
-                            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-                            <p className="text-xs text-amber-800 dark:text-amber-200" data-testid={`warning-${courier.courier_company_id}`}>
-                              {courier.warning_message}
-                            </p>
+                      <div className="flex items-center gap-4 p-4">
+                        {/* Logo */}
+                        <CourierLogo name={courier.courier_name} />
+
+                        {/* Courier Details */}
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-base mb-1" data-testid={`courier-name-${courier.courier_company_id}`}>
+                            {courier.courier_name}
+                          </h3>
+                          <div className="text-sm text-muted-foreground">
+                            {courier.is_surface ? "Surface" : "Air"} | Min-weight: {courier.min_weight || 0.5} Kg
+                            {courier.rto_charges !== undefined && (
+                              <> | RTO Charges: ₹{courier.rto_charges}</>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Rating Badge */}
+                        {selectedTab !== 'non-serviceable' && (
+                          <div className="flex-shrink-0">
+                            <RatingBadge courier={courier} />
                           </div>
                         )}
 
-                        {/* Non-serviceable reason */}
-                        {selectedTab === 'non-serviceable' && courier.non_serviceable_reason && (
-                          <div className="mb-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-md p-3">
-                            <p className="text-xs font-medium text-red-900 dark:text-red-100 mb-1">
-                              Reason for Non-Serviceability:
-                            </p>
-                            <p className="text-sm text-red-700 dark:text-red-300" data-testid={`non-serviceable-reason-${courier.courier_company_id}`}>
-                              {courier.non_serviceable_reason}
-                            </p>
-                          </div>
-                        )}
-
+                        {/* Delivery Info */}
                         {selectedTab !== 'non-serviceable' ? (
                           <>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                              <div>
-                                <p className="text-muted-foreground text-xs">Expected Pickup</p>
-                                <p className="font-medium" data-testid={`pickup-date-${courier.courier_company_id}`}>
-                                  {courier.pickup_availability}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs">Estimated Delivery</p>
-                                <p className="font-medium" data-testid={`delivery-date-${courier.courier_company_id}`}>
-                                  {courier.etd}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs">Delivery Days</p>
-                                <p className="font-medium">{courier.estimated_delivery_days} days</p>
-                              </div>
-                              <div>
-                                <p className="text-muted-foreground text-xs">Charges</p>
-                                <p className="font-semibold text-base" data-testid={`charge-${courier.courier_company_id}`}>
-                                  ₹{calculatePrice(courier).toFixed(2)}
-                                </p>
-                              </div>
+                            <div className="flex-shrink-0 text-center min-w-[80px]">
+                              <p className="text-xs text-muted-foreground mb-1">Pickup</p>
+                              <p className="text-sm font-medium" data-testid={`pickup-date-${courier.courier_company_id}`}>
+                                {courier.pickup_availability}
+                              </p>
                             </div>
 
-                            {/* Charge breakdown */}
-                            <div className="mt-2 text-xs text-muted-foreground">
-                              Freight: ₹{courier.freight_charge || 0} • 
-                              COD: ₹{courier.cod_charges || 0} • 
-                              Other: ₹{courier.other_charges || 0}
+                            <div className="flex-shrink-0 text-center min-w-[100px]">
+                              <p className="text-xs text-muted-foreground mb-1">ETA</p>
+                              <p className="text-sm font-medium" data-testid={`delivery-date-${courier.courier_company_id}`}>
+                                {courier.etd}
+                              </p>
+                            </div>
+
+                            <div className="flex-shrink-0 text-center min-w-[80px]">
+                              <p className="text-xs text-muted-foreground mb-1">Weight</p>
+                              <p className="text-sm font-medium">
+                                {orderDetails.total > 0 ? '1.414' : '0.5'} Kg
+                              </p>
+                            </div>
+
+                            <div className="flex-shrink-0 text-center min-w-[100px]">
+                              <p className="text-xs text-muted-foreground mb-1">Price</p>
+                              <p className="text-lg font-bold" data-testid={`charge-${courier.courier_company_id}`}>
+                                ₹{(courier.total_charge || 0).toFixed(2)}
+                              </p>
+                            </div>
+
+                            {/* Ship Now Button - Shiprocket Purple */}
+                            <div className="flex-shrink-0 ml-2">
+                              <Button
+                                onClick={() => handleShipNow(courier)}
+                                disabled={assignCourierMutation.isPending}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white min-w-[110px]"
+                                data-testid={`button-ship-${courier.courier_company_id}`}
+                              >
+                                {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
+                              </Button>
                             </div>
                           </>
                         ) : (
-                          <div className="text-sm text-muted-foreground">
-                            <p className="mb-1">
-                              <span className="font-medium">Rating:</span> {courier.rating} • 
-                              <span className="font-medium ml-2">Type:</span> {courier.is_surface ? "Surface" : "Air"}
-                            </p>
-                            <p>
-                              <span className="font-medium">Last Known Price:</span> ₹{calculatePrice(courier).toFixed(2)}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right: Ship Button */}
-                      <div className="flex-shrink-0">
-                        {selectedTab !== 'non-serviceable' ? (
-                          <Button
-                            onClick={() => handleShipNow(courier)}
-                            disabled={assignCourierMutation.isPending}
-                            data-testid={`button-ship-${courier.courier_company_id}`}
-                          >
-                            {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            disabled
-                            data-testid={`button-unavailable-${courier.courier_company_id}`}
-                          >
-                            Unavailable
-                          </Button>
+                          <>
+                            {/* Non-serviceable display */}
+                            <div className="flex-1 text-sm text-muted-foreground">
+                              Rating: {courier.rating}
+                            </div>
+                            <Button
+                              variant="outline"
+                              disabled
+                              className="flex-shrink-0"
+                              data-testid={`button-unavailable-${courier.courier_company_id}`}
+                            >
+                              Unavailable
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
+
+                    {/* Warning Banner (if applicable) */}
+                    {selectedTab !== 'non-serviceable' && courier.has_warning && courier.warning_message && (
+                      <div className="mt-2 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3 flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                        <p className="text-sm text-amber-800 dark:text-amber-200" data-testid={`warning-${courier.courier_company_id}`}>
+                          {courier.warning_message}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Non-serviceable reason */}
+                    {selectedTab === 'non-serviceable' && courier.non_serviceable_reason && (
+                      <div className="mt-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                        <p className="text-xs font-medium text-red-900 dark:text-red-100 mb-1">
+                          Reason for Non-Serviceability:
+                        </p>
+                        <p className="text-sm text-red-700 dark:text-red-300" data-testid={`non-serviceable-reason-${courier.courier_company_id}`}>
+                          {courier.non_serviceable_reason}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

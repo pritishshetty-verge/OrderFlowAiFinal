@@ -162,6 +162,9 @@ interface ShiprocketCourierPartner {
   pickup_availability: string;
   pickup_performance: number;
   delivery_performance: number;
+  rto_performance: number;
+  tracking_performance: number;
+  rto_charges: number;
   courier_type: string;
   is_surface: boolean;
   is_hyperlocal: boolean;
