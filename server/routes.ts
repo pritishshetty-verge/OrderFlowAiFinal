@@ -1789,6 +1789,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get available courier partners for an order
+  app.get("/api/orders/:id/couriers", async (req, res) => {
+    try {
+      const orderId = req.params.id;
+
+      // Get order details
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Get shipment for this order
+      const shipment = await storage.getShipmentByOrderId(orderId);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found for this order. Please create a shipment first." });
+      }
+
+      // Prepare serviceability check payload
+      const serviceabilityPayload = {
+        pickup_postcode: "400055", // TODO: Make this configurable from settings
+        delivery_postcode: order.shippingPincode || "",
+        cod: (order.paymentMethod.toLowerCase() === 'cod' ? 1 : 0) as 0 | 1,
+        weight: shipment.weight || 0.5,
+        declared_value: parseFloat(order.subtotal.toString()),
+      };
+
+      // Get available couriers from Shiprocket
+      const couriers = await shiprocketService.getAvailableCouriers(serviceabilityPayload);
+
+      res.json({ couriers });
+    } catch (error: any) {
+      console.error("Error fetching available couriers:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch available couriers" });
+    }
+  });
+
+  // Assign courier and ship order
+  app.post("/api/orders/:id/ship", async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      const { courierId } = req.body;
+
+      if (!courierId) {
+        return res.status(400).json({ error: "Courier ID is required" });
+      }
+
+      // Get order
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Get shipment
+      const shipment = await storage.getShipmentByOrderId(orderId);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found for this order" });
+      }
+
+      // Check if AWB is already assigned
+      if (shipment.awb) {
+        return res.status(400).json({ error: "This shipment already has an AWB assigned" });
+      }
+
+      // Assign courier and get AWB from Shiprocket
+      const assignmentResult = await shiprocketService.assignCourierAndShip({
+        shipment_id: shipment.shiprocketShipmentId!,
+        courier_id: courierId,
+      });
+
+      // Update local shipment with AWB and courier info
+      await storage.updateShipment(shipment.id, {
+        awb: assignmentResult.response.data.awb_code,
+        courierName: assignmentResult.response.data.courier_name,
+        courierCompanyId: assignmentResult.response.data.courier_company_id,
+        pickupScheduledDate: new Date(assignmentResult.response.data.pickup_scheduled_date),
+        status: "pickup_scheduled",
+      });
+
+      res.json({
+        success: true,
+        awb: assignmentResult.response.data.awb_code,
+        courierName: assignmentResult.response.data.courier_name,
+        pickupScheduledDate: assignmentResult.response.data.pickup_scheduled_date,
+      });
+    } catch (error: any) {
+      console.error("Error assigning courier:", error);
+      res.status(500).json({ error: error.message || "Failed to assign courier" });
+    }
+  });
+
   // ============================================================================
   // INVITES API
   // ============================================================================
