@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Calendar as CalendarIcon, Filter, PackageCheck, Search, Package } from "lucide-react";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { CreateShipmentModal } from "@/components/create-shipment-modal";
+import { CourierSelectionModal } from "@/components/courier-selection-modal";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Popover,
@@ -40,7 +41,9 @@ export default function FulfilPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [shipmentModalOpen, setShipmentModalOpen] = useState(false);
+  const [courierSelectionModalOpen, setCourierSelectionModalOpen] = useState(false);
   const [selectedOrderForShipment, setSelectedOrderForShipment] = useState<BackendOrder | null>(null);
+  const [selectedOrderForCourier, setSelectedOrderForCourier] = useState<BackendOrder | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
@@ -148,6 +151,12 @@ export default function FulfilPage() {
     e.stopPropagation();
     setSelectedOrderForShipment(order);
     setShipmentModalOpen(true);
+  };
+
+  const handleShipNow = (order: BackendOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedOrderForCourier(order);
+    setCourierSelectionModalOpen(true);
   };
 
   return (
@@ -382,11 +391,11 @@ export default function FulfilPage() {
                         <Button
                           size="sm"
                           variant="default"
-                          onClick={(e) => handleCreateShipment(order, e)}
-                          data-testid={`button-create-shipment-${order.id}`}
+                          onClick={(e) => handleShipNow(order, e)}
+                          data-testid={`button-ship-now-${order.id}`}
                         >
                           <Package className="h-4 w-4 mr-1" />
-                          Create Shipment
+                          Ship Now
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -416,6 +425,21 @@ export default function FulfilPage() {
             customerName: selectedOrderForShipment.customerName,
             customerPhone: selectedOrderForShipment.customerPhone,
             total: Number(selectedOrderForShipment.totalPrice),
+          }}
+        />
+      )}
+
+      {/* Courier Selection Modal */}
+      {selectedOrderForCourier && (
+        <CourierSelectionModal
+          open={courierSelectionModalOpen}
+          onOpenChange={setCourierSelectionModalOpen}
+          orderId={selectedOrderForCourier.id}
+          orderDetails={{
+            shopifyOrderNumber: selectedOrderForCourier.shopifyOrderId,
+            customerName: selectedOrderForCourier.customerName,
+            total: Number(selectedOrderForCourier.totalPrice),
+            paymentMethod: selectedOrderForCourier.paymentMethod,
           }}
         />
       )}
