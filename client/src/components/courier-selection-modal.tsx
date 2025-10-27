@@ -257,8 +257,18 @@ function CourierLogo({ name, logoUrl }: { name: string; logoUrl?: string }) {
     );
   }
 
-  // Tier 2: Try local courier logo
-  const localLogo = COURIER_LOGO_MAP[name.toLowerCase()];
+  // Tier 2: Try local courier logo with partial matching
+  const nameLower = name.toLowerCase();
+  let localLogo: string | undefined;
+  
+  // Find matching logo by checking if courier name contains any of the mapped names
+  for (const [key, logoPath] of Object.entries(COURIER_LOGO_MAP)) {
+    if (nameLower.includes(key)) {
+      localLogo = logoPath;
+      break;
+    }
+  }
+  
   if (localLogo && !localLogoError) {
     return (
       <div className="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center bg-white dark:bg-gray-800 flex-shrink-0 border border-gray-200 dark:border-gray-700 p-2">
@@ -288,6 +298,7 @@ export function CourierSelectionModal({
 }: CourierSelectionModalProps) {
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState("serviceable");
+  const [shippingCourierId, setShippingCourierId] = useState<number | null>(null);
 
   // Fetch available couriers (categorized response)
   const { data: couriersData, isLoading, error } = useQuery({
@@ -306,6 +317,7 @@ export function CourierSelectionModal({
   // Assign courier mutation
   const assignCourierMutation = useMutation({
     mutationFn: async (courierId: number) => {
+      setShippingCourierId(courierId);
       const response = await fetch(`/api/orders/${orderId}/ship`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -320,6 +332,7 @@ export function CourierSelectionModal({
       return response.json();
     },
     onSuccess: (data) => {
+      setShippingCourierId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders", orderId] });
       toast({
@@ -329,6 +342,7 @@ export function CourierSelectionModal({
       onOpenChange(false);
     },
     onError: (error: Error) => {
+      setShippingCourierId(null);
       toast({
         variant: "destructive",
         title: "Shipping Failed",
@@ -540,11 +554,11 @@ export function CourierSelectionModal({
                             <div className="flex-shrink-0 ml-2">
                               <Button
                                 onClick={() => handleShipNow(courier)}
-                                disabled={assignCourierMutation.isPending}
+                                disabled={shippingCourierId !== null}
                                 className="min-w-[110px]"
                                 data-testid={`button-ship-${courier.courier_company_id}`}
                               >
-                                {assignCourierMutation.isPending ? "Shipping..." : "Ship Now"}
+                                {shippingCourierId === courier.courier_company_id ? "Shipping..." : "Ship Now"}
                               </Button>
                             </div>
                           </>
