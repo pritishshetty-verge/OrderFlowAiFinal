@@ -1615,7 +1615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           discount: "0",
           tax: "0",
         })),
-        payment_method: order.paymentMethod === 'cod' ? 'COD' : 'Prepaid',
+        payment_method: (order.paymentMethod.toLowerCase() === 'cod' ? 'COD' : 'Prepaid') as 'COD' | 'Prepaid',
         sub_total: parseFloat(order.subtotal.toString()),
         length: length || 10,
         breadth: breadth || 10,
