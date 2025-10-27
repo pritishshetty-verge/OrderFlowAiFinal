@@ -36,6 +36,20 @@ import {
   type InsertShipment,
   type NdrEvent,
   type InsertNdrEvent,
+  type Course,
+  type InsertCourse,
+  type Lesson,
+  type InsertLesson,
+  type UserLessonProgress,
+  type InsertUserLessonProgress,
+  type LessonAnalytics,
+  type InsertLessonAnalytics,
+  type Resource,
+  type InsertResource,
+  type OnboardingChecklist,
+  type InsertOnboardingChecklist,
+  type UserOnboardingProgress,
+  type InsertUserOnboardingProgress,
   users,
   invites,
   customers,
@@ -53,6 +67,13 @@ import {
   shopifySyncLogs,
   shipments,
   ndrEvents,
+  courses,
+  lessons,
+  userLessonProgress,
+  lessonAnalytics,
+  resources,
+  onboardingChecklists,
+  userOnboardingProgress,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -176,6 +197,52 @@ export interface IStorage {
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
   listUnresolvedNDREvents(filters?: { limit?: number; offset?: number }): Promise<{ events: NdrEvent[]; total: number }>;
+
+  // Learning Center - Courses
+  getCourse(id: string): Promise<Course | undefined>;
+  getCourseBySlug(slug: string): Promise<Course | undefined>;
+  createCourse(course: InsertCourse): Promise<Course>;
+  updateCourse(id: string, data: Partial<InsertCourse>): Promise<Course | undefined>;
+  deleteCourse(id: string): Promise<void>;
+  listCourses(filters?: { category?: string; isPublished?: boolean }): Promise<Course[]>;
+  
+  // Learning Center - Lessons
+  getLesson(id: string): Promise<Lesson | undefined>;
+  getLessonBySlug(slug: string): Promise<Lesson | undefined>;
+  createLesson(lesson: InsertLesson): Promise<Lesson>;
+  updateLesson(id: string, data: Partial<InsertLesson>): Promise<Lesson | undefined>;
+  deleteLesson(id: string): Promise<void>;
+  getLessonsByCourse(courseId: string): Promise<Lesson[]>;
+  
+  // Learning Center - User Progress
+  getUserLessonProgress(userId: string, lessonId: string): Promise<UserLessonProgress | undefined>;
+  createOrUpdateLessonProgress(progress: InsertUserLessonProgress): Promise<UserLessonProgress>;
+  getUserCourseProgress(userId: string, courseId: string): Promise<{ completedLessons: number; totalLessons: number; percentage: number }>;
+  getUserCompletedCourses(userId: string): Promise<string[]>; // Returns array of course IDs
+  toggleBookmark(userId: string, lessonId: string): Promise<UserLessonProgress | undefined>;
+  
+  // Learning Center - Analytics
+  getLessonAnalytics(lessonId: string): Promise<LessonAnalytics | undefined>;
+  updateLessonAnalytics(lessonId: string, data: Partial<InsertLessonAnalytics>): Promise<LessonAnalytics>;
+  incrementLessonView(lessonId: string, userId: string): Promise<void>;
+  
+  // Learning Center - Resources
+  getResource(id: string): Promise<Resource | undefined>;
+  createResource(resource: InsertResource): Promise<Resource>;
+  updateResource(id: string, data: Partial<InsertResource>): Promise<Resource | undefined>;
+  deleteResource(id: string): Promise<void>;
+  listResources(filters?: { type?: string; category?: string }): Promise<Resource[]>;
+  incrementResourceDownload(id: string): Promise<void>;
+  
+  // Learning Center - Onboarding
+  getOnboardingChecklist(id: string): Promise<OnboardingChecklist | undefined>;
+  getOnboardingChecklistByRole(role: string): Promise<OnboardingChecklist | undefined>;
+  createOnboardingChecklist(checklist: InsertOnboardingChecklist): Promise<OnboardingChecklist>;
+  updateOnboardingChecklist(id: string, data: Partial<InsertOnboardingChecklist>): Promise<OnboardingChecklist | undefined>;
+  
+  getUserOnboardingProgress(userId: string): Promise<UserOnboardingProgress | undefined>;
+  createUserOnboardingProgress(progress: InsertUserOnboardingProgress): Promise<UserOnboardingProgress>;
+  updateUserOnboardingProgress(id: string, data: Partial<InsertUserOnboardingProgress>): Promise<UserOnboardingProgress | undefined>;
 }
 
 export class DbStorage implements IStorage {
@@ -1115,6 +1182,385 @@ export class DbStorage implements IStorage {
       events,
       total: countResult[0]?.count || 0,
     };
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - COURSES
+  // ============================================================================
+
+  async getCourse(id: string): Promise<Course | undefined> {
+    const [course] = await db.select().from(courses).where(eq(courses.id, id));
+    return course;
+  }
+
+  async getCourseBySlug(slug: string): Promise<Course | undefined> {
+    const [course] = await db.select().from(courses).where(eq(courses.slug, slug));
+    return course;
+  }
+
+  async createCourse(course: InsertCourse): Promise<Course> {
+    const [newCourse] = await db.insert(courses).values(course).returning();
+    return newCourse;
+  }
+
+  async updateCourse(id: string, data: Partial<InsertCourse>): Promise<Course | undefined> {
+    const [updated] = await db
+      .update(courses)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(courses.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteCourse(id: string): Promise<void> {
+    await db.delete(courses).where(eq(courses.id, id));
+  }
+
+  async listCourses(filters?: { category?: string; isPublished?: boolean }): Promise<Course[]> {
+    let query = db.select().from(courses).orderBy(asc(courses.order), asc(courses.createdAt));
+
+    const conditions = [];
+    if (filters?.category) {
+      conditions.push(eq(courses.category, filters.category));
+    }
+    if (filters?.isPublished !== undefined) {
+      conditions.push(eq(courses.isPublished, filters.isPublished));
+    }
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    return await query;
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - LESSONS
+  // ============================================================================
+
+  async getLesson(id: string): Promise<Lesson | undefined> {
+    const [lesson] = await db.select().from(lessons).where(eq(lessons.id, id));
+    return lesson;
+  }
+
+  async getLessonBySlug(slug: string): Promise<Lesson | undefined> {
+    const [lesson] = await db.select().from(lessons).where(eq(lessons.slug, slug));
+    return lesson;
+  }
+
+  async createLesson(lesson: InsertLesson): Promise<Lesson> {
+    const [newLesson] = await db.insert(lessons).values(lesson).returning();
+    
+    // Initialize analytics for new lesson
+    await db.insert(lessonAnalytics).values({
+      lessonId: newLesson.id,
+      totalViews: 0,
+      uniqueViews: 0,
+      totalCompletions: 0,
+    }).onConflictDoNothing();
+    
+    return newLesson;
+  }
+
+  async updateLesson(id: string, data: Partial<InsertLesson>): Promise<Lesson | undefined> {
+    const [updated] = await db
+      .update(lessons)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(lessons.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteLesson(id: string): Promise<void> {
+    await db.delete(lessons).where(eq(lessons.id, id));
+  }
+
+  async getLessonsByCourse(courseId: string): Promise<Lesson[]> {
+    return await db
+      .select()
+      .from(lessons)
+      .where(eq(lessons.courseId, courseId))
+      .orderBy(asc(lessons.order));
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - USER PROGRESS
+  // ============================================================================
+
+  async getUserLessonProgress(userId: string, lessonId: string): Promise<UserLessonProgress | undefined> {
+    const [progress] = await db
+      .select()
+      .from(userLessonProgress)
+      .where(and(eq(userLessonProgress.userId, userId), eq(userLessonProgress.lessonId, lessonId)));
+    return progress;
+  }
+
+  async createOrUpdateLessonProgress(progress: InsertUserLessonProgress): Promise<UserLessonProgress> {
+    const existing = await this.getUserLessonProgress(progress.userId, progress.lessonId);
+    
+    if (existing) {
+      const [updated] = await db
+        .update(userLessonProgress)
+        .set({ ...progress, updatedAt: new Date() })
+        .where(eq(userLessonProgress.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [newProgress] = await db.insert(userLessonProgress).values(progress).returning();
+      return newProgress;
+    }
+  }
+
+  async getUserCourseProgress(userId: string, courseId: string): Promise<{ completedLessons: number; totalLessons: number; percentage: number }> {
+    // Get all lessons in the course
+    const courseLessons = await this.getLessonsByCourse(courseId);
+    const totalLessons = courseLessons.length;
+    
+    if (totalLessons === 0) {
+      return { completedLessons: 0, totalLessons: 0, percentage: 0 };
+    }
+
+    // Get user's progress on these lessons
+    const lessonIds = courseLessons.map(l => l.id);
+    const progressRecords = await db
+      .select()
+      .from(userLessonProgress)
+      .where(
+        and(
+          eq(userLessonProgress.userId, userId),
+          eq(userLessonProgress.isCompleted, true)
+        )
+      );
+
+    const completedLessons = progressRecords.filter(p => lessonIds.includes(p.lessonId)).length;
+    const percentage = Math.round((completedLessons / totalLessons) * 100);
+
+    return { completedLessons, totalLessons, percentage };
+  }
+
+  async getUserCompletedCourses(userId: string): Promise<string[]> {
+    // Get all user's completed lessons
+    const completedLessons = await db
+      .select()
+      .from(userLessonProgress)
+      .where(and(eq(userLessonProgress.userId, userId), eq(userLessonProgress.isCompleted, true)));
+
+    // Get all courses
+    const allCourses = await this.listCourses({ isPublished: true });
+    
+    const completedCourseIds: string[] = [];
+
+    // Check each course to see if all lessons are completed
+    for (const course of allCourses) {
+      const courseLessons = await this.getLessonsByCourse(course.id);
+      const courseLessonIds = courseLessons.map(l => l.id);
+      
+      const allCompleted = courseLessonIds.every(lessonId =>
+        completedLessons.some(cl => cl.lessonId === lessonId)
+      );
+
+      if (allCompleted && courseLessonIds.length > 0) {
+        completedCourseIds.push(course.id);
+      }
+    }
+
+    return completedCourseIds;
+  }
+
+  async toggleBookmark(userId: string, lessonId: string): Promise<UserLessonProgress | undefined> {
+    const existing = await this.getUserLessonProgress(userId, lessonId);
+    
+    if (existing) {
+      const [updated] = await db
+        .update(userLessonProgress)
+        .set({ isBookmarked: !existing.isBookmarked, updatedAt: new Date() })
+        .where(eq(userLessonProgress.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      // Create new progress record with bookmark
+      const [newProgress] = await db
+        .insert(userLessonProgress)
+        .values({ userId, lessonId, isBookmarked: true, completionPercentage: 0 })
+        .returning();
+      return newProgress;
+    }
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - ANALYTICS
+  // ============================================================================
+
+  async getLessonAnalytics(lessonId: string): Promise<LessonAnalytics | undefined> {
+    const [analytics] = await db
+      .select()
+      .from(lessonAnalytics)
+      .where(eq(lessonAnalytics.lessonId, lessonId));
+    return analytics;
+  }
+
+  async updateLessonAnalytics(lessonId: string, data: Partial<InsertLessonAnalytics>): Promise<LessonAnalytics> {
+    const existing = await this.getLessonAnalytics(lessonId);
+    
+    if (existing) {
+      const [updated] = await db
+        .update(lessonAnalytics)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(lessonAnalytics.lessonId, lessonId))
+        .returning();
+      return updated;
+    } else {
+      const [newAnalytics] = await db
+        .insert(lessonAnalytics)
+        .values({ lessonId, ...data })
+        .returning();
+      return newAnalytics;
+    }
+  }
+
+  async incrementLessonView(lessonId: string, userId: string): Promise<void> {
+    const analytics = await this.getLessonAnalytics(lessonId);
+    
+    if (analytics) {
+      // Check if this is a unique view (first time this user viewed this lesson)
+      const existingProgress = await this.getUserLessonProgress(userId, lessonId);
+      const isUniqueView = !existingProgress;
+
+      await db
+        .update(lessonAnalytics)
+        .set({
+          totalViews: analytics.totalViews + 1,
+          uniqueViews: isUniqueView ? analytics.uniqueViews + 1 : analytics.uniqueViews,
+          updatedAt: new Date(),
+        })
+        .where(eq(lessonAnalytics.lessonId, lessonId));
+    } else {
+      // Create analytics record
+      await db.insert(lessonAnalytics).values({
+        lessonId,
+        totalViews: 1,
+        uniqueViews: 1,
+      });
+    }
+
+    // Update user's last accessed time
+    await this.createOrUpdateLessonProgress({
+      userId,
+      lessonId,
+      lastAccessedAt: new Date(),
+      completionPercentage: 0,
+    });
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - RESOURCES
+  // ============================================================================
+
+  async getResource(id: string): Promise<Resource | undefined> {
+    const [resource] = await db.select().from(resources).where(eq(resources.id, id));
+    return resource;
+  }
+
+  async createResource(resource: InsertResource): Promise<Resource> {
+    const [newResource] = await db.insert(resources).values(resource).returning();
+    return newResource;
+  }
+
+  async updateResource(id: string, data: Partial<InsertResource>): Promise<Resource | undefined> {
+    const [updated] = await db
+      .update(resources)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(resources.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteResource(id: string): Promise<void> {
+    await db.delete(resources).where(eq(resources.id, id));
+  }
+
+  async listResources(filters?: { type?: string; category?: string }): Promise<Resource[]> {
+    const conditions = [eq(resources.isPublished, true)];
+    if (filters?.type) {
+      conditions.push(eq(resources.type, filters.type));
+    }
+    if (filters?.category) {
+      conditions.push(eq(resources.category, filters.category));
+    }
+
+    return await db
+      .select()
+      .from(resources)
+      .where(and(...conditions))
+      .orderBy(desc(resources.createdAt));
+  }
+
+  async incrementResourceDownload(id: string): Promise<void> {
+    const resource = await this.getResource(id);
+    if (resource) {
+      await db
+        .update(resources)
+        .set({ downloadCount: resource.downloadCount + 1 })
+        .where(eq(resources.id, id));
+    }
+  }
+
+  // ============================================================================
+  // LEARNING CENTER - ONBOARDING
+  // ============================================================================
+
+  async getOnboardingChecklist(id: string): Promise<OnboardingChecklist | undefined> {
+    const [checklist] = await db
+      .select()
+      .from(onboardingChecklists)
+      .where(eq(onboardingChecklists.id, id));
+    return checklist;
+  }
+
+  async getOnboardingChecklistByRole(role: string): Promise<OnboardingChecklist | undefined> {
+    const [checklist] = await db
+      .select()
+      .from(onboardingChecklists)
+      .where(and(eq(onboardingChecklists.role, role), eq(onboardingChecklists.isActive, true)))
+      .orderBy(asc(onboardingChecklists.order))
+      .limit(1);
+    return checklist;
+  }
+
+  async createOnboardingChecklist(checklist: InsertOnboardingChecklist): Promise<OnboardingChecklist> {
+    const [newChecklist] = await db.insert(onboardingChecklists).values(checklist).returning();
+    return newChecklist;
+  }
+
+  async updateOnboardingChecklist(id: string, data: Partial<InsertOnboardingChecklist>): Promise<OnboardingChecklist | undefined> {
+    const [updated] = await db
+      .update(onboardingChecklists)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(onboardingChecklists.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getUserOnboardingProgress(userId: string): Promise<UserOnboardingProgress | undefined> {
+    const [progress] = await db
+      .select()
+      .from(userOnboardingProgress)
+      .where(eq(userOnboardingProgress.userId, userId));
+    return progress;
+  }
+
+  async createUserOnboardingProgress(progress: InsertUserOnboardingProgress): Promise<UserOnboardingProgress> {
+    const [newProgress] = await db.insert(userOnboardingProgress).values(progress).returning();
+    return newProgress;
+  }
+
+  async updateUserOnboardingProgress(id: string, data: Partial<InsertUserOnboardingProgress>): Promise<UserOnboardingProgress | undefined> {
+    const [updated] = await db
+      .update(userOnboardingProgress)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(userOnboardingProgress.id, id))
+      .returning();
+    return updated;
   }
 }
 
