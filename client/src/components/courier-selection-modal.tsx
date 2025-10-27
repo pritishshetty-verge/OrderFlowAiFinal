@@ -459,19 +459,19 @@ export function CourierSelectionModal({
                 {sortedCouriers.map((courier, index) => (
                   <div 
                     key={courier.courier_company_id}
-                    className="animate-in fade-in-50 slide-in-from-bottom-2"
+                    className="animate-in fade-in-50 slide-in-from-bottom-2 overflow-visible"
                     style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'backwards' }}
                   >
                     {/* Courier Card - Shiprocket Style */}
                     <div
-                      className={`relative border rounded-lg bg-white dark:bg-gray-900 transition-all ${
+                      className={`relative border rounded-lg bg-white dark:bg-gray-900 transition-all overflow-visible ${
                         selectedTab === 'non-serviceable' ? 'opacity-60' : 'hover:shadow-md'
                       } ${courier.is_recommended ? 'border-l-4 border-l-indigo-600 pt-6' : ''}`}
                       data-testid={`courier-option-${courier.courier_company_id}`}
                     >
                       {/* Recommended Badge */}
                       {courier.is_recommended && selectedTab !== 'non-serviceable' && (
-                        <div className="absolute -top-2 left-4 z-10">
+                        <div className="absolute -top-2 left-4 z-50">
                           <Badge 
                             className="bg-indigo-600 text-white hover:bg-indigo-700 text-xs px-3 py-1 shadow-sm"
                             data-testid={`recommended-badge-${courier.courier_company_id}`}
