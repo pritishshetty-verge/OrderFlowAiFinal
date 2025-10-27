@@ -67,7 +67,8 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
     }
 
     const signature = req.headers['x-shiprocket-signature'] as string;
-    const rawBody = JSON.stringify(req.body);
+    // Use raw body from express.json middleware to avoid signature mismatches from JSON re-stringification
+    const rawBody = req.rawBody ? (req.rawBody as Buffer).toString('utf8') : JSON.stringify(req.body);
 
     if (!verifyShiprocketSignature(rawBody, signature, shiprocketWebhookSecret)) {
       console.error('[Shiprocket Webhook] Invalid signature');
