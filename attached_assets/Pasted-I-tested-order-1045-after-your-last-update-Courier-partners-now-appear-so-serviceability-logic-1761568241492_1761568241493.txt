@@ -1,0 +1,40 @@
+I tested order #1045 after your last update.
+
+Courier partners now appear (so serviceability logic is improved).
+
+BUT:
+
+The prices shown are not accurate—they do not match Shiprocket’s panel.
+
+Extra courier partners are listed in several tabs in the app UI that do not appear for the same order in Shiprocket’s UI.
+
+Screenshots:
+I’ve attached side-by-side comparisons for order #1045 showing both my app’s modal and the actual Shiprocket courier selection screen.
+
+Problems to address:
+
+Your app’s modal now splits couriers into “All,” “Air,” “Surface,” and “Non-Serviceable” tabs—but the count and list still do not match Shiprocket’s UI on several tabs.
+
+Rates/charges for each courier must exactly match what Shiprocket shows.
+
+You must ONLY show those partners that Shiprocket exposes for the same order, in the right tab, with the same warnings (not more, not less).
+
+What you need to do next:
+
+Re-examine the exact fields in Shiprocket’s courier response for #1045 (and #1054).
+
+Use only those couriers as “serviceable” that appear in Shiprocket’s tabbed UI (Air/Surface/Non-Serviceable).
+
+For price, make sure you are calculating and displaying it in the exact way Shiprocket does (including all surcharges, COD, etc.).
+
+If you are seeing extra couriers, it means your inclusion logic is still too broad—tighten it until your tab counts and lists match Shiprocket exactly.
+
+For prices, compare the value you are using vs. what Shiprocket shows, and reverse engineer (from the fields in the response) if Shiprocket uses more than simply freight+cod.
+
+Please do a row-by-row comparison of the modal vs Shiprocket for one live order, for every tab, listing which couriers are missing/extra/differently priced. Then update your filtering/mapping code so we always match Shiprocket.
+
+Goal:
+
+Courier count, names, prices, and warnings in every tab must always match the live Shiprocket UI for the same order.
+
+Do not release or close this task until this is 100% consistent.
