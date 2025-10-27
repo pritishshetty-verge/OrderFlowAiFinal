@@ -148,7 +148,8 @@ interface ShiprocketCourierPartner {
   freight_charge: number;
   cod_charges: number;
   other_charges: number;
-  total_charge: number;
+  rate: number; // This is the total charge displayed by Shiprocket
+  total_charge?: number; // Computed for backward compatibility
   rating: string;
   etd: string;
   estimated_delivery_days: string;
@@ -160,7 +161,7 @@ interface ShiprocketCourierPartner {
   is_hyperlocal: boolean;
   min_weight: number;
   qc_courier: number;
-  recommendation_score: number;
+  recommendation_score?: number;
   suppression_dates: ShiprocketSuppressionDates | null;
   suppress_text?: string;
   suppress_date?: string;
@@ -569,12 +570,43 @@ class ShiprocketService {
           responseKeys: Object.keys(response.data.data)
         });
 
-        // Log first courier in detail to see full structure
-        if (response.data.data.available_courier_companies?.length > 0) {
-          console.log('[Shiprocket] Sample courier data (first courier):', 
-            JSON.stringify(response.data.data.available_courier_companies[0], null, 2)
-          );
-        }
+        // Log COMPLETE raw API response for debugging
+        console.log('\n========== COMPLETE RAW SHIPROCKET COURIER DATA ==========');
+        console.log(JSON.stringify(response.data.data.available_courier_companies, null, 2));
+        console.log('========== END RAW COURIER DATA ==========\n');
+
+        // Create detailed comparison table
+        console.log('\n========== COURIER COMPARISON TABLE ==========');
+        console.log('Columns: Name | Total | Freight | COD | Rating | Score | Blocked | Suppress | QC | Surface');
+        console.log('─'.repeat(120));
+        
+        response.data.data.available_courier_companies.forEach((courier: any) => {
+          const blockedDates = courier.suppression_dates?.blocked_fm || courier.suppression_dates?.blocked_lm ? 
+            `FM:${courier.suppression_dates.blocked_fm || 'N'} LM:${courier.suppression_dates.blocked_lm || 'N'}` : 'NONE';
+          
+          const totalCharge = courier.rate != null ? `₹${Number(courier.rate).toFixed(2)}` : 'N/A';
+          const freightCharge = courier.freight_charge != null ? `₹${Number(courier.freight_charge).toFixed(2)}` : 'N/A';
+          const codCharges = courier.cod_charges != null ? `₹${Number(courier.cod_charges).toFixed(2)}` : 'N/A';
+          
+          console.log([
+            courier.courier_name.padEnd(35),
+            totalCharge.padEnd(12),
+            freightCharge.padEnd(12),
+            codCharges.padEnd(12),
+            String(courier.rating || 'N/A').padEnd(8),
+            String(courier.recommendation_score || 'N/A').padEnd(8),
+            String(courier.blocked || 0).padEnd(8),
+            (courier.suppress_text?.substring(0, 20) || 'NONE').padEnd(22),
+            String(courier.qc_courier || 0).padEnd(6),
+            String(courier.is_surface).padEnd(8)
+          ].join(' | '));
+          
+          if (courier.suppression_dates) {
+            console.log(`    └─ Suppression: ${blockedDates}, Delay: ${courier.suppression_dates.delay_remark || 'NONE'}`);
+          }
+        });
+        console.log('─'.repeat(120));
+        console.log('========== END COMPARISON TABLE ==========\n');
         
         const recommendedId = response.data.data.shiprocket_recommended_courier_id || response.data.data.recommended_courier_company_id;
         const rawCouriers = response.data.data.available_courier_companies;
@@ -584,7 +616,7 @@ class ShiprocketService {
           name: c.courier_name,
           freight: c.freight_charge,
           cod: c.cod_charges,
-          total: c.total_charge,
+          rate: c.rate,
           qc_courier: c.qc_courier,
           blocked: c.blocked,
           suppress_text: c.suppress_text,
@@ -594,6 +626,8 @@ class ShiprocketService {
 
         // Process all couriers and determine serviceability
         const processedCouriers = rawCouriers.map(courier => {
+          // Add total_charge as computed field for backward compatibility
+          const total_charge = courier.rate;
           // Determine if courier is truly non-serviceable based on Shiprocket's blocking logic
           let isServiceable = true;
           let nonServiceableReason = '';
@@ -616,18 +650,30 @@ class ShiprocketService {
             console.log(`[Shiprocket] Non-serviceable ${courier.courier_name}: has blocking dates, reason="${nonServiceableReason}"`);
           }
           
+          // SHIPROCKET HIDDEN FILTER: Rating threshold
+          // Shiprocket hides couriers with rating < 3.6 from the UI
+          const rating = parseFloat(courier.rating);
+          if (isServiceable && !isNaN(rating) && rating < 3.6) {
+            isServiceable = false;
+            nonServiceableReason = `Courier rating (${rating}) is below quality threshold`;
+            console.log(`[Shiprocket] Hidden due to low rating: ${courier.courier_name} (${rating})`);
+          }
+          
+          // SHIPROCKET HIDDEN FILTER: Network Stress couriers
+          // Shiprocket hides couriers with "Network Stress" in the name from the UI
+          if (isServiceable && (courier.courier_name.includes('Network Stress') || 
+              courier.courier_name.includes('_Network Stress'))) {
+            isServiceable = false;
+            nonServiceableReason = courier.suppress_text || 
+              'This courier is facing operational stress on this particular lane. Deliveries may be significantly delayed.';
+            console.log(`[Shiprocket] Hidden due to Network Stress: ${courier.courier_name}`);
+          }
+          
           // Check for warnings (courier is serviceable but has operational issues)
-          // Network Stress couriers typically have courier name containing "Network Stress" or similar patterns
           if (isServiceable) {
-            if (courier.courier_name.includes('Network Stress') || 
-                courier.courier_name.includes('_Network Stress')) {
-              hasWarning = true;
-              warningMessage = courier.suppress_text || 
-                'This courier is facing operational stress on this particular lane. Order might get delayed.';
-              console.log(`[Shiprocket] Warning for ${courier.courier_name}: ${warningMessage}`);
-            } else if (courier.suppression_dates?.delay_remark && 
-                       !courier.suppression_dates.blocked_fm && 
-                       !courier.suppression_dates.blocked_lm) {
+            if (courier.suppression_dates?.delay_remark && 
+                !courier.suppression_dates.blocked_fm && 
+                !courier.suppression_dates.blocked_lm) {
               // Has delay but not blocked - this is a warning
               hasWarning = true;
               warningMessage = `Delivery may be delayed due to ${courier.suppression_dates.delay_remark.toLowerCase()}`;
@@ -637,6 +683,7 @@ class ShiprocketService {
           
           return {
             ...courier,
+            total_charge, // Add total_charge for backward compatibility with frontend
             is_recommended: courier.courier_company_id === recommendedId,
             is_serviceable: isServiceable,
             non_serviceable_reason: nonServiceableReason,

@@ -57,14 +57,10 @@ export function CourierSelectionModal({
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState("all");
 
-  // Calculate price matching Shiprocket UI logic
+  // Price display: Shiprocket uses total_charge field directly
   const calculatePrice = (courier: CourierPartner) => {
-    const isCOD = orderDetails.paymentMethod.toLowerCase() === 'cod';
-    // For COD: price = freight + cod_charges
-    // For Prepaid: price = freight only
-    return isCOD 
-      ? (courier.freight_charge || 0) + (courier.cod_charges || 0)
-      : (courier.freight_charge || 0);
+    // Shiprocket displays total_charge directly from the API
+    return courier.total_charge || 0;
   };
 
   // Fetch available couriers
