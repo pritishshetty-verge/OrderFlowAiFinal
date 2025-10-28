@@ -173,6 +173,8 @@ export interface IStorage {
   createCall(call: InsertCall): Promise<Call>;
   getCallsByOrderId(orderId: string): Promise<Call[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
+  getCallByReference(callReference: string): Promise<Call | undefined>;
+  updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
 
   // Notifications
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -941,6 +943,24 @@ export class DbStorage implements IStorage {
       .from(calls)
       .where(eq(calls.agentId, agentId))
       .orderBy(desc(calls.calledAt));
+  }
+
+  async getCallByReference(callReference: string): Promise<Call | undefined> {
+    const [call] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.callReference, callReference))
+      .limit(1);
+    return call;
+  }
+
+  async updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined> {
+    const [updated] = await db
+      .update(calls)
+      .set(data)
+      .where(eq(calls.id, id))
+      .returning();
+    return updated;
   }
 
   // ============================================================================
