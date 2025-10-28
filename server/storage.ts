@@ -175,6 +175,7 @@ export interface IStorage {
   getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } | null })[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
   getCallByReference(callReference: string): Promise<Call | undefined>;
+  getRecentCallByPhone(customerPhone: string, minutesAgo?: number): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
   getAllCallsWithDetails(options?: { page?: number; limit?: number }): Promise<{
     calls: (Call & { 
@@ -981,6 +982,24 @@ export class DbStorage implements IStorage {
       .from(calls)
       .where(eq(calls.callReference, callReference))
       .limit(1);
+    return call;
+  }
+
+  async getRecentCallByPhone(customerPhone: string, minutesAgo: number = 10): Promise<Call | undefined> {
+    const cutoffTime = new Date(Date.now() - minutesAgo * 60 * 1000);
+    
+    const [call] = await db
+      .select()
+      .from(calls)
+      .where(
+        and(
+          eq(calls.customerPhone, customerPhone),
+          gte(calls.calledAt, cutoffTime)
+        )
+      )
+      .orderBy(desc(calls.calledAt))
+      .limit(1);
+    
     return call;
   }
 
