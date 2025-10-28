@@ -1318,8 +1318,8 @@ export class DbStorage implements IStorage {
   }
 
   async getUserCourseProgress(userId: string, courseId: string): Promise<{ completedLessons: number; totalLessons: number; percentage: number }> {
-    // Get all lessons in the course
-    const courseLessons = await this.getLessonsByCourse(courseId);
+    // Get all published lessons in the course
+    const courseLessons = await this.getLessonsByCourse(courseId, true);
     const totalLessons = courseLessons.length;
     
     if (totalLessons === 0) {

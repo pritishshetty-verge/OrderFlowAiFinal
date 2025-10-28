@@ -39,9 +39,9 @@ interface Course {
 }
 
 interface UserProgress {
-  completionPercentage: number;
-  enrolledAt: Date;
-  isCompleted: boolean;
+  completedLessons: number;
+  totalLessons: number;
+  percentage: number;
 }
 
 export default function CourseDetailPage() {
@@ -106,7 +106,7 @@ export default function CourseDetailPage() {
   const sortedLessons = [...lessons].sort((a, b) => a.order - b.order);
   const completedLessons = lessonProgress.filter((p) => p?.isCompleted).length;
   const totalLessons = lessons.length;
-  const progress = userProgress?.completionPercentage || 0;
+  const progress = userProgress?.percentage || 0;
 
   return (
     <div className="flex-1 overflow-auto" data-testid="page-course-detail">
@@ -174,7 +174,7 @@ export default function CourseDetailPage() {
                   <span className="text-muted-foreground">
                     {Math.round(progress)}% complete
                   </span>
-                  {userProgress.isCompleted && (
+                  {progress >= 100 && (
                     <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
                       <CheckCircle className="h-4 w-4" />
                       <span className="font-medium">Course Completed!</span>

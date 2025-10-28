@@ -86,6 +86,7 @@ export default function LessonPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/learning/lessons", slug] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learning/courses"] });
     },
   });
 

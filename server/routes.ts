@@ -2462,16 +2462,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "userId and lessonId are required" });
       }
 
-      const progress = await storage.createOrUpdateLessonProgress({
+      // Only include fields that are actually provided in the request
+      const updateData: any = {
         userId,
         lessonId,
-        completionPercentage: completionPercentage || 0,
-        timeSpent: timeSpent || 0,
-        videoProgress: videoProgress || 0,
-        isCompleted: isCompleted || false,
-        completedAt: isCompleted ? new Date() : undefined,
         lastAccessedAt: new Date(),
-      });
+      };
+
+      if (completionPercentage !== undefined) {
+        updateData.completionPercentage = completionPercentage;
+      }
+      if (timeSpent !== undefined) {
+        updateData.timeSpent = timeSpent;
+      }
+      if (videoProgress !== undefined) {
+        updateData.videoProgress = videoProgress;
+      }
+      if (isCompleted !== undefined) {
+        updateData.isCompleted = isCompleted;
+        if (isCompleted) {
+          updateData.completedAt = new Date();
+        }
+      }
+
+      const progress = await storage.createOrUpdateLessonProgress(updateData);
 
       res.json({ progress });
     } catch (error) {
