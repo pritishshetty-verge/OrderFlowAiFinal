@@ -79,7 +79,7 @@ function formatDuration(seconds: number | null): string {
   return `${remainingSeconds}s`;
 }
 
-function AudioPlayer({ recordingUrl }: { recordingUrl: string }) {
+function AudioPlayer({ recordingUrl, callReference }: { recordingUrl: string; callReference: string | null }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -97,6 +97,8 @@ function AudioPlayer({ recordingUrl }: { recordingUrl: string }) {
   const handleEnded = () => {
     setIsPlaying(false);
   };
+
+  const downloadFilename = `Call_${callReference || 'recording'}.wav`;
 
   return (
     <div className="flex items-center gap-2">
@@ -121,7 +123,7 @@ function AudioPlayer({ recordingUrl }: { recordingUrl: string }) {
         asChild
         data-testid={`button-download-recording-${recordingUrl}`}
       >
-        <a href={recordingUrl} download target="_blank" rel="noopener noreferrer">
+        <a href={recordingUrl} download={downloadFilename}>
           <Download className="h-3 w-3" />
         </a>
       </Button>
@@ -270,7 +272,7 @@ export default function CallLogsPage() {
                     </TableCell>
                     <TableCell>
                       {call.recordingUrl ? (
-                        <AudioPlayer recordingUrl={call.recordingUrl} />
+                        <AudioPlayer recordingUrl={call.recordingUrl} callReference={call.callReference} />
                       ) : (
                         <span className="text-muted-foreground text-sm">No recording</span>
                       )}
