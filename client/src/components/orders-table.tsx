@@ -344,7 +344,7 @@ export function OrdersTable({
   };
 
   return (
-    <div className="rounded-lg border bg-card overflow-hidden">
+    <div className="rounded-lg border bg-card">
       <div className="relative">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
