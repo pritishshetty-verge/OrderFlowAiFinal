@@ -212,7 +212,7 @@ export interface IStorage {
   createLesson(lesson: InsertLesson): Promise<Lesson>;
   updateLesson(id: string, data: Partial<InsertLesson>): Promise<Lesson | undefined>;
   deleteLesson(id: string): Promise<void>;
-  getLessonsByCourse(courseId: string): Promise<Lesson[]>;
+  getLessonsByCourse(courseId: string, isPublished?: boolean): Promise<Lesson[]>;
   
   // Learning Center - User Progress
   getUserLessonProgress(userId: string, lessonId: string): Promise<UserLessonProgress | undefined>;
@@ -1275,11 +1275,17 @@ export class DbStorage implements IStorage {
     await db.delete(lessons).where(eq(lessons.id, id));
   }
 
-  async getLessonsByCourse(courseId: string): Promise<Lesson[]> {
+  async getLessonsByCourse(courseId: string, isPublished?: boolean): Promise<Lesson[]> {
+    const conditions = [eq(lessons.courseId, courseId)];
+    
+    if (isPublished !== undefined) {
+      conditions.push(eq(lessons.isPublished, isPublished));
+    }
+    
     return await db
       .select()
       .from(lessons)
-      .where(eq(lessons.courseId, courseId))
+      .where(and(...conditions))
       .orderBy(asc(lessons.order));
   }
 

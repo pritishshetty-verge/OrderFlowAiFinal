@@ -2383,8 +2383,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Course not found" });
       }
 
-      // Get lessons for this course
-      const lessons = await storage.getLessonsByCourse(course.id);
+      // Get lessons for this course (only published lessons for students)
+      const lessons = await storage.getLessonsByCourse(course.id, true);
 
       // Get user's progress if logged in
       let userProgress = null;
