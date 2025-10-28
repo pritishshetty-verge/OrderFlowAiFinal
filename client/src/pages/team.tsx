@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { User } from "@shared/schema";
 
 export default function TeamPage() {
-  const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  const userRole = (localStorage.getItem("userRole") as "admin" | "agent") || "admin";
 
   const { isLoading } = useQuery<User[]>({
     queryKey: ["/api/users"],
