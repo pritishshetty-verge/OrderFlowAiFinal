@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
+import { CallLog } from "@/components/call-log";
 import { format } from "date-fns";
 import type { Order } from "./orders-table";
 
@@ -87,6 +88,12 @@ export function OrderDetailsDialog({
               </div>
             </>
           )}
+
+          <Separator />
+          <div>
+            <h3 className="text-sm font-semibold mb-3">Call History</h3>
+            <CallLog orderId={order.id} />
+          </div>
         </div>
       </DialogContent>
     </Dialog>
