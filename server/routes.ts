@@ -1325,7 +1325,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Handle IVR API response with specific error codes
       if (ivrResponse.status === 200) {
         // Extract call reference from IVR response (adjust field name based on your provider)
-        const callReference = ivrData.call_id || ivrData.callId || ivrData.reference || ivrData.id;
+        const callReference = ivrData.recordid || ivrData.call_id || ivrData.callId || ivrData.reference || ivrData.id;
         
         // Create call record in database
         const call = await storage.createCall({
