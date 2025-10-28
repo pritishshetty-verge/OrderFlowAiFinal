@@ -1449,6 +1449,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Download call recording (proxy endpoint for cross-origin downloads)
+  app.get("/api/calls/download/:callId", async (req, res) => {
+    try {
+      const { callId } = req.params;
+      
+      // Fetch call record to get recording URL
+      const call = await storage.getCallById(callId);
+      
+      if (!call) {
+        return res.status(404).json({ error: "Call not found" });
+      }
+      
+      if (!call.recordingUrl) {
+        return res.status(404).json({ error: "No recording available for this call" });
+      }
+      
+      // Fetch the recording from IVR server
+      const recordingResponse = await axios.get(call.recordingUrl, {
+        responseType: 'stream'
+      });
+      
+      // Set headers for download
+      const filename = `Call_${call.callReference || call.id}.wav`;
+      res.setHeader('Content-Type', 'audio/wav');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      // Stream the file to the client
+      recordingResponse.data.pipe(res);
+      
+    } catch (error: any) {
+      console.error("Error downloading recording:", error);
+      res.status(500).json({ error: "Failed to download recording" });
+    }
+  });
+
   // IVR Webhook - Receive call completion events
   app.post("/api/webhooks/ivr-call-events", async (req, res) => {
     try {

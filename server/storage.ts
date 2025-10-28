@@ -171,6 +171,7 @@ export interface IStorage {
 
   // Calls
   createCall(call: InsertCall): Promise<Call>;
+  getCallById(id: string): Promise<Call | undefined>;
   getCallsByOrderId(orderId: string): Promise<Call[]>;
   getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } | null })[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
@@ -938,6 +939,15 @@ export class DbStorage implements IStorage {
       .values(call)
       .returning();
     return createdCall;
+  }
+
+  async getCallById(id: string): Promise<Call | undefined> {
+    const [call] = await db
+      .select()
+      .from(calls)
+      .where(eq(calls.id, id))
+      .limit(1);
+    return call;
   }
 
   async getCallsByOrderId(orderId: string): Promise<Call[]> {
