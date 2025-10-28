@@ -84,7 +84,7 @@ export default function AdminLearningDashboard() {
 
   const togglePublishMutation = useMutation({
     mutationFn: async ({ courseId, isPublished }: { courseId: string; isPublished: boolean }) => {
-      return await apiRequest(`/api/admin/learning/courses/${courseId}`, "PATCH", {
+      return await apiRequest("PATCH", `/api/admin/learning/courses/${courseId}`, {
         isPublished: !isPublished,
       });
     },
