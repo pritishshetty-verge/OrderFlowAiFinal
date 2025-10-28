@@ -104,7 +104,6 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           <img src={logoUrl} alt="OrderFlowAI Logo" className="h-10 w-10 rounded-md" />
           <div className="flex flex-col">
             <span className="text-sm font-semibold">OrderFlowAI</span>
-            <span className="text-xs text-muted-foreground">Shopify Manager</span>
           </div>
         </div>
       </SidebarHeader>
