@@ -172,7 +172,7 @@ export interface IStorage {
   // Calls
   createCall(call: InsertCall): Promise<Call>;
   getCallsByOrderId(orderId: string): Promise<Call[]>;
-  getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } })[]>;
+  getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } | null })[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
   getCallByReference(callReference: string): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
@@ -938,7 +938,7 @@ export class DbStorage implements IStorage {
       .orderBy(desc(calls.calledAt));
   }
 
-  async getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } })[]> {
+  async getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } | null })[]> {
     const result = await db
       .select({
         call: calls,
@@ -948,13 +948,13 @@ export class DbStorage implements IStorage {
         }
       })
       .from(calls)
-      .innerJoin(users, eq(calls.agentId, users.id))
+      .leftJoin(users, eq(calls.agentId, users.id))
       .where(eq(calls.orderId, orderId))
       .orderBy(desc(calls.calledAt));
 
     return result.map(row => ({
       ...row.call,
-      agent: row.agent
+      agent: row.agent || null
     }));
   }
 

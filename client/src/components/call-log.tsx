@@ -11,7 +11,7 @@ interface CallWithAgent extends Call {
   agent: {
     fullName: string;
     email: string;
-  };
+  } | null;
 }
 
 interface CallLogProps {
@@ -104,7 +104,7 @@ export function CallLog({ orderId }: CallLogProps) {
               <div className="flex items-center gap-2 text-sm">
                 <User className="w-4 h-4 text-muted-foreground" />
                 <span data-testid={`text-agent-${call.id}`}>
-                  {call.agent.fullName}
+                  {call.agent?.fullName || "Unknown Agent"}
                 </span>
                 <span className="text-muted-foreground">•</span>
                 <span className="font-mono text-muted-foreground" data-testid={`text-phone-${call.id}`}>
