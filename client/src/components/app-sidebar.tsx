@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap } from "lucide-react";
+import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap, Phone } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -79,6 +79,12 @@ const menuItems = [
     icon: Users,
   },
   {
+    title: "Call Logs",
+    url: "/call-logs",
+    icon: Phone,
+    adminOnly: true,
+  },
+  {
     title: "Settings",
     url: "/settings",
     icon: Settings,
@@ -107,7 +113,9 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
+              {menuItems
+                .filter((item) => !item.adminOnly || userRole === "admin")
+                .map((item) => (
                 <Collapsible key={item.title} defaultOpen className="group/collapsible">
                   <SidebarMenuItem>
                     {item.items ? (
