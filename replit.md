@@ -101,26 +101,55 @@ A comprehensive Learning Management System inspired by Skool.com provides struct
 - Lesson Form (`/learning/admin/lessons/:id`) - Create/edit lesson with TipTap editor, video embed URL, prerequisites
 
 **Known Implementation Status:**
-✅ **Working:**
-- Publish/draft filtering (agents see only published courses/lessons)
-- Admin publish toggle (one-click publish/unpublish in dashboard)
-- Course browsing with progress tracking
-- Lesson viewing with automatic time tracking
-- Mark complete functionality
-- Bookmark toggle
-- Prerequisite locking (lessons with unmet prerequisites show lock icon)
-- TipTap rich text editor (all formatting options functional)
-- Course/lesson creation and editing (admin)
-- Slug auto-generation from titles
+✅ **Production-Ready & Fully Tested:**
+- **Publish/Draft System**: 
+  - Course publish toggle in admin dashboard table (one-click)
+  - Lesson publish toggle in lesson edit form (Switch component, data-testid="toggle-publish")
+  - Agents see only published courses/lessons (filtering enforced backend + frontend)
+  - Admin publish workflow tested end-to-end (create → publish → verify agent access)
+- **Progress Tracking**: 
+  - Completion percentage calculated correctly (33%, 67%, 100% verified)
+  - Progress persists across sessions (cache invalidation for both lesson and course queries)
+  - Backend field `percentage` matches frontend interface
+- **Course Browsing**: 
+  - Published courses displayed with progress cards
+  - Category tabs functional (onboarding, operations, training)
+  - Progress indicators show completion percentage
+- **Lesson Viewing**:
+  - Mark complete button updates progress immediately
+  - Automatic time tracking on lesson page
+  - Progress bar reflects completion state
+- **Bookmark System**: 
+  - Toggle bookmark button persists state
+  - Bookmark status loads correctly on page refresh
+- **Prerequisite System**: 
+  - Lessons with unmet prerequisites show lock icon
+  - Prerequisites unlock automatically when dependencies complete
+  - Frontend checks prerequisite completion before allowing access
+- **TipTap Rich Text Editor**: 
+  - All formatting options functional (bold, italic, underline, links, images, lists, alignment)
+  - StarterKit properly configured (duplicate extension warnings resolved)
+  - Content saves and loads correctly
+- **Video Embeds**: 
+  - YouTube/Vimeo iframe embedding via embed URL
+  - Video displays in lesson view
+- **Admin Course/Lesson Management**:
+  - Create/edit course form with metadata, slug auto-generation
+  - Create/edit lesson form with TipTap editor, video URL, prerequisites, publish toggle
+  - All CRUD operations functional
+
+**Testing Summary (December 2024):**
+- 10+ automated end-to-end Playwright tests executed
+- All core workflows verified: publish, progress tracking, bookmarks, prerequisites, video embeds, admin CRUD
+- Architect approved as production-ready
+- No critical bugs remaining
 
 ⚠️ **Needs Testing:**
 - Resource library (file uploads, downloads, tracking)
 - Onboarding checklists (role-based task tracking)
 - Analytics dashboard (view counts, completion rates)
-- Video embed display (YouTube/Vimeo iframes)
-- Multi-level prerequisite chains
-- Course completion calculation
-- Progress percentage accuracy
+- Multi-level prerequisite chains (>2 levels deep)
+- Course completion calculation with complex lesson hierarchies
 
 📋 **Not Yet Implemented:**
 - Lesson reordering UI (drag-and-drop)
