@@ -496,6 +496,10 @@ export const calls = pgTable("calls", {
   ivrStatus: text("ivr_status"), // Status reported by IVR provider
   completedAt: timestamp("completed_at"), // When the call actually completed
   webhookData: jsonb("webhook_data"), // Full webhook payload for debugging
+  
+  // Future feature fields
+  transcript: text("transcript"), // Call transcript (populated by speech-to-text service)
+  aiAnalysis: jsonb("ai_analysis"), // AI-powered insights and analysis
 });
 
 export const insertCallSchema = createInsertSchema(calls).omit({ 

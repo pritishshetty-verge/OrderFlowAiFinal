@@ -1438,8 +1438,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all calls with details (admin-only)
   app.get("/api/admin/calls", async (req, res) => {
     try {
-      const calls = await storage.getAllCallsWithDetails();
-      res.json(calls);
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 25;
+      
+      const result = await storage.getAllCallsWithDetails({ page, limit });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching all calls:", error);
       res.status(500).json({ error: "Failed to fetch calls" });

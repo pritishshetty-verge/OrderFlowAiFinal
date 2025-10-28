@@ -1,4 +1,4 @@
-import {  eq, and, desc, asc, or, count, gte, lte } from "drizzle-orm";
+import {  eq, and, desc, asc, or, count, gte, lte, sql } from "drizzle-orm";
 import { db } from "./db";
 import {
   type User,
@@ -176,10 +176,15 @@ export interface IStorage {
   getCallsByAgentId(agentId: string): Promise<Call[]>;
   getCallByReference(callReference: string): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
-  getAllCallsWithDetails(): Promise<(Call & { 
-    agent: { fullName: string; email: string } | null;
-    order: { shopifyOrderNumber: string; customerName: string } | null;
-  })[]>;
+  getAllCallsWithDetails(options?: { page?: number; limit?: number }): Promise<{
+    calls: (Call & { 
+      agent: { fullName: string; email: string } | null;
+      order: { shopifyOrderNumber: string; customerName: string } | null;
+    })[];
+    total: number;
+    page: number;
+    totalPages: number;
+  }>;
 
   // Notifications
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -988,10 +993,26 @@ export class DbStorage implements IStorage {
     return updated;
   }
 
-  async getAllCallsWithDetails(): Promise<(Call & { 
-    agent: { fullName: string; email: string } | null;
-    order: { shopifyOrderNumber: string; customerName: string } | null;
-  })[]> {
+  async getAllCallsWithDetails(options?: { page?: number; limit?: number }): Promise<{
+    calls: (Call & { 
+      agent: { fullName: string; email: string } | null;
+      order: { shopifyOrderNumber: string; customerName: string } | null;
+    })[];
+    total: number;
+    page: number;
+    totalPages: number;
+  }> {
+    const page = options?.page || 1;
+    const limit = options?.limit || 25;
+    const offset = (page - 1) * limit;
+
+    // Get total count
+    const [countResult] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(calls);
+    const total = countResult.count;
+
+    // Get paginated results
     const result = await db
       .select({
         call: calls,
@@ -1007,13 +1028,22 @@ export class DbStorage implements IStorage {
       .from(calls)
       .leftJoin(users, eq(calls.agentId, users.id))
       .leftJoin(orders, eq(calls.orderId, orders.id))
-      .orderBy(desc(calls.calledAt));
+      .orderBy(desc(calls.calledAt))
+      .limit(limit)
+      .offset(offset);
 
-    return result.map(row => ({
+    const callsData = result.map(row => ({
       ...row.call,
       agent: (row.agent && row.agent.fullName) ? row.agent : null,
       order: (row.order && row.order.shopifyOrderNumber) ? row.order : null
     }));
+
+    return {
+      calls: callsData,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit)
+    };
   }
 
   // ============================================================================
