@@ -487,6 +487,15 @@ export const calls = pgTable("calls", {
   callStatus: text("call_status").notNull().default("initiated"), // initiated, connected, failed, completed
   calledAt: timestamp("called_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  
+  // Webhook data fields (populated by IVR provider callback)
+  callDuration: integer("call_duration"), // Duration in seconds
+  recordingUrl: text("recording_url"), // URL to call recording
+  callReference: text("call_reference"), // Unique reference from IVR provider
+  recipientNumber: text("recipient_number"), // The actual number that was called
+  ivrStatus: text("ivr_status"), // Status reported by IVR provider
+  completedAt: timestamp("completed_at"), // When the call actually completed
+  webhookData: jsonb("webhook_data"), // Full webhook payload for debugging
 });
 
 export const insertCallSchema = createInsertSchema(calls).omit({ 
