@@ -34,7 +34,6 @@ export function RichTextEditor({ content, onChange, placeholder }: RichTextEdito
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        // Disable built-in link/underline if present to avoid duplicates
         link: false,
         underline: false,
       }),

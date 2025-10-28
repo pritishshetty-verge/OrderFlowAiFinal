@@ -29,6 +29,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { Switch } from "@/components/ui/switch";
 
 const lessonFormSchema = z.object({
   title: z.string().min(3, "Title must be at least 3 characters"),
@@ -40,6 +41,7 @@ const lessonFormSchema = z.object({
   order: z.coerce.number().min(0),
   estimatedDuration: z.coerce.number().min(1, "Duration must be at least 1 minute"),
   prerequisiteLessonIds: z.array(z.string()).default([]),
+  isPublished: z.boolean().default(false),
 });
 
 type LessonFormValues = z.infer<typeof lessonFormSchema>;
@@ -88,6 +90,7 @@ export default function AdminLessonForm() {
       order: 0,
       estimatedDuration: 15,
       prerequisiteLessonIds: [],
+      isPublished: false,
     },
   });
 
@@ -103,6 +106,7 @@ export default function AdminLessonForm() {
         order: lessonData.lesson.order,
         estimatedDuration: lessonData.lesson.estimatedDuration,
         prerequisiteLessonIds: lessonData.lesson.prerequisiteLessonIds || [],
+        isPublished: lessonData.lesson.isPublished || false,
       });
       setContent(lessonData.lesson.content);
     }
@@ -359,6 +363,28 @@ export default function AdminLessonForm() {
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name="isPublished"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">Publish Lesson</FormLabel>
+                        <FormDescription>
+                          Make this lesson visible to agents. Unpublished lessons remain in draft mode.
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          data-testid="toggle-publish"
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
 
                 <div className="flex gap-4">
                   <Button type="submit" disabled={saveMutation.isPending} data-testid="button-save">
