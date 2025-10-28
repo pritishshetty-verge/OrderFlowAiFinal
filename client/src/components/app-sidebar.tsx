@@ -54,6 +54,7 @@ const menuItems = [
     title: "Analytics",
     url: "/analytics",
     icon: TrendingUp,
+    adminOnly: true,
   },
   {
     title: "Learning Center",
