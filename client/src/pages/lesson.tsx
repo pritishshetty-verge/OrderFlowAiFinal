@@ -62,6 +62,14 @@ export default function LessonPage() {
     userProgress: UserProgress | null;
   }>({
     queryKey: ["/api/learning/lessons", slug, userId],
+    queryFn: async () => {
+      const url = userId 
+        ? `/api/learning/lessons/${slug}?userId=${userId}`
+        : `/api/learning/lessons/${slug}`;
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch lesson");
+      return response.json();
+    },
     enabled: !!slug,
   });
 
@@ -71,7 +79,7 @@ export default function LessonPage() {
       timeSpent?: number;
       isCompleted?: boolean;
     }) => {
-      return await apiRequest(`/api/learning/lessons/${data?.lesson.id}/progress`, "POST", {
+      return await apiRequest("POST", `/api/learning/lessons/${data?.lesson.id}/progress`, {
         userId,
         ...progressData,
       });
@@ -83,7 +91,7 @@ export default function LessonPage() {
 
   const bookmarkMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest(`/api/learning/lessons/${data?.lesson.id}/bookmark`, "POST", {
+      return await apiRequest("POST", `/api/learning/lessons/${data?.lesson.id}/bookmark`, {
         userId,
       });
     },
