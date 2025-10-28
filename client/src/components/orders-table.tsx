@@ -11,12 +11,19 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
 import { CallStatusActions } from "@/components/call-status-actions";
-import { Phone, UserPlus, Loader2 } from "lucide-react";
+import { Phone, UserPlus, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export interface Order {
   id: string;
@@ -60,8 +67,24 @@ export function OrdersTable({
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [callingOrderId, setCallingOrderId] = useState<string | null>(null);
   const [cooldownOrders, setCooldownOrders] = useState<Set<string>>(new Set());
-  const allSelected = orders.length > 0 && selectedOrders.size === orders.length;
-  const someSelected = selectedOrders.size > 0 && !allSelected;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  // Calculate pagination
+  const totalOrders = orders.length;
+  const totalPages = Math.ceil(totalOrders / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalOrders);
+  const paginatedOrders = useMemo(() => orders.slice(startIndex, endIndex), [orders, startIndex, endIndex]);
+  
+  // Selection state based on current page only
+  const allSelected = paginatedOrders.length > 0 && paginatedOrders.every(order => selectedOrders.has(order.id));
+  const someSelected = paginatedOrders.some(order => selectedOrders.has(order.id)) && !allSelected;
+
+  // Reset to first page when filters change (orders array changes)
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [orders]);
 
   // Get current user ID from localStorage (set during login)
   const currentUserId = localStorage.getItem("userId");
@@ -275,11 +298,15 @@ export function OrdersTable({
   };
 
   const handleSelectAll = () => {
+    const newSelected = new Set(selectedOrders);
     if (allSelected) {
-      setSelectedOrders(new Set());
+      // Deselect all orders on current page
+      paginatedOrders.forEach(order => newSelected.delete(order.id));
     } else {
-      setSelectedOrders(new Set(orders.map(order => order.id)));
+      // Select all orders on current page
+      paginatedOrders.forEach(order => newSelected.add(order.id));
     }
+    setSelectedOrders(newSelected);
   };
 
   const handleSelectOrder = (orderId: string) => {
@@ -305,38 +332,50 @@ export function OrdersTable({
     await followupOrderMutation.mutateAsync({ orderId, followupAt, notes });
   };
 
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    setSelectedOrders(new Set()); // Clear selection when changing pages
+  };
+
+  const handlePageSizeChange = (newSize: string) => {
+    setPageSize(Number(newSize));
+    setCurrentPage(1);
+    setSelectedOrders(new Set());
+  };
+
   return (
-    <div className="rounded-lg border bg-card">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[50px]">
-              <Checkbox
-                checked={allSelected}
-                onCheckedChange={handleSelectAll}
-                aria-label="Select all orders"
-                data-testid="checkbox-select-all"
-              />
-            </TableHead>
-            <TableHead className="w-[120px]">Order ID</TableHead>
-            <TableHead>Customer</TableHead>
-            {showAgentColumn && <TableHead>Agent</TableHead>}
-            <TableHead>Items</TableHead>
-            <TableHead className="text-right">Total</TableHead>
-            <TableHead>Payment</TableHead>
-            <TableHead>Call Status</TableHead>
-            <TableHead>Date</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {orders.map((order) => (
-            <TableRow
-              key={order.id}
-              className="hover-elevate cursor-pointer"
-              onClick={() => onViewDetails?.(order)}
-              data-testid={`row-order-${order.id}`}
-            >
+    <div className="rounded-lg border bg-card overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 400px)', minHeight: '500px', maxHeight: '800px' }}>
+      <div className="flex-1 overflow-auto relative">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+            <TableRow>
+              <TableHead className="w-[50px] bg-card">
+                <Checkbox
+                  checked={allSelected}
+                  onCheckedChange={handleSelectAll}
+                  aria-label="Select all orders"
+                  data-testid="checkbox-select-all"
+                />
+              </TableHead>
+              <TableHead className="w-[120px] bg-card">Order ID</TableHead>
+              <TableHead className="bg-card">Customer</TableHead>
+              {showAgentColumn && <TableHead className="bg-card">Agent</TableHead>}
+              <TableHead className="bg-card">Items</TableHead>
+              <TableHead className="text-right bg-card">Total</TableHead>
+              <TableHead className="bg-card">Payment</TableHead>
+              <TableHead className="bg-card">Call Status</TableHead>
+              <TableHead className="bg-card">Date</TableHead>
+              <TableHead className="text-right bg-card">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {paginatedOrders.map((order) => (
+              <TableRow
+                key={order.id}
+                className="hover-elevate cursor-pointer"
+                onClick={() => onViewDetails?.(order)}
+                data-testid={`row-order-${order.id}`}
+              >
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <Checkbox
                   checked={selectedOrders.has(order.id)}
@@ -420,7 +459,62 @@ export function OrdersTable({
             </TableRow>
           ))}
         </TableBody>
-      </Table>
+        </Table>
+      </div>
+      
+      {/* Pagination Footer */}
+      <div className="bg-card border-t p-4 flex-shrink-0">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              Showing {totalOrders === 0 ? 0 : startIndex + 1}-{endIndex} of {totalOrders} orders
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Rows per page:</span>
+              <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                <SelectTrigger className="w-[80px]" data-testid="select-page-size">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                data-testid="button-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground px-4">
+                Page {currentPage} of {totalPages || 1}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage >= totalPages}
+                data-testid="button-next-page"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
