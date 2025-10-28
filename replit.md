@@ -52,36 +52,82 @@ A comprehensive Learning Management System inspired by Skool.com provides struct
 
 **Core Features:**
 - Course/Lesson hierarchy with progress tracking
-- Video embedding support (YouTube, Vimeo) via iframe
-- Rich text lesson content with HTML support
-- Lesson prerequisites to enforce learning sequences
+- Video embedding support (YouTube, Vimeo) via embed URL (iframe)
+- Rich text lesson content with TipTap WYSIWYG editor (supports bold, italic, underline, links, images, lists, alignment)
+- Lesson prerequisites to enforce learning sequences (frontend checks prerequisite completion)
 - Progress tracking (completion percentage, time spent, bookmarks)
 - Category-based course organization (onboarding, operations, training)
 - Difficulty levels (beginner, intermediate, advanced)
+- **Publish/Draft System**: Courses and lessons have `isPublished` flag; agents only see published content, admins see all
 
 **Database Schema:**
-- `courses`: Course metadata, categories, difficulty, estimated duration
-- `lessons`: Individual lessons with content, videos, and sequencing
+- `courses`: Course metadata, categories, difficulty, estimated duration, isPublished, order
+- `lessons`: Individual lessons with content, videos, sequencing, isPublished, prerequisiteLessonIds
 - `resources`: Downloadable files and reference materials
 - `user_lesson_progress`: Tracks completion, time spent, bookmarks
 - `lesson_analytics`: View counts and engagement metrics
 - `onboarding_checklists`: Role-based onboarding tasks
 - `user_onboarding_progress`: Checklist completion tracking
 
-**API Endpoints:**
-- `GET /api/learning/courses` - List all courses with user progress
-- `GET /api/learning/courses/:slug` - Course details with lessons
+**API Endpoints (Student/Agent):**
+- `GET /api/learning/courses` - List published courses with user progress (defaults to `isPublished=true`)
+- `GET /api/learning/courses?isPublished=all` - List all courses (admin use)
+- `GET /api/learning/courses/:slug` - Course details with published lessons only
 - `GET /api/learning/lessons/:slug` - Individual lesson content
-- `POST /api/learning/lessons/:lessonId/progress` - Update progress
+- `POST /api/learning/lessons/:lessonId/progress` - Update progress (completion %, time spent, isCompleted)
 - `POST /api/learning/lessons/:lessonId/bookmark` - Toggle bookmark
 - `GET /api/learning/resources` - List resources
 - `GET /api/learning/onboarding/:userId` - User's onboarding progress
-- Admin routes for content management
 
-**Frontend Pages:**
-- Learning Dashboard (`/learning`) - Course catalog with progress cards
-- Course Detail (`/learning/courses/:slug`) - Lesson list with prerequisites
-- Lesson View (`/learning/lessons/:slug`) - Video player and content display
+**API Endpoints (Admin):**
+- `GET /api/admin/learning/courses/:courseId` - Get course by ID for editing
+- `POST /api/admin/learning/courses` - Create new course
+- `PATCH /api/admin/learning/courses/:courseId` - Update course (including isPublished toggle)
+- `DELETE /api/admin/learning/courses/:courseId` - Delete course
+- `GET /api/admin/learning/courses/:courseId/lessons` - Get lessons for course
+- `GET /api/admin/learning/lessons/:lessonId` - Get lesson by ID for editing
+- `POST /api/admin/learning/lessons` - Create new lesson
+- `PATCH /api/admin/learning/lessons/:lessonId` - Update lesson
+- `DELETE /api/admin/learning/lessons/:lessonId` - Delete lesson
+
+**Frontend Pages (Agent/Student):**
+- Learning Dashboard (`/learning`) - Course catalog with progress cards, category tabs
+- Course Detail (`/learning/courses/:slug`) - Lesson list with prerequisites, lock icons, progress tracking
+- Lesson View (`/learning/lessons/:slug`) - Video embed, rich content, mark complete button, bookmark, progress bar
+
+**Frontend Pages (Admin):**
+- Admin Learning Dashboard (`/learning/admin`) - All courses table with lesson counts, publish/draft toggle buttons
+- Course Form (`/learning/admin/courses/:id`) - Create/edit course with metadata, slug generation
+- Lesson Form (`/learning/admin/lessons/:id`) - Create/edit lesson with TipTap editor, video embed URL, prerequisites
+
+**Known Implementation Status:**
+✅ **Working:**
+- Publish/draft filtering (agents see only published courses/lessons)
+- Admin publish toggle (one-click publish/unpublish in dashboard)
+- Course browsing with progress tracking
+- Lesson viewing with automatic time tracking
+- Mark complete functionality
+- Bookmark toggle
+- Prerequisite locking (lessons with unmet prerequisites show lock icon)
+- TipTap rich text editor (all formatting options functional)
+- Course/lesson creation and editing (admin)
+- Slug auto-generation from titles
+
+⚠️ **Needs Testing:**
+- Resource library (file uploads, downloads, tracking)
+- Onboarding checklists (role-based task tracking)
+- Analytics dashboard (view counts, completion rates)
+- Video embed display (YouTube/Vimeo iframes)
+- Multi-level prerequisite chains
+- Course completion calculation
+- Progress percentage accuracy
+
+📋 **Not Yet Implemented:**
+- Lesson reordering UI (drag-and-drop)
+- Bulk lesson operations
+- Course duplication
+- Content versioning
+- Student roster/enrollment management
 
 ## External Dependencies
 
