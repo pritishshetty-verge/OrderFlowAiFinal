@@ -344,8 +344,8 @@ export function OrdersTable({
   };
 
   return (
-    <div className="rounded-lg border bg-card overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 400px)', minHeight: '500px', maxHeight: '800px' }}>
-      <div className="flex-1 overflow-auto relative">
+    <div className="rounded-lg border bg-card overflow-hidden">
+      <div className="relative">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
             <TableRow>
@@ -463,7 +463,7 @@ export function OrdersTable({
       </div>
       
       {/* Pagination Footer */}
-      <div className="bg-card border-t p-4 flex-shrink-0">
+      <div className="sticky bottom-0 bg-card border-t p-4 z-10">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
