@@ -172,6 +172,7 @@ export interface IStorage {
   // Calls
   createCall(call: InsertCall): Promise<Call>;
   getCallsByOrderId(orderId: string): Promise<Call[]>;
+  getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } })[]>;
   getCallsByAgentId(agentId: string): Promise<Call[]>;
   getCallByReference(callReference: string): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
@@ -935,6 +936,26 @@ export class DbStorage implements IStorage {
       .from(calls)
       .where(eq(calls.orderId, orderId))
       .orderBy(desc(calls.calledAt));
+  }
+
+  async getCallsWithAgentByOrderId(orderId: string): Promise<(Call & { agent: { fullName: string; email: string } })[]> {
+    const result = await db
+      .select({
+        call: calls,
+        agent: {
+          fullName: users.fullName,
+          email: users.email,
+        }
+      })
+      .from(calls)
+      .innerJoin(users, eq(calls.agentId, users.id))
+      .where(eq(calls.orderId, orderId))
+      .orderBy(desc(calls.calledAt));
+
+    return result.map(row => ({
+      ...row.call,
+      agent: row.agent
+    }));
   }
 
   async getCallsByAgentId(agentId: string): Promise<Call[]> {

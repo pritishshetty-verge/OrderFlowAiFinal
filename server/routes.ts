@@ -130,6 +130,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get call history for an order with agent details
+  app.get("/api/orders/:id/calls", async (req, res) => {
+    try {
+      const calls = await storage.getCallsWithAgentByOrderId(req.params.id);
+      res.json(calls);
+    } catch (error) {
+      console.error("Error fetching call history:", error);
+      res.status(500).json({ error: "Failed to fetch call history" });
+    }
+  });
+
   // Assign order to user
   app.post("/api/orders/:id/assign", async (req, res) => {
     try {
