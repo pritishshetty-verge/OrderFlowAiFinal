@@ -1435,6 +1435,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get all calls with details (admin-only)
+  app.get("/api/admin/calls", async (req, res) => {
+    try {
+      const calls = await storage.getAllCallsWithDetails();
+      res.json(calls);
+    } catch (error) {
+      console.error("Error fetching all calls:", error);
+      res.status(500).json({ error: "Failed to fetch calls" });
+    }
+  });
+
   // IVR Webhook - Receive call completion events
   app.post("/api/webhooks/ivr-call-events", async (req, res) => {
     try {

@@ -176,6 +176,10 @@ export interface IStorage {
   getCallsByAgentId(agentId: string): Promise<Call[]>;
   getCallByReference(callReference: string): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
+  getAllCallsWithDetails(): Promise<(Call & { 
+    agent: { fullName: string; email: string } | null;
+    order: { shopifyOrderNumber: string; customerName: string } | null;
+  })[]>;
 
   // Notifications
   createNotification(notification: InsertNotification): Promise<Notification>;
@@ -982,6 +986,34 @@ export class DbStorage implements IStorage {
       .where(eq(calls.id, id))
       .returning();
     return updated;
+  }
+
+  async getAllCallsWithDetails(): Promise<(Call & { 
+    agent: { fullName: string; email: string } | null;
+    order: { shopifyOrderNumber: string; customerName: string } | null;
+  })[]> {
+    const result = await db
+      .select({
+        call: calls,
+        agent: {
+          fullName: users.fullName,
+          email: users.email,
+        },
+        order: {
+          shopifyOrderNumber: orders.shopifyOrderNumber,
+          customerName: orders.customerName,
+        }
+      })
+      .from(calls)
+      .leftJoin(users, eq(calls.agentId, users.id))
+      .leftJoin(orders, eq(calls.orderId, orders.id))
+      .orderBy(desc(calls.calledAt));
+
+    return result.map(row => ({
+      ...row.call,
+      agent: (row.agent && row.agent.fullName) ? row.agent : null,
+      order: (row.order && row.order.shopifyOrderNumber) ? row.order : null
+    }));
   }
 
   // ============================================================================
