@@ -134,14 +134,7 @@ export default function CallLogsPage() {
   const [limit, setLimit] = useState(25);
 
   const { data, isLoading } = useQuery<CallsResponse>({
-    queryKey: ["/api/admin/calls", page, limit],
-    queryFn: async () => {
-      const response = await fetch(`/api/admin/calls?page=${page}&limit=${limit}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to fetch calls");
-      return response.json();
-    },
+    queryKey: [`/api/admin/calls?page=${page}&limit=${limit}`],
   });
 
   if (isLoading) {
