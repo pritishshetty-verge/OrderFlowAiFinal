@@ -2336,9 +2336,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { category, isPublished } = req.query;
       
+      // If isPublished is not specified, default to showing only published courses
+      // Admins can pass isPublished=all to see all courses
+      let publishedFilter: boolean | undefined;
+      if (isPublished === 'all') {
+        publishedFilter = undefined; // Show all
+      } else if (isPublished === 'false') {
+        publishedFilter = false;
+      } else if (isPublished === 'true') {
+        publishedFilter = true;
+      } else {
+        publishedFilter = true; // Default: only published
+      }
+      
       const courses = await storage.listCourses({
         category: category as string | undefined,
-        isPublished: isPublished === 'true' ? true : isPublished === 'false' ? false : undefined,
+        isPublished: publishedFilter,
       });
 
       // Get user's progress for each course (if user is logged in)

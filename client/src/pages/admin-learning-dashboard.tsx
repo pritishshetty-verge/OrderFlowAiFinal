@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Edit, Trash2, BookOpen, Eye } from "lucide-react";
+import { Plus, Edit, Trash2, BookOpen, Eye, Globe, FileText } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -45,7 +45,8 @@ export default function AdminLearningDashboard() {
   const { data, isLoading } = useQuery<{ courses: Course[] }>({
     queryKey: ["/api/learning/courses"],
     queryFn: async () => {
-      const response = await fetch("/api/learning/courses", { credentials: "include" });
+      // Admins should see all courses (including unpublished)
+      const response = await fetch("/api/learning/courses?isPublished=all", { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch courses");
       const coursesData = await response.json();
       
@@ -76,6 +77,30 @@ export default function AdminLearningDashboard() {
       toast({
         title: "Error",
         description: "Failed to delete course.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const togglePublishMutation = useMutation({
+    mutationFn: async ({ courseId, isPublished }: { courseId: string; isPublished: boolean }) => {
+      return await apiRequest(`/api/admin/learning/courses/${courseId}`, "PATCH", {
+        isPublished: !isPublished,
+      });
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learning/courses"] });
+      toast({
+        title: variables.isPublished ? "Course unpublished" : "Course published",
+        description: variables.isPublished 
+          ? "The course is now in draft mode and hidden from agents." 
+          : "The course is now live and visible to all agents.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update course status.",
         variant: "destructive",
       });
     },
@@ -178,11 +203,26 @@ export default function AdminLearningDashboard() {
                       </TableCell>
                       <TableCell>{course.estimatedDuration} min</TableCell>
                       <TableCell>
-                        {course.isPublished ? (
-                          <Badge>Published</Badge>
-                        ) : (
-                          <Badge variant="outline">Draft</Badge>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => togglePublishMutation.mutate({ courseId: course.id, isPublished: course.isPublished })}
+                          disabled={togglePublishMutation.isPending}
+                          data-testid={`button-toggle-publish-${course.id}`}
+                          className="gap-2"
+                        >
+                          {course.isPublished ? (
+                            <>
+                              <Globe className="h-3 w-3" />
+                              <span>Published</span>
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="h-3 w-3" />
+                              <span>Draft</span>
+                            </>
+                          )}
+                        </Button>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
