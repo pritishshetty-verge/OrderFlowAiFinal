@@ -11,7 +11,14 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Download, Play, Pause, Phone } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Download, Play, Pause, Phone, ChevronLeft, ChevronRight } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { useState, useRef } from "react";
 
@@ -28,6 +35,8 @@ interface CallWithDetails {
   ivrStatus: string | null;
   completedAt: string | null;
   webhookData: any;
+  transcript: string | null;
+  aiAnalysis: any | null;
   agent: {
     fullName: string;
     email: string;
@@ -36,6 +45,13 @@ interface CallWithDetails {
     shopifyOrderNumber: string;
     customerName: string;
   } | null;
+}
+
+interface CallsResponse {
+  calls: CallWithDetails[];
+  total: number;
+  page: number;
+  totalPages: number;
 }
 
 function getCallStatusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
@@ -114,8 +130,18 @@ function AudioPlayer({ recordingUrl }: { recordingUrl: string }) {
 }
 
 export default function CallLogsPage() {
-  const { data: calls, isLoading } = useQuery<CallWithDetails[]>({
-    queryKey: ["/api/admin/calls"],
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+
+  const { data, isLoading } = useQuery<CallsResponse>({
+    queryKey: ["/api/admin/calls", page, limit],
+    queryFn: async () => {
+      const response = await fetch(`/api/admin/calls?page=${page}&limit=${limit}`, {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Failed to fetch calls");
+      return response.json();
+    },
   });
 
   if (isLoading) {
@@ -136,101 +162,186 @@ export default function CallLogsPage() {
     );
   }
 
+  const calls = data?.calls || [];
+  const total = data?.total || 0;
+  const totalPages = data?.totalPages || 1;
+
   return (
     <div className="p-6 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Phone className="h-6 w-6" />
-          Call Logs
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          All IVR call records with recordings and metadata
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Phone className="h-6 w-6" />
+            Call Logs
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            All IVR call records with recordings and metadata ({total} total)
+          </p>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Rows per page:</span>
+          <Select
+            value={limit.toString()}
+            onValueChange={(value) => {
+              setLimit(parseInt(value));
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-20" data-testid="select-page-size">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10</SelectItem>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Call Reference</TableHead>
-              <TableHead>Order</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Duration</TableHead>
-              <TableHead>Called At</TableHead>
-              <TableHead>Recording</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {!calls || calls.length === 0 ? (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                  No call records found
-                </TableCell>
+                <TableHead>Call Reference</TableHead>
+                <TableHead>Order</TableHead>
+                <TableHead>Customer</TableHead>
+                <TableHead>Agent</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>Called At</TableHead>
+                <TableHead>Recording</TableHead>
+                <TableHead>Transcript</TableHead>
+                <TableHead>AI Analysis</TableHead>
               </TableRow>
-            ) : (
-              calls.map((call) => (
-                <TableRow key={call.id} data-testid={`row-call-${call.id}`}>
-                  <TableCell className="font-mono text-sm">
-                    {call.callReference || "—"}
-                  </TableCell>
-                  <TableCell>
-                    {call.order ? (
-                      <div>
-                        <div className="font-medium">#{call.order.shopifyOrderNumber}</div>
-                        <div className="text-xs text-muted-foreground">{call.order.customerName}</div>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {call.customerPhone}
-                  </TableCell>
-                  <TableCell>
-                    {call.agent ? (
-                      <div>
-                        <div className="font-medium">{call.agent.fullName}</div>
-                        <div className="text-xs text-muted-foreground">{call.agent.email}</div>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">Unknown Agent</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-1">
-                      <Badge variant={getCallStatusVariant(call.callStatus)}>
-                        {call.callStatus}
-                      </Badge>
-                      {call.ivrStatus && (
-                        <Badge variant="outline" className="ml-1">
-                          {call.ivrStatus}
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>{formatDuration(call.callDuration)}</TableCell>
-                  <TableCell>
-                    <div>
-                      <div className="text-sm">{format(new Date(call.calledAt), "PPp")}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(call.calledAt), { addSuffix: true })}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {call.recordingUrl ? (
-                      <AudioPlayer recordingUrl={call.recordingUrl} />
-                    ) : (
-                      <span className="text-muted-foreground text-sm">No recording</span>
-                    )}
+            </TableHeader>
+            <TableBody>
+              {calls.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    No call records found
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              ) : (
+                calls.map((call) => (
+                  <TableRow key={call.id} data-testid={`row-call-${call.id}`}>
+                    <TableCell className="font-mono text-sm">
+                      {call.callReference || "—"}
+                    </TableCell>
+                    <TableCell>
+                      {call.order ? (
+                        <div>
+                          <div className="font-medium">#{call.order.shopifyOrderNumber}</div>
+                          <div className="text-xs text-muted-foreground">{call.order.customerName}</div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {call.customerPhone}
+                    </TableCell>
+                    <TableCell>
+                      {call.agent ? (
+                        <div>
+                          <div className="font-medium">{call.agent.fullName}</div>
+                          <div className="text-xs text-muted-foreground">{call.agent.email}</div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Unknown Agent</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Badge variant={getCallStatusVariant(call.callStatus)}>
+                          {call.callStatus}
+                        </Badge>
+                        {call.ivrStatus && (
+                          <Badge variant="outline" className="ml-1">
+                            {call.ivrStatus}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatDuration(call.callDuration)}</TableCell>
+                    <TableCell>
+                      <div>
+                        <div className="text-sm">{format(new Date(call.calledAt), "PPp")}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(call.calledAt), { addSuffix: true })}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {call.recordingUrl ? (
+                        <AudioPlayer recordingUrl={call.recordingUrl} />
+                      ) : (
+                        <span className="text-muted-foreground text-sm">No recording</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {call.transcript ? (
+                        <div className="max-w-xs">
+                          <p className="text-sm truncate">{call.transcript}</p>
+                        </div>
+                      ) : (
+                        <Badge variant="outline">N/A</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {call.aiAnalysis ? (
+                        <Badge variant="secondary">Available</Badge>
+                      ) : (
+                        <Badge variant="outline">N/A</Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <div className="text-sm text-muted-foreground">
+              Showing {(page - 1) * limit + 1} to {Math.min(page * limit, total)} of {total} calls
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                data-testid="button-prev-page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              
+              <div className="flex items-center gap-1">
+                <span className="text-sm">
+                  Page {page} of {totalPages}
+                </span>
+              </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                data-testid="button-next-page"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );
