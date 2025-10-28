@@ -1,0 +1,28 @@
+I'd like to provide a very detailed update on our plan for the Orders page layout. The previous changes were a good start, but the current implementation feels "cramped" and the scrolling is "too short."
+
+My goal is to perfectly replicate the Shopify UX, which uses a full-page scrolling model.
+
+The Current Problem
+The table is currently scrolling inside a small, fixed-height container on the page. This is not the desired behavior.
+
+The Required Solution: A "Full-Page Sticky" Layout
+I want the entire page to scroll, and for the table header and pagination footer to become "sticky" to the browser window.
+
+Here is a step-by-step description of the user experience I want you to build:
+
+Initial View: The user loads the page. They can see: * The Summary Cards ("Total Orders," "Pending," etc.) * The Search Bar * The Table Header (<thead>) * The first set of order rows (<tbody>) * The Pagination Footer (stuck to the bottom)
+
+The Scrolling Action: * When the user scrolls the page down, the Summary Cards and Search Bar should scroll up and disappear off the top of the screen. They are not sticky. * The very instant the Table Header (<thead>) hits the top of the browser window, it must lock in place (become position: sticky; top: 0;). * As the user continues to scroll, the table rows from the <tbody> will now scroll underneath the fixed header, allowing the user to always see the column titles.
+
+The Footer: * Throughout this entire process (initial view and scrolling), the Pagination Footer you built must remain locked to the very bottom of the browser window (using position: sticky; bottom: 0;).
+
+Specific Technical Instructions:
+To achieve this, you will need to fundamentally change the current layout:
+
+1. Remove the "Inset Scrollbox": You must find the div that is currently wrapping the table and remove its height, max-height, and overflow-y: auto (or overflow-y: scroll) properties. The page itself, not a div, must be the scrolling element.
+
+2. Make the Header Sticky: Apply position: sticky; and top: 0; to the <thead>. You will also need to apply a z-index (e.g., z-10) and a solid background color to the header so the rows scrolling underneath it are not visible through it.
+
+3. Make the Footer Sticky: Apply position: sticky; and bottom: 0; to the entire pagination footer div. This also needs a z-index and a solid background color.
+
+The final result should be a fluid, full-page scrolling experience where the only two elements that stay fixed to the window are the table header (once you scroll to it) and the pagination footer.
