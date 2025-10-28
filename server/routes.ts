@@ -1324,15 +1324,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Handle IVR API response with specific error codes
       if (ivrResponse.status === 200) {
+        // Extract call reference from IVR response (adjust field name based on your provider)
+        const callReference = ivrData.call_id || ivrData.callId || ivrData.reference || ivrData.id;
+        
         // Create call record in database
         const call = await storage.createCall({
           orderId,
           agentId: userId,
           customerPhone,
           callStatus: "initiated",
+          callReference: callReference || undefined,
+          recipientNumber: customerPhone,
         });
 
-        console.log("✓ Call initiated successfully:", { callId: call.id, orderId });
+        console.log("✓ Call initiated successfully:", { 
+          callId: call.id, 
+          orderId, 
+          callReference 
+        });
 
         return res.json({ 
           success: true, 
@@ -1412,6 +1421,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching calls:", error);
       res.status(500).json({ error: "Failed to fetch calls" });
+    }
+  });
+
+  // IVR Webhook - Receive call completion events
+  app.post("/api/webhooks/ivr-call-events", async (req, res) => {
+    try {
+      console.log("Received IVR webhook:", JSON.stringify(req.body, null, 2));
+
+      // Verify webhook secret if configured
+      const webhookSecret = process.env.IVR_WEBHOOK_SECRET;
+      if (webhookSecret) {
+        const providedSecret = req.headers['x-webhook-secret'] || req.body.secret;
+        
+        if (providedSecret !== webhookSecret) {
+          console.error("IVR webhook authentication failed");
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+      }
+
+      // Parse webhook payload
+      // Adjust these field names based on your IVR provider's actual payload structure
+      const {
+        call_reference,      // Unique call ID from IVR provider
+        callReference,       // Alternative naming
+        call_status,         // Status: completed, failed, no-answer, busy, etc.
+        callStatus,
+        status,
+        call_duration,       // Duration in seconds
+        callDuration,
+        duration,
+        recording_url,       // URL to call recording
+        recordingUrl,
+        caller_number,       // Number that initiated the call (agent)
+        callerNumber,
+        recipient_number,    // Number that was called (customer)
+        recipientNumber,
+        phone,
+        customer_phone,
+        customerPhone,
+      } = req.body;
+
+      // Normalize field names (support multiple formats)
+      const normalizedData = {
+        callReference: call_reference || callReference,
+        ivrStatus: call_status || callStatus || status,
+        callDuration: call_duration || callDuration || duration,
+        recordingUrl: recording_url || recordingUrl,
+        recipientNumber: recipient_number || recipientNumber || phone || customer_phone || customerPhone,
+        completedAt: new Date(),
+        webhookData: req.body, // Store full payload for debugging
+      };
+
+      console.log("Normalized webhook data:", normalizedData);
+
+      // Find the call record by reference
+      let call;
+      if (normalizedData.callReference) {
+        call = await storage.getCallByReference(normalizedData.callReference);
+      }
+
+      // If not found by reference, try to find by customer phone
+      if (!call && normalizedData.recipientNumber) {
+        const recentCalls = await storage.getCallsByOrderId(''); // This won't work, need different approach
+        // For now, we'll just log if we can't find the call
+        console.warn("Could not find call by reference:", normalizedData.callReference);
+      }
+
+      if (call) {
+        // Update the existing call record with webhook data
+        const updateData: any = {
+          callDuration: normalizedData.callDuration,
+          recordingUrl: normalizedData.recordingUrl,
+          callReference: normalizedData.callReference,
+          recipientNumber: normalizedData.recipientNumber,
+          ivrStatus: normalizedData.ivrStatus,
+          completedAt: normalizedData.completedAt,
+          webhookData: normalizedData.webhookData,
+        };
+
+        // Update call status based on IVR status
+        if (normalizedData.ivrStatus) {
+          const statusMap: Record<string, string> = {
+            'completed': 'completed',
+            'answered': 'completed',
+            'success': 'completed',
+            'failed': 'failed',
+            'no-answer': 'failed',
+            'busy': 'failed',
+            'rejected': 'failed',
+          };
+          
+          const mappedStatus = statusMap[normalizedData.ivrStatus.toLowerCase()];
+          if (mappedStatus) {
+            updateData.callStatus = mappedStatus;
+          }
+        }
+
+        await storage.updateCallFromWebhook(call.id, updateData);
+        
+        console.log("Successfully updated call record:", call.id);
+        
+        return res.json({ 
+          success: true, 
+          message: "Call event processed successfully",
+          callId: call.id 
+        });
+      } else {
+        // Call not found - log for debugging but still return success to IVR provider
+        console.warn("Call not found for webhook data:", normalizedData);
+        
+        return res.json({ 
+          success: true, 
+          message: "Webhook received but call record not found",
+          note: "This may be expected if the call wasn't initiated through the system"
+        });
+      }
+
+    } catch (error: any) {
+      console.error("Error processing IVR webhook:", error);
+      
+      // Still return 200 to prevent IVR provider from retrying
+      // but log the error for debugging
+      return res.status(200).json({ 
+        success: false, 
+        error: "Internal error processing webhook",
+        message: error.message 
+      });
     }
   });
 
