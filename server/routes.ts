@@ -1443,7 +1443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Verify webhook secret if configured
       const webhookSecret = process.env.IVR_WEBHOOK_SECRET;
       if (webhookSecret) {
-        const providedSecret = req.headers['x-webhook-secret'] || req.body.secret;
+        const providedSecret = req.headers['x-webhook-secret'] || req.body.secret || req.body.secret_key;
         
         if (providedSecret !== webhookSecret) {
           console.error("IVR webhook authentication failed");
