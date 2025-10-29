@@ -335,4 +335,9 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+
+  /* Logo rotation animation */
+  .hover\:rotate-360:hover {
+    transform: rotate(360deg);
+  }
 }
