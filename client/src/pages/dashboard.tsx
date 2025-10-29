@@ -185,7 +185,6 @@ export default function DashboardPage() {
           </Button>
         </div>
       </header>
-
       <main className="flex-1 overflow-auto p-6">
         {isLoading ? (
           <div className="space-y-6">
@@ -204,7 +203,7 @@ export default function DashboardPage() {
         ) : (
           <div className="space-y-6">
             <div>
-              <h1 className="text-3xl font-bold">Dashboard</h1>
+              <h1 className="font-bold text-[20px]">Dashboard</h1>
             </div>
 
             <DashboardStats {...stats} />
@@ -228,7 +227,6 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
-
       <OrderQuickPreview
         order={selectedOrder}
         open={isQuickPreviewOpen}
@@ -250,7 +248,6 @@ export default function DashboardPage() {
           // TODO: Implement edit order dialog
         }}
       />
-
       <AssignOrderDialog
         order={selectedOrder}
         open={isAssignDialogOpen}

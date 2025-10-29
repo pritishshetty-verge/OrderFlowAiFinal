@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ChevronDown } from "lucide-react";
-import logoUrl from "@assets/image_1761228744572.png";
+import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 const menuItems = [
   {
