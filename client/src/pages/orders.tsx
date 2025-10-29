@@ -226,14 +226,14 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         status: "confirmed" as const,
       },
       {
-        label: "Cancelled",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Cancelled").length,
-        status: "cancelled" as const,
-      },
-      {
         label: "Follow-Up",
         count: baseFilteredOrders.filter((o) => o.callStatus === "Follow Up").length,
         status: "followup" as const,
+      },
+      {
+        label: "Cancelled",
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Cancelled").length,
+        status: "cancelled" as const,
       },
     ],
     [baseFilteredOrders]
