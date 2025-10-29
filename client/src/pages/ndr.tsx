@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Package, AlertTriangle, MapPin, Phone, Calendar } from "lucide-react";
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Package } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -34,6 +34,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
+import { PageLayout } from "@/components/page-layout";
+import { NdrFilter } from "@/components/ndr-filter";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface NdrEvent {
   id: string;
@@ -245,13 +248,68 @@ function ReattemptDeliveryModal({
 export default function NDRPage() {
   const [selectedNdrEvent, setSelectedNdrEvent] = useState<NdrEvent | null>(null);
   const [reattemptModalOpen, setReattemptModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [actionFilter, setActionFilter] = useState<string>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const { data, isLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
     queryKey: ["/api/shiprocket/ndr"],
   });
 
   const ndrEvents = data?.events || [];
+
+  // Apply filters
+  const filteredEvents = useMemo(() => {
+    return ndrEvents.filter((event) => {
+      // Search filter (AWB)
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        if (!event.awb.toLowerCase().includes(query)) {
+          return false;
+        }
+      }
+
+      // Status filter
+      if (statusFilter !== "all" && event.ndrStatus !== statusFilter) {
+        return false;
+      }
+
+      // Action filter
+      if (actionFilter === "pending" && event.actionTaken) {
+        return false;
+      }
+      if (actionFilter === "resolved" && !event.resolved) {
+        return false;
+      }
+      if (actionFilter === "reattempt" && !event.reattemptScheduled) {
+        return false;
+      }
+
+      // Date range filter
+      if (dateRange.from && event.ndrDate) {
+        const ndrDate = new Date(event.ndrDate);
+        if (ndrDate < dateRange.from) return false;
+      }
+      if (dateRange.to && event.ndrDate) {
+        const ndrDate = new Date(event.ndrDate);
+        const toDate = new Date(dateRange.to);
+        toDate.setHours(23, 59, 59, 999);
+        if (ndrDate > toDate) return false;
+      }
+
+      return true;
+    });
+  }, [ndrEvents, searchQuery, statusFilter, actionFilter, dateRange]);
+
+  // Pagination
+  const totalEvents = filteredEvents.length;
+  const totalPages = Math.ceil(totalEvents / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalEvents);
+  const paginatedEvents = filteredEvents.slice(startIndex, endIndex);
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { label: string; variant: any }> = {
@@ -284,143 +342,220 @@ export default function NDRPage() {
     setReattemptModalOpen(true);
   };
 
+  const handleClearFilters = () => {
+    setSearchQuery("");
+    setDateRange({});
+    setStatusFilter("all");
+    setActionFilter("all");
+  };
+
   return (
-    <div className="container mx-auto p-6 space-y-6" data-testid="page-ndr">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2" data-testid="heading-ndr">
-            <AlertTriangle className="h-8 w-8 text-destructive" />
-            NDR Management
-          </h1>
-          <p className="text-muted-foreground mt-1" data-testid="text-description">
-            Track and manage failed delivery attempts
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Total NDR Cases</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-total-ndr">{data?.total || 0}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Pending Action</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-pending-action">
-              {ndrEvents.filter((e) => !e.actionTaken).length}
+    <PageLayout
+      title="NDR Management"
+      description="Track and manage failed delivery attempts"
+    >
+      <div className="p-6 space-y-6" data-testid="page-ndr">
+        {isLoading ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {[...Array(4)].map((_, i) => (
+                <Skeleton key={i} className="h-24 w-full" />
+              ))}
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Reattempt Scheduled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-reattempt-scheduled">
-              {ndrEvents.filter((e) => e.reattemptScheduled).length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Resolved</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-resolved">
-              {ndrEvents.filter((e) => e.resolved).length}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle data-testid="heading-ndr-cases">NDR Cases</CardTitle>
-              <CardDescription>All failed delivery attempts requiring action</CardDescription>
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[200px]" data-testid="select-status-filter">
-                <SelectValue placeholder="Filter by status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" data-testid="option-all">All Statuses</SelectItem>
-                <SelectItem value="customer_unavailable" data-testid="option-customer-unavailable">Customer Unavailable</SelectItem>
-                <SelectItem value="address_issue" data-testid="option-address-issue">Address Issue</SelectItem>
-                <SelectItem value="refused" data-testid="option-refused">Refused</SelectItem>
-                <SelectItem value="other" data-testid="option-other">Other</SelectItem>
-              </SelectContent>
-            </Select>
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-96 w-full" />
           </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground" data-testid="text-loading">
-              Loading NDR cases...
+        ) : (
+          <>
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Total NDR Cases</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold" data-testid="text-total-ndr">{data?.total || 0}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Pending Action</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold" data-testid="text-pending-action">
+                    {ndrEvents.filter((e) => !e.actionTaken).length}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Reattempt Scheduled</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold" data-testid="text-reattempt-scheduled">
+                    {ndrEvents.filter((e) => e.reattemptScheduled).length}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Resolved</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold" data-testid="text-resolved">
+                    {ndrEvents.filter((e) => e.resolved).length}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          ) : ndrEvents.length === 0 ? (
-            <div className="text-center py-8" data-testid="text-no-ndr">
-              <Package className="h-12 w-12 mx-auto text-muted-foreground mb-2" />
-              <p className="text-muted-foreground">No NDR cases found</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead data-testid="header-awb">AWB</TableHead>
-                  <TableHead data-testid="header-ndr-date">NDR Date</TableHead>
-                  <TableHead data-testid="header-status">Status</TableHead>
-                  <TableHead data-testid="header-reason">Reason</TableHead>
-                  <TableHead data-testid="header-action">Action Taken</TableHead>
-                  <TableHead data-testid="header-actions">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ndrEvents
-                  .filter((event) => statusFilter === "all" || event.ndrStatus === statusFilter)
-                  .map((event) => (
-                    <TableRow key={event.id} data-testid={`row-ndr-${event.id}`}>
-                      <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
-                        {event.awb}
-                      </TableCell>
-                      <TableCell data-testid={`cell-date-${event.id}`}>
-                        {format(new Date(event.ndrDate), "MMM dd, yyyy")}
-                      </TableCell>
-                      <TableCell data-testid={`cell-status-${event.id}`}>{getStatusBadge(event.ndrStatus)}</TableCell>
-                      <TableCell className="max-w-xs truncate" data-testid={`cell-reason-${event.id}`}>
-                        {event.ndrReason}
-                      </TableCell>
-                      <TableCell data-testid={`cell-action-taken-${event.id}`}>{getActionBadge(event.actionTaken)}</TableCell>
-                      <TableCell data-testid={`cell-actions-${event.id}`}>
-                        {!event.resolved && (
+
+            {/* Filters */}
+            <NdrFilter
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              dateRange={dateRange}
+              onDateRangeChange={setDateRange}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              actionFilter={actionFilter}
+              onActionFilterChange={setActionFilter}
+              onClearFilters={handleClearFilters}
+            />
+
+            {/* NDR Table */}
+            {filteredEvents.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <Package className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium">No NDR cases found</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {ndrEvents.length === 0
+                      ? "NDR cases will appear here"
+                      : "No cases match your filters"}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {/* Summary Info */}
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1}-{endIndex} of {totalEvents} case{totalEvents !== 1 ? "s" : ""}
+                  </p>
+                </div>
+
+                {/* Table with Sticky Header and Footer */}
+                <div className="rounded-lg border bg-card">
+                  <div className="relative">
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                        <TableRow>
+                          <TableHead className="bg-card" data-testid="header-awb">AWB</TableHead>
+                          <TableHead className="bg-card" data-testid="header-ndr-date">NDR Date</TableHead>
+                          <TableHead className="bg-card" data-testid="header-status">Status</TableHead>
+                          <TableHead className="bg-card" data-testid="header-reason">Reason</TableHead>
+                          <TableHead className="bg-card" data-testid="header-action">Action Taken</TableHead>
+                          <TableHead className="text-right bg-card" data-testid="header-actions">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedEvents.map((event) => (
+                          <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
+                            <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
+                              {event.awb}
+                            </TableCell>
+                            <TableCell data-testid={`cell-date-${event.id}`}>
+                              {format(new Date(event.ndrDate), "MMM dd, yyyy")}
+                            </TableCell>
+                            <TableCell data-testid={`cell-status-${event.id}`}>{getStatusBadge(event.ndrStatus)}</TableCell>
+                            <TableCell className="max-w-xs truncate" data-testid={`cell-reason-${event.id}`}>
+                              {event.ndrReason}
+                            </TableCell>
+                            <TableCell data-testid={`cell-action-taken-${event.id}`}>{getActionBadge(event.actionTaken)}</TableCell>
+                            <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
+                              {!event.resolved && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleReattempt(event)}
+                                  data-testid={`button-reattempt-${event.id}`}
+                                >
+                                  <Calendar className="h-4 w-4 mr-1" />
+                                  Reattempt
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination Footer */}
+                  <div className="sticky bottom-0 bg-card border-t p-4 z-10">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          Showing {totalEvents === 0 ? 0 : startIndex + 1}-{endIndex} of {totalEvents} cases
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">Rows per page:</span>
+                          <Select value={String(pageSize)} onValueChange={(value) => {
+                            setPageSize(Number(value));
+                            setCurrentPage(1);
+                          }}>
+                            <SelectTrigger className="w-[80px]" data-testid="select-page-size">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="10">10</SelectItem>
+                              <SelectItem value="25">25</SelectItem>
+                              <SelectItem value="50">50</SelectItem>
+                              <SelectItem value="100">100</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-center gap-1">
                           <Button
-                            size="sm"
                             variant="outline"
-                            onClick={() => handleReattempt(event)}
-                            data-testid={`button-reattempt-${event.id}`}
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            data-testid="button-prev-page"
                           >
-                            <Calendar className="h-4 w-4 mr-1" />
-                            Reattempt
+                            <ChevronLeft className="h-4 w-4" />
+                            Previous
                           </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                          <span className="text-sm text-muted-foreground px-4">
+                            Page {currentPage} of {totalPages || 1}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage >= totalPages}
+                            data-testid="button-next-page"
+                          >
+                            Next
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <ReattemptDeliveryModal
         open={reattemptModalOpen}
@@ -428,6 +563,6 @@ export default function NDRPage() {
         ndrEvent={selectedNdrEvent}
         onSuccess={() => setSelectedNdrEvent(null)}
       />
-    </div>
+    </PageLayout>
   );
 }
