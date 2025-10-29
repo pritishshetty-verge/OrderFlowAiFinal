@@ -336,8 +336,11 @@
     inset: -1px;
   }
 
-  /* Logo rotation animation */
-  .hover\:rotate-360:hover {
+  /* Logo spin animation */
+  .logo-spin-on-hover {
+    transition: transform 1s ease-in-out;
+  }
+  .logo-spin-on-hover:hover {
     transform: rotate(360deg);
   }
 }
