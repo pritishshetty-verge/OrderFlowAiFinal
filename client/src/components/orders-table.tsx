@@ -364,8 +364,8 @@ export function OrdersTable({
               <TableHead className="bg-card">Items</TableHead>
               <TableHead className="text-right bg-card">Total</TableHead>
               <TableHead className="bg-card">Payment</TableHead>
-              <TableHead className="bg-card">Call Status</TableHead>
               <TableHead className="bg-card">Date</TableHead>
+              <TableHead className="bg-card">Call Status</TableHead>
               <TableHead className="text-right bg-card">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -410,6 +410,9 @@ export function OrdersTable({
               <TableCell>
                 <PaymentBadge method={order.paymentMethod} />
               </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {formatDistanceToNow(order.createdAt, { addSuffix: true })}
+              </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <CallStatusActions
                   orderId={order.id}
@@ -420,9 +423,6 @@ export function OrdersTable({
                   onFollowup={handleFollowupOrder}
                   disabled={confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending}
                 />
-              </TableCell>
-              <TableCell className="text-xs text-muted-foreground">
-                {formatDistanceToNow(order.createdAt, { addSuffix: true })}
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1">
