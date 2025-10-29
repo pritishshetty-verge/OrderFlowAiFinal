@@ -65,7 +65,7 @@ export function OrderItemsSummary({ orderId, fallbackSummary }: OrderItemsSummar
                 data-testid={`item-${index}`}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{item.productName}</p>
+                  <p className="font-medium truncate text-[#2d080a]">{item.productName}</p>
                   {item.variantTitle && item.variantTitle !== "Default Title" && (
                     <p className="text-xs text-muted-foreground">{item.variantTitle}</p>
                   )}
