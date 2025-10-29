@@ -51,7 +51,7 @@ export function OrderItemsSummary({ orderId, fallbackSummary }: OrderItemsSummar
           {smartSummary}
         </button>
       </HoverCardTrigger>
-      <HoverCardContent className="w-80" data-testid={`items-details-${orderId}`}>
+      <HoverCardContent className="w-80 border shadow-lg z-50" data-testid={`items-details-${orderId}`}>
         <div className="space-y-3">
           <div className="flex items-center gap-2 border-b pb-2">
             <Package className="h-4 w-4 text-muted-foreground" />
