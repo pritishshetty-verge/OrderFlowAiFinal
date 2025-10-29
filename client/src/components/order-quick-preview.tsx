@@ -315,7 +315,7 @@ export function OrderQuickPreview({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[500px] sm:w-[600px] overflow-y-auto p-0">
+      <SheetContent className="w-[500px] sm:w-[600px] overflow-y-auto p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4">
         <SheetHeader className="p-4 pb-3">
           <div className="flex items-center justify-between">
             <div>
