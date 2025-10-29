@@ -684,39 +684,7 @@ export function OrderQuickPreview({
             )}
           </div>
 
-          <Separator />
-
-          {/* Action Buttons - At the very bottom */}
-          <div className="flex gap-2 pt-1">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="flex-1"
-              onClick={onInvoice}
-              data-testid="button-invoice"
-            >
-              Invoice
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="flex-1"
-              onClick={onRefund}
-              data-testid="button-refund"
-            >
-              Refund
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="flex-1"
-              onClick={onEditOrder}
-              data-testid="button-edit-order"
-            >
-              Edit order
-            </Button>
           </div>
-        </div>
       </SheetContent>
 
       {/* Add Tag Dialog */}
