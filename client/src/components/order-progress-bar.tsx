@@ -62,7 +62,7 @@ export function OrderProgressBar({ steps, activeStep, onStepClick }: OrderProgre
                         step.status === "assigned" && "bg-blue-500",
                         step.status === "pending" && "bg-purple-500",
                         step.status === "confirmed" && "bg-green-500",
-                        step.status === "cancelled" && "bg-gray-400",
+                        step.status === "cancelled" && "bg-red-600",
                         step.status === "followup" && "bg-amber-500"
                       )}
                       style={{ width: `${fillPercentage}%` }}
