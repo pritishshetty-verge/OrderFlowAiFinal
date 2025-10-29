@@ -59,7 +59,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
 
@@ -151,18 +150,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       );
     }
 
-    // Status filter (Shopify order status)
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((order) => order.status === statusFilter);
-    }
-
     // Payment method filter
     if (paymentFilter !== "all") {
       filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
     }
 
     return filtered;
-  }, [baseFilteredOrders, activeTab, searchQuery, statusFilter, paymentFilter]);
+  }, [baseFilteredOrders, activeTab, searchQuery, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 
@@ -185,17 +179,12 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setSearchQuery(value);
   };
 
-  const handleStatusChange = (value: string) => {
-    setStatusFilter(value);
-  };
-
   const handlePaymentChange = (value: string) => {
     setPaymentFilter(value);
   };
 
   const handleClearFilters = () => {
     setSearchQuery("");
-    setStatusFilter("all");
     setPaymentFilter("all");
   };
 
@@ -262,7 +251,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             <div className="space-y-4">
               <OrdersFilter
                 onSearch={handleSearch}
-                onStatusChange={handleStatusChange}
                 onPaymentChange={handlePaymentChange}
                 onClearFilters={handleClearFilters}
               />

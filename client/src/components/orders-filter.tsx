@@ -11,14 +11,12 @@ import { Button } from "@/components/ui/button";
 
 interface OrdersFilterProps {
   onSearch?: (value: string) => void;
-  onStatusChange?: (value: string) => void;
   onPaymentChange?: (value: string) => void;
   onClearFilters?: () => void;
 }
 
 export function OrdersFilter({
   onSearch,
-  onStatusChange,
   onPaymentChange,
   onClearFilters,
 }: OrdersFilterProps) {
@@ -36,22 +34,6 @@ export function OrdersFilter({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Select onValueChange={onStatusChange} defaultValue="all">
-          <SelectTrigger className="w-[140px]" data-testid="select-status-filter">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="assigned">Assigned</SelectItem>
-            <SelectItem value="confirmed">Confirmed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-            <SelectItem value="shipped">Shipped</SelectItem>
-            <SelectItem value="delivered">Delivered</SelectItem>
-            <SelectItem value="ndr">NDR</SelectItem>
-          </SelectContent>
-        </Select>
-
         <Select onValueChange={onPaymentChange} defaultValue="all">
           <SelectTrigger className="w-[140px]" data-testid="select-payment-filter">
             <SelectValue placeholder="Payment" />
