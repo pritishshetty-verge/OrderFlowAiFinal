@@ -16,10 +16,10 @@ export function PaymentBadge({ method, className }: PaymentBadgeProps) {
     <Badge
       variant="outline"
       className={cn(
-        "rounded-full px-3 py-1 text-xs font-medium border gap-1.5",
+        "rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent",
         isCOD
-          ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
-          : "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20",
+          ? "text-yellow-600 dark:text-yellow-400 border-yellow-600 dark:border-yellow-400"
+          : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400",
         className
       )}
       data-testid={`badge-payment-${method}`}

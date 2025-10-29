@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, Loader2, ChevronDown } from "lucide-react";
 import { CancelOrderModal } from "@/components/cancel-order-modal";
 import { FollowupOrderModal } from "@/components/followup-order-modal";
 import {
@@ -13,6 +13,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -87,6 +93,19 @@ export function CallStatusActions({
     }
   };
 
+  const getStatusIcon = (status?: string) => {
+    switch (status) {
+      case "Confirmed":
+        return <CheckCircle2 className="h-4 w-4 mr-1" />;
+      case "Cancelled":
+        return <XCircle className="h-4 w-4 mr-1" />;
+      case "Follow Up":
+        return <Clock className="h-4 w-4 mr-1" />;
+      default:
+        return <Clock className="h-4 w-4 mr-1" />;
+    }
+  };
+
   if (currentStatus === "Confirmed" || currentStatus === "Cancelled") {
     // Show status badge for completed states
     return (
@@ -109,41 +128,47 @@ export function CallStatusActions({
 
   return (
     <>
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={handleConfirmClick}
-          className="gap-1 text-green-600 dark:text-green-400 border-green-300 dark:border-green-800"
-          data-testid="button-confirm"
-        >
-          <CheckCircle2 className="h-4 w-4" />
-          Confirm
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={handleCancelClick}
-          className="gap-1 text-red-600 dark:text-red-400 border-red-300 dark:border-red-800"
-          data-testid="button-cancel"
-        >
-          <XCircle className="h-4 w-4" />
-          Cancel
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          onClick={handleFollowupClick}
-          className="gap-1 text-yellow-600 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800"
-          data-testid="button-followup"
-        >
-          <Clock className="h-4 w-4" />
-          Follow Up
-        </Button>
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled}
+            className={`gap-1 ${getStatusColor(currentStatus)}`}
+            data-testid="dropdown-call-status"
+          >
+            {getStatusIcon(currentStatus)}
+            {currentStatus || "Pending"}
+            <ChevronDown className="h-3 w-3 ml-1" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem
+            onClick={handleConfirmClick}
+            className="gap-2 text-green-600 dark:text-green-400 focus:text-green-600 dark:focus:text-green-400"
+            data-testid="menuitem-confirm"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            Confirm
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={handleCancelClick}
+            className="gap-2 text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400"
+            data-testid="menuitem-cancel"
+          >
+            <XCircle className="h-4 w-4" />
+            Cancel
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={handleFollowupClick}
+            className="gap-2 text-yellow-600 dark:text-yellow-400 focus:text-yellow-600 dark:focus:text-yellow-400"
+            data-testid="menuitem-followup"
+          >
+            <Clock className="h-4 w-4" />
+            Follow-Up
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* Confirm Dialog */}
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
