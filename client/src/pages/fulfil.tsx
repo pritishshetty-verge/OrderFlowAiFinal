@@ -213,10 +213,10 @@ export default function FulfilPage() {
                 </div>
 
                 {/* Table Container with Sticky Header and Footer */}
-                <div className="relative border rounded-lg">
-                  <div className="overflow-auto max-h-[calc(100vh-320px)]">
+                <div className="rounded-lg border bg-card">
+                  <div className="relative">
                     <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-card">
+                      <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                         <TableRow>
                           <TableHead className="w-[50px] bg-card">
                             <Checkbox
@@ -294,29 +294,27 @@ export default function FulfilPage() {
                     </Table>
                   </div>
 
-                  {/* Sticky Pagination Footer */}
-                  <div className="sticky bottom-0 z-10 bg-card border-t">
-                    <div className="flex items-center justify-between px-4 py-3">
+                  {/* Pagination Footer */}
+                  <div className="sticky bottom-0 bg-card border-t p-4 z-10">
+                    <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm text-muted-foreground">
-                          {startIndex + 1}-{endIndex} of {totalOrders}
-                        </p>
+                        <span className="text-sm text-muted-foreground">
+                          Showing {totalOrders === 0 ? 0 : startIndex + 1}-{endIndex} of {totalOrders} orders
+                        </span>
                       </div>
 
-                      <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">Rows per page</span>
-                          <Select
-                            value={pageSize.toString()}
-                            onValueChange={(value) => {
-                              setPageSize(Number(value));
-                              setCurrentPage(1);
-                            }}
-                          >
-                            <SelectTrigger className="w-[70px]" data-testid="select-page-size">
+                          <span className="text-sm text-muted-foreground">Rows per page:</span>
+                          <Select value={String(pageSize)} onValueChange={(value) => {
+                            setPageSize(Number(value));
+                            setCurrentPage(1);
+                          }}>
+                            <SelectTrigger className="w-[80px]" data-testid="select-page-size">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value="10">10</SelectItem>
                               <SelectItem value="25">25</SelectItem>
                               <SelectItem value="50">50</SelectItem>
                               <SelectItem value="100">100</SelectItem>
@@ -324,22 +322,25 @@ export default function FulfilPage() {
                           </Select>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                             disabled={currentPage === 1}
-                            data-testid="button-previous-page"
+                            data-testid="button-prev-page"
                           >
                             <ChevronLeft className="h-4 w-4" />
                             Previous
                           </Button>
+                          <span className="text-sm text-muted-foreground px-4">
+                            Page {currentPage} of {totalPages || 1}
+                          </span>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                            disabled={currentPage === totalPages}
+                            disabled={currentPage >= totalPages}
                             data-testid="button-next-page"
                           >
                             Next
