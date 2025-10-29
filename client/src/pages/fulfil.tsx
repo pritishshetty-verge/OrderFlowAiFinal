@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -19,21 +18,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Calendar as CalendarIcon, Filter, PackageCheck, Search, Package } from "lucide-react";
+import { Package, PackageCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { CourierSelectionModal } from "@/components/courier-selection-modal";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { PageLayout } from "@/components/page-layout";
+import { FulfilFilter } from "@/components/fulfil-filter";
+import { PaymentBadge } from "@/components/payment-badge";
 import type { Order as BackendOrder } from "@shared/schema";
 import type { Order } from "@/components/orders-table";
-import { cn } from "@/lib/utils";
 
 export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -45,6 +39,8 @@ export default function FulfilPage() {
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [paymentFilter, setPaymentFilter] = useState<string>("all");
   const [agentFilter, setAgentFilter] = useState<string>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   // Fetch confirmed orders
   const { data: ordersResponse, isLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
@@ -89,7 +85,6 @@ export default function FulfilPage() {
     }
     if (dateRange.to && order.confirmedAt) {
       const confirmedDate = new Date(order.confirmedAt);
-      // Set to end of day
       const toDate = new Date(dateRange.to);
       toDate.setHours(23, 59, 59, 999);
       if (confirmedDate > toDate) return false;
@@ -98,15 +93,21 @@ export default function FulfilPage() {
     return true;
   });
 
+  // Pagination
+  const totalOrders = filteredOrders.length;
+  const totalPages = Math.ceil(totalOrders / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalOrders);
+  const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+
   const agents = users?.filter((u) => u.role === "agent") || [];
-  const allSelected = filteredOrders.length > 0 && selectedOrders.size === filteredOrders.length;
-  const someSelected = selectedOrders.size > 0 && !allSelected;
+  const allSelected = paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length;
 
   const handleSelectAll = () => {
     if (allSelected) {
       setSelectedOrders(new Set());
     } else {
-      setSelectedOrders(new Set(filteredOrders.map((order) => order.id)));
+      setSelectedOrders(new Set(paginatedOrders.map((order) => order.id)));
     }
   };
 
@@ -123,7 +124,7 @@ export default function FulfilPage() {
   const handleViewOrder = (order: BackendOrder) => {
     const displayOrder: Order = {
       id: order.id,
-      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderId: order.shopifyOrderNumber,
       customerName: order.customerName,
       customerPhone: order.customerPhone,
       items: order.itemsSummary || `${order.itemsCount} item(s)`,
@@ -150,253 +151,210 @@ export default function FulfilPage() {
     setCourierSelectionModalOpen(true);
   };
 
+  const handleClearFilters = () => {
+    setSearchQuery("");
+    setDateRange({});
+    setPaymentFilter("all");
+    setAgentFilter("all");
+  };
+
   return (
-    <div className="flex flex-col gap-6 max-w-[1600px] mx-auto w-full px-4">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <PackageCheck className="h-6 w-6 text-green-600 dark:text-green-400" />
-          <h1 className="text-3xl font-bold">Fulfil</h1>
-        </div>
-        <p className="text-muted-foreground mt-1">
-          Confirmed orders ready for fulfillment and shipment
-        </p>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            Filters
-          </CardTitle>
-          <CardDescription>Filter confirmed orders by date, agent, or payment method</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search orders..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-                data-testid="input-search-orders"
-              />
-            </div>
-
-            {/* Date Range */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    "justify-start text-left font-normal",
-                    !dateRange.from && "text-muted-foreground"
-                  )}
-                  data-testid="button-date-range"
-                >
-                  <CalendarIcon className="mr-2 h-4 w-4" />
-                  {dateRange.from ? (
-                    dateRange.to ? (
-                      <>
-                        {format(dateRange.from, "MMM dd")} - {format(dateRange.to, "MMM dd")}
-                      </>
-                    ) : (
-                      format(dateRange.from, "MMM dd, yyyy")
-                    )
-                  ) : (
-                    <span>Date range</span>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="range"
-                  selected={{ from: dateRange.from, to: dateRange.to }}
-                  onSelect={(range) => setDateRange({ from: range?.from, to: range?.to })}
-                  numberOfMonths={2}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
-
-            {/* Agent Filter */}
-            <Select value={agentFilter} onValueChange={setAgentFilter}>
-              <SelectTrigger data-testid="select-agent-filter">
-                <SelectValue placeholder="All agents" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All agents</SelectItem>
-                {agents.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>
-                    {agent.username || agent.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Payment Method Filter */}
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger data-testid="select-payment-filter">
-                <SelectValue placeholder="All payments" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All payments</SelectItem>
-                <SelectItem value="cod">COD</SelectItem>
-                <SelectItem value="prepaid">Prepaid</SelectItem>
-              </SelectContent>
-            </Select>
+    <PageLayout
+      title="Fulfil"
+      description="Confirmed orders ready for fulfillment and shipment"
+    >
+      <div className="p-6 space-y-6">
+        {isLoading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-16 w-full" data-testid="skeleton-filter" />
+            <Skeleton className="h-96 w-full" data-testid="skeleton-table" />
           </div>
+        ) : (
+          <>
+            <FulfilFilter
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              dateRange={dateRange}
+              onDateRangeChange={setDateRange}
+              agentFilter={agentFilter}
+              onAgentFilterChange={setAgentFilter}
+              paymentFilter={paymentFilter}
+              onPaymentFilterChange={setPaymentFilter}
+              agents={agents}
+              onClearFilters={handleClearFilters}
+            />
 
-          {/* Clear Filters */}
-          {(searchQuery || dateRange.from || paymentFilter !== "all" || agentFilter !== "all") && (
-            <div className="mt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSearchQuery("");
-                  setDateRange({});
-                  setPaymentFilter("all");
-                  setAgentFilter("all");
-                }}
-                data-testid="button-clear-filters"
-              >
-                Clear filters
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            {filteredOrders.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <PackageCheck className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium">No confirmed orders</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {confirmedOrders.length === 0
+                      ? "Confirmed orders will appear here"
+                      : "No orders match your filters"}
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {/* Summary Info */}
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1}-{endIndex} of {totalOrders} order{totalOrders !== 1 ? "s" : ""}
+                  </p>
+                  {selectedOrders.size > 0 && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        {selectedOrders.size} selected
+                      </span>
+                    </div>
+                  )}
+                </div>
 
-      {/* Orders Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Confirmed Orders</CardTitle>
-              <CardDescription>
-                {filteredOrders.length} order{filteredOrders.length !== 1 ? "s" : ""} ready for fulfillment
-              </CardDescription>
-            </div>
-            {selectedOrders.size > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">
-                  {selectedOrders.size} selected
-                </span>
-                <Button variant="outline" size="sm" data-testid="button-bulk-actions">
-                  Bulk Actions (Coming Soon)
-                </Button>
+                {/* Table Container with Sticky Header and Footer */}
+                <div className="relative border rounded-lg">
+                  <div className="overflow-auto max-h-[calc(100vh-320px)]">
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10 bg-card">
+                        <TableRow>
+                          <TableHead className="w-[50px] bg-card">
+                            <Checkbox
+                              checked={allSelected}
+                              onCheckedChange={handleSelectAll}
+                              aria-label="Select all"
+                              data-testid="checkbox-select-all"
+                            />
+                          </TableHead>
+                          <TableHead className="w-[120px] bg-card">Order ID</TableHead>
+                          <TableHead className="bg-card">Customer</TableHead>
+                          <TableHead className="bg-card">Phone</TableHead>
+                          <TableHead className="text-right bg-card">Value</TableHead>
+                          <TableHead className="bg-card">Payment</TableHead>
+                          <TableHead className="bg-card">Confirmed At</TableHead>
+                          <TableHead className="bg-card">Agent</TableHead>
+                          <TableHead className="text-right bg-card">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedOrders.map((order) => (
+                          <TableRow
+                            key={order.id}
+                            className="hover-elevate cursor-pointer"
+                            onClick={() => handleViewOrder(order)}
+                            data-testid={`row-order-${order.id}`}
+                          >
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedOrders.has(order.id)}
+                                onCheckedChange={() => handleSelectOrder(order.id)}
+                                aria-label={`Select order ${order.shopifyOrderNumber}`}
+                                data-testid={`checkbox-order-${order.id}`}
+                              />
+                            </TableCell>
+                            <TableCell className="font-mono text-xs font-medium">
+                              #{order.shopifyOrderNumber}
+                            </TableCell>
+                            <TableCell>
+                              <span className="font-medium text-sm">{order.customerName}</span>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {order.customerPhone}
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              ₹{Number(order.totalPrice).toLocaleString("en-IN")}
+                            </TableCell>
+                            <TableCell>
+                              <PaymentBadge method={order.paymentMethod as "cod" | "prepaid"} />
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {order.confirmedAt ? (
+                                format(new Date(order.confirmedAt), "MMM dd, h:mm a")
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {getAgentName(order.assignedTo)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={(e) => handleShipNow(order, e)}
+                                data-testid={`button-ship-now-${order.id}`}
+                              >
+                                <Package className="h-4 w-4 mr-1" />
+                                Ship Now
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Sticky Pagination Footer */}
+                  <div className="sticky bottom-0 z-10 bg-card border-t">
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm text-muted-foreground">
+                          {startIndex + 1}-{endIndex} of {totalOrders}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">Rows per page</span>
+                          <Select
+                            value={pageSize.toString()}
+                            onValueChange={(value) => {
+                              setPageSize(Number(value));
+                              setCurrentPage(1);
+                            }}
+                          >
+                            <SelectTrigger className="w-[70px]" data-testid="select-page-size">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="25">25</SelectItem>
+                              <SelectItem value="50">50</SelectItem>
+                              <SelectItem value="100">100</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            data-testid="button-previous-page"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            Previous
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            data-testid="button-next-page"
+                          >
+                            Next
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : filteredOrders.length === 0 ? (
-            <div className="text-center py-12">
-              <PackageCheck className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-              <h3 className="text-lg font-semibold mb-1">No confirmed orders</h3>
-              <p className="text-sm text-muted-foreground">
-                {confirmedOrders.length === 0
-                  ? "Confirmed orders will appear here"
-                  : "No orders match your filters"}
-              </p>
-            </div>
-          ) : (
-            <div className="rounded-lg border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[50px]">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={handleSelectAll}
-                        aria-label="Select all"
-                        data-testid="checkbox-select-all"
-                      />
-                    </TableHead>
-                    <TableHead className="w-[120px]">Order ID</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead className="text-right">Value</TableHead>
-                    <TableHead>Payment</TableHead>
-                    <TableHead>Confirmed At</TableHead>
-                    <TableHead>Agent</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredOrders.map((order) => (
-                    <TableRow
-                      key={order.id}
-                      className="hover-elevate cursor-pointer"
-                      onClick={() => handleViewOrder(order)}
-                      data-testid={`row-order-${order.id}`}
-                    >
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={selectedOrders.has(order.id)}
-                          onCheckedChange={() => handleSelectOrder(order.id)}
-                          aria-label={`Select order ${order.shopifyOrderNumber}`}
-                          data-testid={`checkbox-order-${order.id}`}
-                        />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs font-medium">
-                        #{order.shopifyOrderNumber}
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-medium text-sm">{order.customerName}</span>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {order.customerPhone}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        ₹{Number(order.totalPrice).toLocaleString("en-IN")}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant={order.paymentMethod === "prepaid" ? "default" : "secondary"}
-                        >
-                          {order.paymentMethod === "cod" ? "COD" : "Prepaid"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {order.confirmedAt ? (
-                          format(new Date(order.confirmedAt), "MMM dd, h:mm a")
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {getAgentName(order.assignedTo)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={(e) => handleShipNow(order, e)}
-                          data-testid={`button-ship-now-${order.id}`}
-                        >
-                          <Package className="h-4 w-4 mr-1" />
-                          Ship Now
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </>
+        )}
+      </div>
 
       {/* Order Quick Preview */}
       <OrderQuickPreview
@@ -419,6 +377,6 @@ export default function FulfilPage() {
           }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
