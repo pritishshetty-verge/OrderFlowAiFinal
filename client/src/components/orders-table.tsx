@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
 import { CallStatusActions } from "@/components/call-status-actions";
+import { OrderItemsSummary } from "@/components/order-items-summary";
 import { Phone, UserPlus, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo, useEffect } from "react";
@@ -400,7 +401,9 @@ export function OrdersTable({
                   {order.assignedTo || <span className="text-muted-foreground">Unassigned</span>}
                 </TableCell>
               )}
-              <TableCell className="text-sm">{order.items}</TableCell>
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <OrderItemsSummary orderId={order.id} fallbackSummary={order.items} />
+              </TableCell>
               <TableCell className="text-right font-medium">
                 ₹{order.total.toLocaleString("en-IN")}
               </TableCell>
