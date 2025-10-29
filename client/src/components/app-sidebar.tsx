@@ -103,7 +103,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
         <div className="flex items-center gap-3 text-[20px]">
           <img src={logoUrl} alt="OrderFlowAI Logo" className="h-10 w-10 rounded-md logo-spin-on-hover" />
           <div className="flex flex-col">
-            <span className="text-sm font-semibold">OrderFlowAI</span>
+            <span className="font-semibold text-[16px]">OrderFlow</span>
           </div>
         </div>
       </SidebarHeader>
