@@ -200,9 +200,6 @@ export default function FulfilPage() {
               <div className="flex flex-col gap-4">
                 {/* Summary Info */}
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {startIndex + 1}-{endIndex} of {totalOrders} order{totalOrders !== 1 ? "s" : ""}
-                  </p>
                   {selectedOrders.size > 0 && (
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">
