@@ -2320,7 +2320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         await sendInvitationEmail({
           toEmail: validatedData.email,
-          inviterName: currentUser.name || currentUser.email,
+          inviterName: currentUser.fullName || currentUser.email,
           role: validatedData.role,
           inviteToken: token,
           expiresAt,
