@@ -2439,6 +2439,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Verify invite token (used by signup page)
+  app.get("/api/invites/verify/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+
+      if (!token) {
+        return res.status(400).json({ error: "Token is required" });
+      }
+
+      const invite = await storage.getInviteByToken(token);
+
+      if (!invite) {
+        return res.status(404).json({ error: "Invalid invite token" });
+      }
+
+      if (invite.status !== "pending") {
+        return res.status(400).json({ 
+          error: "This invitation has already been used",
+          status: invite.status 
+        });
+      }
+
+      if (new Date() > new Date(invite.expiresAt)) {
+        return res.status(400).json({ error: "This invitation has expired" });
+      }
+
+      res.json({
+        email: invite.email,
+        firstName: invite.firstName,
+        lastName: invite.lastName,
+        role: invite.role,
+        adminType: invite.adminType,
+        permissions: invite.permissions,
+      });
+    } catch (error) {
+      console.error("Error verifying invite:", error);
+      res.status(500).json({ error: "Failed to verify invite" });
+    }
+  });
+
+  // Accept invite and create user account
+  app.post("/api/invites/accept", async (req, res) => {
+    try {
+      const { token, username, password, fullName, phone } = req.body;
+
+      if (!token || !username || !password || !fullName) {
+        return res.status(400).json({ 
+          error: "Token, username, password, and full name are required" 
+        });
+      }
+
+      const invite = await storage.getInviteByToken(token);
+
+      if (!invite) {
+        return res.status(404).json({ error: "Invalid invite token" });
+      }
+
+      if (invite.status !== "pending") {
+        return res.status(400).json({ 
+          error: "This invitation has already been used",
+          status: invite.status 
+        });
+      }
+
+      if (new Date() > new Date(invite.expiresAt)) {
+        return res.status(400).json({ error: "This invitation has expired" });
+      }
+
+      const existingUser = await storage.getUserByEmail(invite.email);
+      if (existingUser) {
+        return res.status(400).json({ error: "A user with this email already exists" });
+      }
+
+      const existingUsername = await storage.getUserByUsername(username);
+      if (existingUsername) {
+        return res.status(400).json({ error: "This username is already taken" });
+      }
+
+      const newUser = await storage.createUser({
+        email: invite.email,
+        username,
+        password,
+        fullName,
+        phone: phone || null,
+        role: invite.role,
+        adminType: invite.adminType || null,
+        permissions: invite.permissions || null,
+        department: null,
+      });
+
+      await storage.updateInviteStatus(invite.id, 'accepted');
+
+      res.json({
+        message: "Account created successfully",
+        user: {
+          id: newUser.id,
+          email: newUser.email,
+          username: newUser.username,
+          fullName: newUser.fullName,
+          role: newUser.role,
+        },
+      });
+    } catch (error) {
+      console.error("Error accepting invite:", error);
+      res.status(500).json({ error: "Failed to create account" });
+    }
+  });
+
   // ============================================================================
   // LEAVE REQUESTS API
   // ============================================================================
