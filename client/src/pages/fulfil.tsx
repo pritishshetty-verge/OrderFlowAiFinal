@@ -198,17 +198,6 @@ export default function FulfilPage() {
               </Card>
             ) : (
               <div className="flex flex-col gap-4">
-                {/* Summary Info */}
-                <div className="flex items-center justify-between">
-                  {selectedOrders.size > 0 && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        {selectedOrders.size} selected
-                      </span>
-                    </div>
-                  )}
-                </div>
-
                 {/* Table Container with Sticky Header and Footer */}
                 <div className="rounded-lg border bg-card">
                   <div className="relative">
