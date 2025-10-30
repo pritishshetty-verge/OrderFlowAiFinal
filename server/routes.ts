@@ -8,6 +8,7 @@ import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
 import { OrderAssignmentEngine } from "./assignment";
 import axios from "axios";
+import { sendInvitationEmail } from "./resend";
 import {
   canAssignOrders,
   canBulkAssignOrders,
@@ -2315,19 +2316,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invitedBy,
       });
       
-      // TODO: Send email via SendGrid/Resend integration
-      // For now, log the invite details to console
-      const inviteUrl = `${req.protocol}://${req.get('host')}/accept-invite?token=${token}`;
-      console.log('\n📧 USER INVITE EMAIL');
-      console.log('===================');
-      console.log(`To: ${validatedData.email}`);
-      console.log(`Subject: You're invited to join OrderFlowAI`);
-      console.log(`\nHi ${validatedData.firstName || 'there'},\n`);
-      console.log(`You've been invited to join OrderFlowAI as a ${validatedData.role}.`);
-      console.log(`\nClick the link below to accept your invitation and set up your account:`);
-      console.log(inviteUrl);
-      console.log(`\nThis invite expires in 7 days.`);
-      console.log('===================\n');
+      // Send invitation email via Resend
+      try {
+        await sendInvitationEmail({
+          toEmail: validatedData.email,
+          inviterName: currentUser.name || currentUser.email,
+          role: validatedData.role,
+          inviteToken: token,
+          expiresAt,
+        });
+        console.log(`✅ Invitation email sent to ${validatedData.email}`);
+      } catch (emailError) {
+        console.error("Error sending invitation email:", emailError);
+        // Don't fail the invite creation if email fails - just log it
+      }
       
       res.json({ 
         message: "Invite sent successfully",
