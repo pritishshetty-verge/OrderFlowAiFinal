@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import LoginPage from "@/pages/login";
+import SignupPage from "@/pages/signup";
 import DashboardPage from "@/pages/dashboard";
 import OrdersPage from "@/pages/orders";
 import FulfilPage from "@/pages/fulfil";
@@ -49,6 +50,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/login" component={LoginPage} />
+      <Route path="/signup" component={SignupPage} />
       <Route path="/">
         {() => <ProtectedRoute component={DashboardPage} />}
       </Route>
@@ -107,6 +109,7 @@ export default function App() {
   const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
   const isLoggedIn = localStorage.getItem("userRole");
   const isLoginPage = location === "/login";
+  const isSignupPage = location.startsWith("/signup");
   
   const style = {
     "--sidebar-width": "16rem",
@@ -119,7 +122,7 @@ export default function App() {
         <TooltipProvider>
           <SidebarProvider style={style as React.CSSProperties}>
             <div className="flex h-screen w-full">
-              {isLoggedIn && !isLoginPage && <AppSidebar userRole={userRole} />}
+              {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
               <Router />
             </div>
           </SidebarProvider>
