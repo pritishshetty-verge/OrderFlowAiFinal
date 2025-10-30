@@ -2409,6 +2409,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Test Resend connection
+  app.post("/api/test-resend", async (req, res) => {
+    try {
+      const { toEmail } = req.body;
+      
+      if (!toEmail) {
+        return res.status(400).json({ error: "toEmail is required" });
+      }
+
+      console.log(`🧪 Testing Resend connection, sending to: ${toEmail}`);
+      
+      await sendInvitationEmail({
+        toEmail,
+        inviterName: "Test User",
+        role: "agent",
+        inviteToken: "test-token-12345",
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+
+      console.log(`✅ Test email sent successfully to ${toEmail}`);
+      res.json({ success: true, message: "Test email sent successfully" });
+    } catch (error) {
+      console.error("❌ Test email failed:", error);
+      res.status(500).json({ 
+        error: "Failed to send test email", 
+        details: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
   // ============================================================================
   // LEAVE REQUESTS API
   // ============================================================================

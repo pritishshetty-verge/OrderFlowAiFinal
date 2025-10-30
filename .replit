@@ -35,6 +35,10 @@ localPort = 38159
 externalPort = 3003
 
 [[ports]]
+localPort = 41425
+externalPort = 6000
+
+[[ports]]
 localPort = 43909
 externalPort = 5000
 
@@ -67,4 +71,4 @@ args = "npm run dev"
 waitForPort = 5000
 
 [agent]
-integrations = ["javascript_websocket:1.0.0", "javascript_database:1.0.0"]
+integrations = ["javascript_websocket:1.0.0", "javascript_database:1.0.0", "resend:1.0.0"]
