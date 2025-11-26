@@ -327,7 +327,7 @@ export function OrderQuickPreview({
             handleConfirmClick();
           }
           break;
-        case "x":
+        case "r":
           if (!isTerminalStatus) {
             e.preventDefault();
             handleCancelClick();
@@ -508,9 +508,20 @@ export function OrderQuickPreview({
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Status</p>
-              <Badge variant={getStatusColor(order.status) as any}>
-                {order.status}
-              </Badge>
+              <Select value={order.status} onValueChange={(value) => console.log("Status changed to:", value)}>
+                <SelectTrigger className="h-8 px-2 text-sm w-full" data-testid="select-order-status">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="assigned">Assigned</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="shipped">Shipped</SelectItem>
+                  <SelectItem value="delivered">Delivered</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="ndr">NDR</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -851,7 +862,7 @@ export function OrderQuickPreview({
             </Button>
 
             {/* Center: Status Action Buttons */}
-            <div className="flex items-center gap-1.5 flex-1 justify-center">
+            <div className="flex items-center gap-2.5 flex-1 justify-center px-2">
               {isTerminalStatus ? (
                 <div className={`px-4 py-2 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
                   {order.callStatus}
@@ -879,11 +890,11 @@ export function OrderQuickPreview({
                     onClick={handleCancelClick}
                     disabled={isMutating}
                     className="gap-1.5 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
-                    data-testid="button-footer-cancel"
+                    data-testid="button-footer-reject"
                   >
                     <XCircle className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Cancel</span>
-                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
+                    <span className="hidden sm:inline">Reject</span>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">R</kbd>
                   </Button>
                   <Button
                     variant="outline"
