@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
   ChevronLeft, ChevronRight, Clock, XCircle
@@ -64,6 +65,7 @@ export function OrderQuickPreview({
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [confirmNotes, setConfirmNotes] = useState("");
   const [isConfirming, setIsConfirming] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<string>("");
 
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
@@ -298,6 +300,33 @@ export function OrderQuickPreview({
     }
   }, [canNavigatePrev, onNavigate]);
 
+  const handleSaveAndNext = useCallback(() => {
+    const isTerminal = order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled";
+    
+    if (!selectedAction || isTerminal) {
+      if (canNavigateNext) {
+        onNavigate("next");
+      }
+      return;
+    }
+
+    switch (selectedAction) {
+      case "confirm":
+        setConfirmDialogOpen(true);
+        break;
+      case "cancel":
+        setCancelModalOpen(true);
+        break;
+      case "followup":
+        setFollowupModalOpen(true);
+        break;
+      default:
+        if (canNavigateNext) {
+          onNavigate("next");
+        }
+    }
+  }, [selectedAction, order?.callStatus, canNavigateNext, onNavigate]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -311,30 +340,30 @@ export function OrderQuickPreview({
         return;
       }
 
-      const isTerminalStatus = order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled";
+      const isTerminal = order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled";
 
       switch (e.key.toLowerCase()) {
         case "f":
-          if (!isTerminalStatus) {
+          if (!isTerminal) {
             e.preventDefault();
-            handleFollowupClick();
+            setSelectedAction("followup");
           }
           break;
         case "c":
-          if (!isTerminalStatus) {
+          if (!isTerminal) {
             e.preventDefault();
-            handleConfirmClick();
+            setSelectedAction("confirm");
           }
           break;
         case "x":
-          if (!isTerminalStatus) {
+          if (!isTerminal) {
             e.preventDefault();
-            handleCancelClick();
+            setSelectedAction("cancel");
           }
           break;
         case "enter":
           e.preventDefault();
-          handleNavigateNext();
+          handleSaveAndNext();
           break;
         case "arrowleft":
           e.preventDefault();
@@ -349,7 +378,7 @@ export function OrderQuickPreview({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, order?.callStatus, confirmDialogOpen, cancelModalOpen, followupModalOpen, showAddTagDialog, handleConfirmClick, handleCancelClick, handleFollowupClick, handleNavigateNext, handleNavigatePrev]);
+  }, [open, order?.callStatus, confirmDialogOpen, cancelModalOpen, followupModalOpen, showAddTagDialog, handleSaveAndNext, handleNavigateNext, handleNavigatePrev]);
 
   if (!order) return null;
 
@@ -442,44 +471,44 @@ export function OrderQuickPreview({
         {/* STICKY HEADER */}
         <div className="flex-shrink-0 border-b bg-card px-4 py-3 rounded-tl-xl">
           <div className="flex items-center justify-between gap-2">
+            {/* Left: Order ID + Payment Badge */}
             <div className="flex items-center gap-2">
+              <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
+              <Badge className={`${getPaymentBadgeStyle(order.paymentMethod)} border-0 font-medium`} data-testid="badge-payment-status">
+                {order.paymentMethod === "prepaid" ? "Prepaid" : "COD"}
+              </Badge>
+            </div>
+            {/* Right: Navigation + Close */}
+            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={handleNavigatePrev}
                 disabled={!canNavigatePrev}
-                className="h-8 w-8"
+                className="h-7 w-7"
                 data-testid="button-prev-order"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
-                <Badge className={`${getPaymentBadgeStyle(order.paymentMethod)} border-0 font-medium`} data-testid="badge-payment-status">
-                  {order.paymentMethod === "prepaid" ? "Prepaid" : "COD"}
-                </Badge>
-              </div>
+              <span className="text-xs text-muted-foreground min-w-[60px] text-center" data-testid="text-order-position">
+                {currentIndex + 1} of {totalOrders}
+              </span>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={handleNavigateNext}
                 disabled={!canNavigateNext}
-                className="h-8 w-8"
+                className="h-7 w-7"
                 data-testid="button-next-order"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground" data-testid="text-order-position">
-                {currentIndex + 1} of {totalOrders}
-              </span>
-              <Separator orientation="vertical" className="h-5" />
+              <Separator orientation="vertical" className="h-5 mx-1" />
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => onOpenChange(false)}
-                className="h-8 w-8"
+                className="h-7 w-7"
                 data-testid="button-close-preview"
               >
                 <X className="h-4 w-4" />
@@ -490,19 +519,16 @@ export function OrderQuickPreview({
 
         {/* SCROLLABLE BODY */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-          {/* Order Info */}
+          {/* Order Info: Created at | Status | Tags */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Created at</p>
               <p className="text-sm font-medium">
-                {format(order.createdAt, "MMM dd, yyyy 'at' h:mm a")}
+                {format(order.createdAt, "MMM dd, yyyy")}
               </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Payment</p>
-              <Badge variant={order.paymentMethod === "prepaid" ? "default" : "secondary"}>
-                {order.paymentMethod === "prepaid" ? "Paid" : "Pending Payment"}
-              </Badge>
+              <p className="text-xs text-muted-foreground">
+                {format(order.createdAt, "h:mm a")}
+              </p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Status</p>
@@ -510,23 +536,17 @@ export function OrderQuickPreview({
                 {order.status}
               </Badge>
             </div>
-          </div>
-
-          <Separator />
-
-          {/* Tags Section */}
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-semibold text-foreground whitespace-nowrap">Tags:</p>
-              <div className="flex items-center gap-2 flex-1 overflow-hidden">
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Tags</p>
+              <div className="flex flex-wrap items-center gap-1">
                 {isLoading ? (
-                  <Skeleton className="h-7 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-16 rounded-full" />
                 ) : (
                   <>
                     {visibleTags.map((tag, index) => (
                       <span
                         key={tag}
-                        className={`${getTagColor(index)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default flex-shrink-0`}
+                        className={`${getTagColor(index)} rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1 group cursor-default`}
                         data-testid={`badge-tag-${index}`}
                       >
                         {tag}
@@ -535,7 +555,7 @@ export function OrderQuickPreview({
                           className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
                           data-testid={`button-remove-tag-${index}`}
                         >
-                          <X className="h-3 w-3" />
+                          <X className="h-2.5 w-2.5" />
                         </button>
                       </span>
                     ))}
@@ -543,11 +563,10 @@ export function OrderQuickPreview({
                       <Popover>
                         <PopoverTrigger asChild>
                           <button
-                            className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 flex-shrink-0 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
+                            className="rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 inline-flex items-center gap-1 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
                             data-testid="button-more-tags"
                           >
-                            <MoreHorizontal className="h-3 w-3" />
-                            {hiddenTags.length} more
+                            +{hiddenTags.length}
                           </button>
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-3" align="start">
@@ -557,7 +576,7 @@ export function OrderQuickPreview({
                               {hiddenTags.map((tag, index) => (
                                 <span
                                   key={tag}
-                                  className={`${getTagColor(index + VISIBLE_TAG_LIMIT)} rounded-full px-3 py-1.5 text-xs font-medium inline-flex items-center gap-1.5 group hover-elevate active-elevate-2 cursor-default`}
+                                  className={`${getTagColor(index + VISIBLE_TAG_LIMIT)} rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1 group cursor-default`}
                                   data-testid={`badge-hidden-tag-${index}`}
                                 >
                                   {tag}
@@ -566,7 +585,7 @@ export function OrderQuickPreview({
                                     className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
                                     data-testid={`button-remove-hidden-tag-${index}`}
                                   >
-                                    <X className="h-3 w-3" />
+                                    <X className="h-2.5 w-2.5" />
                                   </button>
                                 </span>
                               ))}
@@ -577,11 +596,10 @@ export function OrderQuickPreview({
                     )}
                     <button
                       onClick={() => setShowAddTagDialog(true)}
-                      className="rounded-full px-3 py-1.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 hover-elevate active-elevate-2 inline-flex items-center gap-1 flex-shrink-0 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
+                      className="rounded-full p-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                       data-testid="button-add-tag"
                     >
                       <Plus className="h-3 w-3" />
-                      Add
                     </button>
                   </>
                 )}
@@ -835,7 +853,7 @@ export function OrderQuickPreview({
 
         {/* STICKY FOOTER - Call Status Controls */}
         <div className="flex-shrink-0 border-t bg-card px-4 py-3 rounded-bl-xl">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-3">
             {/* Left: Prev Navigation */}
             <Button
               variant="ghost"
@@ -848,54 +866,45 @@ export function OrderQuickPreview({
               <ChevronLeft className="h-4 w-4" />
             </Button>
 
-            {/* Center: Status Action Buttons */}
-            <div className="flex items-center gap-1.5 flex-1 justify-center">
+            {/* Center: Action Dropdown */}
+            <div className="flex-1 flex justify-center">
               {isTerminalStatus ? (
                 <div className={`px-4 py-2 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
                   {order.callStatus}
                 </div>
               ) : (
-                <>
-                  <Button
-                    variant={order.callStatus === "Follow Up" ? "default" : "outline"}
-                    size="sm"
-                    onClick={handleFollowupClick}
-                    disabled={isMutating}
-                    className={order.callStatus === "Follow Up" 
-                      ? "gap-1.5 bg-yellow-500 hover:bg-yellow-600 text-white border-0" 
-                      : "gap-1.5 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
-                    }
-                    data-testid="button-footer-followup"
-                  >
-                    <Clock className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Follow Up</span>
-                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-black/10 dark:bg-white/10 rounded">F</kbd>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCancelClick}
-                    disabled={isMutating}
-                    className="gap-1.5 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
-                    data-testid="button-footer-cancel"
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Cancel</span>
-                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleConfirmClick}
-                    disabled={isMutating}
-                    className="gap-1.5 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20"
-                    data-testid="button-footer-confirm"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Confirm</span>
-                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
-                  </Button>
-                </>
+                <Select
+                  value={selectedAction}
+                  onValueChange={setSelectedAction}
+                  disabled={isMutating}
+                >
+                  <SelectTrigger className="w-[180px]" data-testid="select-action">
+                    <SelectValue placeholder="Select Action" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="confirm" data-testid="select-item-confirm">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <span>Confirm Order</span>
+                        <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="cancel" data-testid="select-item-cancel">
+                      <div className="flex items-center gap-2">
+                        <XCircle className="h-4 w-4 text-red-600" />
+                        <span>Cancel Order</span>
+                        <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="followup" data-testid="select-item-followup">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-yellow-600" />
+                        <span>Follow Up</span>
+                        <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">F</kbd>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               )}
             </div>
 
@@ -903,8 +912,8 @@ export function OrderQuickPreview({
             <Button
               variant="default"
               size="sm"
-              onClick={handleNavigateNext}
-              disabled={!canNavigateNext || isMutating}
+              onClick={handleSaveAndNext}
+              disabled={isMutating}
               className="gap-1.5 flex-shrink-0"
               data-testid="button-footer-save-next"
             >
