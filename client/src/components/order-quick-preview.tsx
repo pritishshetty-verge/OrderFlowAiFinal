@@ -259,11 +259,29 @@ export function OrderQuickPreview({
     setConfirmDialogOpen(true);
   }, [order?.callStatus]);
 
-  const handleConfirmOrder = async () => {
-    if (!order?.id) return;
+  // Global Ctrl+Enter listener for Confirm Order dialog
+  useEffect(() => {
+    if (!confirmDialogOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        // Directly trigger submit - notes can be empty
+        if (!isConfirming && order?.id) {
+          handleConfirmOrderSubmit();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [confirmDialogOpen, isConfirming, order?.id]);
+
+  const handleConfirmOrderSubmit = async () => {
+    if (!order?.id || isConfirming) return;
     try {
       setIsConfirming(true);
-      await confirmOrderMutation.mutateAsync({ orderId: order.id, notes: confirmNotes });
+      await confirmOrderMutation.mutateAsync({ orderId: order.id, notes: confirmNotes || undefined });
       setConfirmDialogOpen(false);
       setConfirmNotes("");
       setSelectedAction("");
@@ -999,12 +1017,6 @@ export function OrderQuickPreview({
               id="confirm-notes"
               value={confirmNotes}
               onChange={(e) => setConfirmNotes(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  handleConfirmOrder();
-                }
-              }}
               placeholder="Type notes... (Press Ctrl + Enter to save)"
               className="mt-1.5"
               rows={2}
@@ -1022,7 +1034,7 @@ export function OrderQuickPreview({
             <Button
               onClick={(e) => {
                 e.preventDefault();
-                handleConfirmOrder();
+                handleConfirmOrderSubmit();
               }}
               disabled={isConfirming}
               data-testid="button-confirm-order"
