@@ -141,12 +141,12 @@ export function CancelOrderModal({
                   <FormControl>
                     <Textarea
                       {...field}
-                      placeholder="Add any additional details..."
+                      placeholder="Type notes... (Press Ctrl + Enter to save)"
                       rows={3}
                       data-testid="textarea-cancel-notes"
                       autoFocus
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
+                        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                           e.preventDefault();
                           form.handleSubmit(handleSubmit)();
                         }

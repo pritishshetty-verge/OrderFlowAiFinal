@@ -1000,12 +1000,12 @@ export function OrderQuickPreview({
               value={confirmNotes}
               onChange={(e) => setConfirmNotes(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                   e.preventDefault();
                   handleConfirmOrder();
                 }
               }}
-              placeholder="Add any notes..."
+              placeholder="Type notes... (Press Ctrl + Enter to save)"
               className="mt-1.5"
               rows={2}
               data-testid="input-confirm-notes"

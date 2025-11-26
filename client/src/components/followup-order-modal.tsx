@@ -85,23 +85,26 @@ export function FollowupOrderModal({
 
   const preset = form.watch("preset");
 
-  // Keyboard shortcuts: 1=10min, 2=30min, 3=45min, Enter=submit
+  // Keyboard shortcuts: 1=10min, 2=30min, 3=45min, Ctrl+Enter=submit
   useEffect(() => {
     if (!open) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture if user is typing in a text field
       const target = e.target as HTMLElement;
-      if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
-        // Allow Enter to submit from textarea (Shift+Enter for newline)
-        if (e.key === "Enter" && !e.shiftKey && target.tagName === "TEXTAREA") {
-          e.preventDefault();
-          form.handleSubmit(handleSubmit)();
-        }
+      
+      // Ctrl/Cmd + Enter = submit from anywhere
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        form.handleSubmit(handleSubmit)();
         return;
       }
 
-      // Number shortcuts for quick presets
+      // Don't capture number shortcuts if user is typing in a text field
+      if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+        return;
+      }
+
+      // Number shortcuts for quick presets (only when not in text field)
       if (e.key === "1") {
         e.preventDefault();
         form.setValue("preset", "10");
@@ -111,9 +114,6 @@ export function FollowupOrderModal({
       } else if (e.key === "3") {
         e.preventDefault();
         form.setValue("preset", "45");
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        form.handleSubmit(handleSubmit)();
       }
     };
 
@@ -279,7 +279,7 @@ export function FollowupOrderModal({
                   <FormControl>
                     <Textarea
                       {...field}
-                      placeholder="Add any notes for the follow-up..."
+                      placeholder="Type notes... (Press Ctrl + Enter to save)"
                       rows={3}
                       data-testid="textarea-followup-notes"
                     />
