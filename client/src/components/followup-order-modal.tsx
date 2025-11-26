@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -84,6 +84,42 @@ export function FollowupOrderModal({
   });
 
   const preset = form.watch("preset");
+
+  // Keyboard shortcuts: 1=10min, 2=30min, 3=45min, Enter=submit
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture if user is typing in a text field
+      const target = e.target as HTMLElement;
+      if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+        // Allow Enter to submit from textarea (Shift+Enter for newline)
+        if (e.key === "Enter" && !e.shiftKey && target.tagName === "TEXTAREA") {
+          e.preventDefault();
+          form.handleSubmit(handleSubmit)();
+        }
+        return;
+      }
+
+      // Number shortcuts for quick presets
+      if (e.key === "1") {
+        e.preventDefault();
+        form.setValue("preset", "10");
+      } else if (e.key === "2") {
+        e.preventDefault();
+        form.setValue("preset", "30");
+      } else if (e.key === "3") {
+        e.preventDefault();
+        form.setValue("preset", "45");
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        form.handleSubmit(handleSubmit)();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, form]);
 
   const handleSubmit = async (data: FollowupOrderFormData) => {
     try {

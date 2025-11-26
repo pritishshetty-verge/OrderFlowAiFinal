@@ -68,6 +68,7 @@ export function CancelOrderModal({
   const form = useForm<CancelOrderFormData>({
     resolver: zodResolver(cancelOrderSchema),
     defaultValues: {
+      reason: CANCELLATION_REASONS[0],
       notes: "",
     },
   });
@@ -143,6 +144,13 @@ export function CancelOrderModal({
                       placeholder="Add any additional details..."
                       rows={3}
                       data-testid="textarea-cancel-notes"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          form.handleSubmit(handleSubmit)();
+                        }
+                      }}
                     />
                   </FormControl>
                   <FormMessage />

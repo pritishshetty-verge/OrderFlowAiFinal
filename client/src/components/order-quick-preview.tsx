@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -994,7 +995,7 @@ export function OrderQuickPreview({
           </AlertDialogHeader>
           <div className="py-2">
             <Label htmlFor="confirm-notes">Notes (Optional)</Label>
-            <Input
+            <Textarea
               id="confirm-notes"
               value={confirmNotes}
               onChange={(e) => setConfirmNotes(e.target.value)}
@@ -1006,6 +1007,7 @@ export function OrderQuickPreview({
               }}
               placeholder="Add any notes..."
               className="mt-1.5"
+              rows={2}
               data-testid="input-confirm-notes"
               autoFocus
             />
@@ -1017,14 +1019,17 @@ export function OrderQuickPreview({
             >
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmOrder}
+            <Button
+              onClick={(e) => {
+                e.preventDefault();
+                handleConfirmOrder();
+              }}
               disabled={isConfirming}
               data-testid="button-confirm-order"
             >
               {isConfirming && <Clock className="mr-2 h-4 w-4 animate-spin" />}
               Confirm Order
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
