@@ -1,4 +1,4 @@
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -6,20 +6,38 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CallStatusActions } from "@/components/call-status-actions";
-import { Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package } from "lucide-react";
+import { 
+  Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
+  ChevronLeft, ChevronRight, Clock, XCircle
+} from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Order } from "@/components/orders-table";
 import type { Order as BackendOrder, OrderItem as BackendOrderItem, OrderStatusHistory } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { CancelOrderModal } from "@/components/cancel-order-modal";
+import { FollowupOrderModal } from "@/components/followup-order-modal";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Label } from "@/components/ui/label";
 
 interface OrderQuickPreviewProps {
   order: Order | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  currentIndex: number;
+  totalOrders: number;
+  onNavigate: (direction: "prev" | "next") => void;
   onEditCustomer?: () => void;
   onInvoice?: () => void;
   onRefund?: () => void;
@@ -30,6 +48,9 @@ export function OrderQuickPreview({
   order,
   open,
   onOpenChange,
+  currentIndex,
+  totalOrders,
+  onNavigate,
   onEditCustomer,
   onInvoice,
   onRefund,
@@ -38,26 +59,27 @@ export function OrderQuickPreview({
   const { toast } = useToast();
   const [showAddTagDialog, setShowAddTagDialog] = useState(false);
   const [newTag, setNewTag] = useState("");
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [followupModalOpen, setFollowupModalOpen] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [confirmNotes, setConfirmNotes] = useState("");
+  const [isConfirming, setIsConfirming] = useState(false);
 
-  // Fetch full order details from backend
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
     enabled: open && !!order?.id,
   });
 
-  // Fetch order items
   const { data: orderItems = [], isLoading: itemsLoading } = useQuery<BackendOrderItem[]>({
     queryKey: ["/api/orders", order?.id, "items"],
     enabled: open && !!order?.id,
   });
 
-  // Fetch order history/timeline
   const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
     queryKey: ["/api/orders", order?.id, "history"],
     enabled: open && !!order?.id,
   });
 
-  // Fetch shipment information
   const { data: shipmentData, isLoading: shipmentLoading } = useQuery<{
     shipment?: any;
     ndrEvents?: any[];
@@ -66,7 +88,6 @@ export function OrderQuickPreview({
     enabled: open && !!order?.id,
   });
 
-  // Tags management mutation - must be before any early returns
   const updateTagsMutation = useMutation({
     mutationFn: async (tags: string[]) => {
       if (!order?.id) return;
@@ -90,10 +111,8 @@ export function OrderQuickPreview({
     },
   });
 
-  // Get current user ID from localStorage (set during login)
   const currentUserId = localStorage.getItem("userId");
 
-  // Mutation to confirm order
   const confirmOrderMutation = useMutation({
     mutationFn: async ({ orderId, notes }: { orderId: string; notes?: string }) => {
       if (!currentUserId) {
@@ -137,7 +156,6 @@ export function OrderQuickPreview({
     },
   });
 
-  // Mutation to cancel order
   const cancelOrderMutation = useMutation({
     mutationFn: async ({ orderId, reason, notes }: { orderId: string; reason: string; notes?: string }) => {
       if (!currentUserId) {
@@ -182,7 +200,6 @@ export function OrderQuickPreview({
     },
   });
 
-  // Mutation to schedule followup
   const followupOrderMutation = useMutation({
     mutationFn: async ({ orderId, followupAt, notes }: { orderId: string; followupAt: Date; notes?: string }) => {
       if (!currentUserId) {
@@ -227,12 +244,116 @@ export function OrderQuickPreview({
     },
   });
 
-  // Early return after all hooks
+  const canNavigatePrev = currentIndex > 0;
+  const canNavigateNext = currentIndex < totalOrders - 1;
+
+  const handleConfirmClick = useCallback(() => {
+    if (order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled") return;
+    setConfirmDialogOpen(true);
+  }, [order?.callStatus]);
+
+  const handleConfirmOrder = async () => {
+    if (!order?.id) return;
+    try {
+      setIsConfirming(true);
+      await confirmOrderMutation.mutateAsync({ orderId: order.id, notes: confirmNotes });
+      setConfirmDialogOpen(false);
+      setConfirmNotes("");
+    } catch (error) {
+      console.error("Error confirming order:", error);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleCancelClick = useCallback(() => {
+    if (order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled") return;
+    setCancelModalOpen(true);
+  }, [order?.callStatus]);
+
+  const handleCancelOrder = async (reason: string, notes?: string) => {
+    if (!order?.id) return;
+    await cancelOrderMutation.mutateAsync({ orderId: order.id, reason, notes });
+  };
+
+  const handleFollowupClick = useCallback(() => {
+    if (order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled") return;
+    setFollowupModalOpen(true);
+  }, [order?.callStatus]);
+
+  const handleScheduleFollowup = async (followupAt: Date, notes?: string) => {
+    if (!order?.id) return;
+    await followupOrderMutation.mutateAsync({ orderId: order.id, followupAt, notes });
+  };
+
+  const handleNavigateNext = useCallback(() => {
+    if (canNavigateNext) {
+      onNavigate("next");
+    }
+  }, [canNavigateNext, onNavigate]);
+
+  const handleNavigatePrev = useCallback(() => {
+    if (canNavigatePrev) {
+      onNavigate("prev");
+    }
+  }, [canNavigatePrev, onNavigate]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
+
+      if (confirmDialogOpen || cancelModalOpen || followupModalOpen || showAddTagDialog) {
+        return;
+      }
+
+      const isTerminalStatus = order?.callStatus === "Confirmed" || order?.callStatus === "Cancelled";
+
+      switch (e.key.toLowerCase()) {
+        case "f":
+          if (!isTerminalStatus) {
+            e.preventDefault();
+            handleFollowupClick();
+          }
+          break;
+        case "c":
+          if (!isTerminalStatus) {
+            e.preventDefault();
+            handleConfirmClick();
+          }
+          break;
+        case "x":
+          if (!isTerminalStatus) {
+            e.preventDefault();
+            handleCancelClick();
+          }
+          break;
+        case "enter":
+          e.preventDefault();
+          handleNavigateNext();
+          break;
+        case "arrowleft":
+          e.preventDefault();
+          handleNavigatePrev();
+          break;
+        case "arrowright":
+          e.preventDefault();
+          handleNavigateNext();
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, order?.callStatus, confirmDialogOpen, cancelModalOpen, followupModalOpen, showAddTagDialog, handleConfirmClick, handleCancelClick, handleFollowupClick, handleNavigateNext, handleNavigatePrev]);
+
   if (!order) return null;
 
   const isLoading = orderLoading || itemsLoading || historyLoading;
-
-  // Tags data
   const currentTags = orderDetails?.tags || [];
   const VISIBLE_TAG_LIMIT = 3;
   const visibleTags = currentTags.slice(0, VISIBLE_TAG_LIMIT);
@@ -252,19 +373,6 @@ export function OrderQuickPreview({
     updateTagsMutation.mutate(updatedTags);
   };
 
-  // Handler functions for CallStatusActions
-  const handleConfirmOrder = async (orderId: string, notes?: string) => {
-    await confirmOrderMutation.mutateAsync({ orderId, notes });
-  };
-
-  const handleCancelOrder = async (orderId: string, reason: string, notes?: string) => {
-    await cancelOrderMutation.mutateAsync({ orderId, reason, notes });
-  };
-
-  const handleFollowupOrder = async (orderId: string, followupAt: Date, notes?: string) => {
-    await followupOrderMutation.mutateAsync({ orderId, followupAt, notes });
-  };
-
   const getTagColor = (index: number) => {
     const colors = [
       "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
@@ -276,19 +384,19 @@ export function OrderQuickPreview({
     return colors[index % colors.length];
   };
 
-  // Generate random colors for items (for visual consistency)
   const colors = ["#fbbf24", "#60a5fa", "#f87171", "#a78bfa", "#34d399"];
   const getItemColor = (index: number) => colors[index % colors.length];
 
-  // Payment breakdown from real order data
   const subtotal = orderDetails ? parseFloat(orderDetails.subtotal || "0") : 0;
   const discount = orderDetails ? parseFloat(orderDetails.totalDiscount || "0") : 0;
   const shipping = orderDetails ? parseFloat(orderDetails.shippingPrice || "0") : 0;
   const tax = orderDetails ? parseFloat(orderDetails.totalTax || "0") : 0;
   const total = orderDetails ? parseFloat(orderDetails.totalPrice || "0") : 0;
 
-  const getPaymentStatus = (method: string) => {
-    return method === "prepaid" ? "Paid" : "Pending Payment";
+  const getPaymentBadgeStyle = (method: string) => {
+    return method === "prepaid" 
+      ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400"
+      : "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400";
   };
 
   const getStatusColor = (status: string) => {
@@ -304,7 +412,19 @@ export function OrderQuickPreview({
     return statusMap[status] || "secondary";
   };
 
-  // Transform status history into timeline events
+  const getCallStatusColor = (status?: string) => {
+    switch (status) {
+      case "Confirmed":
+        return "text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20";
+      case "Cancelled":
+        return "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20";
+      case "Follow Up":
+        return "text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20";
+      default:
+        return "text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20";
+    }
+  };
+
   const timelineEvents = orderHistory.map((history) => ({
     id: history.id,
     description: `Status changed to ${history.status}`,
@@ -313,19 +433,62 @@ export function OrderQuickPreview({
     completed: true,
   }));
 
+  const isTerminalStatus = order.callStatus === "Confirmed" || order.callStatus === "Cancelled";
+  const isMutating = confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending;
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[500px] sm:w-[600px] overflow-y-auto p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4">
-        <SheetHeader className="p-4 pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <SheetTitle className="text-2xl">#{order.shopifyOrderId}</SheetTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">Order details</p>
+      <SheetContent className="w-[500px] sm:w-[600px] p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4 flex flex-col">
+        {/* STICKY HEADER */}
+        <div className="flex-shrink-0 border-b bg-card px-4 py-3 rounded-tl-xl">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleNavigatePrev}
+                disabled={!canNavigatePrev}
+                className="h-8 w-8"
+                data-testid="button-prev-order"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
+                <Badge className={`${getPaymentBadgeStyle(order.paymentMethod)} border-0 font-medium`} data-testid="badge-payment-status">
+                  {order.paymentMethod === "prepaid" ? "Prepaid" : "COD"}
+                </Badge>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleNavigateNext}
+                disabled={!canNavigateNext}
+                className="h-8 w-8"
+                data-testid="button-next-order"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground" data-testid="text-order-position">
+                {currentIndex + 1} of {totalOrders}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onOpenChange(false)}
+                className="h-8 w-8"
+                data-testid="button-close-preview"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           </div>
-        </SheetHeader>
+        </div>
 
-        <div className="px-4 space-y-3 pb-4">
+        {/* SCROLLABLE BODY */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {/* Order Info */}
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -337,7 +500,7 @@ export function OrderQuickPreview({
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Payment</p>
               <Badge variant={order.paymentMethod === "prepaid" ? "default" : "secondary"}>
-                {getPaymentStatus(order.paymentMethod)}
+                {order.paymentMethod === "prepaid" ? "Paid" : "Pending Payment"}
               </Badge>
             </div>
             <div>
@@ -346,22 +509,6 @@ export function OrderQuickPreview({
                 {order.status}
               </Badge>
             </div>
-          </div>
-
-          <Separator />
-
-          {/* Call Status Section */}
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-2">Call Status</p>
-            <CallStatusActions
-              orderId={order.id}
-              orderNumber={order.shopifyOrderId}
-              currentStatus={order.callStatus}
-              onConfirm={handleConfirmOrder}
-              onCancel={handleCancelOrder}
-              onFollowup={handleFollowupOrder}
-              disabled={confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending}
-            />
           </div>
 
           <Separator />
@@ -683,9 +830,142 @@ export function OrderQuickPreview({
               </div>
             )}
           </div>
+        </div>
 
+        {/* STICKY FOOTER - Call Status Controls */}
+        <div className="flex-shrink-0 border-t bg-card px-4 py-3 rounded-bl-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleNavigatePrev}
+                disabled={!canNavigatePrev || isMutating}
+                className="h-8 w-8"
+                data-testid="button-footer-prev"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Call Status</span>
+                <div className={`px-3 py-1 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
+                  {order.callStatus || "Pending"}
+                </div>
+              </div>
+            </div>
+
+            {!isTerminalStatus && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFollowupClick}
+                  disabled={isMutating}
+                  className="gap-1.5 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
+                  data-testid="button-footer-followup"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  Follow Up
+                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">F</kbd>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancelClick}
+                  disabled={isMutating}
+                  className="gap-1.5 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
+                  data-testid="button-footer-cancel"
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Cancel
+                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleConfirmClick}
+                  disabled={isMutating}
+                  className="gap-1.5 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20"
+                  data-testid="button-footer-confirm"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Confirm
+                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
+                </Button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleNavigateNext}
+                disabled={!canNavigateNext || isMutating}
+                className="h-8 w-8"
+                data-testid="button-footer-next"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border text-muted-foreground">Enter</kbd>
+            </div>
           </div>
+        </div>
       </SheetContent>
+
+      {/* Confirm Dialog */}
+      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <AlertDialogContent data-testid="dialog-confirm-order">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Order</AlertDialogTitle>
+            <AlertDialogDescription>
+              Order #{order.shopifyOrderId} - Mark this order as confirmed and move it to Fulfil section?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <Label htmlFor="confirm-notes">Notes (Optional)</Label>
+            <Input
+              id="confirm-notes"
+              value={confirmNotes}
+              onChange={(e) => setConfirmNotes(e.target.value)}
+              placeholder="Add any notes..."
+              className="mt-1.5"
+              data-testid="input-confirm-notes"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={isConfirming}
+              data-testid="button-cancel-dialog"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmOrder}
+              disabled={isConfirming}
+              data-testid="button-confirm-order"
+            >
+              {isConfirming && <Clock className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm Order
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Modal */}
+      <CancelOrderModal
+        open={cancelModalOpen}
+        onOpenChange={setCancelModalOpen}
+        onConfirm={handleCancelOrder}
+        orderNumber={order.shopifyOrderId}
+      />
+
+      {/* Follow-up Modal */}
+      <FollowupOrderModal
+        open={followupModalOpen}
+        onOpenChange={setFollowupModalOpen}
+        onConfirm={handleScheduleFollowup}
+        orderNumber={order.shopifyOrderId}
+      />
 
       {/* Add Tag Dialog */}
       <Dialog open={showAddTagDialog} onOpenChange={setShowAddTagDialog}>

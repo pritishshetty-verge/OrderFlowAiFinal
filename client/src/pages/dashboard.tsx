@@ -52,6 +52,7 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
 export default function DashboardPage() {
   const [, setLocation] = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -115,8 +116,18 @@ export default function DashboardPage() {
   };
 
   const handleViewDetails = (order: Order) => {
+    const index = filteredOrders.findIndex((o) => o.id === order.id);
     setSelectedOrder(order);
+    setSelectedOrderIndex(index);
     setIsQuickPreviewOpen(true);
+  };
+
+  const handleNavigateOrder = (direction: "prev" | "next") => {
+    const newIndex = direction === "prev" ? selectedOrderIndex - 1 : selectedOrderIndex + 1;
+    if (newIndex >= 0 && newIndex < filteredOrders.length) {
+      setSelectedOrder(filteredOrders[newIndex]);
+      setSelectedOrderIndex(newIndex);
+    }
   };
 
   const handleCallCustomer = (order: Order) => {
@@ -211,7 +222,6 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <OrdersFilter
                 onSearch={handleSearch}
-                onStatusChange={handleStatusChange}
                 onPaymentChange={handlePaymentChange}
                 onClearFilters={handleClearFilters}
               />
@@ -231,6 +241,9 @@ export default function DashboardPage() {
         order={selectedOrder}
         open={isQuickPreviewOpen}
         onOpenChange={setIsQuickPreviewOpen}
+        currentIndex={selectedOrderIndex}
+        totalOrders={filteredOrders.length}
+        onNavigate={handleNavigateOrder}
         onEditCustomer={() => {
           console.log("Edit customer clicked");
           // TODO: Implement edit customer dialog

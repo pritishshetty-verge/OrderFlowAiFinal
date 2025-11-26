@@ -32,6 +32,7 @@ import type { Order } from "@/components/orders-table";
 export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [courierSelectionModalOpen, setCourierSelectionModalOpen] = useState(false);
   const [selectedOrderForCourier, setSelectedOrderForCourier] = useState<BackendOrder | null>(null);
@@ -135,8 +136,32 @@ export default function FulfilPage() {
       assignedTo: order.assignedTo || undefined,
       createdAt: new Date(order.createdAt),
     };
+    const index = paginatedOrders.findIndex((o) => o.id === order.id);
     setSelectedOrder(displayOrder);
+    setSelectedOrderIndex(index);
     setIsQuickPreviewOpen(true);
+  };
+
+  const handleNavigateOrder = (direction: "prev" | "next") => {
+    const newIndex = direction === "prev" ? selectedOrderIndex - 1 : selectedOrderIndex + 1;
+    if (newIndex >= 0 && newIndex < paginatedOrders.length) {
+      const order = paginatedOrders[newIndex];
+      const displayOrder: Order = {
+        id: order.id,
+        shopifyOrderId: order.shopifyOrderNumber,
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        items: order.itemsSummary || `${order.itemsCount} item(s)`,
+        total: Number(order.totalPrice),
+        paymentMethod: order.paymentMethod as "cod" | "prepaid",
+        status: order.status as "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr",
+        callStatus: order.callStatus as "Pending" | "Confirmed" | "Cancelled" | "Follow Up" | undefined,
+        assignedTo: order.assignedTo || undefined,
+        createdAt: new Date(order.createdAt),
+      };
+      setSelectedOrder(displayOrder);
+      setSelectedOrderIndex(newIndex);
+    }
   };
 
   const getAgentName = (agentId?: string | null) => {
@@ -348,6 +373,9 @@ export default function FulfilPage() {
         order={selectedOrder}
         open={isQuickPreviewOpen}
         onOpenChange={setIsQuickPreviewOpen}
+        currentIndex={selectedOrderIndex}
+        totalOrders={paginatedOrders.length}
+        onNavigate={handleNavigateOrder}
       />
 
       {/* Courier Selection Modal */}
