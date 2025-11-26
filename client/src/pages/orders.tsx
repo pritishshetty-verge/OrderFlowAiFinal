@@ -303,6 +303,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         currentIndex={selectedOrderIndex}
         totalOrders={filteredOrders.length}
         onNavigate={handleNavigateOrder}
+        onStatusUpdate={() => {
+          // Refresh the orders list when status is updated in the modal
+          queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+        }}
         onEditCustomer={() => {
           console.log("Edit customer clicked");
           // TODO: Implement edit customer dialog

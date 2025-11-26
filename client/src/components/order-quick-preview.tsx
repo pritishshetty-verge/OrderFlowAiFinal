@@ -39,6 +39,7 @@ interface OrderQuickPreviewProps {
   currentIndex: number;
   totalOrders: number;
   onNavigate: (direction: "prev" | "next") => void;
+  onStatusUpdate?: () => void;
   onEditCustomer?: () => void;
   onInvoice?: () => void;
   onRefund?: () => void;
@@ -52,6 +53,7 @@ export function OrderQuickPreview({
   currentIndex,
   totalOrders,
   onNavigate,
+  onStatusUpdate,
   onEditCustomer,
   onInvoice,
   onRefund,
@@ -66,6 +68,7 @@ export function OrderQuickPreview({
   const [confirmNotes, setConfirmNotes] = useState("");
   const [isConfirming, setIsConfirming] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string>("");
+  const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
 
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
@@ -261,8 +264,21 @@ export function OrderQuickPreview({
       await confirmOrderMutation.mutateAsync({ orderId: order.id, notes: confirmNotes });
       setConfirmDialogOpen(false);
       setConfirmNotes("");
+      setSelectedAction("");
+      
+      // Notify parent to refresh data
+      onStatusUpdate?.();
+      
+      // Auto-advance if triggered via Save & Next
+      if (pendingAutoAdvance && canNavigateNext) {
+        setPendingAutoAdvance(false);
+        setTimeout(() => onNavigate("next"), 100);
+      } else {
+        setPendingAutoAdvance(false);
+      }
     } catch (error) {
       console.error("Error confirming order:", error);
+      setPendingAutoAdvance(false);
     } finally {
       setIsConfirming(false);
     }
@@ -275,7 +291,26 @@ export function OrderQuickPreview({
 
   const handleCancelOrder = async (reason: string, notes?: string) => {
     if (!order?.id) return;
-    await cancelOrderMutation.mutateAsync({ orderId: order.id, reason, notes });
+    try {
+      await cancelOrderMutation.mutateAsync({ orderId: order.id, reason, notes });
+      setCancelModalOpen(false);
+      setSelectedAction("");
+      
+      // Notify parent to refresh data
+      onStatusUpdate?.();
+      
+      // Auto-advance if triggered via Save & Next
+      if (pendingAutoAdvance && canNavigateNext) {
+        setPendingAutoAdvance(false);
+        setTimeout(() => onNavigate("next"), 100);
+      } else {
+        setPendingAutoAdvance(false);
+      }
+    } catch (error) {
+      console.error("Error cancelling order:", error);
+      setPendingAutoAdvance(false);
+      throw error;
+    }
   };
 
   const handleFollowupClick = useCallback(() => {
@@ -285,7 +320,26 @@ export function OrderQuickPreview({
 
   const handleScheduleFollowup = async (followupAt: Date, notes?: string) => {
     if (!order?.id) return;
-    await followupOrderMutation.mutateAsync({ orderId: order.id, followupAt, notes });
+    try {
+      await followupOrderMutation.mutateAsync({ orderId: order.id, followupAt, notes });
+      setFollowupModalOpen(false);
+      setSelectedAction("");
+      
+      // Notify parent to refresh data
+      onStatusUpdate?.();
+      
+      // Auto-advance if triggered via Save & Next
+      if (pendingAutoAdvance && canNavigateNext) {
+        setPendingAutoAdvance(false);
+        setTimeout(() => onNavigate("next"), 100);
+      } else {
+        setPendingAutoAdvance(false);
+      }
+    } catch (error) {
+      console.error("Error scheduling followup:", error);
+      setPendingAutoAdvance(false);
+      throw error;
+    }
   };
 
   const handleNavigateNext = useCallback(() => {
@@ -310,6 +364,9 @@ export function OrderQuickPreview({
       return;
     }
 
+    // Set flag to auto-advance after successful status update
+    setPendingAutoAdvance(true);
+
     switch (selectedAction) {
       case "confirm":
         setConfirmDialogOpen(true);
@@ -321,6 +378,7 @@ export function OrderQuickPreview({
         setFollowupModalOpen(true);
         break;
       default:
+        setPendingAutoAdvance(false);
         if (canNavigateNext) {
           onNavigate("next");
         }
@@ -925,7 +983,10 @@ export function OrderQuickPreview({
       </SheetContent>
 
       {/* Confirm Dialog */}
-      <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+      <AlertDialog open={confirmDialogOpen} onOpenChange={(open) => {
+        setConfirmDialogOpen(open);
+        if (!open) setPendingAutoAdvance(false);
+      }}>
         <AlertDialogContent data-testid="dialog-confirm-order">
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Order</AlertDialogTitle>
@@ -966,7 +1027,10 @@ export function OrderQuickPreview({
       {/* Cancel Modal */}
       <CancelOrderModal
         open={cancelModalOpen}
-        onOpenChange={setCancelModalOpen}
+        onOpenChange={(open) => {
+          setCancelModalOpen(open);
+          if (!open) setPendingAutoAdvance(false);
+        }}
         onConfirm={handleCancelOrder}
         orderNumber={order.shopifyOrderId}
       />
@@ -974,7 +1038,10 @@ export function OrderQuickPreview({
       {/* Follow-up Modal */}
       <FollowupOrderModal
         open={followupModalOpen}
-        onOpenChange={setFollowupModalOpen}
+        onOpenChange={(open) => {
+          setFollowupModalOpen(open);
+          if (!open) setPendingAutoAdvance(false);
+        }}
         onConfirm={handleScheduleFollowup}
         orderNumber={order.shopifyOrderId}
       />
