@@ -561,6 +561,16 @@ export function OrderQuickPreview({
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
+              <Separator orientation="vertical" className="h-5 mx-1" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onOpenChange(false)}
+                className="h-7 w-7"
+                data-testid="button-close-preview"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </div>
