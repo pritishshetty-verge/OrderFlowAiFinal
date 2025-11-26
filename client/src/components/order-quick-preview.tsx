@@ -998,9 +998,16 @@ export function OrderQuickPreview({
               id="confirm-notes"
               value={confirmNotes}
               onChange={(e) => setConfirmNotes(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleConfirmOrder();
+                }
+              }}
               placeholder="Add any notes..."
               className="mt-1.5"
               data-testid="input-confirm-notes"
+              autoFocus
             />
           </div>
           <AlertDialogFooter>
