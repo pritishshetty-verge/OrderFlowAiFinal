@@ -6,7 +6,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
   ChevronLeft, ChevronRight, Clock, XCircle
@@ -442,14 +441,14 @@ export function OrderQuickPreview({
       <SheetContent className="w-[500px] sm:w-[600px] p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4 flex flex-col">
         {/* STICKY HEADER */}
         <div className="flex-shrink-0 border-b bg-card px-4 py-3 rounded-tl-xl">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={handleNavigatePrev}
                 disabled={!canNavigatePrev}
-                className="h-8 w-8 flex-shrink-0"
+                className="h-8 w-8"
                 data-testid="button-prev-order"
               >
                 <ChevronLeft className="h-4 w-4" />
@@ -465,23 +464,22 @@ export function OrderQuickPreview({
                 size="icon"
                 onClick={handleNavigateNext}
                 disabled={!canNavigateNext}
-                className="h-8 w-8 flex-shrink-0"
+                className="h-8 w-8"
                 data-testid="button-next-order"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
-              <Separator orientation="vertical" className="h-6 bg-border" />
-              <span className="text-xs text-muted-foreground whitespace-nowrap" data-testid="text-order-position">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground" data-testid="text-order-position">
                 {currentIndex + 1} of {totalOrders}
               </span>
-              <Separator orientation="vertical" className="h-6 bg-border" />
+              <Separator orientation="vertical" className="h-5" />
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => onOpenChange(false)}
-                className="h-8 w-8 flex-shrink-0"
+                className="h-8 w-8"
                 data-testid="button-close-preview"
               >
                 <X className="h-4 w-4" />
