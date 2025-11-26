@@ -470,10 +470,11 @@ export function OrderQuickPreview({
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-3">
               <span className="text-xs text-muted-foreground" data-testid="text-order-position">
                 {currentIndex + 1} of {totalOrders}
               </span>
+              <Separator orientation="vertical" className="h-5" />
               <Button
                 variant="ghost"
                 size="icon"
@@ -834,80 +835,82 @@ export function OrderQuickPreview({
 
         {/* STICKY FOOTER - Call Status Controls */}
         <div className="flex-shrink-0 border-t bg-card px-4 py-3 rounded-bl-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleNavigatePrev}
-                disabled={!canNavigatePrev || isMutating}
-                className="h-8 w-8"
-                data-testid="button-footer-prev"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">Call Status</span>
-                <div className={`px-3 py-1 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
-                  {order.callStatus || "Pending"}
+          <div className="flex items-center justify-between gap-2">
+            {/* Left: Prev Navigation */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleNavigatePrev}
+              disabled={!canNavigatePrev || isMutating}
+              className="h-8 w-8 flex-shrink-0"
+              data-testid="button-footer-prev"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+
+            {/* Center: Status Action Buttons */}
+            <div className="flex items-center gap-1.5 flex-1 justify-center">
+              {isTerminalStatus ? (
+                <div className={`px-4 py-2 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
+                  {order.callStatus}
                 </div>
-              </div>
+              ) : (
+                <>
+                  <Button
+                    variant={order.callStatus === "Follow Up" ? "default" : "outline"}
+                    size="sm"
+                    onClick={handleFollowupClick}
+                    disabled={isMutating}
+                    className={order.callStatus === "Follow Up" 
+                      ? "gap-1.5 bg-yellow-500 hover:bg-yellow-600 text-white border-0" 
+                      : "gap-1.5 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
+                    }
+                    data-testid="button-footer-followup"
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Follow Up</span>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-black/10 dark:bg-white/10 rounded">F</kbd>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelClick}
+                    disabled={isMutating}
+                    className="gap-1.5 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    data-testid="button-footer-cancel"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Cancel</span>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleConfirmClick}
+                    disabled={isMutating}
+                    className="gap-1.5 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20"
+                    data-testid="button-footer-confirm"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Confirm</span>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
+                  </Button>
+                </>
+              )}
             </div>
 
-            {!isTerminalStatus && (
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleFollowupClick}
-                  disabled={isMutating}
-                  className="gap-1.5 text-yellow-600 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
-                  data-testid="button-footer-followup"
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                  Follow Up
-                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">F</kbd>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCancelClick}
-                  disabled={isMutating}
-                  className="gap-1.5 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20"
-                  data-testid="button-footer-cancel"
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                  Cancel
-                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleConfirmClick}
-                  disabled={isMutating}
-                  className="gap-1.5 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800 hover:bg-green-50 dark:hover:bg-green-900/20"
-                  data-testid="button-footer-confirm"
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Confirm
-                  <kbd className="ml-1 px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
-                </Button>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleNavigateNext}
-                disabled={!canNavigateNext || isMutating}
-                className="h-8 w-8"
-                data-testid="button-footer-next"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border text-muted-foreground">Enter</kbd>
-            </div>
+            {/* Right: Save & Next */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleNavigateNext}
+              disabled={!canNavigateNext || isMutating}
+              className="gap-1.5 flex-shrink-0"
+              data-testid="button-footer-save-next"
+            >
+              Save & Next
+              <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-black/20 dark:bg-white/20 rounded">↵</kbd>
+            </Button>
           </div>
         </div>
       </SheetContent>
