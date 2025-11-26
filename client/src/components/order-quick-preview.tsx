@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
@@ -442,7 +443,7 @@ export function OrderQuickPreview({
 
   const isLoading = orderLoading || itemsLoading || historyLoading;
   const currentTags = orderDetails?.tags || [];
-  const VISIBLE_TAG_LIMIT = 3;
+  const VISIBLE_TAG_LIMIT = 2;
   const visibleTags = currentTags.slice(0, VISIBLE_TAG_LIMIT);
   const hiddenTags = currentTags.slice(VISIBLE_TAG_LIMIT);
   const hasMoreTags = hiddenTags.length > 0;
@@ -596,65 +597,62 @@ export function OrderQuickPreview({
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Tags</p>
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex flex-row items-center gap-1 overflow-hidden h-6">
                 {isLoading ? (
-                  <Skeleton className="h-6 w-16 rounded-full" />
+                  <Skeleton className="h-5 w-16 rounded-full flex-shrink-0" />
+                ) : currentTags.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">—</span>
                 ) : (
                   <>
                     {visibleTags.map((tag, index) => (
-                      <span
-                        key={tag}
-                        className={`${getTagColor(index)} rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1 group cursor-default`}
-                        data-testid={`badge-tag-${index}`}
-                      >
-                        {tag}
-                        <button
-                          onClick={() => handleRemoveTag(tag)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
-                          data-testid={`button-remove-tag-${index}`}
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
+                      <Tooltip key={tag}>
+                        <TooltipTrigger asChild>
+                          <span
+                            className={`${getTagColor(index)} rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1 group cursor-default flex-shrink-0 max-w-[80px] truncate`}
+                            data-testid={`badge-tag-${index}`}
+                          >
+                            <span className="truncate">{tag}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleRemoveTag(tag); }}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110 flex-shrink-0"
+                              data-testid={`button-remove-tag-${index}`}
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs">
+                          {tag}
+                        </TooltipContent>
+                      </Tooltip>
                     ))}
                     {hasMoreTags && (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <button
-                            className="rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-600 border border-gray-200 inline-flex items-center gap-1 dark:bg-gray-800/50 dark:text-gray-400 dark:border-gray-700"
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground inline-flex items-center cursor-default flex-shrink-0"
                             data-testid="button-more-tags"
                           >
-                            +{hiddenTags.length}
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-3" align="start">
-                          <div className="flex flex-col gap-2">
-                            <p className="text-xs font-semibold text-muted-foreground mb-1">All Tags</p>
-                            <div className="flex flex-wrap gap-2 max-w-xs">
-                              {hiddenTags.map((tag, index) => (
-                                <span
-                                  key={tag}
-                                  className={`${getTagColor(index + VISIBLE_TAG_LIMIT)} rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1 group cursor-default`}
-                                  data-testid={`badge-hidden-tag-${index}`}
-                                >
-                                  {tag}
-                                  <button
-                                    onClick={() => handleRemoveTag(tag)}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
-                                    data-testid={`button-remove-hidden-tag-${index}`}
-                                  >
-                                    <X className="h-2.5 w-2.5" />
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
+                            +{hiddenTags.length} more
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs">
+                          <div className="flex flex-wrap gap-1.5 py-1">
+                            {currentTags.map((tag, index) => (
+                              <span
+                                key={tag}
+                                className={`${getTagColor(index)} rounded-full px-2 py-0.5 text-xs font-medium`}
+                              >
+                                {tag}
+                              </span>
+                            ))}
                           </div>
-                        </PopoverContent>
-                      </Popover>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                     <button
                       onClick={() => setShowAddTagDialog(true)}
-                      className="rounded-full p-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      className="rounded-full p-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0"
                       data-testid="button-add-tag"
                     >
                       <Plus className="h-3 w-3" />
