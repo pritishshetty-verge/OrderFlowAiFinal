@@ -848,16 +848,22 @@ export function OrderQuickPreview({
               <div className="space-y-2">
                 {orderItems.map((item, index) => (
                   <div key={item.id} className="flex items-center gap-2">
-                    <div
-                      className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
-                      style={{
-                        background: `linear-gradient(135deg, ${getItemColor(index)} 0%, ${getItemColor(index)}dd 100%)`,
-                      }}
-                    >
-                      {item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.productName} className="w-full h-full object-cover rounded-md" />
-                      ) : null}
-                    </div>
+                    {item.imageUrl ? (
+                      <img 
+                        src={item.imageUrl} 
+                        alt={item.productName} 
+                        className="w-12 h-12 object-cover rounded-md flex-shrink-0 bg-muted"
+                      />
+                    ) : (
+                      <div
+                        className="w-12 h-12 rounded-md flex items-center justify-center flex-shrink-0"
+                        style={{
+                          background: `linear-gradient(135deg, ${getItemColor(index)} 0%, ${getItemColor(index)}dd 100%)`,
+                        }}
+                      >
+                        <Package className="w-5 h-5 text-white/80" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium">{item.productName}</p>
                       {item.variantTitle && (
