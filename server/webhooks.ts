@@ -146,21 +146,39 @@ export async function handleOrderCreated(req: Request, res: Response) {
 
     const order = await storage.createOrder(orderData);
 
-    // Create order items
+    // Create order items with product image lookup from local database
     if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
-      const items: InsertOrderItem[] = shopifyOrder.line_items.map((item: any) => ({
-        orderId: order.id,
-        shopifyLineItemId: item.id?.toString() || null,
-        shopifyProductId: item.product_id?.toString() || null,
-        shopifyVariantId: item.variant_id?.toString() || null,
-        productName: item.name || "Unknown Product",
-        variantTitle: item.variant_title || null,
-        sku: item.sku || null,
-        quantity: item.quantity,
-        price: item.price || "0",
-        totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
-        imageUrl: item.image_url || null,
-      }));
+      const items: InsertOrderItem[] = [];
+      
+      for (const item of shopifyOrder.line_items) {
+        let imageUrl = item.image_url || null;
+        
+        // Try to look up product image from local products table
+        if (!imageUrl && item.variant_id) {
+          try {
+            const localProduct = await storage.getProductByVariantId(item.variant_id.toString());
+            if (localProduct?.imageUrl) {
+              imageUrl = localProduct.imageUrl;
+            }
+          } catch (err) {
+            console.log(`Could not look up product image for variant ${item.variant_id}:`, err);
+          }
+        }
+        
+        items.push({
+          orderId: order.id,
+          shopifyLineItemId: item.id?.toString() || null,
+          shopifyProductId: item.product_id?.toString() || null,
+          shopifyVariantId: item.variant_id?.toString() || null,
+          productName: item.name || "Unknown Product",
+          variantTitle: item.variant_title || null,
+          sku: item.sku || null,
+          quantity: item.quantity,
+          price: item.price || "0",
+          totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+          imageUrl: imageUrl,
+        });
+      }
 
       await storage.createOrderItems(items);
     }
