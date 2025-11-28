@@ -283,6 +283,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
               ) : (
                 <OrdersTable
                   orders={filteredOrders}
+                  totalCount={ordersResponse?.total}
                   userRole={userRole}
                   onCallCustomer={handleCallCustomer}
                   onViewDetails={handleViewDetails}

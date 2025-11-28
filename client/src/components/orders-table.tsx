@@ -47,6 +47,7 @@ export interface Order {
 
 interface OrdersTableProps {
   orders: Order[];
+  totalCount?: number; // Real total from API for pagination display
   userRole?: "admin" | "manager" | "agent";
   onCallCustomer?: (order: Order) => void;
   onViewDetails?: (order: Order) => void;
@@ -57,6 +58,7 @@ interface OrdersTableProps {
 
 export function OrdersTable({
   orders,
+  totalCount,
   userRole = "admin",
   onCallCustomer,
   onViewDetails,
@@ -71,8 +73,8 @@ export function OrdersTable({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Calculate pagination
-  const totalOrders = orders.length;
+  // Calculate pagination - use totalCount from API if provided, otherwise fall back to orders.length
+  const totalOrders = totalCount ?? orders.length;
   const totalPages = Math.ceil(totalOrders / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalOrders);
