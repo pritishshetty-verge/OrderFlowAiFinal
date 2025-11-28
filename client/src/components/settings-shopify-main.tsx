@@ -8,7 +8,18 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package } from "lucide-react";
+import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -76,8 +87,36 @@ export function ShopifySettingsMain() {
     },
   });
 
+  // Disconnect store mutation
+  const disconnectMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("DELETE", "/api/shopify/credentials");
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Store Disconnected",
+        description: "Your Shopify store has been disconnected. You can now reconnect with fresh credentials.",
+      });
+      // Invalidate relevant queries to refresh the UI
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Disconnect Failed",
+        description: error.message || "Failed to disconnect store.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSync = () => {
     syncMutation.mutate();
+  };
+
+  const handleDisconnect = () => {
+    disconnectMutation.mutate();
   };
 
   return (
@@ -152,6 +191,57 @@ export function ShopifySettingsMain() {
                 </AlertDescription>
               </Alert>
             )}
+
+            {/* Disconnect Store Section */}
+            <div className="pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Disconnect Store</p>
+                  <p className="text-sm text-muted-foreground">
+                    Remove credentials to reconnect with fresh OAuth token
+                  </p>
+                </div>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      className="gap-2 text-destructive hover:text-destructive"
+                      data-testid="button-disconnect-store"
+                      disabled={disconnectMutation.isPending}
+                    >
+                      {disconnectMutation.isPending ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Disconnecting...
+                        </>
+                      ) : (
+                        <>
+                          <Unplug className="h-4 w-4" />
+                          Disconnect Store
+                        </>
+                      )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Disconnect Shopify Store?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will remove your Shopify API credentials. Your existing orders will remain in the system, but you will need to reconnect the store to sync new orders and fix any authentication issues.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction 
+                        onClick={handleDisconnect}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Disconnect Store
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </div>
           </div>
         )}
       </SettingsCard>
