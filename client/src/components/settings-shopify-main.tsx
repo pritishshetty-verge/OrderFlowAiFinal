@@ -44,9 +44,23 @@ interface BackendOrder {
   priority: string;
 }
 
+interface CredentialsStatus {
+  configured: boolean;
+  storeUrl: string | null;
+  lastTested: string | null;
+  testStatus: string | null;
+  testMessage?: string;
+}
+
 export function ShopifySettingsMain() {
   const { toast } = useToast();
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+
+  // Fetch credentials status from database (source of truth for connection state)
+  const { data: credentialsStatus } = useQuery<CredentialsStatus>({
+    queryKey: ["/api/shopify/credentials/status"],
+    refetchInterval: 30000,
+  });
 
   // Fetch most recent order to show webhook activity
   const { data: recentOrderData, isLoading: isLoadingOrders } = useQuery<{ orders: BackendOrder[]; total: number }>({
@@ -55,8 +69,8 @@ export function ShopifySettingsMain() {
   });
 
   const lastOrder = recentOrderData?.orders?.[0];
-  // Consider Shopify connected if we have any orders in the system
-  const isConnected = (recentOrderData?.total ?? 0) > 0;
+  // Connection status is determined ONLY by database credentials, not by order count
+  const isConnected = credentialsStatus?.configured === true;
 
   // Manual sync mutation
   const syncMutation = useMutation({
