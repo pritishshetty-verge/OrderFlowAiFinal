@@ -129,6 +129,7 @@ export interface IStorage {
   getOrderItems(orderId: string): Promise<OrderItem[]>;
   createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
   createOrderItems(items: InsertOrderItem[]): Promise<OrderItem[]>;
+  updateOrderItemImage(itemId: string, imageUrl: string): Promise<OrderItem | undefined>;
 
   // Order Assignments
   getOrderAssignments(orderId: string): Promise<OrderAssignment[]>;
@@ -589,6 +590,15 @@ export class DbStorage implements IStorage {
   async createOrderItems(items: InsertOrderItem[]): Promise<OrderItem[]> {
     if (items.length === 0) return [];
     return await db.insert(orderItems).values(items).returning();
+  }
+
+  async updateOrderItemImage(itemId: string, imageUrl: string): Promise<OrderItem | undefined> {
+    const [item] = await db
+      .update(orderItems)
+      .set({ imageUrl })
+      .where(eq(orderItems.id, itemId))
+      .returning();
+    return item;
   }
 
   // ============================================================================

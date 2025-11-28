@@ -555,6 +555,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
 
         if (existingOrder) {
+          // Still update order items with images from local products cache
+          if (shopifyOrder.line_items?.length > 0) {
+            const existingItems = await storage.getOrderItems(existingOrder.id);
+            
+            for (const item of existingItems) {
+              // Skip if already has an image
+              if (item.imageUrl) continue;
+              
+              // Look up product image from our local products cache
+              let imageUrl: string | null = null;
+              
+              if (item.shopifyVariantId) {
+                const productByVariant = await storage.getProductByVariantId(item.shopifyVariantId);
+                if (productByVariant?.imageUrl) {
+                  imageUrl = productByVariant.imageUrl;
+                }
+              }
+              
+              if (!imageUrl && item.shopifyProductId) {
+                const productByProduct = await storage.getProductByProductId(item.shopifyProductId);
+                if (productByProduct?.imageUrl) {
+                  imageUrl = productByProduct.imageUrl;
+                }
+              }
+              
+              // Update the order item with the image
+              if (imageUrl) {
+                await storage.updateOrderItemImage(item.id, imageUrl);
+              }
+            }
+          }
+          
           skippedCount++;
           continue;
         }
@@ -626,21 +658,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const order = await storage.createOrder(orderData);
 
-        // Create order items
+        // Create order items with product image lookup from local products table
         if (shopifyOrder.line_items?.length > 0) {
-          const items = shopifyOrder.line_items.map((item: any) => ({
-            orderId: order.id,
-            shopifyLineItemId: item.id?.toString() || null,
-            shopifyProductId: item.product_id?.toString() || null,
-            shopifyVariantId: item.variant_id?.toString() || null,
-            productName: item.name || "Unknown Product",
-            variantTitle: item.variant_title || null,
-            sku: item.sku || null,
-            quantity: item.quantity,
-            price: item.price || "0",
-            totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
-            imageUrl: item.image_url || null,
-          }));
+          const items = await Promise.all(
+            shopifyOrder.line_items.map(async (item: any) => {
+              // Look up product image from our local products cache
+              let imageUrl: string | null = null;
+              
+              // Try by variant ID first (more specific)
+              if (item.variant_id) {
+                const productByVariant = await storage.getProductByVariantId(item.variant_id.toString());
+                if (productByVariant?.imageUrl) {
+                  imageUrl = productByVariant.imageUrl;
+                }
+              }
+              
+              // Fall back to product ID if no variant match
+              if (!imageUrl && item.product_id) {
+                const productByProduct = await storage.getProductByProductId(item.product_id.toString());
+                if (productByProduct?.imageUrl) {
+                  imageUrl = productByProduct.imageUrl;
+                }
+              }
+              
+              return {
+                orderId: order.id,
+                shopifyLineItemId: item.id?.toString() || null,
+                shopifyProductId: item.product_id?.toString() || null,
+                shopifyVariantId: item.variant_id?.toString() || null,
+                productName: item.name || "Unknown Product",
+                variantTitle: item.variant_title || null,
+                sku: item.sku || null,
+                quantity: item.quantity,
+                price: item.price || "0",
+                totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+                imageUrl: imageUrl,
+              };
+            })
+          );
 
           await storage.createOrderItems(items);
         }
