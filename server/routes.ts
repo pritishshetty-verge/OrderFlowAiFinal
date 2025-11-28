@@ -912,6 +912,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // PRODUCTS SYNC API
+  // ============================================================================
+
+  // Sync products from Shopify to local database
+  app.post("/api/admin/sync-products", async (req, res) => {
+    try {
+      const credentials = await storage.getShopifyCredentials();
+      
+      if (!credentials) {
+        return res.status(400).json({ error: "Shopify credentials not configured" });
+      }
+
+      const decryptedKey = decrypt(credentials.apiKey);
+      
+      // Create a new ShopifyClient instance with decrypted credentials
+      const { ShopifyClient } = await import("./shopify");
+      const client = new ShopifyClient({
+        storeUrl: credentials.storeUrl,
+        apiKey: decryptedKey,
+        apiSecret: decrypt(credentials.apiSecret),
+      });
+
+      console.log("Starting Shopify product sync...");
+      
+      // Fetch all products from Shopify
+      const shopifyProducts = await client.fetchAllProducts();
+      console.log(`Fetched ${shopifyProducts.length} products from Shopify`);
+
+      // Transform and upsert each product variant
+      let syncedCount = 0;
+      let variantCount = 0;
+
+      for (const product of shopifyProducts) {
+        const productImage = product.image?.src || product.images?.[0]?.src || null;
+
+        for (const variant of product.variants || []) {
+          // Find variant-specific image or fall back to product image
+          const variantImageId = variant.image_id;
+          let variantImage = productImage;
+          
+          if (variantImageId && product.images) {
+            const matchingImage = product.images.find((img: any) => img.id === variantImageId);
+            if (matchingImage) {
+              variantImage = matchingImage.src;
+            }
+          }
+
+          await storage.upsertProduct({
+            shopifyProductId: String(product.id),
+            shopifyVariantId: String(variant.id),
+            title: product.title,
+            variantTitle: variant.title !== "Default Title" ? variant.title : null,
+            sku: variant.sku || null,
+            imageUrl: variantImage,
+            lastSyncedAt: new Date(),
+          });
+          
+          variantCount++;
+        }
+        syncedCount++;
+      }
+
+      console.log(`Synced ${syncedCount} products with ${variantCount} variants`);
+
+      res.json({
+        success: true,
+        message: `Synced ${syncedCount} products with ${variantCount} variants`,
+        productsCount: syncedCount,
+        variantsCount: variantCount,
+      });
+    } catch (error: any) {
+      console.error("Error syncing products:", error);
+      res.status(500).json({ 
+        error: "Failed to sync products", 
+        details: error.message 
+      });
+    }
+  });
+
+  // Get product sync status
+  app.get("/api/admin/products/status", async (req, res) => {
+    try {
+      const count = await storage.getProductCount();
+      const lastSync = await storage.getLastProductSync();
+      
+      res.json({
+        productCount: count,
+        lastSyncedAt: lastSync,
+      });
+    } catch (error) {
+      console.error("Error getting product status:", error);
+      res.status(500).json({ error: "Failed to get product status" });
+    }
+  });
+
+  // Get product by variant ID (for order item lookup)
+  app.get("/api/products/variant/:variantId", async (req, res) => {
+    try {
+      const product = await storage.getProductByVariantId(req.params.variantId);
+      if (!product) {
+        return res.status(404).json({ error: "Product not found" });
+      }
+      res.json(product);
+    } catch (error) {
+      console.error("Error fetching product:", error);
+      res.status(500).json({ error: "Failed to fetch product" });
+    }
+  });
+
+  // ============================================================================
   // USERS API
   // ============================================================================
 

@@ -107,6 +107,52 @@ export class ShopifyClient {
     return data.shop;
   }
 
+  async fetchAllProducts(): Promise<any[]> {
+    const allProducts: any[] = [];
+    let pageInfo: string | null = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const queryParams = new URLSearchParams();
+      queryParams.set("limit", "250"); // Max per page
+      
+      if (pageInfo) {
+        queryParams.set("page_info", pageInfo);
+      }
+
+      const url = `${this.baseUrl}/products.json?${queryParams.toString()}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: this.getHeaders(),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error('Shopify products API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorBody,
+        });
+        throw new Error(`Shopify API error: ${response.statusText} (${response.status})`);
+      }
+
+      const data = await response.json();
+      allProducts.push(...(data.products || []));
+
+      // Check for pagination via Link header
+      const linkHeader = response.headers.get("Link");
+      if (linkHeader && linkHeader.includes('rel="next"')) {
+        const match = linkHeader.match(/<[^>]*page_info=([^>&>]+)[^>]*>;\s*rel="next"/);
+        pageInfo = match ? match[1] : null;
+        hasNextPage = !!pageInfo;
+      } else {
+        hasNextPage = false;
+      }
+    }
+
+    return allProducts;
+  }
+
   verifyWebhook(body: string, hmacHeader: string): boolean {
     if (!this.config.webhookSecret) {
       throw new Error("Webhook secret not configured - refusing to process unverified webhooks");
