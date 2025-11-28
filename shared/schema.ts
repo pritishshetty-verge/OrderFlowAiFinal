@@ -293,6 +293,31 @@ export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 export type OrderItem = typeof orderItems.$inferSelect;
 
 // ============================================================================
+// PRODUCTS (Local Cache of Shopify Products)
+// ============================================================================
+
+export const products = pgTable("products", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  shopifyProductId: text("shopify_product_id").notNull(),
+  shopifyVariantId: text("shopify_variant_id").notNull().unique(),
+  
+  title: text("title").notNull(),
+  variantTitle: text("variant_title"),
+  sku: text("sku"),
+  
+  imageUrl: text("image_url"),
+  
+  // Sync metadata
+  lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertProduct = z.infer<typeof insertProductSchema>;
+export type Product = typeof products.$inferSelect;
+
+// ============================================================================
 // ORDER ASSIGNMENTS
 // ============================================================================
 

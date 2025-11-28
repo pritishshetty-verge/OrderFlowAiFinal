@@ -50,6 +50,8 @@ import {
   type InsertOnboardingChecklist,
   type UserOnboardingProgress,
   type InsertUserOnboardingProgress,
+  type Product,
+  type InsertProduct,
   users,
   invites,
   customers,
@@ -74,6 +76,7 @@ import {
   resources,
   onboardingChecklists,
   userOnboardingProgress,
+  products,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -257,6 +260,15 @@ export interface IStorage {
   getUserOnboardingProgress(userId: string): Promise<UserOnboardingProgress | undefined>;
   createUserOnboardingProgress(progress: InsertUserOnboardingProgress): Promise<UserOnboardingProgress>;
   updateUserOnboardingProgress(id: string, data: Partial<InsertUserOnboardingProgress>): Promise<UserOnboardingProgress | undefined>;
+  
+  // Products (Shopify Product Cache)
+  upsertProduct(product: InsertProduct): Promise<Product>;
+  upsertProducts(products: InsertProduct[]): Promise<Product[]>;
+  getProductByVariantId(shopifyVariantId: string): Promise<Product | undefined>;
+  getProductByProductId(shopifyProductId: string): Promise<Product | undefined>;
+  listProducts(): Promise<Product[]>;
+  getProductCount(): Promise<number>;
+  getLastProductSync(): Promise<Date | null>;
 }
 
 export class DbStorage implements IStorage {
@@ -1699,6 +1711,80 @@ export class DbStorage implements IStorage {
       .where(eq(userOnboardingProgress.id, id))
       .returning();
     return updated;
+  }
+
+  // ============================================================================
+  // PRODUCTS (Shopify Product Cache)
+  // ============================================================================
+
+  async upsertProduct(product: InsertProduct): Promise<Product> {
+    const [result] = await db
+      .insert(products)
+      .values(product)
+      .onConflictDoUpdate({
+        target: products.shopifyVariantId,
+        set: {
+          shopifyProductId: product.shopifyProductId,
+          title: product.title,
+          variantTitle: product.variantTitle,
+          sku: product.sku,
+          imageUrl: product.imageUrl,
+          lastSyncedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async upsertProducts(productList: InsertProduct[]): Promise<Product[]> {
+    if (productList.length === 0) return [];
+    
+    const results: Product[] = [];
+    for (const product of productList) {
+      const result = await this.upsertProduct(product);
+      results.push(result);
+    }
+    return results;
+  }
+
+  async getProductByVariantId(shopifyVariantId: string): Promise<Product | undefined> {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.shopifyVariantId, shopifyVariantId));
+    return product;
+  }
+
+  async getProductByProductId(shopifyProductId: string): Promise<Product | undefined> {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.shopifyProductId, shopifyProductId));
+    return product;
+  }
+
+  async listProducts(): Promise<Product[]> {
+    return await db
+      .select()
+      .from(products)
+      .orderBy(asc(products.title));
+  }
+
+  async getProductCount(): Promise<number> {
+    const [result] = await db
+      .select({ count: count() })
+      .from(products);
+    return result?.count || 0;
+  }
+
+  async getLastProductSync(): Promise<Date | null> {
+    const [product] = await db
+      .select({ lastSyncedAt: products.lastSyncedAt })
+      .from(products)
+      .orderBy(desc(products.lastSyncedAt))
+      .limit(1);
+    return product?.lastSyncedAt || null;
   }
 }
 
