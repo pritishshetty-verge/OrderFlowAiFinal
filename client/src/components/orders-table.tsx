@@ -38,6 +38,7 @@ export interface Order {
   items: string;
   total: number;
   paymentMethod: "cod" | "prepaid";
+  financialStatus?: string | null; // Shopify financial status: paid, pending, voided, refunded
   status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr";
   callStatus?: "Pending" | "Confirmed" | "Cancelled" | "Follow Up";
   assignedTo?: string;
@@ -445,7 +446,7 @@ export function OrdersTable({
                 ₹{order.total.toLocaleString("en-IN")}
               </TableCell>
               <TableCell>
-                <PaymentBadge method={order.paymentMethod} />
+                <PaymentBadge method={order.paymentMethod} financialStatus={order.financialStatus} />
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">
                 {formatDistanceToNow(order.createdAt, { addSuffix: true })}
