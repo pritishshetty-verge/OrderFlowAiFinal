@@ -925,14 +925,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Shopify credentials not configured" });
       }
 
-      const decryptedKey = decrypt(credentials.apiKey);
+      // Use accessToken (same as syncOrders pattern)
+      const decryptedToken = decrypt(credentials.accessToken);
+      const decryptedSecret = decrypt(credentials.apiSecret);
+      
+      // Debug log: show token prefix to verify we're using the right credential
+      console.log("Sync Products using Token:", decryptedToken ? decryptedToken.slice(0, 5) + "..." : "UNDEFINED");
       
       // Create a new ShopifyClient instance with decrypted credentials
       const { ShopifyClient } = await import("./shopify");
       const client = new ShopifyClient({
         storeUrl: credentials.storeUrl,
-        apiKey: decryptedKey,
-        apiSecret: decrypt(credentials.apiSecret),
+        apiKey: decryptedToken,  // accessToken is used as apiKey for Shopify API requests
+        apiSecret: decryptedSecret,
       });
 
       console.log("Starting Shopify product sync...");
