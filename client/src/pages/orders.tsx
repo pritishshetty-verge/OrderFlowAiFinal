@@ -62,10 +62,21 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
+  
+  // Pagination state - lifted from OrdersTable for server-side pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
-  // Fetch orders from backend with auto-refresh every 30 seconds
+  // Fetch orders from backend with server-side pagination
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders"],
+    queryKey: ["/api/orders", currentPage, pageSize],
+    queryFn: async () => {
+      const res = await fetch(`/api/orders?page=${currentPage}&limit=${pageSize}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch orders");
+      return res.json();
+    },
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
   });
 
@@ -76,6 +87,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       return res.json();
     },
     onSuccess: () => {
+      // Invalidate all order queries regardless of pagination params
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       toast({
         title: "Call Status Updated",
@@ -188,23 +200,37 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   const handleSearch = (value: string) => {
     setSearchQuery(value);
+    setCurrentPage(1); // Reset to first page when searching
   };
 
   const handlePaymentChange = (value: string) => {
     setPaymentFilter(value);
+    setCurrentPage(1); // Reset to first page when filtering
   };
 
   const handleClearFilters = () => {
     setSearchQuery("");
     setPaymentFilter("all");
+    setCurrentPage(1); // Reset to first page when clearing filters
   };
 
   const handleStepClick = (status: string) => {
     setActiveTab(status);
+    setCurrentPage(1); // Reset to first page when changing tabs
   };
 
   const handleCallStatusChange = (orderId: string, callStatus: string) => {
     updateCallStatusMutation.mutate({ orderId, callStatus });
+  };
+
+  // Pagination handlers
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize);
+    setCurrentPage(1); // Reset to first page when changing page size
   };
 
   // Calculate stats for progress bar using base-filtered orders (respects agent/admin role)
@@ -290,6 +316,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                   onAssignOrder={handleAssignOrder}
                   onCallStatusChange={handleCallStatusChange}
                   showAgentColumn={false}
+                  currentPage={currentPage}
+                  pageSize={pageSize}
+                  onPageChange={handlePageChange}
+                  onPageSizeChange={handlePageSizeChange}
                 />
               )}
             </div>

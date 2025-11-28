@@ -54,6 +54,11 @@ interface OrdersTableProps {
   onAssignOrder?: (order: Order) => void;
   onCallStatusChange?: (orderId: string, newStatus: string) => void;
   showAgentColumn?: boolean;
+  // Controlled pagination props
+  currentPage?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
 }
 
 export function OrdersTable({
@@ -65,29 +70,50 @@ export function OrdersTable({
   onAssignOrder,
   onCallStatusChange,
   showAgentColumn = true,
+  // Controlled pagination - use props if provided, otherwise use internal state
+  currentPage: controlledPage,
+  pageSize: controlledPageSize,
+  onPageChange,
+  onPageSizeChange,
 }: OrdersTableProps) {
   const { toast } = useToast();
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [callingOrderId, setCallingOrderId] = useState<string | null>(null);
   const [cooldownOrders, setCooldownOrders] = useState<Set<string>>(new Set());
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  
+  // Support both controlled and uncontrolled pagination
+  const [internalPage, setInternalPage] = useState(1);
+  const [internalPageSize, setInternalPageSize] = useState(50);
+  
+  const isControlled = controlledPage !== undefined && onPageChange !== undefined;
+  const currentPage = isControlled ? controlledPage : internalPage;
+  const pageSize = isControlled ? (controlledPageSize ?? 50) : internalPageSize;
 
   // Calculate pagination - use totalCount from API if provided, otherwise fall back to orders.length
   const totalOrders = totalCount ?? orders.length;
   const totalPages = Math.ceil(totalOrders / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalOrders);
-  const paginatedOrders = useMemo(() => orders.slice(startIndex, endIndex), [orders, startIndex, endIndex]);
+  
+  // When controlled (server-side pagination), show all orders since they're already paginated
+  // When uncontrolled (client-side), slice the orders array
+  const paginatedOrders = useMemo(() => {
+    if (isControlled) {
+      return orders; // Server already returned paginated data
+    }
+    return orders.slice(startIndex, endIndex);
+  }, [orders, startIndex, endIndex, isControlled]);
   
   // Selection state based on current page only
   const allSelected = paginatedOrders.length > 0 && paginatedOrders.every(order => selectedOrders.has(order.id));
   const someSelected = paginatedOrders.some(order => selectedOrders.has(order.id)) && !allSelected;
 
-  // Reset to first page when filters change (orders array changes)
+  // Reset to first page when orders change (only for uncontrolled mode)
   useEffect(() => {
-    setCurrentPage(1);
-  }, [orders]);
+    if (!isControlled) {
+      setInternalPage(1);
+    }
+  }, [orders, isControlled]);
 
   // Get current user ID from localStorage (set during login)
   const currentUserId = localStorage.getItem("userId");
@@ -336,13 +362,22 @@ export function OrdersTable({
   };
 
   const handlePageChange = (newPage: number) => {
-    setCurrentPage(newPage);
+    if (isControlled && onPageChange) {
+      onPageChange(newPage);
+    } else {
+      setInternalPage(newPage);
+    }
     setSelectedOrders(new Set()); // Clear selection when changing pages
   };
 
   const handlePageSizeChange = (newSize: string) => {
-    setPageSize(Number(newSize));
-    setCurrentPage(1);
+    const size = Number(newSize);
+    if (isControlled && onPageSizeChange) {
+      onPageSizeChange(size);
+    } else {
+      setInternalPageSize(size);
+      setInternalPage(1);
+    }
     setSelectedOrders(new Set());
   };
 
