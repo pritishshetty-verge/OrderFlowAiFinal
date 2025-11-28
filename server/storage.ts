@@ -487,12 +487,15 @@ export class DbStorage implements IStorage {
     }
     const [{ value: total }] = await countQuery;
 
-    // Get paginated orders
-    let query = db.select().from(orders).orderBy(desc(orders.createdAt));
+    // Get paginated orders - build query with orderBy at the end
+    let query = db.select().from(orders);
 
     if (whereClause) {
       query = query.where(whereClause) as any;
     }
+
+    // Apply sorting AFTER filters - newest first (descending by createdAt)
+    query = query.orderBy(desc(orders.createdAt)) as any;
 
     if (filters?.limit) {
       query = query.limit(filters.limit) as any;
