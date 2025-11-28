@@ -494,8 +494,8 @@ export class DbStorage implements IStorage {
       query = query.where(whereClause) as any;
     }
 
-    // Apply sorting AFTER filters - newest first (descending by createdAt)
-    query = query.orderBy(desc(orders.createdAt)) as any;
+    // Apply sorting AFTER filters - newest first by Shopify timestamp (not local createdAt)
+    query = query.orderBy(desc(orders.shopifyCreatedAt)) as any;
 
     if (filters?.limit) {
       query = query.limit(filters.limit) as any;
