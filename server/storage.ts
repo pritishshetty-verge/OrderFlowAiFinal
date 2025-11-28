@@ -816,9 +816,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteShopifyCredentials(id: string): Promise<void> {
+    // Hard delete to allow fresh OAuth connection
     await db
-      .update(shopifyCredentials)
-      .set({ isActive: false, updatedAt: new Date() })
+      .delete(shopifyCredentials)
       .where(eq(shopifyCredentials.id, id));
   }
 
