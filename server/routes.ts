@@ -45,14 +45,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, limit, offset } = req.query;
+      const { status, paymentMethod, assignedTo, limit, page } = req.query;
+
+      // Parse pagination parameters
+      const parsedLimit = limit ? parseInt(limit as string) : 50;
+      const parsedPage = page ? parseInt(page as string) : 1;
+      // Calculate offset from page number: page 1 = offset 0, page 2 = offset 50, etc.
+      const calculatedOffset = (parsedPage - 1) * parsedLimit;
 
       const filters = {
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
         assignedTo: assignedTo as string | undefined,
-        limit: limit ? parseInt(limit as string) : 50,
-        offset: offset ? parseInt(offset as string) : 0,
+        limit: parsedLimit,
+        offset: calculatedOffset,
       };
 
       const result = await storage.listOrders(filters);
