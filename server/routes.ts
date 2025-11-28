@@ -893,13 +893,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Delete Shopify credentials
+  // Delete Shopify credentials (idempotent - returns 200 even if already deleted)
   app.delete("/api/shopify/credentials", async (req, res) => {
     try {
       const credentials = await storage.getShopifyCredentials();
       
       if (!credentials) {
-        return res.status(404).json({ error: "No credentials found" });
+        // Idempotent: If the goal is "no credentials exist" and none exist, that's success
+        return res.json({ success: true, message: "Credentials already cleared" });
       }
 
       await storage.deleteShopifyCredentials(credentials.id);

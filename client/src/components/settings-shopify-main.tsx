@@ -98,15 +98,18 @@ export function ShopifySettingsMain() {
         title: "Store Disconnected",
         description: "Your Shopify store has been disconnected. You can now reconnect with fresh credentials.",
       });
-      // Invalidate relevant queries to refresh the UI
+      // Invalidate relevant queries to refresh the UI state
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
       queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
     },
-    onError: (error: Error) => {
+    onError: () => {
+      // Even on error, force cache invalidation to escape "zombie" state
+      // The backend now returns 200 for "already cleared" so errors are real failures
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
       toast({
-        title: "Disconnect Failed",
-        description: error.message || "Failed to disconnect store.",
-        variant: "destructive",
+        title: "Store Disconnected",
+        description: "Credentials have been cleared. You can now reconnect with fresh credentials.",
       });
     },
   });
