@@ -7,8 +7,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2 } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -213,6 +213,9 @@ export function ShopifySettingsMain() {
         )}
       </SettingsCard>
 
+      {/* Product Catalog Sync */}
+      <ProductCatalogSync />
+
       {/* IVR Connection Status */}
       <IVRConnectionStatus />
 
@@ -404,6 +407,123 @@ function IVRConnectionStatus() {
           </div>
         )}
       </div>
+    </SettingsCard>
+  );
+}
+
+interface ProductSyncStatus {
+  productCount: number;
+  lastSyncedAt: string | null;
+}
+
+interface ProductSyncResult {
+  success: boolean;
+  message: string;
+  productsCount: number;
+  variantsCount: number;
+}
+
+function ProductCatalogSync() {
+  const { toast } = useToast();
+
+  const { data: syncStatus, isLoading } = useQuery<ProductSyncStatus>({
+    queryKey: ["/api/admin/products/status"],
+    refetchInterval: 60000,
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/admin/sync-products", {});
+      return response.json() as Promise<ProductSyncResult>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/products/status"] });
+      toast({
+        title: "Products Synced",
+        description: `Successfully synced ${data.productsCount} products with ${data.variantsCount} variants from Shopify.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Sync Failed",
+        description: error.message || "Failed to sync products from Shopify.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <SettingsCard
+      icon={Package}
+      title="Product Catalog"
+      description="Sync product images and details from Shopify"
+      testId="card-product-catalog"
+      action={
+        syncStatus?.productCount ? (
+          <StatusBadge status="active" label={`${syncStatus.productCount} Products`} />
+        ) : (
+          <StatusBadge status="inactive" label="Not Synced" />
+        )
+      }
+    >
+      {isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="text-sm text-muted-foreground">Products in Database</p>
+              <p className="text-sm font-medium">{syncStatus?.productCount || 0}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Last Synced</p>
+              <p className="text-sm font-medium">
+                {syncStatus?.lastSyncedAt 
+                  ? formatDistanceToNow(new Date(syncStatus.lastSyncedAt), { addSuffix: true })
+                  : "Never"
+                }
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              data-testid="button-sync-products"
+              className="gap-2"
+            >
+              {syncMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Syncing Products...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4" />
+                  Sync Products
+                </>
+              )}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Import product images for order visualization
+            </p>
+          </div>
+
+          {!syncStatus?.productCount && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                No products synced yet. Click "Sync Products" to import product images from your Shopify store.
+                This enables product thumbnails in the order preview panel.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
     </SettingsCard>
   );
 }
