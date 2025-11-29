@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -57,12 +57,6 @@ const menuItems = [
     ],
   },
   {
-    title: "Analytics",
-    url: "/analytics",
-    icon: TrendingUp,
-    adminOnly: true,
-  },
-  {
     title: "Learning Center",
     url: "/learning",
     icon: GraduationCap,
@@ -101,9 +95,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems
-                .filter((item) => !item.adminOnly || userRole === "admin")
-                .map((item) => (
+              {menuItems.map((item) => (
                 <Collapsible key={item.title} defaultOpen className="group/collapsible">
                   <SidebarMenuItem>
                     {item.items ? (
