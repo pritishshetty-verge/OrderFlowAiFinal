@@ -56,6 +56,15 @@ function InsightCard({ title, value, change, trend, icon }: InsightCardProps) {
 }
 
 export default function AnalyticsPage() {
+  // Get current user from localStorage
+  const userEmail = localStorage.getItem("userEmail");
+  
+  // Fetch current user profile for personalized greeting
+  const { data: currentUser } = useQuery<User>({
+    queryKey: [`/api/users/by-email/${userEmail}`],
+    enabled: !!userEmail,
+  });
+  
   // Fetch orders from backend with auto-refresh every 30 seconds
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
@@ -116,10 +125,14 @@ export default function AnalyticsPage() {
     [allOrders]
   );
 
+  // Build personalized greeting
+  const userName = currentUser?.fullName || currentUser?.username || "there";
+  const greeting = `Welcome back, ${userName}`;
+
   return (
     <PageLayout
-      title="Analytics & Insights"
-      description="Comprehensive analytics and performance metrics"
+      title={greeting}
+      description="Your analytics dashboard and performance metrics"
     >
       <div className="p-6 space-y-6">
         {isLoading ? (
