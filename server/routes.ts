@@ -78,6 +78,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Dashboard metrics - aggregated counts for overview
+  app.get("/api/dashboard/metrics", async (req, res) => {
+    try {
+      const metrics = await storage.getDashboardMetrics();
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error fetching dashboard metrics:", error);
+      res.status(500).json({ error: "Failed to fetch dashboard metrics" });
+    }
+  });
+
   // Get single order by ID
   app.get("/api/orders/:id", async (req, res) => {
     try {

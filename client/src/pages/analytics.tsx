@@ -55,6 +55,13 @@ function InsightCard({ title, value, change, trend, icon }: InsightCardProps) {
   );
 }
 
+interface DashboardMetrics {
+  totalOrders: number;
+  confirmedOrders: number;
+  cancelledOrders: number;
+  codOrders: number;
+}
+
 export default function AnalyticsPage() {
   // Get current user from localStorage
   const userEmail = localStorage.getItem("userEmail");
@@ -65,6 +72,12 @@ export default function AnalyticsPage() {
     enabled: !!userEmail,
   });
   
+  // Fetch dashboard metrics from backend aggregation query
+  const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
+    queryKey: ["/api/dashboard/metrics"],
+    refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time updates
+  });
+
   // Fetch orders from backend with auto-refresh every 30 seconds
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
@@ -76,48 +89,26 @@ export default function AnalyticsPage() {
     queryKey: ["/api/users"],
   });
 
-  // Transform backend orders to frontend format
+  // Transform backend orders to frontend format (for charts)
   const allOrders = useMemo(() => {
     if (!ordersResponse?.orders || !usersData) return [];
     return ordersResponse.orders.map((order) => transformOrder(order, usersData));
   }, [ordersResponse, usersData]);
 
-  const isLoading = ordersLoading || usersLoading;
+  const isLoading = metricsLoading || ordersLoading || usersLoading;
 
-  // Calculate stats from real data
-  const stats = useMemo(
-    () => {
-      const successfulOrders = allOrders.filter(
-        (o) => o.status === "confirmed" || o.status === "delivered"
-      );
-      return {
-        totalOrders: allOrders.length,
-        confirmedOrders: allOrders.filter((o) => o.status === "confirmed").length,
-        cancelledOrders: allOrders.filter((o) => o.status === "cancelled").length,
-        totalRevenue: successfulOrders.reduce((sum, o) => sum + o.total, 0),
-        successfulOrdersCount: successfulOrders.length,
-      };
-    },
-    [allOrders]
-  );
-
-  const avgOrderValue = useMemo(
-    () =>
-      stats.successfulOrdersCount > 0
-        ? Math.floor(stats.totalRevenue / stats.successfulOrdersCount)
-        : 0,
-    [stats]
-  );
+  // Use backend metrics for stats
+  const stats = {
+    totalOrders: metrics?.totalOrders || 0,
+    confirmedOrders: metrics?.confirmedOrders || 0,
+    cancelledOrders: metrics?.cancelledOrders || 0,
+    codOrders: metrics?.codOrders || 0,
+  };
 
   const conversionRate = useMemo(
     () =>
       stats.totalOrders > 0 ? ((stats.confirmedOrders / stats.totalOrders) * 100).toFixed(1) : "0",
     [stats]
-  );
-
-  const codOrders = useMemo(
-    () => allOrders.filter((o) => o.paymentMethod === "cod").length,
-    [allOrders]
   );
 
   const activeAgents = useMemo(
@@ -159,32 +150,32 @@ export default function AnalyticsPage() {
             {/* Additional Insights */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <InsightCard
-                title="Avg Order Value"
-                value={`₹${avgOrderValue.toLocaleString("en-IN")}`}
-                change="+8.2% from last period"
-                trend="up"
-                icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
-              />
-              <InsightCard
                 title="Conversion Rate"
                 value={`${conversionRate}%`}
-                change="+3.1% from last period"
+                change="Based on confirmed orders"
                 trend="up"
                 icon={<Activity className="h-4 w-4 text-muted-foreground" />}
-              />
-              <InsightCard
-                title="COD Orders"
-                value={codOrders.toString()}
-                change="-2.4% from last period"
-                trend="down"
-                icon={<TrendingDown className="h-4 w-4 text-muted-foreground" />}
               />
               <InsightCard
                 title="Active Agents"
                 value={activeAgents.toString()}
-                change="No change"
+                change="With assigned orders"
                 trend="up"
                 icon={<Activity className="h-4 w-4 text-muted-foreground" />}
+              />
+              <InsightCard
+                title="Pending Actions"
+                value={(stats.totalOrders - stats.confirmedOrders - stats.cancelledOrders).toString()}
+                change="Orders awaiting verification"
+                trend="down"
+                icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
+              />
+              <InsightCard
+                title="Cancellation Rate"
+                value={stats.totalOrders > 0 ? `${((stats.cancelledOrders / stats.totalOrders) * 100).toFixed(1)}%` : "0%"}
+                change="Focus on reduction"
+                trend="down"
+                icon={<TrendingDown className="h-4 w-4 text-muted-foreground" />}
               />
             </div>
 

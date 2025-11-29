@@ -33,17 +33,21 @@ interface DashboardStatsProps {
   totalOrders: number;
   confirmedOrders: number;
   cancelledOrders: number;
-  totalRevenue: number;
+  codOrders: number;
 }
 
 export function DashboardStats({
   totalOrders,
   confirmedOrders,
   cancelledOrders,
-  totalRevenue,
+  codOrders,
 }: DashboardStatsProps) {
   const confirmationRate = totalOrders > 0 
     ? ((confirmedOrders / totalOrders) * 100).toFixed(1) 
+    : "0";
+    
+  const codPercentage = totalOrders > 0
+    ? ((codOrders / totalOrders) * 100).toFixed(1)
     : "0";
 
   return (
@@ -59,7 +63,6 @@ export function DashboardStats({
         value={confirmedOrders}
         icon={<CheckCircle2 className="h-4 w-4 text-green-600" />}
         description={`${confirmationRate}% confirmation rate`}
-        trend="+12% from last week"
       />
       <StatCard
         title="Cancelled Orders"
@@ -68,11 +71,10 @@ export function DashboardStats({
         description="Requires attention"
       />
       <StatCard
-        title="Revenue"
-        value={`₹${totalRevenue.toLocaleString("en-IN")}`}
-        icon={<TrendingUp className="h-4 w-4 text-blue-600" />}
-        description="Confirmed orders"
-        trend="+18% from last week"
+        title="COD Orders"
+        value={codOrders}
+        icon={<TrendingUp className="h-4 w-4 text-orange-600" />}
+        description={`${codPercentage}% of total orders`}
       />
     </div>
   );

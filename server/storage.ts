@@ -281,6 +281,14 @@ export interface IStorage {
   listProducts(): Promise<Product[]>;
   getProductCount(): Promise<number>;
   getLastProductSync(): Promise<Date | null>;
+
+  // Dashboard Metrics
+  getDashboardMetrics(): Promise<{
+    totalOrders: number;
+    confirmedOrders: number;
+    cancelledOrders: number;
+    codOrders: number;
+  }>;
 }
 
 export class DbStorage implements IStorage {
@@ -1893,6 +1901,33 @@ export class DbStorage implements IStorage {
       .orderBy(desc(products.lastSyncedAt))
       .limit(1);
     return product?.lastSyncedAt || null;
+  }
+
+  // ============================================================================
+  // DASHBOARD METRICS
+  // ============================================================================
+
+  async getDashboardMetrics(): Promise<{
+    totalOrders: number;
+    confirmedOrders: number;
+    cancelledOrders: number;
+    codOrders: number;
+  }> {
+    const [result] = await db
+      .select({
+        totalOrders: count(),
+        confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
+        cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
+        codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
+      })
+      .from(orders);
+
+    return {
+      totalOrders: result?.totalOrders || 0,
+      confirmedOrders: Number(result?.confirmedOrders) || 0,
+      cancelledOrders: Number(result?.cancelledOrders) || 0,
+      codOrders: Number(result?.codOrders) || 0,
+    };
   }
 }
 
