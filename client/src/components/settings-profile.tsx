@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Form,
   FormControl,
@@ -16,13 +17,16 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { Camera, Save } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Camera, Save, Loader2 } from "lucide-react";
+import type { User } from "@shared/schema";
 
 const profileSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
+  username: z.string().min(2, "Username must be at least 2 characters"),
+  fullName: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
-  phone: z.string().min(10, "Phone number must be at least 10 characters"),
-  department: z.string().min(2, "Department must be at least 2 characters"),
+  phone: z.string().optional(),
 });
 
 type ProfileFormValues = z.infer<typeof profileSchema>;
@@ -33,35 +37,71 @@ interface ProfileSettingsProps {
 
 export function ProfileSettings({ userRole }: ProfileSettingsProps) {
   const { toast } = useToast();
-  const employeeId = useMemo(() => `EMP${Math.floor(Math.random() * 10000)}`, []);
-  
+  const userEmail = localStorage.getItem("userEmail");
+
+  const { data: user, isLoading } = useQuery<User>({
+    queryKey: [`/api/users/by-email/${userEmail}`],
+    enabled: !!userEmail,
+  });
+
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
     defaultValues: {
-      name: userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent",
-      email: `${userRole}@orderflowai.com`,
-      phone: "+91 98765 43210",
-      department: "Operations",
+      username: "",
+      fullName: "",
+      email: "",
+      phone: "",
+    },
+  });
+
+  useEffect(() => {
+    if (user) {
+      form.reset({
+        username: user.username || "",
+        fullName: user.fullName || "",
+        email: user.email || "",
+        phone: user.phone || "",
+      });
+    }
+  }, [user, form]);
+
+  const updateProfileMutation = useMutation({
+    mutationFn: async (data: ProfileFormValues) => {
+      if (!user?.id) throw new Error("User not found");
+      return apiRequest("PATCH", `/api/users/${user.id}`, data);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Profile Updated",
+        description: "Your profile has been updated successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/by-email/${userEmail}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update Failed",
+        description: error.message || "Failed to update profile. Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
   const onSubmit = (data: ProfileFormValues) => {
-    console.log("Profile updated:", data);
-    toast({
-      title: "Profile Updated",
-      description: "Your profile has been updated successfully.",
-    });
+    updateProfileMutation.mutate(data);
   };
 
   const getInitials = (name: string) => {
+    if (!name) return "??";
     return name
       .split(" ")
       .map((n) => n[0])
       .join("")
-      .toUpperCase();
+      .toUpperCase()
+      .slice(0, 2);
   };
 
-  const getRoleBadgeVariant = (role: "admin" | "manager" | "agent") => {
+  const getRoleBadgeVariant = (role: string) => {
     switch (role) {
       case "admin":
         return "default";
@@ -69,8 +109,51 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         return "secondary";
       case "agent":
         return "outline";
+      default:
+        return "outline";
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-64" />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center gap-6">
+              <Skeleton className="h-24 w-24 rounded-full" />
+              <div className="space-y-2">
+                <Skeleton className="h-6 w-32" />
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -78,16 +161,15 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         <CardHeader>
           <CardTitle>Profile Information</CardTitle>
           <CardDescription>
-            Update your personal information and profile picture
+            Update your personal information and profile details
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Avatar Section */}
           <div className="flex items-center gap-6">
             <div className="relative">
               <Avatar className="h-24 w-24">
                 <AvatarFallback className="text-2xl">
-                  {getInitials(form.watch("name"))}
+                  {getInitials(form.watch("fullName"))}
                 </AvatarFallback>
               </Avatar>
               <Button
@@ -102,28 +184,42 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold" data-testid="text-profile-name">
-                  {form.watch("name")}
+                  {form.watch("fullName") || "Your Name"}
                 </h3>
-                <Badge variant={getRoleBadgeVariant(userRole)} className="capitalize" data-testid="badge-role">
-                  {userRole}
+                <Badge variant={getRoleBadgeVariant(user?.role || userRole)} className="capitalize" data-testid="badge-role">
+                  {user?.role || userRole}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground" data-testid="text-profile-email">
                 {form.watch("email")}
               </p>
-              <p className="text-xs text-muted-foreground" data-testid="text-employee-id">
-                Employee ID: {employeeId}
-              </p>
+              {user?.employeeId && (
+                <p className="text-xs text-muted-foreground" data-testid="text-employee-id">
+                  Employee ID: {user.employeeId}
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Form Fields */}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <FormField
                   control={form.control}
-                  name="name"
+                  name="username"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Username</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-username" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="fullName"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Full Name</FormLabel>
@@ -160,24 +256,41 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                     </FormItem>
                   )}
                 />
-                <FormField
-                  control={form.control}
-                  name="department"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Department</FormLabel>
-                      <FormControl>
-                        <Input {...field} data-testid="input-department" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <FormItem>
+                  <FormLabel>Role</FormLabel>
+                  <FormControl>
+                    <Input 
+                      value={user?.role || userRole} 
+                      disabled 
+                      className="capitalize bg-muted" 
+                      data-testid="input-role" 
+                    />
+                  </FormControl>
+                </FormItem>
+                <FormItem>
+                  <FormLabel>Department</FormLabel>
+                  <FormControl>
+                    <Input 
+                      value={user?.department || "Operations"} 
+                      disabled 
+                      className="bg-muted" 
+                      data-testid="input-department" 
+                    />
+                  </FormControl>
+                </FormItem>
               </div>
 
               <div className="flex justify-end pt-4">
-                <Button type="submit" data-testid="button-save-profile">
-                  <Save className="h-4 w-4 mr-2" />
+                <Button 
+                  type="submit" 
+                  disabled={updateProfileMutation.isPending}
+                  data-testid="button-save-profile"
+                >
+                  {updateProfileMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
                   Save Changes
                 </Button>
               </div>
@@ -186,7 +299,6 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         </CardContent>
       </Card>
 
-      {/* Additional Info Card */}
       <Card>
         <CardHeader>
           <CardTitle>Account Statistics</CardTitle>
@@ -196,15 +308,17 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Orders Handled</p>
-              <p className="text-2xl font-bold" data-testid="text-orders-handled">156</p>
+              <p className="text-2xl font-bold" data-testid="text-orders-handled">--</p>
             </div>
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Success Rate</p>
-              <p className="text-2xl font-bold" data-testid="text-success-rate">94.2%</p>
+              <p className="text-2xl font-bold" data-testid="text-success-rate">--</p>
             </div>
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">Account Age</p>
-              <p className="text-2xl font-bold" data-testid="text-account-age">8 months</p>
+              <p className="text-2xl font-bold" data-testid="text-account-age">
+                {user?.createdAt ? `${Math.floor((Date.now() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24))} days` : "--"}
+              </p>
             </div>
           </div>
         </CardContent>
