@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Table,
   TableBody,
@@ -18,10 +18,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { PageLayout } from "@/components/page-layout";
-import { Download, Play, Pause, Phone, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, Play, Pause, Phone, ChevronLeft, ChevronRight, Sparkles, Loader2, FileText } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { useState, useRef } from "react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface CallWithDetails {
   id: string;
@@ -129,6 +137,106 @@ function AudioPlayer({ recordingUrl, callReference, callId }: { recordingUrl: st
         </a>
       </Button>
     </div>
+  );
+}
+
+function GenerateAnalysisButton({ callId, recordingUrl }: { callId: string; recordingUrl: string }) {
+  const { toast } = useToast();
+  
+  const analysisMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("/api/integrations/analyze-call", {
+        method: "POST",
+        body: JSON.stringify({ callId, recordingUrl }),
+        headers: { "Content-Type": "application/json" }
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Analysis Complete",
+        description: "AI analysis has been generated successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/calls'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Analysis Failed",
+        description: error?.message || "Failed to generate AI analysis. Please try again.",
+        variant: "destructive",
+      });
+    }
+  });
+  
+  return (
+    <Button
+      size="sm"
+      onClick={() => analysisMutation.mutate()}
+      disabled={analysisMutation.isPending}
+      className="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white border-0 shadow-lg shadow-purple-500/25"
+      data-testid={`button-generate-analysis-${callId}`}
+    >
+      {analysisMutation.isPending ? (
+        <>
+          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+          Generating...
+        </>
+      ) : (
+        <>
+          <Sparkles className="w-3 h-3 mr-1" />
+          Generate
+        </>
+      )}
+    </Button>
+  );
+}
+
+function AnalysisViewer({ analysis, transcript }: { analysis: any; transcript: string | null }) {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  const analysisText = typeof analysis === 'string' ? analysis : JSON.stringify(analysis, null, 2);
+  
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => setIsOpen(true)}
+        className="text-purple-600 border-purple-200 hover:bg-purple-50 dark:text-purple-400 dark:border-purple-800 dark:hover:bg-purple-950"
+        data-testid="button-view-analysis"
+      >
+        <FileText className="w-3 h-3 mr-1" />
+        View Analysis
+      </Button>
+      
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-500" />
+              AI Call Analysis
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {transcript && (
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm text-muted-foreground">Transcript</h4>
+                <div className="bg-muted p-4 rounded-lg text-sm whitespace-pre-wrap">
+                  {transcript}
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-2">
+              <h4 className="font-semibold text-sm text-muted-foreground">AI Analysis</h4>
+              <div className="bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950 dark:to-indigo-950 p-4 rounded-lg text-sm whitespace-pre-wrap border border-purple-100 dark:border-purple-900">
+                {analysisText}
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

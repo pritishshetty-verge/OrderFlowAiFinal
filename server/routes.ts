@@ -1865,6 +1865,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AI Analysis - Proxy to n8n workflow for call transcription and analysis
+  app.post("/api/integrations/analyze-call", async (req, res) => {
+    try {
+      const { callId, recordingUrl } = req.body;
+      
+      if (!callId || !recordingUrl) {
+        return res.status(400).json({ error: "callId and recordingUrl are required" });
+      }
+      
+      // Verify call exists
+      const call = await storage.getCallById(callId);
+      if (!call) {
+        return res.status(404).json({ error: "Call not found" });
+      }
+      
+      console.log(`🤖 Starting AI analysis for call ${callId}`);
+      
+      // Call n8n webhook
+      const n8nWebhookUrl = "https://n8n.srv1031651.hstgr.cloud/webhook-test/b9e4258a-5f84-4ae0-9e2b-101ddef236a5";
+      
+      const n8nResponse = await axios.post(n8nWebhookUrl, {
+        callId,
+        recordingUrl
+      }, {
+        timeout: 120000, // 2 minute timeout for AI processing
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`✅ n8n response received for call ${callId}:`, JSON.stringify(n8nResponse.data).substring(0, 200));
+      
+      // Extract transcript and analysis from n8n response
+      const { transcript, analysis, ai_analysis } = n8nResponse.data;
+      const finalAnalysis = analysis || ai_analysis;
+      
+      // Update call record with transcript and AI analysis
+      const updatedCall = await storage.updateCallFromWebhook(callId, {
+        transcript: transcript || null,
+        aiAnalysis: finalAnalysis || null
+      });
+      
+      if (!updatedCall) {
+        return res.status(500).json({ error: "Failed to update call record" });
+      }
+      
+      console.log(`💾 Call ${callId} updated with AI analysis`);
+      
+      res.json({
+        success: true,
+        call: updatedCall,
+        transcript,
+        aiAnalysis: finalAnalysis
+      });
+      
+    } catch (error: any) {
+      console.error("Error generating AI analysis:", error);
+      
+      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+        return res.status(504).json({ error: "AI analysis request timed out. Please try again." });
+      }
+      
+      res.status(500).json({ 
+        error: "Failed to generate AI analysis",
+        details: error.message 
+      });
+    }
+  });
+
   // IVR Webhook - Receive call completion events
   app.post("/api/webhooks/ivr-call-events", async (req, res) => {
     try {
