@@ -1880,7 +1880,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Call not found" });
       }
       
+      // Fetch agent details for context
+      const agent = await storage.getUser(call.agentId);
+      const staffMember = agent ? (agent.fullName || agent.email) : "Unknown Agent";
+      
       console.log(`🤖 Starting AI analysis for call ${callId}`);
+      console.log(`📋 Context: Order ${call.orderId}, Agent: ${staffMember}, Duration: ${call.callDuration || 0}s`);
       
       // Call n8n webhook - uses environment variable for configurability
       const n8nWebhookUrl = process.env.N8N_ANALYZE_CALL_URL;
@@ -1890,10 +1895,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "AI analysis service not configured" });
       }
       
-      const n8nResponse = await axios.post(n8nWebhookUrl, {
+      // Build enriched payload with order and agent context
+      const n8nPayload = {
         callId,
-        recordingUrl
-      }, {
+        recordingUrl,
+        orderId: call.orderId,
+        staffMember,
+        callDate: call.calledAt?.toISOString() || new Date().toISOString(),
+        callDuration: call.callDuration || 0
+      };
+      
+      const n8nResponse = await axios.post(n8nWebhookUrl, n8nPayload, {
         timeout: 120000, // 2 minute timeout for AI processing
         headers: {
           'Content-Type': 'application/json'
