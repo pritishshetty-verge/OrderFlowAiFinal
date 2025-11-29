@@ -80,9 +80,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   
   const isAdmin = userRole === "admin";
 
-  // Type for API response with stats
+  // Type for API response with stats (orders include joined user data)
   interface OrdersApiResponse {
-    orders: BackendOrder[];
+    orders: BackendOrderWithUser[];
     total: number;
     stats: {
       total: number;
@@ -181,7 +181,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     // Admins see all orders (no filter)
     
     // Transform filtered orders to frontend format
-    return filteredBackendOrders.map((order) => transformOrder(order as BackendOrderWithUser));
+    return filteredBackendOrders.map((order) => transformOrder(order));
   }, [ordersResponse, usersData, userRole, currentUserId]);
 
   // Apply tab filters and search/payment filters on top of base filtered orders
@@ -396,7 +396,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                   onViewDetails={handleViewDetails}
                   onAssignOrder={handleAssignOrder}
                   onCallStatusChange={handleCallStatusChange}
-                  showAgentColumn={false}
+                  showAgentColumn={true}
                   currentPage={currentPage}
                   pageSize={pageSize}
                   onPageChange={handlePageChange}
