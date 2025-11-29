@@ -703,7 +703,7 @@ export function OrderQuickPreview({
               </Button>
             </div>
             <div className="space-y-1.5">
-              <p className="text-sm font-medium">{order.customerName}</p>
+              <p className="text-sm font-medium">{orderDetails?.customerName || order.customerName}</p>
               {isLoading ? (
                 <Skeleton className="h-4 w-48" />
               ) : orderDetails?.customerEmail ? (
@@ -717,22 +717,34 @@ export function OrderQuickPreview({
                 </a>
               ) : null}
               <a
-                href={`tel:${order.customerPhone}`}
+                href={`tel:${orderDetails?.customerPhone || order.customerPhone}`}
                 className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
                 data-testid="link-customer-phone"
               >
                 <Phone className="h-3.5 w-3.5" />
-                {order.customerPhone}
+                {orderDetails?.customerPhone || order.customerPhone}
               </a>
-              {order.shippingAddress && (
-                <div className="flex items-start gap-1.5 text-xs text-muted-foreground pt-0.5" data-testid="text-shipping-address">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <span className="flex-1">{order.shippingAddress}</span>
-                </div>
-              )}
+              {(() => {
+                const displayAddress = orderDetails 
+                  ? [
+                      orderDetails.shippingAddressLine1,
+                      orderDetails.shippingAddressLine2,
+                      orderDetails.shippingCity,
+                      orderDetails.shippingState,
+                      orderDetails.shippingPincode,
+                      orderDetails.shippingCountry
+                    ].filter(Boolean).join(", ")
+                  : order.shippingAddress;
+                return displayAddress ? (
+                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground pt-0.5" data-testid="text-shipping-address">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span className="flex-1">{displayAddress}</span>
+                  </div>
+                ) : null;
+              })()}
             </div>
           </div>
 
