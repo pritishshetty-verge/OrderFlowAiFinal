@@ -140,25 +140,37 @@ function AudioPlayer({ recordingUrl, callReference, callId }: { recordingUrl: st
   );
 }
 
+interface AnalyzeCallResponse {
+  success: boolean;
+  call: any;
+  transcript: string | null;
+  aiAnalysis: any;
+}
+
 function GenerateAnalysisButton({ callId, recordingUrl }: { callId: string; recordingUrl: string }) {
   const { toast } = useToast();
   
-  const analysisMutation = useMutation({
+  const analysisMutation = useMutation<AnalyzeCallResponse, Error>({
     mutationFn: async () => {
-      return await apiRequest("/api/integrations/analyze-call", {
+      const response = await apiRequest("/api/integrations/analyze-call", {
         method: "POST",
         body: JSON.stringify({ callId, recordingUrl }),
         headers: { "Content-Type": "application/json" }
       });
+      return response as AnalyzeCallResponse;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast({
         title: "Analysis Complete",
-        description: "AI analysis has been generated successfully.",
+        description: data.transcript 
+          ? "Transcript and AI analysis generated successfully." 
+          : "AI analysis generated successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ['/api/admin/calls'] });
+      queryClient.invalidateQueries({ 
+        predicate: (query) => query.queryKey[0] === '/api/admin/calls'
+      });
     },
-    onError: (error: any) => {
+    onError: (error: Error) => {
       toast({
         title: "Analysis Failed",
         description: error?.message || "Failed to generate AI analysis. Please try again.",
@@ -190,10 +202,32 @@ function GenerateAnalysisButton({ callId, recordingUrl }: { callId: string; reco
   );
 }
 
+function formatAnalysis(analysis: any): string {
+  if (typeof analysis === 'string') return analysis;
+  
+  if (typeof analysis === 'object' && analysis !== null) {
+    const parts: string[] = [];
+    
+    if (analysis.summary) parts.push(`Summary:\n${analysis.summary}`);
+    if (analysis.sentiment) parts.push(`Sentiment: ${analysis.sentiment}`);
+    if (analysis.intent) parts.push(`Customer Intent: ${analysis.intent}`);
+    if (analysis.outcome) parts.push(`Call Outcome: ${analysis.outcome}`);
+    if (analysis.action_items) parts.push(`Action Items:\n${Array.isArray(analysis.action_items) ? analysis.action_items.map((i: string) => `• ${i}`).join('\n') : analysis.action_items}`);
+    if (analysis.key_points) parts.push(`Key Points:\n${Array.isArray(analysis.key_points) ? analysis.key_points.map((i: string) => `• ${i}`).join('\n') : analysis.key_points}`);
+    if (analysis.notes) parts.push(`Notes:\n${analysis.notes}`);
+    
+    if (parts.length > 0) return parts.join('\n\n');
+    
+    return JSON.stringify(analysis, null, 2);
+  }
+  
+  return String(analysis);
+}
+
 function AnalysisViewer({ analysis, transcript }: { analysis: any; transcript: string | null }) {
   const [isOpen, setIsOpen] = useState(false);
   
-  const analysisText = typeof analysis === 'string' ? analysis : JSON.stringify(analysis, null, 2);
+  const analysisText = formatAnalysis(analysis);
   
   return (
     <>
@@ -410,7 +444,9 @@ export default function CallLogsPage() {
                     </TableCell>
                     <TableCell>
                       {call.aiAnalysis ? (
-                        <Badge variant="secondary">Available</Badge>
+                        <AnalysisViewer analysis={call.aiAnalysis} transcript={call.transcript} />
+                      ) : call.recordingUrl ? (
+                        <GenerateAnalysisButton callId={call.id} recordingUrl={call.recordingUrl} />
                       ) : (
                         <Badge variant="outline">N/A</Badge>
                       )}

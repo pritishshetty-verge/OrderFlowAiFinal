@@ -1892,13 +1892,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         timeout: 120000, // 2 minute timeout for AI processing
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        validateStatus: (status) => status < 500 // Accept any non-5xx response
       });
+      
+      // Check for non-2xx responses
+      if (n8nResponse.status >= 400) {
+        console.error(`❌ n8n returned error status ${n8nResponse.status}:`, n8nResponse.data);
+        return res.status(502).json({ 
+          error: "AI service returned an error",
+          details: n8nResponse.data?.message || `Status ${n8nResponse.status}`
+        });
+      }
       
       console.log(`✅ n8n response received for call ${callId}:`, JSON.stringify(n8nResponse.data).substring(0, 200));
       
       // Extract transcript and analysis from n8n response
-      const { transcript, analysis, ai_analysis } = n8nResponse.data;
+      const { transcript, analysis, ai_analysis } = n8nResponse.data || {};
       const finalAnalysis = analysis || ai_analysis;
       
       // Update call record with transcript and AI analysis
