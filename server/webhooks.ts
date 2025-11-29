@@ -115,7 +115,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       customerName: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() || shopifyOrder.billing_address?.name || "Guest",
       customerEmail: shopifyOrder.email || null,
       customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
-      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, shipmentStatus),
+      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, shipmentStatus, shopifyOrder.cancelled_at),
       fulfillmentStatus: shopifyOrder.fulfillment_status || null,
       fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
       financialStatus: shopifyOrder.financial_status || null,
@@ -276,6 +276,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shopifyOrder.financial_status,
       shopifyOrder.fulfillment_status,
       shipmentStatus,
+      shopifyOrder.cancelled_at,
     );
 
     const orderData: Partial<InsertOrder> = {
