@@ -8,11 +8,10 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
-import DashboardPage from "@/pages/dashboard";
+import OverviewPage from "@/pages/analytics";
 import OrdersPage from "@/pages/orders";
 import FulfilPage from "@/pages/fulfil";
 import NDRPage from "@/pages/ndr";
-import AnalyticsPage from "@/pages/analytics";
 import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
 import ProfilePage from "@/pages/profile";
@@ -53,7 +52,7 @@ function Router() {
       <Route path="/login" component={LoginPage} />
       <Route path="/signup" component={SignupPage} />
       <Route path="/">
-        {() => <ProtectedRoute component={DashboardPage} />}
+        {() => <ProtectedRoute component={OverviewPage} />}
       </Route>
       <Route path="/orders">
         {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole} />} />}
@@ -63,9 +62,6 @@ function Router() {
       </Route>
       <Route path="/ndr">
         {() => <ProtectedRoute component={NDRPage} />}
-      </Route>
-      <Route path="/analytics">
-        {() => <ProtectedRoute component={AnalyticsPage} />}
       </Route>
       <Route path="/team">
         {() => <ProtectedRoute component={TeamPage} />}
