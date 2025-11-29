@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { ChevronUp, User, Settings, Moon, Sun, LogOut, HelpCircle, Bell } from "lucide-react";
+import { ChevronUp, User, Settings, Moon, Sun, LogOut } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -48,11 +48,6 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
       icon: Settings,
       label: "Settings",
       onClick: () => handleNavigation("/settings"),
-    },
-    {
-      icon: Bell,
-      label: "Notifications",
-      onClick: () => handleNavigation("/settings?tab=notifications"),
     },
   ];
 
@@ -129,19 +124,6 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
               data-testid="switch-dark-mode"
             />
           </div>
-        </div>
-
-        <Separator />
-
-        <div className="p-1">
-          <button
-            onClick={() => handleNavigation("/learning")}
-            className="flex items-center gap-3 w-full rounded-md px-3 py-2 text-sm hover-elevate transition-colors"
-            data-testid="button-menu-help"
-          >
-            <HelpCircle className="h-4 w-4 text-muted-foreground" />
-            <span>Help Center</span>
-          </button>
         </div>
 
         <Separator />
