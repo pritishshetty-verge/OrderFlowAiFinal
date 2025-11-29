@@ -115,6 +115,7 @@ export interface IStorage {
     callStatus?: string;
     paymentMethod?: string;
     assignedTo?: string;
+    agentId?: string; // 'unassigned' for NULL, or agent UUID
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -477,6 +478,7 @@ export class DbStorage implements IStorage {
     callStatus?: string;
     paymentMethod?: string;
     assignedTo?: string;
+    agentId?: string; // 'unassigned' for NULL, or agent UUID
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -492,11 +494,27 @@ export class DbStorage implements IStorage {
   }> {
     const conditions = [];
     if (filters?.status) conditions.push(eq(orders.status, filters.status));
-    if (filters?.callStatus) conditions.push(eq(orders.callStatus, filters.callStatus));
+    if (filters?.callStatus) {
+      // Handle 'Pending' specially - includes NULL/undefined callStatus
+      if (filters.callStatus === 'Pending') {
+        conditions.push(sql`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
+      } else {
+        conditions.push(eq(orders.callStatus, filters.callStatus));
+      }
+    }
     if (filters?.paymentMethod)
       conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
     if (filters?.assignedTo)
       conditions.push(eq(orders.assignedTo, filters.assignedTo));
+    
+    // Handle agentId filter: 'unassigned' for orders with no agent, or specific agent UUID
+    if (filters?.agentId) {
+      if (filters.agentId === 'unassigned') {
+        conditions.push(sql`${orders.assignedTo} IS NULL`);
+      } else {
+        conditions.push(eq(orders.assignedTo, filters.agentId));
+      }
+    }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

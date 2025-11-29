@@ -52,7 +52,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, limit, page } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -64,6 +64,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
         assignedTo: assignedTo as string | undefined,
+        callStatus: callStatus as string | undefined,
+        agentId: agentId as string | undefined, // 'unassigned' for NULL, or agent UUID
         limit: parsedLimit,
         offset: calculatedOffset,
       };
@@ -1248,6 +1250,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Get all agents (for admin order filtering dropdown)
+  app.get("/api/users/agents", async (req, res) => {
+    try {
+      const agents = await storage.listUsers({ role: "agent", isActive: true });
+      // Return minimal data needed for dropdown
+      res.json(agents.map(agent => ({
+        id: agent.id,
+        fullName: agent.fullName,
+        email: agent.email,
+      })));
+    } catch (error) {
+      console.error("Error fetching agents:", error);
+      res.status(500).json({ error: "Failed to fetch agents" });
     }
   });
 
