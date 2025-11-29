@@ -68,8 +68,21 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
+  // Type for API response with stats
+  interface OrdersApiResponse {
+    orders: BackendOrder[];
+    total: number;
+    stats: {
+      total: number;
+      pending: number;
+      confirmed: number;
+      followUp: number;
+      cancelled: number;
+    };
+  }
+
   // Fetch orders from backend with server-side pagination
-  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
     queryKey: ["/api/orders", currentPage, pageSize],
     queryFn: async () => {
       const res = await fetch(`/api/orders?page=${currentPage}&limit=${pageSize}`, {
@@ -234,37 +247,40 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setCurrentPage(1); // Reset to first page when changing page size
   };
 
-  // Calculate stats for progress bar using base-filtered orders (respects agent/admin role)
+  // Use stats from API response for progress bar (global counts from database)
   // Order: Total Orders -> Pending -> Follow-Up -> Cancelled -> Confirmed
   const progressSteps = useMemo(
-    () => [
-      {
-        label: "Total Orders",
-        count: baseFilteredOrders.length,
-        status: "all" as const,
-      },
-      {
-        label: "Pending",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Pending" || !o.callStatus).length,
-        status: "pending" as const,
-      },
-      {
-        label: "Follow-Up",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Follow Up").length,
-        status: "followup" as const,
-      },
-      {
-        label: "Cancelled",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Cancelled").length,
-        status: "cancelled" as const,
-      },
-      {
-        label: "Confirmed",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Confirmed").length,
-        status: "confirmed" as const,
-      },
-    ],
-    [baseFilteredOrders]
+    () => {
+      const stats = ordersResponse?.stats || { total: 0, pending: 0, confirmed: 0, followUp: 0, cancelled: 0 };
+      return [
+        {
+          label: "Total Orders",
+          count: stats.total,
+          status: "all" as const,
+        },
+        {
+          label: "Pending",
+          count: stats.pending,
+          status: "pending" as const,
+        },
+        {
+          label: "Follow-Up",
+          count: stats.followUp,
+          status: "followup" as const,
+        },
+        {
+          label: "Cancelled",
+          count: stats.cancelled,
+          status: "cancelled" as const,
+        },
+        {
+          label: "Confirmed",
+          count: stats.confirmed,
+          status: "confirmed" as const,
+        },
+      ];
+    },
+    [ordersResponse?.stats]
   );
 
   return (
