@@ -156,6 +156,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update shipping address (syncs to Shopify first, then updates local DB)
+  app.put("/api/orders/:id/address", async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      const { 
+        firstName, lastName, address1, address2, 
+        city, province, zip, country, phone, email 
+      } = req.body;
+
+      // Get the order to find its Shopify ID
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+
+      // Sync to Shopify first
+      try {
+        const credentials = await storage.getShopifyCredentials();
+        if (credentials) {
+          const { decrypt } = await import("./encryption");
+          const decryptedToken = decrypt(credentials.accessToken);
+          
+          const { ShopifyClient } = await import("./shopify");
+          const client = new ShopifyClient({
+            storeUrl: credentials.storeUrl,
+            apiKey: decryptedToken,
+            apiSecret: credentials.apiSecret || "",
+          });
+
+          await client.updateOrderShippingAddress(order.shopifyOrderId, {
+            firstName,
+            lastName,
+            address1,
+            address2,
+            city,
+            province,
+            zip,
+            country: country || "India",
+            phone,
+          });
+        }
+      } catch (shopifyError: any) {
+        console.error("Shopify address update failed:", shopifyError);
+        return res.status(400).json({ 
+          error: "Failed to update address in Shopify",
+          details: shopifyError.message 
+        });
+      }
+
+      // Build formatted address string
+      const addressParts = [
+        address1,
+        address2,
+        city,
+        province,
+        zip,
+        country || "India"
+      ].filter(Boolean);
+      const formattedAddress = addressParts.join(", ");
+
+      // Build the full address object for JSONB storage
+      const shippingAddressObject = {
+        first_name: firstName,
+        last_name: lastName,
+        address1,
+        address2,
+        city,
+        province,
+        zip,
+        country: country || "India",
+        phone,
+      };
+
+      // Update local database
+      const updatedOrder = await storage.updateOrder(orderId, {
+        customerName: `${firstName} ${lastName}`.trim(),
+        customerPhone: phone || order.customerPhone,
+        customerEmail: email || order.customerEmail,
+        shippingAddress: shippingAddressObject,
+        shippingAddressLine1: address1,
+        shippingAddressLine2: address2,
+        shippingCity: city,
+        shippingState: province,
+        shippingPincode: zip,
+        shippingCountry: country || "India",
+      });
+
+      res.json(updatedOrder);
+    } catch (error: any) {
+      console.error("Error updating shipping address:", error);
+      res.status(500).json({ error: "Failed to update shipping address" });
+    }
+  });
+
   // Assign order to user
   app.post("/api/orders/:id/assign", async (req, res) => {
     try {
