@@ -15,6 +15,7 @@ import NDRPage from "@/pages/ndr";
 import AnalyticsPage from "@/pages/analytics";
 import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
+import ProfilePage from "@/pages/profile";
 import ShopifySetupPage from "@/pages/shopify-setup";
 import ShopifyWebhooksPage from "@/pages/shopify-webhooks";
 import LearningCenterPage from "@/pages/learning-center";
@@ -68,6 +69,9 @@ function Router() {
       </Route>
       <Route path="/team">
         {() => <ProtectedRoute component={TeamPage} />}
+      </Route>
+      <Route path="/profile">
+        {() => <ProtectedRoute component={ProfilePage} />}
       </Route>
       <Route path="/settings">
         {() => <ProtectedRoute component={SettingsPage} />}

@@ -41,7 +41,7 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
     {
       icon: User,
       label: "Profile",
-      onClick: () => handleNavigation("/settings?tab=profile"),
+      onClick: () => handleNavigation("/profile"),
     },
     {
       icon: Settings,
