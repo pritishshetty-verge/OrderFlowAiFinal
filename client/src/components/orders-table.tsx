@@ -42,6 +42,11 @@ export interface Order {
   status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr";
   callStatus?: "Pending" | "Confirmed" | "Cancelled" | "Follow Up";
   assignedTo?: string;
+  assignedToUser?: {
+    id: string;
+    username: string;
+    fullName?: string | null;
+  } | null;
   discountCode?: string;
   createdAt: Date;
 }
