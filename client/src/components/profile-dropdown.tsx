@@ -1,0 +1,162 @@
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { ChevronUp, User, Settings, Moon, Sun, LogOut, HelpCircle, Bell } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
+import { useTheme } from "@/components/theme-provider";
+
+interface ProfileDropdownProps {
+  userRole: "admin" | "manager" | "agent";
+  userName?: string;
+  userEmail?: string;
+}
+
+export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdownProps) {
+  const [, setLocation] = useLocation();
+  const [open, setOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  const handleLogout = () => {
+    localStorage.removeItem("userRole");
+    localStorage.removeItem("userId");
+    localStorage.removeItem("userEmail");
+    setLocation("/login");
+  };
+
+  const handleNavigation = (path: string) => {
+    setOpen(false);
+    setLocation(path);
+  };
+
+  const displayName = userName || (userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent");
+  const displayEmail = userEmail || `${userRole}@orderflow.app`;
+  const initials = userRole === "admin" ? "AD" : userRole === "manager" ? "MG" : "AG";
+
+  const menuItems = [
+    {
+      icon: User,
+      label: "Profile",
+      onClick: () => handleNavigation("/settings?tab=profile"),
+    },
+    {
+      icon: Settings,
+      label: "Settings",
+      onClick: () => handleNavigation("/settings"),
+    },
+    {
+      icon: Bell,
+      label: "Notifications",
+      onClick: () => handleNavigation("/settings?tab=notifications"),
+    },
+  ];
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="flex items-center gap-3 w-full rounded-lg p-2 hover-elevate transition-colors cursor-pointer"
+          data-testid="button-profile-dropdown"
+        >
+          <Avatar className="h-9 w-9">
+            <AvatarFallback className="text-xs bg-primary/10 text-primary">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex flex-col flex-1 min-w-0 text-left">
+            <span className="text-sm font-medium truncate">{displayName}</span>
+            <span className="text-xs text-muted-foreground capitalize">{userRole}</span>
+          </div>
+          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-64 p-0"
+        sideOffset={8}
+      >
+        <div className="p-3 border-b">
+          <div className="flex items-center gap-3">
+            <Avatar className="h-10 w-10">
+              <AvatarFallback className="text-sm bg-primary/10 text-primary">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-medium truncate">{displayName}</span>
+              <span className="text-xs text-muted-foreground truncate">{displayEmail}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-1">
+          {menuItems.map((item) => (
+            <button
+              key={item.label}
+              onClick={item.onClick}
+              className="flex items-center gap-3 w-full rounded-md px-3 py-2 text-sm hover-elevate transition-colors"
+              data-testid={`button-menu-${item.label.toLowerCase()}`}
+            >
+              <item.icon className="h-4 w-4 text-muted-foreground" />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <Separator />
+
+        <div className="p-1">
+          <div
+            className="flex items-center justify-between w-full rounded-md px-3 py-2 text-sm"
+          >
+            <div className="flex items-center gap-3">
+              {theme === "dark" ? (
+                <Moon className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <Sun className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span>Dark mode</span>
+            </div>
+            <Switch
+              checked={theme === "dark"}
+              onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")}
+              data-testid="switch-dark-mode"
+            />
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="p-1">
+          <button
+            onClick={() => handleNavigation("/learning")}
+            className="flex items-center gap-3 w-full rounded-md px-3 py-2 text-sm hover-elevate transition-colors"
+            data-testid="button-menu-help"
+          >
+            <HelpCircle className="h-4 w-4 text-muted-foreground" />
+            <span>Help Center</span>
+          </button>
+        </div>
+
+        <Separator />
+
+        <div className="p-1">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 w-full rounded-md px-3 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+            data-testid="button-menu-logout"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Log out</span>
+          </button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

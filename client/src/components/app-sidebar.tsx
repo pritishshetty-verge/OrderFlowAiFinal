@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap, Phone } from "lucide-react";
+import { Home, Package, Users, Settings, TrendingUp, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -19,8 +19,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ChevronDown } from "lucide-react";
+import { ProfileDropdown } from "@/components/profile-dropdown";
 import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 const menuItems = [
@@ -83,11 +82,6 @@ const menuItems = [
     title: "Call Logs",
     url: "/call-logs",
     icon: Phone,
-  },
-  {
-    title: "Settings",
-    url: "/settings",
-    icon: Settings,
   },
 ];
 
@@ -165,20 +159,8 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border p-4">
-        <div className="flex items-center gap-3">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="text-xs">
-              {userRole === "admin" ? "AD" : userRole === "manager" ? "MG" : "AG"}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex flex-col flex-1 min-w-0">
-            <span className="text-sm font-medium truncate">
-              {userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent"}
-            </span>
-            <span className="text-xs text-muted-foreground capitalize">{userRole}</span>
-          </div>
-        </div>
+      <SidebarFooter className="border-t border-sidebar-border p-2">
+        <ProfileDropdown userRole={userRole} />
       </SidebarFooter>
     </Sidebar>
   );

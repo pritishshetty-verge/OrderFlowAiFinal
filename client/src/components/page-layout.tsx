@@ -1,10 +1,6 @@
 import { ConnectionStatus } from "@/components/connection-status";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
-import { useLocation } from "wouter";
-import { LogOut } from "lucide-react";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -14,13 +10,7 @@ interface PageLayoutProps {
 }
 
 export function PageLayout({ children, title, description, actions }: PageLayoutProps) {
-  const [, setLocation] = useLocation();
   const isConnected = true; //todo: remove mock functionality
-
-  const handleLogout = () => {
-    localStorage.removeItem("userRole");
-    setLocation("/login");
-  };
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -40,15 +30,6 @@ export function PageLayout({ children, title, description, actions }: PageLayout
           {actions}
           <ConnectionStatus connected={isConnected} />
           <NotificationsBell />
-          <ThemeToggle />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleLogout}
-            data-testid="button-logout"
-          >
-            <LogOut className="h-5 w-5" />
-          </Button>
         </div>
       </header>
 
