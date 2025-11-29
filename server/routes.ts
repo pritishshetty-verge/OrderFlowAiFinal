@@ -1,6 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
+import { 
+  orders, leaveRequests, orderStatusHistory, teamMessages, invites, 
+  attendance, orderAssignments, calls, notifications, ndrEvents, 
+  courses, resources, userLessonProgress, userOnboardingProgress, users 
+} from "@shared/schema";
+import { eq, or } from "drizzle-orm";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
@@ -1291,7 +1298,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Delete user
+  // Delete user with full cleanup of all foreign key dependencies
   app.delete("/api/users/:id", async (req, res) => {
     try {
       const userId = req.params.id;
@@ -1302,8 +1309,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
-      // Delete the user from database
+      console.log(`Starting cleanup for user ${userId} (${user.email})`);
+
+      // Sequential cleanup of all foreign key dependencies
+      // 1. Unassign orders
+      await db.update(orders).set({ assignedTo: null }).where(eq(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq(orders.cancelledBy, userId));
+      console.log("  - Orders unassigned");
+
+      // 2. Delete order assignments
+      await db.delete(orderAssignments).where(
+        or(eq(orderAssignments.userId, userId), eq(orderAssignments.assignedBy, userId))
+      );
+      console.log("  - Order assignments deleted");
+
+      // 3. Delete team messages (sent or received)
+      await db.delete(teamMessages).where(
+        or(eq(teamMessages.fromUserId, userId), eq(teamMessages.toUserId, userId))
+      );
+      console.log("  - Team messages deleted");
+
+      // 4. Delete leave requests
+      await db.delete(leaveRequests).where(eq(leaveRequests.userId, userId));
+      // Set reviewedBy to null for requests reviewed by this user
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq(leaveRequests.reviewedBy, userId));
+      console.log("  - Leave requests deleted/updated");
+
+      // 5. Delete notifications
+      await db.delete(notifications).where(eq(notifications.userId, userId));
+      console.log("  - Notifications deleted");
+
+      // 6. Delete attendance records
+      await db.delete(attendance).where(eq(attendance.userId, userId));
+      console.log("  - Attendance records deleted");
+
+      // 7. Delete call records
+      await db.delete(calls).where(eq(calls.agentId, userId));
+      console.log("  - Call records deleted");
+
+      // 8. Unlink order status history (set changedBy to null)
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq(orderStatusHistory.changedBy, userId));
+      console.log("  - Order status history updated");
+
+      // 9. Unlink invites (set invitedBy to null)
+      await db.update(invites).set({ invitedBy: null }).where(eq(invites.invitedBy, userId));
+      console.log("  - Invites updated");
+
+      // 10. Unlink NDR events (set actionBy to null)
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq(ndrEvents.actionBy, userId));
+      console.log("  - NDR events updated");
+
+      // 11. Unlink courses (set authorId to null)
+      await db.update(courses).set({ authorId: null }).where(eq(courses.authorId, userId));
+      console.log("  - Courses updated");
+
+      // 12. Unlink resources (set authorId to null)
+      await db.update(resources).set({ authorId: null }).where(eq(resources.authorId, userId));
+      console.log("  - Resources updated");
+
+      // 13. Delete user lesson progress
+      await db.delete(userLessonProgress).where(eq(userLessonProgress.userId, userId));
+      console.log("  - User lesson progress deleted");
+
+      // 14. Delete user onboarding progress
+      await db.delete(userOnboardingProgress).where(eq(userOnboardingProgress.userId, userId));
+      console.log("  - User onboarding progress deleted");
+
+      // 15. Finally, delete the user
       await storage.deleteUser(userId);
+      console.log(`User ${userId} deleted successfully`);
 
       res.json({ success: true, message: "User deleted successfully" });
     } catch (error) {
