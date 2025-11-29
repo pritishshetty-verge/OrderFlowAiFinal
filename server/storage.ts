@@ -117,7 +117,17 @@ export interface IStorage {
     assignedTo?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ orders: Order[]; total: number }>;
+  }): Promise<{ 
+    orders: Order[]; 
+    total: number;
+    stats: {
+      total: number;
+      pending: number;
+      confirmed: number;
+      followUp: number;
+      cancelled: number;
+    };
+  }>;
   assignOrder(orderId: string, userId: string): Promise<Order | undefined>;
   
   // Call Status Actions
@@ -469,7 +479,17 @@ export class DbStorage implements IStorage {
     assignedTo?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ orders: Order[]; total: number }> {
+  }): Promise<{ 
+    orders: Order[]; 
+    total: number;
+    stats: {
+      total: number;
+      pending: number;
+      confirmed: number;
+      followUp: number;
+      cancelled: number;
+    };
+  }> {
     const conditions = [];
     if (filters?.status) conditions.push(eq(orders.status, filters.status));
     if (filters?.callStatus) conditions.push(eq(orders.callStatus, filters.callStatus));
@@ -480,12 +500,50 @@ export class DbStorage implements IStorage {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count
+    // Get total count for current filter
     let countQuery = db.select({ value: count() }).from(orders);
     if (whereClause) {
       countQuery = countQuery.where(whereClause) as any;
     }
     const [{ value: total }] = await countQuery;
+
+    // Get global stats (respects assignedTo filter for role-based access, but ignores callStatus filter)
+    // This ensures agents see their own stats, admins see all stats
+    const statsConditions = [];
+    if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
+    const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : undefined;
+
+    // Count all orders for this user/global scope
+    let totalCountQuery = db.select({ value: count() }).from(orders);
+    if (statsWhereClause) {
+      totalCountQuery = totalCountQuery.where(statsWhereClause) as any;
+    }
+    const [{ value: statsTotal }] = await totalCountQuery;
+
+    // Count pending orders (callStatus is NULL or 'Pending')
+    let pendingQuery = db.select({ value: count() }).from(orders);
+    const pendingConditions = [...statsConditions];
+    pendingConditions.push(sql`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
+    pendingQuery = pendingQuery.where(and(...pendingConditions)) as any;
+    const [{ value: pendingCount }] = await pendingQuery;
+
+    // Count confirmed orders
+    let confirmedQuery = db.select({ value: count() }).from(orders);
+    const confirmedConditions = [...statsConditions, eq(orders.callStatus, 'Confirmed')];
+    confirmedQuery = confirmedQuery.where(and(...confirmedConditions)) as any;
+    const [{ value: confirmedCount }] = await confirmedQuery;
+
+    // Count follow-up orders
+    let followUpQuery = db.select({ value: count() }).from(orders);
+    const followUpConditions = [...statsConditions, eq(orders.callStatus, 'Follow Up')];
+    followUpQuery = followUpQuery.where(and(...followUpConditions)) as any;
+    const [{ value: followUpCount }] = await followUpQuery;
+
+    // Count cancelled orders
+    let cancelledQuery = db.select({ value: count() }).from(orders);
+    const cancelledConditions = [...statsConditions, eq(orders.callStatus, 'Cancelled')];
+    cancelledQuery = cancelledQuery.where(and(...cancelledConditions)) as any;
+    const [{ value: cancelledCount }] = await cancelledQuery;
 
     // Get paginated orders - build query with orderBy at the end
     let query = db.select().from(orders);
@@ -507,7 +565,17 @@ export class DbStorage implements IStorage {
 
     const ordersList = await query;
 
-    return { orders: ordersList, total };
+    return { 
+      orders: ordersList, 
+      total,
+      stats: {
+        total: statsTotal,
+        pending: pendingCount,
+        confirmed: confirmedCount,
+        followUp: followUpCount,
+        cancelled: cancelledCount,
+      }
+    };
   }
 
   async assignOrder(orderId: string, userId: string): Promise<Order | undefined> {
