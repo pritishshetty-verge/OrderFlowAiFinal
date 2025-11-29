@@ -34,6 +34,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
+import { EditAddressDialog } from "@/components/edit-address-dialog";
 
 interface OrderQuickPreviewProps {
   order: Order | null;
@@ -72,6 +73,7 @@ export function OrderQuickPreview({
   const [isConfirming, setIsConfirming] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string>("");
   const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
+  const [editAddressOpen, setEditAddressOpen] = useState(false);
 
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
@@ -694,7 +696,7 @@ export function OrderQuickPreview({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8 text-[#172033]"
-                onClick={onEditCustomer}
+                onClick={() => setEditAddressOpen(true)}
                 data-testid="button-edit-customer"
               >
                 <Edit className="h-4 w-4" />
@@ -1116,6 +1118,25 @@ export function OrderQuickPreview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Edit Address Dialog */}
+      <EditAddressDialog
+        open={editAddressOpen}
+        onOpenChange={setEditAddressOpen}
+        orderId={order.id}
+        initialData={{
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          customerEmail: orderDetails?.customerEmail,
+          shippingAddress: orderDetails?.shippingAddress,
+          shippingAddressLine1: orderDetails?.shippingAddressLine1,
+          shippingAddressLine2: orderDetails?.shippingAddressLine2,
+          shippingCity: orderDetails?.shippingCity,
+          shippingState: orderDetails?.shippingState,
+          shippingPincode: orderDetails?.shippingPincode,
+          shippingCountry: orderDetails?.shippingCountry,
+        }}
+      />
     </Sheet>
   );
 }
