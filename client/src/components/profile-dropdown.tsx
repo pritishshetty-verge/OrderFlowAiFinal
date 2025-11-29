@@ -35,7 +35,6 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
   };
 
   const displayName = userName || (userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent");
-  const displayEmail = userEmail || `${userRole}@orderflow.app`;
   const initials = userRole === "admin" ? "AD" : userRole === "manager" ? "MG" : "AG";
 
   const menuItems = [
@@ -73,24 +72,10 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
       <PopoverContent
         side="top"
         align="start"
-        className="w-64 p-0"
+        className="w-56 p-1"
         sideOffset={8}
       >
-        <div className="p-3 border-b">
-          <div className="flex items-center gap-3">
-            <Avatar className="h-10 w-10">
-              <AvatarFallback className="text-sm bg-primary/10 text-primary">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
-            <div className="flex flex-col min-w-0">
-              <span className="text-sm font-medium truncate">{displayName}</span>
-              <span className="text-xs text-muted-foreground truncate">{displayEmail}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-1">
+        <div className="py-1">
           {menuItems.map((item) => (
             <button
               key={item.label}
