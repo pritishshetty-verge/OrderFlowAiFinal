@@ -1922,16 +1922,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      console.log(`✅ n8n response received for call ${callId}:`, JSON.stringify(n8nResponse.data).substring(0, 200));
+      console.log(`✅ n8n response received for call ${callId}:`, JSON.stringify(n8nResponse.data).substring(0, 500));
       
-      // Extract transcript and analysis from n8n response
-      const { transcript, analysis, ai_analysis } = n8nResponse.data || {};
-      const finalAnalysis = analysis || ai_analysis;
+      // Extract all 5 structured fields from n8n response
+      const {
+        overallScore,
+        executiveSummary,
+        rawMarkdownReport,
+        riskFlag,
+        coachingRecommendation,
+        transcript // Also capture transcript if provided
+      } = n8nResponse.data || {};
       
-      // Update call record with transcript and AI analysis
+      // Build structured AI analysis object with all fields
+      const aiAnalysis = {
+        overallScore: overallScore ?? null,
+        executiveSummary: executiveSummary || null,
+        rawMarkdownReport: rawMarkdownReport || null,
+        riskFlag: riskFlag || null,
+        coachingRecommendation: coachingRecommendation || null,
+        analyzedAt: new Date().toISOString()
+      };
+      
+      console.log(`📊 Analysis extracted - Score: ${overallScore}, Risk: ${riskFlag}`);
+      
+      // Update call record with transcript and structured AI analysis
       const updatedCall = await storage.updateCallFromWebhook(callId, {
         transcript: transcript || null,
-        aiAnalysis: finalAnalysis || null
+        aiAnalysis
       });
       
       if (!updatedCall) {
@@ -1943,8 +1961,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         call: updatedCall,
-        transcript,
-        aiAnalysis: finalAnalysis
+        aiAnalysis
       });
       
     } catch (error: any) {
