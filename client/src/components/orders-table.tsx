@@ -441,7 +441,11 @@ export function OrdersTable({
               </TableCell>
               {showAgentColumn && (
                 <TableCell className="text-sm" data-testid={`agent-${order.id}`} onClick={(e) => e.stopPropagation()}>
-                  {order.assignedTo || <span className="text-muted-foreground">Unassigned</span>}
+                  {order.assignedToUser ? (
+                    <span className="font-medium">{order.assignedToUser.fullName || order.assignedToUser.username}</span>
+                  ) : (
+                    <span className="text-muted-foreground">Unassigned</span>
+                  )}
                 </TableCell>
               )}
               <TableCell onClick={(e) => e.stopPropagation()}>
