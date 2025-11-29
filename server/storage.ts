@@ -563,25 +563,28 @@ export class DbStorage implements IStorage {
     cancelledQuery = cancelledQuery.where(and(...cancelledConditions)) as any;
     const [{ value: cancelledCount }] = await cancelledQuery;
 
-    // Get paginated orders - build query with orderBy at the end
-    let query = db.select().from(orders);
+    // Get paginated orders with assigned user info - LEFT JOIN users table
+    const ordersWithAgent = await db
+      .select({
+        order: orders,
+        assignedToUser: {
+          id: users.id,
+          username: users.username,
+          fullName: users.fullName,
+        },
+      })
+      .from(orders)
+      .leftJoin(users, eq(orders.assignedTo, users.id))
+      .where(whereClause)
+      .orderBy(desc(orders.shopifyCreatedAt))
+      .limit(filters?.limit ?? 50)
+      .offset(filters?.offset ?? 0);
 
-    if (whereClause) {
-      query = query.where(whereClause) as any;
-    }
-
-    // Apply sorting AFTER filters - newest first by Shopify timestamp (not local createdAt)
-    query = query.orderBy(desc(orders.shopifyCreatedAt)) as any;
-
-    if (filters?.limit) {
-      query = query.limit(filters.limit) as any;
-    }
-
-    if (filters?.offset) {
-      query = query.offset(filters.offset) as any;
-    }
-
-    const ordersList = await query;
+    // Transform results to include assignedToUser in each order
+    const ordersList = ordersWithAgent.map(row => ({
+      ...row.order,
+      assignedToUser: row.assignedToUser?.id ? row.assignedToUser : null,
+    }));
 
     return { 
       orders: ordersList, 
