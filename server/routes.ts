@@ -1285,13 +1285,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/users/:id", async (req, res) => {
     try {
-      const { currentUserId } = req.body;
+      // Get currentUserId from body (for admin edits) or default to target user (self-edit)
+      const currentUserId = req.body.currentUserId || req.params.id;
       
-      if (!currentUserId) {
-        return res.status(400).json({ error: "currentUserId is required" });
-      }
+      // Remove currentUserId from body before validation (it's not part of updateUserSchema)
+      const { currentUserId: _, ...updateData } = req.body;
 
-      const validatedData = updateUserSchema.parse(req.body);
+      const validatedData = updateUserSchema.parse(updateData);
       
       // Get current user to check permissions
       const currentUser = await storage.getUser(currentUserId);
