@@ -326,6 +326,70 @@ export class ShopifyClient {
     return data.orderUpdate.order;
   }
 
+  async updateOrderShippingAddress(shopifyOrderId: string, shippingAddress: {
+    firstName?: string;
+    lastName?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    zip?: string;
+    country?: string;
+    phone?: string;
+  }): Promise<any> {
+    const query = `
+      mutation orderUpdate($input: OrderInput!) {
+        orderUpdate(input: $input) {
+          order {
+            id
+            shippingAddress {
+              firstName
+              lastName
+              address1
+              address2
+              city
+              province
+              provinceCode
+              zip
+              country
+              countryCodeV2
+              phone
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      input: {
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+        shippingAddress: {
+          firstName: shippingAddress.firstName,
+          lastName: shippingAddress.lastName,
+          address1: shippingAddress.address1,
+          address2: shippingAddress.address2,
+          city: shippingAddress.city,
+          province: shippingAddress.province,
+          zip: shippingAddress.zip,
+          country: shippingAddress.country || "India",
+          phone: shippingAddress.phone,
+        },
+      },
+    };
+
+    const data = await this.graphqlRequest(query, variables);
+    
+    if (data.orderUpdate.userErrors.length > 0) {
+      throw new Error(`Shipping address update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+    }
+
+    return data.orderUpdate.order;
+  }
+
   async cancelOrder(
     shopifyOrderId: string, 
     reason: string, 
