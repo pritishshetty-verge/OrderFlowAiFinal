@@ -13,12 +13,17 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
-// Transform backend order to frontend order format
-function transformOrder(order: BackendOrder, users: User[]): Order {
-  const assignedUser = order.assignedTo
-    ? users.find((u) => u.id === order.assignedTo)
-    : undefined;
+// Extended backend order type with joined user data from API
+interface BackendOrderWithUser extends BackendOrder {
+  assignedToUser?: {
+    id: string;
+    username: string;
+    fullName?: string | null;
+  } | null;
+}
 
+// Transform backend order to frontend order format
+function transformOrder(order: BackendOrderWithUser): Order {
   // Format shipping address
   const addressParts = [
     order.shippingAddressLine1,
@@ -41,10 +46,11 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
     items: order.itemsSummary || "",
     total: parseFloat(order.totalPrice),
     paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
-    financialStatus: order.financialStatus, // Pass through Shopify financial status for accurate badge display
+    financialStatus: order.financialStatus,
     status: order.status as Order["status"],
     callStatus: order.callStatus as Order["callStatus"],
-    assignedTo: assignedUser?.fullName,
+    assignedTo: order.assignedTo || undefined,
+    assignedToUser: order.assignedToUser || null,
     discountCode: order.discountCode || undefined,
     createdAt: new Date(order.shopifyCreatedAt),
   };
@@ -175,7 +181,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     // Admins see all orders (no filter)
     
     // Transform filtered orders to frontend format
-    return filteredBackendOrders.map((order) => transformOrder(order, usersData));
+    return filteredBackendOrders.map((order) => transformOrder(order as BackendOrderWithUser));
   }, [ordersResponse, usersData, userRole, currentUserId]);
 
   // Apply tab filters and search/payment filters on top of base filtered orders
