@@ -1207,20 +1207,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //   }
   // });
 
-  // Get user by email (public endpoint for login)
+  // Get user by email (public endpoint for login and profile)
   app.get("/api/users/by-email/:email", async (req, res) => {
     try {
       const user = await storage.getUserByEmail(req.params.email);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      // Return only safe user info (no sensitive data)
+      // Return user info for profile (exclude password only)
       res.json({
         id: user.id,
         email: user.email,
         username: user.username,
+        fullName: user.fullName,
+        phone: user.phone,
         role: user.role,
+        adminType: user.adminType,
+        department: user.department,
+        employeeId: user.employeeId,
+        agentExtension: user.agentExtension,
+        presenceStatus: user.presenceStatus,
         isActive: user.isActive,
+        createdAt: user.createdAt,
       });
     } catch (error) {
       console.error("Error fetching user by email:", error);
