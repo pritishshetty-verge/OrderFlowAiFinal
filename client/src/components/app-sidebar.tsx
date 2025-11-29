@@ -20,6 +20,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ProfileDropdown } from "@/components/profile-dropdown";
+import { useQuery } from "@tanstack/react-query";
+import type { User } from "@shared/schema";
 import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 const menuItems = [
@@ -90,6 +92,13 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
+  const userEmail = localStorage.getItem("userEmail");
+  
+  const { data: currentUser } = useQuery<User>({
+    queryKey: [`/api/users/by-email/${userEmail}`],
+    enabled: !!userEmail,
+  });
+
   return (
     <Sidebar data-testid="sidebar-main">
       <SidebarHeader className="border-b border-sidebar-border p-4">
@@ -160,7 +169,11 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="border-t border-sidebar-border p-2">
-        <ProfileDropdown userRole={userRole} />
+        <ProfileDropdown 
+          userRole={userRole} 
+          userName={currentUser?.fullName || currentUser?.username}
+          userEmail={currentUser?.email}
+        />
       </SidebarFooter>
     </Sidebar>
   );
