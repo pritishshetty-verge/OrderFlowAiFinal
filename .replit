@@ -43,6 +43,10 @@ localPort = 40585
 externalPort = 6800
 
 [[ports]]
+localPort = 42715
+externalPort = 8008
+
+[[ports]]
 localPort = 43909
 externalPort = 5000
 
@@ -84,4 +88,4 @@ integrations = ["javascript_websocket:1.0.0", "javascript_database:1.0.0", "rese
 [userenv]
 
 [userenv.shared]
-N8N_ANALYZE_CALL_URL = "https://n8n.srv1031651.hstgr.cloud/webhook-test/analyze-call"
+N8N_ANALYZE_CALL_URL = "https://n8n.srv1031651.hstgr.cloud/webhook/analyze-call"
