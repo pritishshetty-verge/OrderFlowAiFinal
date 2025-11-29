@@ -134,9 +134,25 @@ function AudioPlayer({ recordingUrl, callReference, callId }: { recordingUrl: st
 export default function CallLogsPage() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
+  
+  // Get user info from localStorage for role-based filtering
+  const userId = localStorage.getItem("userId") || "";
+  const userRole = localStorage.getItem("userRole") || "agent";
+  const isAdmin = userRole === "admin";
 
   const { data, isLoading } = useQuery<CallsResponse>({
-    queryKey: [`/api/admin/calls?page=${page}&limit=${limit}`],
+    queryKey: ['/api/admin/calls', page, limit, userId, userRole],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+        userId,
+        userRole,
+      });
+      const response = await fetch(`/api/admin/calls?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch calls");
+      return response.json();
+    },
   });
 
   if (isLoading) {
@@ -165,12 +181,15 @@ export default function CallLogsPage() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-call-logs-title">
             <Phone className="h-6 w-6" />
-            Call Logs
+            {isAdmin ? "All Call Logs" : "Your Call Logs"}
           </h1>
-          <p className="text-muted-foreground mt-1">
-            All IVR call records with recordings and metadata ({total} total)
+          <p className="text-muted-foreground mt-1" data-testid="text-call-logs-description">
+            {isAdmin 
+              ? `All IVR call records with recordings and metadata (${total} total)`
+              : `Your IVR call records with recordings and metadata (${total} total)`
+            }
           </p>
         </div>
         

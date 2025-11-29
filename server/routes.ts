@@ -1689,13 +1689,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all calls with details (admin-only)
+  // Get all calls with details (admins see all, agents see only their own)
   app.get("/api/admin/calls", async (req, res) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 25;
       
-      const result = await storage.getAllCallsWithDetails({ page, limit });
+      // Get user info from query params (passed from frontend)
+      const userId = req.query.userId as string | undefined;
+      const userRole = req.query.userRole as string | undefined;
+      
+      // If user is an agent, force filter to only their calls
+      const agentId = userRole === 'agent' && userId ? userId : undefined;
+      
+      const result = await storage.getAllCallsWithDetails({ page, limit, agentId });
       res.json(result);
     } catch (error) {
       console.error("Error fetching all calls:", error);

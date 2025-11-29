@@ -182,7 +182,7 @@ export interface IStorage {
   getCallByReference(callReference: string): Promise<Call | undefined>;
   getRecentCallByPhone(customerPhone: string, minutesAgo?: number): Promise<Call | undefined>;
   updateCallFromWebhook(id: string, data: Partial<InsertCall>): Promise<Call | undefined>;
-  getAllCallsWithDetails(options?: { page?: number; limit?: number }): Promise<{
+  getAllCallsWithDetails(options?: { page?: number; limit?: number; agentId?: string }): Promise<{
     calls: (Call & { 
       agent: { fullName: string; email: string } | null;
       order: { shopifyOrderNumber: string; customerName: string } | null;
@@ -1047,7 +1047,7 @@ export class DbStorage implements IStorage {
     return updated;
   }
 
-  async getAllCallsWithDetails(options?: { page?: number; limit?: number }): Promise<{
+  async getAllCallsWithDetails(options?: { page?: number; limit?: number; agentId?: string }): Promise<{
     calls: (Call & { 
       agent: { fullName: string; email: string } | null;
       order: { shopifyOrderNumber: string; customerName: string } | null;
@@ -1059,15 +1059,20 @@ export class DbStorage implements IStorage {
     const page = options?.page || 1;
     const limit = options?.limit || 25;
     const offset = (page - 1) * limit;
+    const agentId = options?.agentId;
 
-    // Get total count
-    const [countResult] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(calls);
+    // Build where condition for agent filtering
+    const whereCondition = agentId ? eq(calls.agentId, agentId) : undefined;
+
+    // Get total count (filtered if agentId provided)
+    const countQuery = db.select({ count: sql<number>`count(*)::int` }).from(calls);
+    const [countResult] = agentId 
+      ? await countQuery.where(whereCondition!)
+      : await countQuery;
     const total = countResult.count;
 
-    // Get paginated results
-    const result = await db
+    // Get paginated results (filtered if agentId provided)
+    const baseQuery = db
       .select({
         call: calls,
         agent: {
@@ -1081,10 +1086,11 @@ export class DbStorage implements IStorage {
       })
       .from(calls)
       .leftJoin(users, eq(calls.agentId, users.id))
-      .leftJoin(orders, eq(calls.orderId, orders.id))
-      .orderBy(desc(calls.calledAt))
-      .limit(limit)
-      .offset(offset);
+      .leftJoin(orders, eq(calls.orderId, orders.id));
+
+    const result = agentId
+      ? await baseQuery.where(whereCondition!).orderBy(desc(calls.calledAt)).limit(limit).offset(offset)
+      : await baseQuery.orderBy(desc(calls.calledAt)).limit(limit).offset(offset);
 
     const callsData = result.map(row => ({
       ...row.call,

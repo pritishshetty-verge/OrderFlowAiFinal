@@ -83,7 +83,6 @@ const menuItems = [
     title: "Call Logs",
     url: "/call-logs",
     icon: Phone,
-    adminOnly: true,
   },
   {
     title: "Settings",
