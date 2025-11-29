@@ -22,9 +22,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Plus, Edit, Trash2, BookOpen, Eye, Globe, FileText } from "lucide-react";
+import { Plus, Edit, Trash2, BookOpen, Eye, Globe, FileText, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PageLayout } from "@/components/page-layout";
 
 interface Course {
   id: string;
@@ -108,36 +109,42 @@ export default function AdminLearningDashboard() {
 
   const courses = data?.courses || [];
 
+  const breadcrumb = (
+    <nav className="flex items-center gap-1 text-sm text-muted-foreground" aria-label="Breadcrumb">
+      <Link href="/learning" className="hover:text-foreground transition-colors" data-testid="link-breadcrumb-learning">
+        Learning Center
+      </Link>
+      <ChevronRight className="h-4 w-4" />
+      <span className="text-foreground font-medium">Manage Courses</span>
+    </nav>
+  );
+
+  const headerActions = (
+    <Link href="/learning/admin/courses/new">
+      <Button data-testid="button-new-course">
+        <Plus className="h-4 w-4 mr-2" />
+        New Course
+      </Button>
+    </Link>
+  );
+
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-auto p-8">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-muted rounded w-64" />
-          <div className="h-64 bg-muted rounded" />
+      <PageLayout title="Manage Courses" actions={headerActions}>
+        <div className="p-8 space-y-6">
+          {breadcrumb}
+          <div className="animate-pulse space-y-4">
+            <div className="h-64 bg-muted rounded" />
+          </div>
         </div>
-      </div>
+      </PageLayout>
     );
   }
 
   return (
-    <div className="flex-1 overflow-auto" data-testid="page-admin-learning">
-      <div className="p-8 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold" data-testid="text-page-title">
-              Learning Center Management
-            </h1>
-            <p className="text-muted-foreground mt-2">
-              Create and manage training courses and lessons
-            </p>
-          </div>
-          <Link href="/learning/admin/courses/new">
-            <Button data-testid="button-new-course">
-              <Plus className="h-4 w-4 mr-2" />
-              New Course
-            </Button>
-          </Link>
-        </div>
+    <PageLayout title="Manage Courses" actions={headerActions}>
+      <div className="p-8 space-y-6" data-testid="page-admin-learning">
+        {breadcrumb}
 
         <Card>
           <CardHeader>
@@ -270,6 +277,6 @@ export default function AdminLearningDashboard() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PageLayout>
   );
 }
