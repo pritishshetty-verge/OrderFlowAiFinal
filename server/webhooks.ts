@@ -379,13 +379,15 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 }
 
 // Helper function to map Shopify statuses to our system
+// CRITICAL: Only mark as Cancelled if cancelled_at is NOT NULL
 function mapShopifyStatus(
   financialStatus?: string,
   fulfillmentStatus?: string,
   shipmentStatus?: string | null,
+  cancelledAt?: string | null,
 ): string {
-  // Cancelled is highest priority
-  if (financialStatus === "refunded" || financialStatus === "voided") {
+  // Cancelled ONLY if the order was actually cancelled in Shopify (cancelled_at is set)
+  if (cancelledAt) {
     return "Cancelled";
   }
 
@@ -407,6 +409,10 @@ function mapShopifyStatus(
       return "Processing";
     }
     if (financialStatus === "pending" || financialStatus === "authorized") {
+      return "Pending";
+    }
+    // Voided/refunded payments on non-cancelled orders default to Pending
+    if (financialStatus === "voided" || financialStatus === "refunded") {
       return "Pending";
     }
   }
