@@ -33,16 +33,16 @@ interface EditAddressDialogProps {
   onOpenChange: (open: boolean) => void;
   orderId: string;
   initialData: {
-    customerName?: string;
-    customerPhone?: string;
-    customerEmail?: string;
+    customerName?: string | null;
+    customerPhone?: string | null;
+    customerEmail?: string | null;
     shippingAddress?: any;
-    shippingAddressLine1?: string;
-    shippingAddressLine2?: string;
-    shippingCity?: string;
-    shippingState?: string;
-    shippingPincode?: string;
-    shippingCountry?: string;
+    shippingAddressLine1?: string | null;
+    shippingAddressLine2?: string | null;
+    shippingCity?: string | null;
+    shippingState?: string | null;
+    shippingPincode?: string | null;
+    shippingCountry?: string | null;
   };
 }
 
