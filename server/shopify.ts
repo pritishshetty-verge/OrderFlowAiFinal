@@ -337,12 +337,26 @@ export class ShopifyClient {
     country?: string;
     phone?: string;
   }): Promise<any> {
+    // For physical products, billing address should always match shipping address
     const query = `
       mutation orderUpdate($input: OrderInput!) {
         orderUpdate(input: $input) {
           order {
             id
             shippingAddress {
+              firstName
+              lastName
+              address1
+              address2
+              city
+              province
+              provinceCode
+              zip
+              country
+              countryCodeV2
+              phone
+            }
+            billingAddress {
               firstName
               lastName
               address1
@@ -364,27 +378,31 @@ export class ShopifyClient {
       }
     `;
 
+    // Build the address object once, use for both shipping and billing
+    const addressData = {
+      firstName: shippingAddress.firstName,
+      lastName: shippingAddress.lastName,
+      address1: shippingAddress.address1,
+      address2: shippingAddress.address2,
+      city: shippingAddress.city,
+      province: shippingAddress.province,
+      zip: shippingAddress.zip,
+      country: shippingAddress.country || "India",
+      phone: shippingAddress.phone,
+    };
+
     const variables = {
       input: {
         id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
-        shippingAddress: {
-          firstName: shippingAddress.firstName,
-          lastName: shippingAddress.lastName,
-          address1: shippingAddress.address1,
-          address2: shippingAddress.address2,
-          city: shippingAddress.city,
-          province: shippingAddress.province,
-          zip: shippingAddress.zip,
-          country: shippingAddress.country || "India",
-          phone: shippingAddress.phone,
-        },
+        shippingAddress: addressData,
+        billingAddress: addressData,
       },
     };
 
     const data = await this.graphqlRequest(query, variables);
     
     if (data.orderUpdate.userErrors.length > 0) {
-      throw new Error(`Shipping address update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+      throw new Error(`Address update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
     }
 
     return data.orderUpdate.order;
