@@ -235,6 +235,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   };
 
   // Calculate stats for progress bar using base-filtered orders (respects agent/admin role)
+  // Order: Total Orders -> Pending -> Follow-Up -> Cancelled -> Confirmed
   const progressSteps = useMemo(
     () => [
       {
@@ -248,11 +249,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         status: "pending" as const,
       },
       {
-        label: "Confirmed",
-        count: baseFilteredOrders.filter((o) => o.callStatus === "Confirmed").length,
-        status: "confirmed" as const,
-      },
-      {
         label: "Follow-Up",
         count: baseFilteredOrders.filter((o) => o.callStatus === "Follow Up").length,
         status: "followup" as const,
@@ -261,6 +257,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         label: "Cancelled",
         count: baseFilteredOrders.filter((o) => o.callStatus === "Cancelled").length,
         status: "cancelled" as const,
+      },
+      {
+        label: "Confirmed",
+        count: baseFilteredOrders.filter((o) => o.callStatus === "Confirmed").length,
+        status: "confirmed" as const,
       },
     ],
     [baseFilteredOrders]
