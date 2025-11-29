@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageLayout } from "@/components/page-layout";
-import { Link } from "wouter";
-import { BookOpen, Clock, Award, PlayCircle, FileText, CheckCircle, Lock } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { BookOpen, Clock, Award, PlayCircle, FileText, CheckCircle, Lock, Settings } from "lucide-react";
 
 interface Course {
   id: string;
@@ -27,6 +27,9 @@ interface Course {
 
 export default function LearningCenterPage() {
   const userId = localStorage.getItem("userId");
+  const userRole = localStorage.getItem("userRole");
+  const isAdmin = userRole === "admin";
+  const [, setLocation] = useLocation();
 
   const { data, isLoading } = useQuery<{ courses: Course[] }>({
     queryKey: ["/api/learning/courses", userId],
@@ -50,9 +53,24 @@ export default function LearningCenterPage() {
     return courses.filter((c) => c.category === category);
   };
 
+  const adminActions = isAdmin ? (
+    <Button 
+      variant="outline" 
+      onClick={() => setLocation("/learning/admin")}
+      data-testid="button-manage-courses"
+    >
+      <Settings className="h-4 w-4 mr-2" />
+      Manage Courses
+    </Button>
+  ) : null;
+
   if (isLoading) {
     return (
-      <PageLayout title="Learning Center" description="Expand your skills with our comprehensive training courses">
+      <PageLayout 
+        title="Learning Center" 
+        description="Expand your skills with our comprehensive training courses"
+        actions={adminActions}
+      >
         <div className="p-8">
           <div className="animate-pulse space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -67,7 +85,11 @@ export default function LearningCenterPage() {
   }
 
   return (
-    <PageLayout title="Learning Center" description="Expand your skills with our comprehensive training courses">
+    <PageLayout 
+      title="Learning Center" 
+      description="Expand your skills with our comprehensive training courses"
+      actions={adminActions}
+    >
       <div className="p-8 space-y-6" data-testid="page-learning-center">
         <Tabs defaultValue="all" className="w-full">
           <TabsList data-testid="tabs-categories">
