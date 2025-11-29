@@ -9,16 +9,35 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 
+interface Agent {
+  id: string;
+  fullName: string;
+  email: string;
+}
+
 interface OrdersFilterProps {
   onSearch?: (value: string) => void;
   onPaymentChange?: (value: string) => void;
   onClearFilters?: () => void;
+  // Admin-only filters
+  isAdmin?: boolean;
+  agents?: Agent[];
+  onCallStatusChange?: (value: string) => void;
+  onAgentChange?: (value: string) => void;
+  callStatusValue?: string;
+  agentValue?: string;
 }
 
 export function OrdersFilter({
   onSearch,
   onPaymentChange,
   onClearFilters,
+  isAdmin = false,
+  agents = [],
+  onCallStatusChange,
+  onAgentChange,
+  callStatusValue = "all",
+  agentValue = "all",
 }: OrdersFilterProps) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -44,6 +63,40 @@ export function OrdersFilter({
             <SelectItem value="prepaid">Prepaid</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Admin-only: Call Status Filter */}
+        {isAdmin && (
+          <Select value={callStatusValue} onValueChange={onCallStatusChange}>
+            <SelectTrigger className="w-[140px]" data-testid="select-call-status-filter">
+              <SelectValue placeholder="Call Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="Pending">Pending</SelectItem>
+              <SelectItem value="Confirmed">Confirmed</SelectItem>
+              <SelectItem value="Follow Up">Follow-up</SelectItem>
+              <SelectItem value="Cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Admin-only: Agent Filter */}
+        {isAdmin && (
+          <Select value={agentValue} onValueChange={onAgentChange}>
+            <SelectTrigger className="w-[160px]" data-testid="select-agent-filter">
+              <SelectValue placeholder="Agent" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Agents</SelectItem>
+              <SelectItem value="unassigned">Unassigned</SelectItem>
+              {agents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.fullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         <Button
           variant="outline"

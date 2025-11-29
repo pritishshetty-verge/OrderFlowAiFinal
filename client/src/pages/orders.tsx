@@ -64,9 +64,15 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
   
+  // Admin-only filter state
+  const [callStatusFilter, setCallStatusFilter] = useState("all");
+  const [agentFilter, setAgentFilter] = useState("all");
+  
   // Pagination state - lifted from OrdersTable for server-side pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  
+  const isAdmin = userRole === "admin";
 
   // Type for API response with stats
   interface OrdersApiResponse {
@@ -81,11 +87,37 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     };
   }
 
-  // Fetch orders from backend with server-side pagination
+  // Type for agent dropdown
+  interface Agent {
+    id: string;
+    fullName: string;
+    email: string;
+  }
+
+  // Fetch agents list for admin filter dropdown
+  const { data: agentsData } = useQuery<Agent[]>({
+    queryKey: ["/api/users/agents"],
+    enabled: isAdmin, // Only fetch for admins
+  });
+
+  // Fetch orders from backend with server-side pagination and admin filters
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize],
+    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter],
     queryFn: async () => {
-      const res = await fetch(`/api/orders?page=${currentPage}&limit=${pageSize}`, {
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: pageSize.toString(),
+      });
+      
+      // Add admin filters if set
+      if (isAdmin && callStatusFilter !== "all") {
+        params.append("callStatus", callStatusFilter);
+      }
+      if (isAdmin && agentFilter !== "all") {
+        params.append("agentId", agentFilter);
+      }
+      
+      const res = await fetch(`/api/orders?${params.toString()}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to fetch orders");
@@ -225,7 +257,23 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const handleClearFilters = () => {
     setSearchQuery("");
     setPaymentFilter("all");
+    // Reset admin filters too
+    if (isAdmin) {
+      setCallStatusFilter("all");
+      setAgentFilter("all");
+    }
     setCurrentPage(1); // Reset to first page when clearing filters
+  };
+
+  // Admin filter handlers
+  const handleCallStatusFilterChange = (value: string) => {
+    setCallStatusFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleAgentFilterChange = (value: string) => {
+    setAgentFilter(value);
+    setCurrentPage(1);
   };
 
   const handleStepClick = (status: string) => {
@@ -311,6 +359,12 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
                 onSearch={handleSearch}
                 onPaymentChange={handlePaymentChange}
                 onClearFilters={handleClearFilters}
+                isAdmin={isAdmin}
+                agents={agentsData || []}
+                onCallStatusChange={handleCallStatusFilterChange}
+                onAgentChange={handleAgentFilterChange}
+                callStatusValue={callStatusFilter}
+                agentValue={agentFilter}
               />
 
               {filteredOrders.length === 0 ? (
