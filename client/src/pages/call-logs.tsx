@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PageLayout } from "@/components/page-layout";
 import { Download, Play, Pause, Phone, ChevronLeft, ChevronRight } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { useState, useRef } from "react";
@@ -157,19 +158,17 @@ export default function CallLogsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 space-y-4">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-96" />
+      <PageLayout title={isAdmin ? "All Call Logs" : "Your Call Logs"}>
+        <div className="p-6 space-y-4">
+          <Card className="p-6">
+            <div className="space-y-3">
+              {[...Array(5)].map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
+            </div>
+          </Card>
         </div>
-        <Card className="p-6">
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
-            ))}
-          </div>
-        </Card>
-      </div>
+      </PageLayout>
     );
   }
 
@@ -177,45 +176,41 @@ export default function CallLogsPage() {
   const total = data?.total || 0;
   const totalPages = data?.totalPages || 1;
 
-  return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2" data-testid="text-call-logs-title">
-            <Phone className="h-6 w-6" />
-            {isAdmin ? "All Call Logs" : "Your Call Logs"}
-          </h1>
-          <p className="text-muted-foreground mt-1" data-testid="text-call-logs-description">
-            {isAdmin 
-              ? `All IVR call records with recordings and metadata (${total} total)`
-              : `Your IVR call records with recordings and metadata (${total} total)`
-            }
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Rows per page:</span>
-          <Select
-            value={limit.toString()}
-            onValueChange={(value) => {
-              setLimit(parseInt(value));
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="w-20" data-testid="select-page-size">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="10">10</SelectItem>
-              <SelectItem value="25">25</SelectItem>
-              <SelectItem value="50">50</SelectItem>
-              <SelectItem value="100">100</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+  const pageDescription = isAdmin 
+    ? `All IVR call records with recordings and metadata (${total} total)`
+    : `Your IVR call records with recordings and metadata (${total} total)`;
 
-      <Card>
+  const pageActions = (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted-foreground">Rows per page:</span>
+      <Select
+        value={limit.toString()}
+        onValueChange={(value) => {
+          setLimit(parseInt(value));
+          setPage(1);
+        }}
+      >
+        <SelectTrigger className="w-20" data-testid="select-page-size">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="10">10</SelectItem>
+          <SelectItem value="25">25</SelectItem>
+          <SelectItem value="50">50</SelectItem>
+          <SelectItem value="100">100</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
+  return (
+    <PageLayout 
+      title={isAdmin ? "All Call Logs" : "Your Call Logs"} 
+      description={pageDescription}
+      actions={pageActions}
+    >
+      <div className="p-6 space-y-4">
+        <Card>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -357,6 +352,7 @@ export default function CallLogsPage() {
           </div>
         )}
       </Card>
-    </div>
+      </div>
+    </PageLayout>
   );
 }

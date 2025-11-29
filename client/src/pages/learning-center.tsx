@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageLayout } from "@/components/page-layout";
 import { Link } from "wouter";
 import { BookOpen, Clock, Award, PlayCircle, FileText, CheckCircle, Lock } from "lucide-react";
 
@@ -51,19 +52,17 @@ export default function LearningCenterPage() {
 
   if (isLoading) {
     return (
-      <div className="flex-1 overflow-auto">
+      <PageLayout title="Learning Center" description="Expand your skills with our comprehensive training courses">
         <div className="p-8">
           <div className="animate-pulse space-y-4">
-            <div className="h-8 bg-muted rounded w-64" />
-            <div className="h-4 bg-muted rounded w-96" />
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-80 bg-muted rounded-lg" />
               ))}
             </div>
           </div>
         </div>
-      </div>
+      </PageLayout>
     );
   }
 
