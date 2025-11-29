@@ -297,11 +297,14 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
           </div>
         ) : (
           <>
-            <OrderProgressBar
-              steps={progressSteps}
-              activeStep={activeTab}
-              onStepClick={handleStepClick}
-            />
+            {/* Hide progress bar for admins - they use filters to oversee, not track targets */}
+            {userRole === "agent" && (
+              <OrderProgressBar
+                steps={progressSteps}
+                activeStep={activeTab}
+                onStepClick={handleStepClick}
+              />
+            )}
 
             <div className="space-y-4">
               <OrdersFilter
