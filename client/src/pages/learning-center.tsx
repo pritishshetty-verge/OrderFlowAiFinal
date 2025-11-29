@@ -67,17 +67,8 @@ export default function LearningCenterPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto" data-testid="page-learning-center">
-      <div className="p-8 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold" data-testid="text-page-title">
-            Learning Center
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            Expand your skills with our comprehensive training courses
-          </p>
-        </div>
-
+    <PageLayout title="Learning Center" description="Expand your skills with our comprehensive training courses">
+      <div className="p-8 space-y-6" data-testid="page-learning-center">
         <Tabs defaultValue="all" className="w-full">
           <TabsList data-testid="tabs-categories">
             {allCategories.map((category) => (
@@ -115,7 +106,7 @@ export default function LearningCenterPage() {
           ))}
         </Tabs>
       </div>
-    </div>
+    </PageLayout>
   );
 }
 
