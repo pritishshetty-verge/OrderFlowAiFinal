@@ -27,10 +27,6 @@ localPort = 35619
 externalPort = 3002
 
 [[ports]]
-localPort = 35653
-externalPort = 8008
-
-[[ports]]
 localPort = 36871
 externalPort = 3000
 
@@ -84,3 +80,8 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_websocket:1.0.0", "javascript_database:1.0.0", "resend:1.0.0"]
+
+[userenv]
+
+[userenv.shared]
+N8N_ANALYZE_CALL_URL = "https://n8n.srv1031651.hstgr.cloud/webhook-test/analyze-call"

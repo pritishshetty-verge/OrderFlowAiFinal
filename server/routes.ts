@@ -1882,8 +1882,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`🤖 Starting AI analysis for call ${callId}`);
       
-      // Call n8n webhook
-      const n8nWebhookUrl = "https://n8n.srv1031651.hstgr.cloud/webhook-test/b9e4258a-5f84-4ae0-9e2b-101ddef236a5";
+      // Call n8n webhook - uses environment variable for configurability
+      const n8nWebhookUrl = process.env.N8N_ANALYZE_CALL_URL;
+      
+      if (!n8nWebhookUrl) {
+        console.error("❌ N8N_ANALYZE_CALL_URL environment variable not set");
+        return res.status(500).json({ error: "AI analysis service not configured" });
+      }
       
       const n8nResponse = await axios.post(n8nWebhookUrl, {
         callId,
