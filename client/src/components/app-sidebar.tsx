@@ -49,6 +49,11 @@ const menuItems = [
         url: "/ndr",
         icon: AlertTriangle,
       },
+      {
+        title: "Call Logs",
+        url: "/call-logs",
+        icon: Phone,
+      },
     ],
   },
   {
@@ -79,11 +84,6 @@ const menuItems = [
     title: "Team",
     url: "/team",
     icon: Users,
-  },
-  {
-    title: "Call Logs",
-    url: "/call-logs",
-    icon: Phone,
   },
 ];
 
