@@ -41,6 +41,7 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
     items: order.itemsSummary || "",
     total: parseFloat(order.totalPrice),
     paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
+    financialStatus: order.financialStatus, // Pass through Shopify financial status for accurate badge display
     status: order.status as Order["status"],
     callStatus: order.callStatus as Order["callStatus"],
     assignedTo: assignedUser?.fullName,
