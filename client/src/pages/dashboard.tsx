@@ -6,12 +6,9 @@ import { OrdersTable, type Order } from "@/components/orders-table";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { ConnectionStatus } from "@/components/connection-status";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationsBell } from "@/components/notifications-bell";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useLocation } from "wouter";
-import { LogOut } from "lucide-react";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Transform backend order to frontend order format
@@ -51,7 +48,6 @@ function transformOrder(order: BackendOrder, users: User[]): Order {
 }
 
 export default function DashboardPage() {
-  const [, setLocation] = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
@@ -110,11 +106,6 @@ export default function DashboardPage() {
   }, [allOrders, searchQuery, statusFilter, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
-
-  const handleLogout = () => {
-    localStorage.removeItem("userRole");
-    setLocation("/login");
-  };
 
   const handleViewDetails = (order: Order) => {
     const index = filteredOrders.findIndex((o) => o.id === order.id);
@@ -186,15 +177,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-center gap-3">
           <ConnectionStatus connected={isConnected} />
-          <ThemeToggle />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleLogout}
-            data-testid="button-logout"
-          >
-            <LogOut className="h-5 w-5" />
-          </Button>
+          <NotificationsBell />
         </div>
       </header>
       <main className="flex-1 overflow-auto p-6">
