@@ -152,12 +152,8 @@ function GenerateAnalysisButton({ callId, recordingUrl }: { callId: string; reco
   
   const analysisMutation = useMutation<AnalyzeCallResponse, Error>({
     mutationFn: async () => {
-      const response = await apiRequest("/api/integrations/analyze-call", {
-        method: "POST",
-        body: JSON.stringify({ callId, recordingUrl }),
-        headers: { "Content-Type": "application/json" }
-      });
-      return response as AnalyzeCallResponse;
+      const response = await apiRequest("POST", "/api/integrations/analyze-call", { callId, recordingUrl });
+      return await response.json() as AnalyzeCallResponse;
     },
     onSuccess: (data) => {
       toast({
