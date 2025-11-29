@@ -22,6 +22,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { CancelOrderModal } from "@/components/cancel-order-modal";
 import { FollowupOrderModal } from "@/components/followup-order-modal";
+import { PaymentBadge } from "@/components/payment-badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -552,9 +553,10 @@ export function OrderQuickPreview({
             {/* Left: Order ID + Payment Badge */}
             <div className="flex items-center gap-2">
               <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
-              <Badge className={`${getPaymentBadgeStyle(order.paymentMethod)} border-0 font-medium`} data-testid="badge-payment-status">
-                {order.paymentMethod === "prepaid" ? "Prepaid" : "COD"}
-              </Badge>
+              <PaymentBadge 
+                method={order.paymentMethod} 
+                financialStatus={order.financialStatus}
+              />
             </div>
             {/* Right: Navigation + Close */}
             <div className="flex items-center gap-1">
