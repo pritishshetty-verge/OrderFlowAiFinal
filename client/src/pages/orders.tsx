@@ -7,8 +7,10 @@ import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package } from "lucide-react";
+import { Package, User as UserIcon, Globe } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Order as BackendOrder, User } from "@shared/schema";
@@ -78,6 +80,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   
+  // Agent scope toggle: false = Personal View (assigned to me), true = Global View (all orders)
+  const [isGlobalView, setIsGlobalView] = useState(false);
+  
   const isAdmin = userRole === "admin";
 
   // Type for API response with stats (orders include joined user data)
@@ -110,16 +115,17 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const localStorageUserId = localStorage.getItem("userId");
   
   // Fetch orders from backend with server-side pagination and role-based filters
+  // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId],
+    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: pageSize.toString(),
       });
       
-      // For agents: filter by their assigned orders (server-side filtering)
-      if (!isAdmin && localStorageUserId) {
+      // For agents: filter by their assigned orders ONLY if in Personal view (not Global view)
+      if (!isAdmin && localStorageUserId && !isGlobalView) {
         params.append("assignedTo", localStorageUserId);
       }
       
@@ -138,6 +144,37 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       return res.json();
     },
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
+  });
+  
+  // Separate stats query for progress bar - ALWAYS filters by agent's userId regardless of table scope
+  // This ensures agents always see their personal workload metrics
+  interface AgentStats {
+    total: number;
+    pending: number;
+    confirmed: number;
+    followUp: number;
+    cancelled: number;
+  }
+  
+  const { data: agentStats } = useQuery<AgentStats>({
+    queryKey: ["/api/orders/agent-stats", localStorageUserId],
+    queryFn: async () => {
+      // Fetch orders with agent's userId to get their personal stats
+      const params = new URLSearchParams({
+        page: "1",
+        limit: "1", // We only need stats, not actual orders
+        assignedTo: localStorageUserId || "",
+      });
+      
+      const res = await fetch(`/api/orders?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch agent stats");
+      const data = await res.json();
+      return data.stats;
+    },
+    enabled: !isAdmin && !!localStorageUserId, // Only for agents
+    refetchInterval: 30000,
   });
 
   // Mutation for updating call status
@@ -300,11 +337,17 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setCurrentPage(1); // Reset to first page when changing page size
   };
 
-  // Use stats from API response for progress bar (global counts from database)
+  // Use separate agentStats for progress bar (always shows agent's personal metrics)
+  // This ensures the progress bar is NOT affected by the global/personal view toggle
   // Order: Total Orders -> Pending -> Follow-Up -> Cancelled -> Confirmed
   const progressSteps = useMemo(
     () => {
-      const stats = ordersResponse?.stats || { total: 0, pending: 0, confirmed: 0, followUp: 0, cancelled: 0 };
+      // For agents: use dedicated agentStats that always filters by their userId
+      // For admins: use ordersResponse stats (though progress bar is hidden for admins)
+      const stats = isAdmin 
+        ? (ordersResponse?.stats || { total: 0, pending: 0, confirmed: 0, followUp: 0, cancelled: 0 })
+        : (agentStats || { total: 0, pending: 0, confirmed: 0, followUp: 0, cancelled: 0 });
+      
       return [
         {
           label: "Total Orders",
@@ -333,7 +376,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         },
       ];
     },
-    [ordersResponse?.stats]
+    [isAdmin, ordersResponse?.stats, agentStats]
   );
 
   return (
@@ -360,6 +403,38 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             )}
 
             <div className="space-y-4">
+              {/* Scope toggle for agents - switch between personal and global view */}
+              {!isAdmin && (
+                <div className="flex items-center justify-between bg-muted/30 rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      {isGlobalView ? (
+                        <Globe className="h-4 w-4 text-primary" />
+                      ) : (
+                        <UserIcon className="h-4 w-4 text-primary" />
+                      )}
+                      <span className="text-sm font-medium">
+                        {isGlobalView ? "All Store Orders" : "My Assigned Orders"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Label htmlFor="scope-toggle" className="text-sm text-muted-foreground cursor-pointer">
+                      {isGlobalView ? "Switch to Personal View" : "Universal Lookup"}
+                    </Label>
+                    <Switch
+                      id="scope-toggle"
+                      checked={isGlobalView}
+                      onCheckedChange={(checked) => {
+                        setIsGlobalView(checked);
+                        setCurrentPage(1); // Reset pagination when switching views
+                      }}
+                      data-testid="toggle-scope-view"
+                    />
+                  </div>
+                </div>
+              )}
+              
               <OrdersFilter
                 onSearch={handleSearch}
                 onPaymentChange={handlePaymentChange}
