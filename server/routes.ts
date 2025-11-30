@@ -79,9 +79,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dashboard metrics - aggregated counts for overview
+  // If userId is provided, workflow metrics (Confirmed, Cancelled, Pending, Follow Up) are filtered by that agent
+  // Total Orders is always global (unfiltered)
   app.get("/api/dashboard/metrics", async (req, res) => {
     try {
-      const metrics = await storage.getDashboardMetrics();
+      const userId = req.query.userId as string | undefined;
+      const metrics = await storage.getDashboardMetrics(userId);
       res.json(metrics);
     } catch (error) {
       console.error("Error fetching dashboard metrics:", error);
