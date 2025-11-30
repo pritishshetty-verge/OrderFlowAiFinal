@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { useScope } from "@/contexts/scope-context";
 import { User, Globe } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useLocation } from "wouter";
 
 interface PageLayoutProps {
   children: React.ReactNode;
@@ -18,6 +19,8 @@ export function PageLayout({ children, title, description, actions }: PageLayout
   const userRole = localStorage.getItem("userRole");
   const isAgent = userRole === "agent";
   const { isGlobalView, setIsGlobalView } = useScope();
+  const [location] = useLocation();
+  const isOrdersPage = location === "/orders";
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -35,7 +38,7 @@ export function PageLayout({ children, title, description, actions }: PageLayout
         </div>
         <div className="flex items-center gap-3">
           {actions}
-          {isAgent && (
+          {isAgent && isOrdersPage && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 border">
