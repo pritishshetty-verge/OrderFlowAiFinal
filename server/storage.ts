@@ -1509,7 +1509,18 @@ export class DbStorage implements IStorage {
   }
 
   async createLesson(lesson: InsertLesson): Promise<Lesson> {
-    const [newLesson] = await db.insert(lessons).values(lesson).returning();
+    // Handle duplicate slug by appending suffix
+    let finalSlug = lesson.slug;
+    let suffix = 1;
+    
+    while (true) {
+      const existing = await this.getLessonBySlug(finalSlug);
+      if (!existing) break;
+      suffix++;
+      finalSlug = `${lesson.slug}-${suffix}`;
+    }
+    
+    const [newLesson] = await db.insert(lessons).values({ ...lesson, slug: finalSlug }).returning();
     
     // Initialize analytics for new lesson
     await db.insert(lessonAnalytics).values({
