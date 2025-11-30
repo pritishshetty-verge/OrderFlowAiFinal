@@ -106,14 +106,22 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     enabled: isAdmin, // Only fetch for admins
   });
 
-  // Fetch orders from backend with server-side pagination and admin filters
+  // Get current user's ID from localStorage for agent filtering
+  const localStorageUserId = localStorage.getItem("userId");
+  
+  // Fetch orders from backend with server-side pagination and role-based filters
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter],
+    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: pageSize.toString(),
       });
+      
+      // For agents: filter by their assigned orders (server-side filtering)
+      if (!isAdmin && localStorageUserId) {
+        params.append("assignedTo", localStorageUserId);
+      }
       
       // Add admin filters if set
       if (isAdmin && callStatusFilter !== "all") {
@@ -165,24 +173,15 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const currentUser = usersData?.find(u => u.email === userEmail);
   const currentUserId = currentUser?.id;
 
-  // BASE FILTER: Apply role-based filtering first (agents see only their assigned orders)
+  // BASE FILTER: Transform backend orders to frontend format
+  // Server-side filtering is already applied for agents via assignedTo param
   const baseFilteredOrders = useMemo(() => {
     if (!ordersResponse?.orders || !usersData) return [];
     
-    // Filter backend orders based on role
-    let filteredBackendOrders = ordersResponse.orders;
-    
-    if (userRole === "agent" && currentUserId) {
-      // Agents see only orders assigned to them
-      filteredBackendOrders = ordersResponse.orders.filter(
-        (order) => order.assignedTo === currentUserId
-      );
-    }
-    // Admins see all orders (no filter)
-    
-    // Transform filtered orders to frontend format
-    return filteredBackendOrders.map((order) => transformOrder(order));
-  }, [ordersResponse, usersData, userRole, currentUserId]);
+    // Transform backend orders to frontend format
+    // Server already filters by assignedTo for agents, so no client-side filtering needed
+    return ordersResponse.orders.map((order) => transformOrder(order));
+  }, [ordersResponse, usersData]);
 
   // Apply tab filters and search/payment filters on top of base filtered orders
   const filteredOrders = useMemo(() => {
