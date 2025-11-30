@@ -1907,46 +1907,26 @@ export class DbStorage implements IStorage {
   // DASHBOARD METRICS
   // ============================================================================
 
-  async getDashboardMetrics(userId?: string): Promise<{
+  async getDashboardMetrics(): Promise<{
     totalOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
     codOrders: number;
-    pendingOrders: number;
-    followUpOrders: number;
   }> {
-    // Total orders is always global (unfiltered)
-    const [globalResult] = await db
+    const [result] = await db
       .select({
         totalOrders: count(),
-      })
-      .from(orders);
-
-    // Workflow metrics are filtered by agent if userId is provided
-    let workflowQuery = db
-      .select({
         confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
         cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
         codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
-        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} IS NULL OR ${orders.callStatus} = '' OR ${orders.callStatus} = 'Pending')`,
-        followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
       })
       .from(orders);
 
-    // If userId is provided, filter workflow metrics by assigned agent
-    if (userId) {
-      workflowQuery = workflowQuery.where(eq(orders.assignedTo, userId)) as typeof workflowQuery;
-    }
-
-    const [workflowResult] = await workflowQuery;
-
     return {
-      totalOrders: globalResult?.totalOrders || 0,
-      confirmedOrders: Number(workflowResult?.confirmedOrders) || 0,
-      cancelledOrders: Number(workflowResult?.cancelledOrders) || 0,
-      codOrders: Number(workflowResult?.codOrders) || 0,
-      pendingOrders: Number(workflowResult?.pendingOrders) || 0,
-      followUpOrders: Number(workflowResult?.followUpOrders) || 0,
+      totalOrders: result?.totalOrders || 0,
+      confirmedOrders: Number(result?.confirmedOrders) || 0,
+      cancelledOrders: Number(result?.cancelledOrders) || 0,
+      codOrders: Number(result?.codOrders) || 0,
     };
   }
 }
