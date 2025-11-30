@@ -1907,26 +1907,46 @@ export class DbStorage implements IStorage {
   // DASHBOARD METRICS
   // ============================================================================
 
-  async getDashboardMetrics(): Promise<{
+  async getDashboardMetrics(userId?: string): Promise<{
     totalOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
     codOrders: number;
+    pendingOrders: number;
+    followUpOrders: number;
   }> {
-    const [result] = await db
+    // Total orders is always global (unfiltered)
+    const [globalResult] = await db
       .select({
         totalOrders: count(),
-        confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
-        cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
-        codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
       })
       .from(orders);
 
+    // Workflow metrics are filtered by agent if userId is provided
+    let workflowQuery = db
+      .select({
+        confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
+        cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
+        codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
+        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} IS NULL OR ${orders.callStatus} = '' OR ${orders.callStatus} = 'Pending')`,
+        followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
+      })
+      .from(orders);
+
+    // If userId is provided, filter workflow metrics by assigned agent
+    if (userId) {
+      workflowQuery = workflowQuery.where(eq(orders.assignedTo, userId)) as typeof workflowQuery;
+    }
+
+    const [workflowResult] = await workflowQuery;
+
     return {
-      totalOrders: result?.totalOrders || 0,
-      confirmedOrders: Number(result?.confirmedOrders) || 0,
-      cancelledOrders: Number(result?.cancelledOrders) || 0,
-      codOrders: Number(result?.codOrders) || 0,
+      totalOrders: globalResult?.totalOrders || 0,
+      confirmedOrders: Number(workflowResult?.confirmedOrders) || 0,
+      cancelledOrders: Number(workflowResult?.cancelledOrders) || 0,
+      codOrders: Number(workflowResult?.codOrders) || 0,
+      pendingOrders: Number(workflowResult?.pendingOrders) || 0,
+      followUpOrders: Number(workflowResult?.followUpOrders) || 0,
     };
   }
 }
