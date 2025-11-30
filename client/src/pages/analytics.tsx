@@ -60,11 +60,15 @@ interface DashboardMetrics {
   confirmedOrders: number;
   cancelledOrders: number;
   codOrders: number;
+  pendingOrders: number;
+  followUpOrders: number;
 }
 
 export default function AnalyticsPage() {
   // Get current user from localStorage
   const userEmail = localStorage.getItem("userEmail");
+  const userId = localStorage.getItem("userId");
+  const userRole = localStorage.getItem("userRole");
   
   // Fetch current user profile for personalized greeting
   const { data: currentUser } = useQuery<User>({
@@ -72,9 +76,15 @@ export default function AnalyticsPage() {
     enabled: !!userEmail,
   });
   
+  // For agents, filter workflow metrics by their userId
+  // For admins, show global metrics (no userId filter)
+  const metricsQueryKey = userRole === 'agent' && userId
+    ? `/api/dashboard/metrics?userId=${userId}`
+    : "/api/dashboard/metrics";
+  
   // Fetch dashboard metrics from backend aggregation query
   const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
-    queryKey: ["/api/dashboard/metrics"],
+    queryKey: [metricsQueryKey],
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time updates
   });
 
@@ -98,11 +108,15 @@ export default function AnalyticsPage() {
   const isLoading = metricsLoading || ordersLoading || usersLoading;
 
   // Use backend metrics for stats
+  // For agents: totalOrders is global, all other metrics are agent-filtered
+  // For admins: all metrics are global
   const stats = {
     totalOrders: metrics?.totalOrders || 0,
     confirmedOrders: metrics?.confirmedOrders || 0,
     cancelledOrders: metrics?.cancelledOrders || 0,
     codOrders: metrics?.codOrders || 0,
+    pendingOrders: metrics?.pendingOrders || 0,
+    followUpOrders: metrics?.followUpOrders || 0,
   };
 
   const conversionRate = useMemo(
