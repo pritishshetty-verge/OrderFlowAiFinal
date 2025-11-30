@@ -1907,12 +1907,15 @@ export class DbStorage implements IStorage {
   // DASHBOARD METRICS
   // ============================================================================
 
-  async getDashboardMetrics(): Promise<{
+  async getDashboardMetrics(userId?: string): Promise<{
     totalOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
     codOrders: number;
   }> {
+    // Build base query - if userId provided, filter ALL metrics by assignedTo
+    const baseCondition = userId ? eq(orders.assignedTo, userId) : undefined;
+
     const [result] = await db
       .select({
         totalOrders: count(),
@@ -1920,7 +1923,8 @@ export class DbStorage implements IStorage {
         cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
         codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
       })
-      .from(orders);
+      .from(orders)
+      .where(baseCondition);
 
     return {
       totalOrders: result?.totalOrders || 0,
