@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { ChevronLeft, Plus } from "lucide-react";
+import { ChevronLeft, Plus, Edit2, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -60,6 +60,34 @@ export default function AdminCourseForm() {
     },
     enabled: !!courseId,
   });
+
+  const { data: lessonsData = { lessons: [] }, isLoading: lessonsLoading } = useQuery({
+    queryKey: ["/api/admin/learning/courses", courseId, "lessons"],
+    queryFn: async () => {
+      if (!courseId) return { lessons: [] };
+      const response = await fetch(`/api/admin/learning/courses/${courseId}/lessons`, { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch lessons");
+      return response.json();
+    },
+    enabled: !!courseId,
+  });
+
+  const deleteLesson = async (lessonId: string) => {
+    try {
+      await apiRequest("DELETE", `/api/admin/learning/lessons/${lessonId}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/learning/courses", courseId, "lessons"] });
+      toast({
+        title: "Lesson deleted",
+        description: "The lesson has been deleted successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete lesson",
+        variant: "destructive",
+      });
+    }
+  };
 
   const form = useForm<CourseFormValues>({
     resolver: zodResolver(courseFormSchema),
@@ -398,9 +426,47 @@ export default function AdminCourseForm() {
               </div>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground text-center py-8">
-                Save the course first, then add lessons
-              </p>
+              {lessonsLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-12 bg-muted rounded animate-pulse" />
+                  ))}
+                </div>
+              ) : lessonsData.lessons && lessonsData.lessons.length > 0 ? (
+                <div className="space-y-2">
+                  {lessonsData.lessons.map((lesson: any) => (
+                    <div
+                      key={lesson.id}
+                      className="flex items-center justify-between p-4 border rounded-md hover-elevate"
+                      data-testid={`row-lesson-${lesson.id}`}
+                    >
+                      <div className="flex-1">
+                        <h4 className="font-medium">{lesson.title}</h4>
+                        <p className="text-sm text-muted-foreground">{lesson.slug}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Link href={`/learning/admin/lessons/${lesson.id}`}>
+                          <Button size="icon" variant="ghost" data-testid={`button-edit-${lesson.id}`}>
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                        </Link>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => deleteLesson(lesson.id)}
+                          data-testid={`button-delete-${lesson.id}`}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-center py-8">
+                  No lessons yet. Click "Add Lesson" to create one.
+                </p>
+              )}
             </CardContent>
           </Card>
         )}
