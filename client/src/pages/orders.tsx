@@ -118,10 +118,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Get current user's ID from localStorage for agent filtering
   const localStorageUserId = localStorage.getItem("userId");
   
-  // Fetch orders from backend with server-side pagination, search, and role-based filters
+  // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView, searchQuery],
+    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -139,11 +139,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       }
       if (isAdmin && agentFilter !== "all") {
         params.append("agentId", agentFilter);
-      }
-      
-      // Add search parameter - searches across entire database before pagination
-      if (searchQuery) {
-        params.append("search", searchQuery);
       }
       
       const res = await fetch(`/api/orders?${params.toString()}`, {
@@ -229,8 +224,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return ordersResponse.orders.map((order) => transformOrder(order));
   }, [ordersResponse, usersData]);
 
-  // Apply tab filters and payment filters on top of base filtered orders
-  // Note: Search is now handled server-side and searches the entire database
+  // Apply tab filters and search/payment filters on top of base filtered orders
   const filteredOrders = useMemo(() => {
     let filtered = [...baseFilteredOrders];
 
@@ -250,13 +244,24 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       filtered = filtered.filter((order) => order.callStatus === "Follow Up");
     }
 
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (order) =>
+          order.shopifyOrderId.toLowerCase().includes(query) ||
+          order.customerName.toLowerCase().includes(query) ||
+          order.customerPhone.includes(query)
+      );
+    }
+
     // Payment method filter
     if (paymentFilter !== "all") {
       filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
     }
 
     return filtered;
-  }, [baseFilteredOrders, activeTab, paymentFilter]);
+  }, [baseFilteredOrders, activeTab, searchQuery, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 
