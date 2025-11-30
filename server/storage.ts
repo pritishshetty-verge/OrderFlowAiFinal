@@ -116,6 +116,7 @@ export interface IStorage {
     paymentMethod?: string;
     assignedTo?: string;
     agentId?: string; // 'unassigned' for NULL, or agent UUID
+    search?: string; // Search across shopifyOrderId, customerName, customerPhone
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -487,6 +488,7 @@ export class DbStorage implements IStorage {
     paymentMethod?: string;
     assignedTo?: string;
     agentId?: string; // 'unassigned' for NULL, or agent UUID
+    search?: string; // Search across shopifyOrderId, customerName, customerPhone
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -522,6 +524,18 @@ export class DbStorage implements IStorage {
       } else {
         conditions.push(eq(orders.assignedTo, filters.agentId));
       }
+    }
+    
+    // Handle search filter - search across shopifyOrderId, customerName, customerPhone
+    if (filters?.search) {
+      const searchTerm = `%${filters.search.toLowerCase()}%`;
+      conditions.push(
+        sql`(
+          LOWER(${orders.shopifyOrderId}) LIKE ${searchTerm} OR 
+          LOWER(${orders.customerName}) LIKE ${searchTerm} OR 
+          ${orders.customerPhone} LIKE ${searchTerm}
+        )`
+      );
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;

@@ -52,7 +52,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, search, limit, page } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -66,6 +66,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedTo: assignedTo as string | undefined,
         callStatus: callStatus as string | undefined,
         agentId: agentId as string | undefined, // 'unassigned' for NULL, or agent UUID
+        search: search as string | undefined, // Search across shopifyOrderId, customerName, customerPhone
         limit: parsedLimit,
         offset: calculatedOffset,
       };
