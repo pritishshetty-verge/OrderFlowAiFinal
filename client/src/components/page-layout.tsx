@@ -41,13 +41,13 @@ export function PageLayout({ children, title, description, actions }: PageLayout
           {isAgent && isOrdersPage && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 border">
+                <div className="flex items-center gap-3 px-4 py-1.5 rounded-full bg-muted/50 border">
                   <User className={`h-3.5 w-3.5 ${!isGlobalView ? "text-primary" : "text-muted-foreground"}`} />
                   <Switch
                     id="header-scope-toggle"
                     checked={isGlobalView}
                     onCheckedChange={setIsGlobalView}
-                    className="h-4 w-7 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30"
+                    className="h-4 w-8 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30"
                     data-testid="toggle-scope-view"
                   />
                   <Globe className={`h-3.5 w-3.5 ${isGlobalView ? "text-primary" : "text-muted-foreground"}`} />
