@@ -65,6 +65,8 @@ interface DashboardMetrics {
 export default function AnalyticsPage() {
   // Get current user from localStorage
   const userEmail = localStorage.getItem("userEmail");
+  const userId = localStorage.getItem("userId");
+  const userRole = localStorage.getItem("userRole");
   
   // Fetch current user profile for personalized greeting
   const { data: currentUser } = useQuery<User>({
@@ -72,9 +74,20 @@ export default function AnalyticsPage() {
     enabled: !!userEmail,
   });
   
+  // For agents, filter metrics by their assigned orders; for admins, show global metrics
+  const metricsUserId = userRole === "agent" ? userId : undefined;
+  
   // Fetch dashboard metrics from backend aggregation query
   const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
-    queryKey: ["/api/dashboard/metrics"],
+    queryKey: ["/api/dashboard/metrics", metricsUserId],
+    queryFn: async () => {
+      const url = metricsUserId 
+        ? `/api/dashboard/metrics?userId=${metricsUserId}`
+        : "/api/dashboard/metrics";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch metrics");
+      return res.json();
+    },
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time updates
   });
 
