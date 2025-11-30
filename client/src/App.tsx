@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { ScopeProvider } from "@/contexts/scope-context";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import OverviewPage from "@/pages/analytics";
@@ -120,13 +121,15 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
-          <SidebarProvider style={style as React.CSSProperties}>
-            <div className="flex h-screen w-full">
-              {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
-              <Router />
-            </div>
-          </SidebarProvider>
-          <Toaster />
+          <ScopeProvider>
+            <SidebarProvider style={style as React.CSSProperties}>
+              <div className="flex h-screen w-full">
+                {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
+                <Router />
+              </div>
+            </SidebarProvider>
+            <Toaster />
+          </ScopeProvider>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

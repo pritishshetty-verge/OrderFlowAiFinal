@@ -7,12 +7,11 @@ import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package, User as UserIcon, Globe } from "lucide-react";
+import { Package } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useScope } from "@/contexts/scope-context";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Extended backend order type with joined user data from API
@@ -80,8 +79,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   
-  // Agent scope toggle: false = Personal View (assigned to me), true = Global View (all orders)
-  const [isGlobalView, setIsGlobalView] = useState(false);
+  // Agent scope toggle from global context (controlled by header toggle)
+  const { isGlobalView } = useScope();
+  
+  // Reset pagination when scope changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [isGlobalView]);
   
   const isAdmin = userRole === "admin";
 
@@ -403,38 +407,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             )}
 
             <div className="space-y-4">
-              {/* Scope toggle for agents - switch between personal and global view */}
-              {!isAdmin && (
-                <div className="flex items-center justify-between bg-muted/30 rounded-lg px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      {isGlobalView ? (
-                        <Globe className="h-4 w-4 text-primary" />
-                      ) : (
-                        <UserIcon className="h-4 w-4 text-primary" />
-                      )}
-                      <span className="text-sm font-medium">
-                        {isGlobalView ? "All Store Orders" : "My Assigned Orders"}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Label htmlFor="scope-toggle" className="text-sm text-muted-foreground cursor-pointer">
-                      {isGlobalView ? "Switch to Personal View" : "Universal Lookup"}
-                    </Label>
-                    <Switch
-                      id="scope-toggle"
-                      checked={isGlobalView}
-                      onCheckedChange={(checked) => {
-                        setIsGlobalView(checked);
-                        setCurrentPage(1); // Reset pagination when switching views
-                      }}
-                      data-testid="toggle-scope-view"
-                    />
-                  </div>
-                </div>
-              )}
-              
               <OrdersFilter
                 onSearch={handleSearch}
                 onPaymentChange={handlePaymentChange}
