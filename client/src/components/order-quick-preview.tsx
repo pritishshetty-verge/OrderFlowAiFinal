@@ -982,14 +982,14 @@ export function OrderQuickPreview({
                     <SelectItem value="confirm" data-testid="select-item-confirm">
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className="h-4 w-4 text-green-600" />
-                        <span>Confirm Order</span>
+                        <span>Confirm</span>
                         <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">C</kbd>
                       </div>
                     </SelectItem>
                     <SelectItem value="cancel" data-testid="select-item-cancel">
                       <div className="flex items-center gap-2">
                         <XCircle className="h-4 w-4 text-red-600" />
-                        <span>Cancel Order</span>
+                        <span>Cancel</span>
                         <kbd className="ml-auto px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">X</kbd>
                       </div>
                     </SelectItem>
