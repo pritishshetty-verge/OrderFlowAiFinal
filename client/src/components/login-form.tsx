@@ -99,7 +99,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
           {/* Content */}
           <div className="relative z-10 text-center space-y-6">
             <div className="space-y-3">
-              <h2 className="text-3xl font-bold text-white">OrderSync</h2>
+              <h2 className="text-3xl font-bold text-white">OrderFlowAi</h2>
               <p className="text-blue-100 text-lg">
                 Streamline your Shopify order management with intelligent assignment and tracking
               </p>
