@@ -949,15 +949,15 @@ export function OrderQuickPreview({
         </div>
 
         {/* STICKY FOOTER - Call Status Controls */}
-        <div className="flex-shrink-0 border-t bg-card px-4 py-3 rounded-bl-xl">
-          <div className="flex items-center justify-between gap-3">
+        <div className="flex-shrink-0 border-t bg-card px-3 py-2 rounded-bl-xl">
+          <div className="flex items-center justify-between gap-4">
             {/* Left: Prev Navigation */}
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon"
               onClick={handleNavigatePrev}
               disabled={!canNavigatePrev || isMutating}
-              className="h-8 w-8 flex-shrink-0"
+              className="h-8 w-8 flex-shrink-0 rounded-full"
               data-testid="button-footer-prev"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -966,7 +966,7 @@ export function OrderQuickPreview({
             {/* Center: Action Dropdown */}
             <div className="flex-1 flex justify-center">
               {isTerminalStatus ? (
-                <div className={`px-4 py-2 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
+                <div className={`px-3 py-1.5 rounded-md text-sm font-medium ${getCallStatusColor(order.callStatus)}`} data-testid="text-call-status">
                   {order.callStatus}
                 </div>
               ) : (
@@ -975,8 +975,8 @@ export function OrderQuickPreview({
                   onValueChange={setSelectedAction}
                   disabled={isMutating}
                 >
-                  <SelectTrigger className="w-[180px]" data-testid="select-action">
-                    <SelectValue placeholder="Select Action" />
+                  <SelectTrigger className="w-[160px] h-8" data-testid="select-action">
+                    <SelectValue placeholder="Select Action..." />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="confirm" data-testid="select-item-confirm">
@@ -1005,17 +1005,17 @@ export function OrderQuickPreview({
               )}
             </div>
 
-            {/* Right: Save & Next */}
+            {/* Right: Save & Next - Primary action */}
             <Button
               variant="default"
               size="sm"
               onClick={handleSaveAndNext}
               disabled={isMutating}
-              className="gap-1.5 flex-shrink-0"
+              className="gap-1.5 flex-shrink-0 h-8"
               data-testid="button-footer-save-next"
             >
               Save & Next
-              <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-black/20 dark:bg-white/20 rounded">↵</kbd>
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </div>
