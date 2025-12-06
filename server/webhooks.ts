@@ -107,6 +107,11 @@ export async function handleOrderCreated(req: Request, res: Response) {
     // Extract shipment status from fulfillments
     const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
 
+    // Extract and parse tags (Shopify sends as comma-separated string)
+    const tags = shopifyOrder.tags 
+      ? shopifyOrder.tags.split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag.length > 0)
+      : [];
+
     // Create order
     const orderData: InsertOrder = {
       shopifyOrderId: shopifyOrder.id.toString(),
@@ -139,6 +144,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       assignedTo: null,
       assignedAt: null,
       shipmentStatus: shipmentStatus,
+      tags: tags,
       rawShopifyData: shopifyOrder,
       shopifyCreatedAt: new Date(shopifyOrder.created_at),
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
@@ -271,6 +277,11 @@ export async function handleOrderUpdated(req: Request, res: Response) {
     // Extract shipment status from fulfillments
     const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
 
+    // Extract and parse tags (Shopify sends as comma-separated string)
+    const tags = shopifyOrder.tags 
+      ? shopifyOrder.tags.split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag.length > 0)
+      : [];
+
     // Update order
     const newStatus = mapShopifyStatus(
       shopifyOrder.financial_status,
@@ -292,6 +303,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
       shipmentStatus: shipmentStatus,
+      tags: tags,
       rawShopifyData: shopifyOrder,
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
     };
