@@ -862,14 +862,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({
           configured: false,
           storeUrl: null,
+          storeName: null,
           lastTested: null,
           testStatus: null,
         });
       }
 
+      // Extract store name from URL (e.g., "gripherstore" from "gripherstore.myshopify.com")
+      const storeName = credentials.storeUrl.split('.')[0] || null;
+
       res.json({
         configured: true,
         storeUrl: credentials.storeUrl,
+        storeName: storeName,
         lastTested: credentials.lastTestedAt,
         testStatus: credentials.testStatus,
         testMessage: credentials.testMessage,

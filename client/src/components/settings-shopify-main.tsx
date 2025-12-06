@@ -47,6 +47,7 @@ interface BackendOrder {
 interface CredentialsStatus {
   configured: boolean;
   storeUrl: string | null;
+  storeName: string | null;
   lastTested: string | null;
   testStatus: string | null;
   testMessage?: string;
@@ -136,13 +137,18 @@ export function ShopifySettingsMain() {
     disconnectMutation.mutate();
   };
 
+  // Determine the description based on connection status
+  const cardDescription = isConnected && credentialsStatus?.storeName
+    ? `Connected to: ${credentialsStatus.storeName}`
+    : "Manage your Shopify store integration";
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
       <SettingsCard
         iconImg="https://cdn.shopify.com/s/files/1/0741/0594/6252/files/Shopify-logo.png?v=1765021115"
         title="Shopify Connection"
-        description="Manage your Shopify store integration"
+        description={cardDescription}
         testId="card-connection-status"
         action={
           <StatusBadge 
