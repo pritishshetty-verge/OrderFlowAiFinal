@@ -32,16 +32,30 @@ export function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const userId = localStorage.getItem("userId");
 
-  // Fetch unread count
+  // Fetch unread count with proper URL query params
   const { data: unreadCountData } = useQuery<{ count: number }>({
-    queryKey: ["/api/notifications/unread-count", { userId }],
+    queryKey: ["/api/notifications/unread-count", userId],
+    queryFn: async () => {
+      const res = await fetch(`/api/notifications/unread-count?userId=${userId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch unread count");
+      return res.json();
+    },
     enabled: !!userId,
     refetchInterval: 30000, // Refetch every 30 seconds
   });
 
-  // Fetch notifications when popover is open
+  // Fetch notifications when popover is open with proper URL query params
   const { data: notifications = [], isLoading } = useQuery<Notification[]>({
-    queryKey: ["/api/notifications", { userId }],
+    queryKey: ["/api/notifications", userId],
+    queryFn: async () => {
+      const res = await fetch(`/api/notifications?userId=${userId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch notifications");
+      return res.json();
+    },
     enabled: open && !!userId,
   });
 
