@@ -3637,7 +3637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             orderId: order.id,
             type: "followup_reminder",
             title: "Follow-up Reminder",
-            message: `Order #${order.shopifyOrderId} follow-up is due`,
+            message: `Order #${order.shopifyOrderNumber} follow-up is due`,
             actionUrl: "/orders",
             isRead: false,
           });
