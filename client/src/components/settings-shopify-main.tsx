@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Store, RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -140,7 +140,7 @@ export function ShopifySettingsMain() {
     <div className="space-y-6">
       {/* Connection Status */}
       <SettingsCard
-        icon={Store}
+        iconImg="https://cdn.shopify.com/s/files/1/0741/0594/6252/files/Shopify-logo.png?v=1765021115"
         title="Shopify Connection"
         description="Manage your Shopify store integration"
         testId="card-connection-status"
@@ -335,7 +335,7 @@ export function ShopifySettingsMain() {
         <div className="grid gap-3 sm:grid-cols-2">
           <Link href="/settings/shopify/setup">
             <Button variant="outline" className="w-full justify-start gap-2">
-              <Store className="h-4 w-4" />
+              <Settings className="h-4 w-4" />
               Initial Setup Guide
             </Button>
           </Link>
