@@ -3671,7 +3671,7 @@ function mapShopifyStatus(
   }
 
   if (fulfillmentStatus === "fulfilled") {
-    return "Delivered";
+    return "Shipped";
   }
   if (fulfillmentStatus === "partial") {
     return "Shipped";
