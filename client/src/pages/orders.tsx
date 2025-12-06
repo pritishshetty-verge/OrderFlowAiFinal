@@ -1,5 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
 import { PageLayout } from "@/components/page-layout";
 import { OrdersFilter } from "@/components/orders-filter";
 import { OrdersTable, type Order } from "@/components/orders-table";
@@ -63,6 +64,8 @@ interface OrdersPageProps {
 
 export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const searchString = useSearch();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
@@ -265,6 +268,64 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   const isLoading = ordersLoading || usersLoading;
 
+  // Handle URL query param for opening sidebar from notifications
+  // This fetches the order directly if not in the current page (due to server-side pagination)
+  const [urlOrderId, setUrlOrderId] = useState<string | null>(null);
+  
+  // Parse URL param on change
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    const selectedOrderId = params.get("selected_order");
+    setUrlOrderId(selectedOrderId);
+  }, [searchString]);
+
+  // Fetch the specific order when needed (handles pagination case)
+  const { data: fetchedOrder } = useQuery<BackendOrderWithUser>({
+    queryKey: ["/api/orders", urlOrderId],
+    queryFn: async () => {
+      const res = await fetch(`/api/orders/${urlOrderId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch order");
+      return res.json();
+    },
+    enabled: !!urlOrderId && !baseFilteredOrders.find((o: Order) => o.id === urlOrderId),
+  });
+
+  // Open sidebar when we have the order (either from current page or fetched)
+  useEffect(() => {
+    if (!urlOrderId) return;
+    
+    // First check if order is in current page
+    const localOrder = baseFilteredOrders.find((o: Order) => o.id === urlOrderId);
+    if (localOrder) {
+      const index = filteredOrders.findIndex((o) => o.id === urlOrderId);
+      setSelectedOrder(localOrder);
+      setSelectedOrderIndex(index >= 0 ? index : -1);
+      setIsQuickPreviewOpen(true);
+      return;
+    }
+    
+    // If we fetched the order, use it
+    if (fetchedOrder) {
+      const transformedOrder = transformOrder(fetchedOrder);
+      setSelectedOrder(transformedOrder);
+      setSelectedOrderIndex(-1); // Not in current page, so no index
+      setIsQuickPreviewOpen(true);
+    }
+  }, [urlOrderId, baseFilteredOrders, filteredOrders, fetchedOrder]);
+
+  // Handler for sidebar close - clears only selected_order param, preserves others
+  const handleQuickPreviewClose = useCallback((open: boolean) => {
+    setIsQuickPreviewOpen(open);
+    if (!open) {
+      // Clear only the selected_order param from URL, preserve other params
+      const params = new URLSearchParams(searchString);
+      params.delete("selected_order");
+      const newSearch = params.toString();
+      setLocation(newSearch ? `/orders?${newSearch}` : "/orders", { replace: true });
+      setUrlOrderId(null);
+    }
+  }, [setLocation, searchString]);
+
   const handleViewDetails = (order: Order) => {
     const index = filteredOrders.findIndex((o) => o.id === order.id);
     setSelectedOrder(order);
@@ -457,7 +518,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       <OrderQuickPreview
         order={selectedOrder}
         open={isQuickPreviewOpen}
-        onOpenChange={setIsQuickPreviewOpen}
+        onOpenChange={handleQuickPreviewClose}
         currentIndex={selectedOrderIndex}
         totalOrders={filteredOrders.length}
         onNavigate={handleNavigateOrder}

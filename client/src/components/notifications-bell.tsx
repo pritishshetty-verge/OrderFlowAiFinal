@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ interface Notification {
   type: string;
   title: string;
   message: string;
+  orderId: string | null;
   isRead: boolean;
   readAt: Date | null;
   actionUrl: string | null;
@@ -26,6 +28,7 @@ interface Notification {
 
 export function NotificationsBell() {
   const { toast } = useToast();
+  const [location, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const userId = localStorage.getItem("userId");
 
@@ -91,9 +94,24 @@ export function NotificationsBell() {
     if (!notification.isRead) {
       markAsReadMutation.mutate(notification.id);
     }
-    if (notification.actionUrl) {
-      window.location.href = notification.actionUrl;
-      setOpen(false);
+    
+    // Close the popover first
+    setOpen(false);
+    
+    // Handle order-related notifications with smooth sidebar opening
+    if (notification.orderId) {
+      const isOnOrdersPage = location === "/orders" || location.startsWith("/orders?");
+      
+      if (isOnOrdersPage) {
+        // Already on orders page - update URL param to trigger sidebar (no reload)
+        setLocation(`/orders?selected_order=${notification.orderId}`);
+      } else {
+        // Navigate to orders page with the order param
+        setLocation(`/orders?selected_order=${notification.orderId}`);
+      }
+    } else if (notification.actionUrl) {
+      // Fallback to actionUrl for non-order notifications
+      setLocation(notification.actionUrl);
     }
   };
 
@@ -168,7 +186,7 @@ export function NotificationsBell() {
                           <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
                         )}
                       </div>
-                      <p className="text-sm text-muted-foreground mb-1">
+                      <p className="text-sm text-muted-foreground mb-1 line-clamp-2">
                         {notification.message}
                       </p>
                       <p className="text-xs text-muted-foreground">
