@@ -8,10 +8,16 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
 import { CallStatusActions } from "@/components/call-status-actions";
 import { OrderItemsSummary } from "@/components/order-items-summary";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Phone, UserPlus, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo, useEffect } from "react";
@@ -48,6 +54,7 @@ export interface Order {
     fullName?: string | null;
   } | null;
   discountCode?: string;
+  tags?: string[];
   createdAt: Date;
 }
 
@@ -404,6 +411,7 @@ export function OrdersTable({
               <TableHead className="w-[120px] bg-card">Order ID</TableHead>
               <TableHead className="bg-card">Customer</TableHead>
               {showAgentColumn && <TableHead className="bg-card">Agent</TableHead>}
+              <TableHead className="bg-card">Tags</TableHead>
               <TableHead className="bg-card">Items</TableHead>
               <TableHead className="text-right bg-card">Total</TableHead>
               <TableHead className="bg-card">Payment</TableHead>
@@ -448,6 +456,41 @@ export function OrdersTable({
                   )}
                 </TableCell>
               )}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                {order.tags && order.tags.length > 0 ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <Badge
+                          variant="outline"
+                          className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent max-w-[80px]"
+                          data-testid={`badge-tag-${order.id}`}
+                        >
+                          <span className="truncate">{order.tags[0]}</span>
+                        </Badge>
+                        {order.tags.length > 1 && (
+                          <Badge
+                            variant="outline"
+                            className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent flex-shrink-0"
+                            data-testid={`badge-tag-count-${order.id}`}
+                          >
+                            +{order.tags.length - 1}
+                          </Badge>
+                        )}
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-xs">
+                      <div className="flex flex-wrap gap-1">
+                        {order.tags.map((tag, index) => (
+                          <span key={index} className="text-xs">{tag}</span>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <span className="text-xs text-muted-foreground">—</span>
+                )}
+              </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <OrderItemsSummary orderId={order.id} fallbackSummary={order.items} />
               </TableCell>
