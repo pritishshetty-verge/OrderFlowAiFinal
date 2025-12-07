@@ -1,9 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Form,
   FormControl,
@@ -19,7 +27,7 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Check, Save, Loader2 } from "lucide-react";
+import { Check, Save, Loader2, Camera } from "lucide-react";
 import type { User } from "@shared/schema";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
@@ -40,6 +48,8 @@ interface ProfileSettingsProps {
 export function ProfileSettings({ userRole }: ProfileSettingsProps) {
   const { toast } = useToast();
   const userEmail = localStorage.getItem("userEmail");
+  const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
 
   const { data: user, isLoading } = useQuery<User>({
     queryKey: [`/api/users/by-email/${userEmail}`],
@@ -99,6 +109,8 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         title: "Avatar Updated",
         description: "Your avatar has been changed successfully.",
       });
+      setAvatarDialogOpen(false);
+      setSelectedAvatar(null);
       queryClient.invalidateQueries({ queryKey: [`/api/users/by-email/${userEmail}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
     },
@@ -190,18 +202,31 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center gap-6">
-            <Avatar className="h-24 w-24">
-              {user?.avatarImage && (
-                <AvatarImage 
-                  src={`/avatars/${user.avatarImage}`} 
-                  alt={form.watch("fullName")} 
-                  className="object-cover"
-                />
-              )}
-              <AvatarFallback className="text-2xl">
-                {getInitials(form.watch("fullName"))}
-              </AvatarFallback>
-            </Avatar>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAvatar(user?.avatarImage || null);
+                setAvatarDialogOpen(true);
+              }}
+              className="relative group cursor-pointer"
+              data-testid="button-edit-avatar"
+            >
+              <Avatar className="h-24 w-24">
+                {user?.avatarImage && (
+                  <AvatarImage 
+                    src={`/avatars/${user.avatarImage}`} 
+                    alt={form.watch("fullName")} 
+                    className="object-cover"
+                  />
+                )}
+                <AvatarFallback className="text-2xl">
+                  {getInitials(form.watch("fullName"))}
+                </AvatarFallback>
+              </Avatar>
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                <Camera className="h-6 w-6 text-white" />
+              </div>
+            </button>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold" data-testid="text-profile-name">
@@ -320,26 +345,27 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Choose Avatar</CardTitle>
-          <CardDescription>Select an avatar to personalize your profile</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-4">
+      <Dialog open={avatarDialogOpen} onOpenChange={setAvatarDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Choose Avatar</DialogTitle>
+            <DialogDescription>
+              Select an avatar to personalize your profile
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-3 gap-4 py-4">
             {AVATAR_OPTIONS.map((avatar) => {
-              const isSelected = user?.avatarImage === avatar;
-              const isUpdating = updateAvatarMutation.isPending;
+              const isSelected = selectedAvatar === avatar;
               return (
                 <button
                   key={avatar}
-                  onClick={() => !isUpdating && updateAvatarMutation.mutate(avatar)}
-                  disabled={isUpdating}
+                  type="button"
+                  onClick={() => setSelectedAvatar(avatar)}
                   className={`relative rounded-full overflow-hidden aspect-square transition-all ${
                     isSelected 
                       ? "ring-2 ring-primary ring-offset-2 ring-offset-background" 
                       : "hover:ring-2 hover:ring-muted-foreground/50 hover:ring-offset-2 hover:ring-offset-background"
-                  } ${isUpdating ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  }`}
                   data-testid={`button-avatar-${avatar.replace('.png', '')}`}
                 >
                   <img 
@@ -358,8 +384,32 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
               );
             })}
           </div>
-        </CardContent>
-      </Card>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAvatarDialogOpen(false);
+                setSelectedAvatar(null);
+              }}
+              data-testid="button-cancel-avatar"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => selectedAvatar && updateAvatarMutation.mutate(selectedAvatar)}
+              disabled={!selectedAvatar || selectedAvatar === user?.avatarImage || updateAvatarMutation.isPending}
+              data-testid="button-save-avatar"
+            >
+              {updateAvatarMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4 mr-2" />
+              )}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
