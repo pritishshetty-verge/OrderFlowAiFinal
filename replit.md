@@ -34,6 +34,16 @@ Planned features include WebSocket connections for live order updates, bidirecti
 
 A custom theme system supports light and dark modes via CSS variables and a theme provider, with semantic color tokens.
 
+### Avatar System
+
+Users have graphical avatar images instead of text initials. Features:
+- **6 Preset Avatars**: Stored in `client/public/avatars/` as `avatar_1.png` through `avatar_6.png`
+- **Random Assignment**: New users automatically receive a random avatar on signup via `getRandomAvatar()` in `server/storage.ts`
+- **User Selection**: Settings Profile page includes "Choose Avatar" section with clickable grid
+- **Graceful Fallback**: Avatar component uses `AvatarImage` with `AvatarFallback` - shows initials if image fails to load
+- **Real-time Updates**: Avatar changes immediately update sidebar via query invalidation
+- **Database Field**: `avatarImage` column in users table stores the filename (e.g., "avatar_1.png")
+
 ### Call Status Workflow
 
 A simplified three-status workflow (Confirmed, Cancelled, Follow Up) enables systematic customer verification. Each status action involves modals for data capture, automatically creating order history entries and, for "Follow Up", scheduling notifications. Notifications are managed by a background checker that creates `followup_reminder` notifications when due.
