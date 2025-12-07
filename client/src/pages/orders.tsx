@@ -343,7 +343,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   };
 
   const handleCallCustomer = (order: Order) => {
-    console.log("Calling customer:", order.customerName, order.customerPhone);
     alert(`Calling ${order.customerName} at ${order.customerPhone}`);
   };
 
@@ -528,19 +527,15 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
           queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         }}
         onEditCustomer={() => {
-          console.log("Edit customer clicked");
           // TODO: Implement edit customer dialog
         }}
         onInvoice={() => {
-          console.log("Invoice clicked for order:", selectedOrder?.shopifyOrderId);
           // TODO: Implement invoice generation
         }}
         onRefund={() => {
-          console.log("Refund clicked for order:", selectedOrder?.shopifyOrderId);
           // TODO: Implement refund dialog
         }}
         onEditOrder={() => {
-          console.log("Edit order clicked for order:", selectedOrder?.shopifyOrderId);
           // TODO: Implement edit order dialog
         }}
       />
