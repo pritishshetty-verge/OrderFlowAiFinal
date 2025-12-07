@@ -115,29 +115,42 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                         <CollapsibleTrigger asChild>
                           <SidebarMenuButton 
                             data-testid={`link-${item.title.toLowerCase()}`}
-                            isActive={isParentActive(item.items)}
+                            className={`hover:bg-sidebar-accent/50 ${
+                              isParentActive(item.items) 
+                                ? "text-foreground font-semibold" 
+                                : "text-muted-foreground"
+                            }`}
                           >
                             <item.icon className="h-4 w-4" />
                             <span>{item.title}</span>
-                            <ChevronDown className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                            <ChevronDown className={`ml-auto h-4 w-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-180 ${
+                              isParentActive(item.items) ? "text-foreground" : "text-muted-foreground"
+                            }`} />
                           </SidebarMenuButton>
                         </CollapsibleTrigger>
                         <CollapsibleContent>
                           <SidebarMenuSub>
-                            {item.items.map((subItem) => (
-                              <SidebarMenuSubItem key={subItem.title}>
-                                <SidebarMenuSubButton 
-                                  asChild 
-                                  data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}
-                                  isActive={isPathActive(subItem.url)}
-                                >
-                                  <a href={subItem.url}>
-                                    <subItem.icon className="h-4 w-4" />
-                                    <span>{subItem.title}</span>
-                                  </a>
-                                </SidebarMenuSubButton>
-                              </SidebarMenuSubItem>
-                            ))}
+                            {item.items.map((subItem) => {
+                              const isActive = isPathActive(subItem.url);
+                              return (
+                                <SidebarMenuSubItem key={subItem.title}>
+                                  <SidebarMenuSubButton 
+                                    asChild 
+                                    data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}
+                                    className={`hover:bg-sidebar-accent/50 ${
+                                      isActive 
+                                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
+                                        : "text-muted-foreground"
+                                    }`}
+                                  >
+                                    <a href={subItem.url}>
+                                      <subItem.icon className="h-4 w-4" />
+                                      <span>{subItem.title}</span>
+                                    </a>
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              );
+                            })}
                           </SidebarMenuSub>
                         </CollapsibleContent>
                       </>
@@ -145,7 +158,11 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                       <SidebarMenuButton 
                         asChild 
                         data-testid={`link-${item.title.toLowerCase()}`}
-                        isActive={isPathActive(item.url!)}
+                        className={`hover:bg-sidebar-accent/50 ${
+                          isPathActive(item.url!) 
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
+                            : "text-muted-foreground"
+                        }`}
                       >
                         <a href={item.url}>
                           <item.icon className="h-4 w-4" />
