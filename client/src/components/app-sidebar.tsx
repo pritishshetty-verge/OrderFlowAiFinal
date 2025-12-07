@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/collapsible";
 import { ProfileDropdown } from "@/components/profile-dropdown";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
@@ -74,11 +75,22 @@ interface AppSidebarProps {
 
 export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   const userEmail = localStorage.getItem("userEmail");
+  const [location] = useLocation();
   
   const { data: currentUser } = useQuery<User>({
     queryKey: [`/api/users/by-email/${userEmail}`],
     enabled: !!userEmail,
   });
+
+  const isPathActive = (url: string) => {
+    if (url === "/") return location === "/";
+    return location === url || location.startsWith(url + "/");
+  };
+
+  const isParentActive = (items?: { url: string }[]) => {
+    if (!items) return false;
+    return items.some(item => isPathActive(item.url));
+  };
 
   return (
     <Sidebar data-testid="sidebar-main">
@@ -101,7 +113,10 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                     {item.items ? (
                       <>
                         <CollapsibleTrigger asChild>
-                          <SidebarMenuButton data-testid={`link-${item.title.toLowerCase()}`}>
+                          <SidebarMenuButton 
+                            data-testid={`link-${item.title.toLowerCase()}`}
+                            isActive={isParentActive(item.items)}
+                          >
                             <item.icon className="h-4 w-4" />
                             <span>{item.title}</span>
                             <ChevronDown className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
@@ -111,8 +126,12 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                           <SidebarMenuSub>
                             {item.items.map((subItem) => (
                               <SidebarMenuSubItem key={subItem.title}>
-                                <SidebarMenuSubButton asChild data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}>
-                                  <a href={subItem.url} className="hover-elevate">
+                                <SidebarMenuSubButton 
+                                  asChild 
+                                  data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}
+                                  isActive={isPathActive(subItem.url)}
+                                >
+                                  <a href={subItem.url}>
                                     <subItem.icon className="h-4 w-4" />
                                     <span>{subItem.title}</span>
                                   </a>
@@ -123,8 +142,12 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                         </CollapsibleContent>
                       </>
                     ) : (
-                      <SidebarMenuButton asChild data-testid={`link-${item.title.toLowerCase()}`}>
-                        <a href={item.url} className="hover-elevate">
+                      <SidebarMenuButton 
+                        asChild 
+                        data-testid={`link-${item.title.toLowerCase()}`}
+                        isActive={isPathActive(item.url!)}
+                      >
+                        <a href={item.url}>
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
                         </a>
