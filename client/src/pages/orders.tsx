@@ -54,6 +54,7 @@ function transformOrder(order: BackendOrderWithUser): Order {
     assignedTo: order.assignedTo || undefined,
     assignedToUser: order.assignedToUser || null,
     discountCode: order.discountCode || undefined,
+    tags: order.tags || undefined,
     createdAt: new Date(order.shopifyCreatedAt),
   };
 }
