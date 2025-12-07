@@ -32,6 +32,67 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+/**
+ * Defensive parser for PostgreSQL text arrays.
+ * Handles: null, undefined, already-parsed arrays, PostgreSQL string format {tag1,"tag with spaces"}
+ * This ensures tags display correctly regardless of backend data format.
+ */
+function parsePostgresArray(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return [];
+  
+  const str = value.trim();
+  if (!str.startsWith('{') || !str.endsWith('}')) return [];
+  
+  const inner = str.slice(1, -1);
+  if (inner === '') return [];
+  
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let i = 0;
+  
+  while (i < inner.length) {
+    const char = inner[i];
+    
+    if (inQuotes) {
+      if (char === '"') {
+        if (inner[i + 1] === '"') {
+          current += '"';
+          i += 2;
+          continue;
+        } else {
+          inQuotes = false;
+          i++;
+          continue;
+        }
+      } else if (char === '\\' && i + 1 < inner.length) {
+        current += inner[i + 1];
+        i += 2;
+        continue;
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true;
+        i++;
+        continue;
+      } else if (char === ',') {
+        result.push(current);
+        current = '';
+        i++;
+        continue;
+      }
+    }
+    
+    current += char;
+    i++;
+  }
+  
+  result.push(current);
+  return result;
+}
+
 export interface Order {
   id: string;
   shopifyOrderId: string;
@@ -457,39 +518,43 @@ export function OrdersTable({
                 </TableCell>
               )}
               <TableCell onClick={(e) => e.stopPropagation()}>
-                {order.tags && order.tags.length > 0 ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        <Badge
-                          variant="outline"
-                          className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent max-w-[80px]"
-                          data-testid={`badge-tag-${order.id}`}
-                        >
-                          <span className="truncate">{order.tags[0]}</span>
-                        </Badge>
-                        {order.tags.length > 1 && (
+                {(() => {
+                  const tags = parsePostgresArray(order.tags);
+                  if (tags.length === 0) {
+                    return <span className="text-xs text-muted-foreground">—</span>;
+                  }
+                  return (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                           <Badge
                             variant="outline"
-                            className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent flex-shrink-0"
-                            data-testid={`badge-tag-count-${order.id}`}
+                            className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent max-w-[80px]"
+                            data-testid={`badge-tag-${order.id}`}
                           >
-                            +{order.tags.length - 1}
+                            <span className="truncate">{tags[0]}</span>
                           </Badge>
-                        )}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-xs">
-                      <div className="flex flex-wrap gap-1">
-                        {order.tags.map((tag, index) => (
-                          <span key={index} className="text-xs">{tag}</span>
-                        ))}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <span className="text-xs text-muted-foreground">—</span>
-                )}
+                          {tags.length > 1 && (
+                            <Badge
+                              variant="outline"
+                              className="rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent flex-shrink-0"
+                              data-testid={`badge-tag-count-${order.id}`}
+                            >
+                              +{tags.length - 1}
+                            </Badge>
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">
+                        <div className="flex flex-wrap gap-1">
+                          {tags.map((tag, index) => (
+                            <span key={index} className="text-xs">{tag}</span>
+                          ))}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })()}
               </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <OrderItemsSummary orderId={order.id} fallbackSummary={order.items} />
