@@ -4,7 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,6 +37,7 @@ interface TeamMember {
   email: string;
   phone: string;
   agentExtension?: string;
+  avatarImage?: string;
   status: "active" | "on-leave" | "offline";
   assignedOrders: number;
   completedOrders: number;
@@ -245,6 +246,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         email: user.email,
         phone: user.phone || "N/A",
         agentExtension: user.agentExtension || undefined,
+        avatarImage: user.avatarImage || undefined,
         status: user.isActive ? "active" : "offline",
         assignedOrders: userOrders.filter(
           (o) => o.status !== "delivered" && o.status !== "cancelled"
@@ -324,6 +326,13 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <Avatar className="h-12 w-12">
+                      {member.avatarImage && (
+                        <AvatarImage 
+                          src={`/avatars/${member.avatarImage}`} 
+                          alt={member.name}
+                          className="object-cover"
+                        />
+                      )}
                       <AvatarFallback className="text-sm font-semibold">
                         {getInitials(member.name)}
                       </AvatarFallback>
