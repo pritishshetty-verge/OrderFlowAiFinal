@@ -1249,6 +1249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         presenceStatus: user.presenceStatus,
         isActive: user.isActive,
         createdAt: user.createdAt,
+        avatarImage: user.avatarImage,
       });
     } catch (error) {
       console.error("Error fetching user by email:", error);
