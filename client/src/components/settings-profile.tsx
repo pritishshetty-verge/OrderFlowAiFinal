@@ -113,6 +113,7 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
       setSelectedAvatar(null);
       queryClient.invalidateQueries({ queryKey: [`/api/users/by-email/${userEmail}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user"] });
     },
     onError: (error: Error) => {
       toast({
