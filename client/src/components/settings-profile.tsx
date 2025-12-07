@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -19,8 +19,10 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Camera, Save, Loader2 } from "lucide-react";
+import { Check, Save, Loader2 } from "lucide-react";
 import type { User } from "@shared/schema";
+
+const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
 
 const profileSchema = z.object({
   username: z.string().min(2, "Username must be at least 2 characters"),
@@ -82,6 +84,28 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
       toast({
         title: "Update Failed",
         description: error.message || "Failed to update profile. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateAvatarMutation = useMutation({
+    mutationFn: async (avatarImage: string) => {
+      if (!user?.id) throw new Error("User not found");
+      return apiRequest("PATCH", `/api/users/${user.id}`, { avatarImage });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Avatar Updated",
+        description: "Your avatar has been changed successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/by-email/${userEmail}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update Failed",
+        description: error.message || "Failed to update avatar. Please try again.",
         variant: "destructive",
       });
     },
@@ -166,21 +190,18 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center gap-6">
-            <div className="relative">
-              <Avatar className="h-24 w-24">
-                <AvatarFallback className="text-2xl">
-                  {getInitials(form.watch("fullName"))}
-                </AvatarFallback>
-              </Avatar>
-              <Button
-                size="icon"
-                variant="secondary"
-                className="absolute -bottom-2 -right-2 h-8 w-8 rounded-full"
-                data-testid="button-change-avatar"
-              >
-                <Camera className="h-4 w-4" />
-              </Button>
-            </div>
+            <Avatar className="h-24 w-24">
+              {user?.avatarImage && (
+                <AvatarImage 
+                  src={`/avatars/${user.avatarImage}`} 
+                  alt={form.watch("fullName")} 
+                  className="object-cover"
+                />
+              )}
+              <AvatarFallback className="text-2xl">
+                {getInitials(form.watch("fullName"))}
+              </AvatarFallback>
+            </Avatar>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold" data-testid="text-profile-name">
@@ -296,6 +317,47 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
               </div>
             </form>
           </Form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Choose Avatar</CardTitle>
+          <CardDescription>Select an avatar to personalize your profile</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-4">
+            {AVATAR_OPTIONS.map((avatar) => {
+              const isSelected = user?.avatarImage === avatar;
+              const isUpdating = updateAvatarMutation.isPending;
+              return (
+                <button
+                  key={avatar}
+                  onClick={() => !isUpdating && updateAvatarMutation.mutate(avatar)}
+                  disabled={isUpdating}
+                  className={`relative rounded-full overflow-hidden aspect-square transition-all ${
+                    isSelected 
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background" 
+                      : "hover:ring-2 hover:ring-muted-foreground/50 hover:ring-offset-2 hover:ring-offset-background"
+                  } ${isUpdating ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  data-testid={`button-avatar-${avatar.replace('.png', '')}`}
+                >
+                  <img 
+                    src={`/avatars/${avatar}`} 
+                    alt={`Avatar option ${avatar}`}
+                    className="w-full h-full object-cover"
+                  />
+                  {isSelected && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-primary/20">
+                      <div className="bg-primary rounded-full p-1">
+                        <Check className="h-4 w-4 text-primary-foreground" />
+                      </div>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 

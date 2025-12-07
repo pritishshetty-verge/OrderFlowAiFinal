@@ -142,6 +142,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           userRole={userRole} 
           userName={currentUser?.fullName || currentUser?.username}
           userEmail={currentUser?.email}
+          avatarImage={currentUser?.avatarImage ?? undefined}
         />
       </SidebarFooter>
     </Sidebar>

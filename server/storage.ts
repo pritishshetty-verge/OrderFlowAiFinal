@@ -1,5 +1,12 @@
 import {  eq, and, desc, asc, or, count, gte, lte, sql } from "drizzle-orm";
 import { db } from "./db";
+
+const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
+
+function getRandomAvatar(): string {
+  return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
+}
+
 import {
   type User,
   type InsertUser,
@@ -381,7 +388,11 @@ export class DbStorage implements IStorage {
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(users).values(insertUser).returning();
+    const userWithAvatar = {
+      ...insertUser,
+      avatarImage: getRandomAvatar(),
+    };
+    const [user] = await db.insert(users).values(userWithAvatar).returning();
     return user;
   }
 

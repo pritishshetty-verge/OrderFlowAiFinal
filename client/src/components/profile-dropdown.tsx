@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { ChevronUp, User, Settings, Moon, Sun, LogOut } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
 import {
   Popover,
@@ -15,9 +15,10 @@ interface ProfileDropdownProps {
   userRole: "admin" | "manager" | "agent";
   userName?: string;
   userEmail?: string;
+  avatarImage?: string;
 }
 
-export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdownProps) {
+export function ProfileDropdown({ userRole, userName, userEmail, avatarImage }: ProfileDropdownProps) {
   const [, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
@@ -35,7 +36,10 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
   };
 
   const displayName = userName || (userRole === "admin" ? "Admin User" : userRole === "manager" ? "Manager" : "Agent");
-  const initials = userRole === "admin" ? "AD" : userRole === "manager" ? "MG" : "AG";
+  const initials = userName 
+    ? userName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+    : userRole === "admin" ? "AD" : userRole === "manager" ? "MG" : "AG";
+  const avatarSrc = avatarImage ? `/avatars/${avatarImage}` : undefined;
 
   const menuItems = [
     {
@@ -58,6 +62,7 @@ export function ProfileDropdown({ userRole, userName, userEmail }: ProfileDropdo
           data-testid="button-profile-dropdown"
         >
           <Avatar className="h-9 w-9">
+            {avatarSrc && <AvatarImage src={avatarSrc} alt={displayName} className="object-cover" />}
             <AvatarFallback className="text-xs bg-primary/10 text-primary">
               {initials}
             </AvatarFallback>

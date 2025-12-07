@@ -14,6 +14,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   fullName: text("full_name").notNull(),
   phone: text("phone"),
+  avatarImage: text("avatar_image"), // Avatar filename (e.g., "avatar_1.png")
   role: text("role").notNull().default("agent"), // admin, agent
   adminType: text("admin_type"), // full_control, partial_control (nullable, only for admins)
   permissions: jsonb("permissions"), // Custom permissions for partial_control admins
@@ -44,6 +45,7 @@ export const updateUserSchema = createInsertSchema(users).pick({
   email: true,
   fullName: true,
   phone: true,
+  avatarImage: true,
   role: true,
   adminType: true,
   permissions: true,
