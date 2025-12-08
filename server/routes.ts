@@ -2798,19 +2798,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Note: adminType and permissions are now configured in a separate step via the permissions modal
       // after the invite is created, so we don't validate them here
       
-      // Check if email already has a pending invite
-      const existingInvite = await storage.getInviteByEmail(validatedData.email);
-      if (existingInvite && existingInvite.status === 'pending') {
-        return res.status(400).json({ error: "An invite has already been sent to this email" });
-      }
-      
       // Check if user already exists with this email
       const existingUser = await storage.getUserByEmail(validatedData.email);
       if (existingUser) {
-        return res.status(400).json({ error: "A user with this email already exists" });
+        if (existingUser.isActive) {
+          // User is active - return clear error
+          return res.status(409).json({ error: "This user is already active in the system" });
+        } else {
+          // User exists but is inactive - reactivate them
+          const reactivatedUser = await storage.reactivateUser(existingUser.id, {
+            role: validatedData.role,
+            adminType: null,
+            permissions: null,
+          });
+          
+          console.log(`✅ Reactivated user ${validatedData.email}`);
+          return res.json({
+            message: "User reactivated successfully",
+            reactivated: true,
+            user: {
+              id: reactivatedUser.id,
+              email: reactivatedUser.email,
+              role: reactivatedUser.role,
+            }
+          });
+        }
       }
       
-      // Generate unique invite token (simple random string for now)
+      // Generate unique invite token
       const token = Array.from({ length: 32 }, () => 
         Math.random().toString(36).charAt(2)
       ).join('');
@@ -2819,13 +2834,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       
-      // Create invite
-      const invite = await storage.createInvite({
-        ...validatedData,
-        token,
-        expiresAt,
-        invitedBy,
-      });
+      // Check if an invite already exists for this email (any status)
+      const existingInvite = await storage.getInviteByEmail(validatedData.email);
+      let invite;
+      
+      if (existingInvite) {
+        // Reset the existing invite instead of creating a new one
+        invite = await storage.resetInviteForResend(validatedData.email, {
+          token,
+          expiresAt,
+          role: validatedData.role,
+          invitedBy,
+          firstName: validatedData.firstName,
+          lastName: validatedData.lastName,
+        });
+        console.log(`♻️ Reset existing invite for ${validatedData.email}`);
+      } else {
+        // Create new invite
+        invite = await storage.createInvite({
+          ...validatedData,
+          token,
+          expiresAt,
+          invitedBy,
+        });
+        console.log(`📧 Created new invite for ${validatedData.email}`);
+      }
       
       // Send invitation email via Resend
       try {
