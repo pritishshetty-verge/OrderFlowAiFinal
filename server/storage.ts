@@ -461,6 +461,39 @@ export class DbStorage implements IStorage {
       .where(eq(invites.id, id));
   }
 
+  async resetInviteForResend(email: string, data: { token: string; expiresAt: Date; role: string; invitedBy: string; firstName?: string; lastName?: string }): Promise<Invite> {
+    const [invite] = await db
+      .update(invites)
+      .set({
+        token: data.token,
+        expiresAt: data.expiresAt,
+        status: 'pending',
+        role: data.role,
+        invitedBy: data.invitedBy,
+        firstName: data.firstName || null,
+        lastName: data.lastName || null,
+        acceptedAt: null,
+      })
+      .where(eq(invites.email, email))
+      .returning();
+    return invite;
+  }
+
+  async reactivateUser(id: string, updates: { role?: string; adminType?: string | null; permissions?: any }): Promise<User> {
+    const [user] = await db
+      .update(users)
+      .set({
+        isActive: true,
+        role: updates.role,
+        adminType: updates.adminType,
+        permissions: updates.permissions,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, id))
+      .returning();
+    return user;
+  }
+
   async updateInvitePermissions(id: string, adminType: string, permissions: any): Promise<Invite | undefined> {
     const [invite] = await db
       .update(invites)
