@@ -581,7 +581,7 @@ export function OrdersTable({
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1">
-                  {order.paymentMethod === "cod" && order.status === "assigned" && (
+                  {order.paymentMethod === "cod" && (order.status === "assigned" || order.status === "pending") && (
                     <Button
                       variant="ghost"
                       size="icon"

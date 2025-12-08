@@ -714,13 +714,25 @@ export class DbStorage implements IStorage {
   }
 
   async assignOrder(orderId: string, userId: string): Promise<Order | undefined> {
+    // Get current order to check status
+    const currentOrder = await this.getOrder(orderId);
+    if (!currentOrder) return undefined;
+
+    // Only update status to 'assigned' if currently 'pending'
+    // This prevents regression for confirmed/shipped orders
+    const updateData: any = {
+      assignedTo: userId,
+      assignedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    
+    if (currentOrder.status === 'pending') {
+      updateData.status = 'assigned';
+    }
+
     const [order] = await db
       .update(orders)
-      .set({
-        assignedTo: userId,
-        assignedAt: new Date(),
-        updatedAt: new Date(),
-      })
+      .set(updateData)
       .where(eq(orders.id, orderId))
       .returning();
     return order;
