@@ -9,9 +9,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
-  ChevronLeft, ChevronRight, Clock, XCircle
+  ChevronLeft, ChevronRight, Clock, XCircle, MapPin, User, History, FileText
 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useCallback } from "react";
@@ -74,6 +75,7 @@ export function OrderQuickPreview({
   const [selectedAction, setSelectedAction] = useState<string>("");
   const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
   const [editAddressOpen, setEditAddressOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>("overview");
 
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
     queryKey: ["/api/orders", order?.id],
@@ -549,58 +551,87 @@ export function OrderQuickPreview({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-[500px] sm:w-[600px] p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4 flex flex-col">
-        {/* STICKY HEADER */}
-        <div className="flex-shrink-0 border-b bg-card px-4 py-3 rounded-tl-xl">
-          <div className="flex items-center justify-between gap-2">
-            {/* Left: Order ID + Payment Badge */}
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
-              <PaymentBadge 
-                method={order.paymentMethod} 
-                financialStatus={order.financialStatus}
-              />
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
+          {/* STICKY HEADER */}
+          <div className="flex-shrink-0 border-b bg-card rounded-tl-xl">
+            {/* Row 1: Order ID, Payment Badge, Navigation, Close */}
+            <div className="flex items-center justify-between gap-2 px-4 py-3">
+              {/* Left: Order ID + Payment Badge */}
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold" data-testid="text-order-id">#{order.shopifyOrderId}</span>
+                <PaymentBadge 
+                  method={order.paymentMethod} 
+                  financialStatus={order.financialStatus}
+                />
+              </div>
+              {/* Right: Navigation + Close */}
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleNavigatePrev}
+                  disabled={!canNavigatePrev}
+                  className="h-7 w-7"
+                  data-testid="button-prev-order"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs text-muted-foreground min-w-[60px] text-center" data-testid="text-order-position">
+                  {currentIndex + 1} of {totalOrders}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleNavigateNext}
+                  disabled={!canNavigateNext}
+                  className="h-7 w-7"
+                  data-testid="button-next-order"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Separator orientation="vertical" className="h-5 mx-1" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onOpenChange(false)}
+                  className="h-7 w-7"
+                  data-testid="button-close-preview"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            {/* Right: Navigation + Close */}
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleNavigatePrev}
-                disabled={!canNavigatePrev}
-                className="h-7 w-7"
-                data-testid="button-prev-order"
+            {/* Row 2: Tabs Navigation */}
+            <TabsList className="w-full justify-start h-auto p-0 bg-transparent border-t">
+              <TabsTrigger 
+                value="overview" 
+                className="flex-1 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none py-2 text-sm"
+                data-testid="tab-overview"
               >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-xs text-muted-foreground min-w-[60px] text-center" data-testid="text-order-position">
-                {currentIndex + 1} of {totalOrders}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleNavigateNext}
-                disabled={!canNavigateNext}
-                className="h-7 w-7"
-                data-testid="button-next-order"
+                <FileText className="h-4 w-4 mr-1.5" />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger 
+                value="shipment" 
+                className="flex-1 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none py-2 text-sm"
+                data-testid="tab-shipment"
               >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <Separator orientation="vertical" className="h-5 mx-1" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onOpenChange(false)}
-                className="h-7 w-7"
-                data-testid="button-close-preview"
+                <Truck className="h-4 w-4 mr-1.5" />
+                Shipment
+              </TabsTrigger>
+              <TabsTrigger 
+                value="history" 
+                className="flex-1 data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none py-2 text-sm"
+                data-testid="tab-history"
               >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
+                <History className="h-4 w-4 mr-1.5" />
+                History
+              </TabsTrigger>
+            </TabsList>
           </div>
-        </div>
 
-        {/* SCROLLABLE BODY */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {/* SCROLLABLE BODY - Overview Tab */}
+          <TabsContent value="overview" className="flex-1 overflow-y-auto px-4 py-3 space-y-3 mt-0">
           {/* Order Info: Created at | Status | Tags */}
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -750,100 +781,6 @@ export function OrderQuickPreview({
 
           <Separator />
 
-          {/* Shipment Tracking Section */}
-          {(shipmentData?.shipment || orderDetails?.callStatus === "Confirmed") && (
-            <>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Shipment Tracking</p>
-                {shipmentLoading ? (
-                  <Skeleton className="h-20 w-full rounded-lg" />
-                ) : shipmentData?.shipment ? (
-                  <div className="rounded-lg border p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Truck className="h-4 w-4 text-blue-600" />
-                        <span className="text-sm font-medium">{shipmentData.shipment.courierName || "Courier"}</span>
-                      </div>
-                      <Badge variant="default" data-testid="badge-shipment-status">
-                        {shipmentData.shipment.status || "Created"}
-                      </Badge>
-                    </div>
-                    {shipmentData.shipment.awb && (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">AWB:</span>
-                        <span className="font-mono font-medium" data-testid="text-awb">{shipmentData.shipment.awb}</span>
-                      </div>
-                    )}
-                    {shipmentData.shipment.trackingUrl && (
-                      <a
-                        href={shipmentData.shipment.trackingUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
-                        data-testid="link-track-shipment"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Track Shipment
-                      </a>
-                    )}
-                    {shipmentData.ndrEvents && shipmentData.ndrEvents.length > 0 && (
-                      <div className="mt-2 pt-2 border-t">
-                        <p className="text-xs font-medium text-destructive mb-1">NDR Events</p>
-                        {shipmentData.ndrEvents.map((ndr: any, idx: number) => (
-                          <div key={idx} className="text-xs text-muted-foreground">
-                            {ndr.ndrReason} - {format(new Date(ndr.ndrDate), "MMM dd, yyyy")}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : orderDetails?.callStatus === "Confirmed" ? (
-                  <div className="rounded-lg border border-dashed p-3 text-center">
-                    <Package className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                    <p className="text-xs text-muted-foreground">No shipment created yet</p>
-                    <p className="text-xs text-muted-foreground">Go to Fulfil page to create shipment</p>
-                  </div>
-                ) : null}
-              </div>
-              <Separator />
-            </>
-          )}
-
-          {/* Timeline */}
-          {timelineEvents.length > 0 && (
-            <>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Timeline</p>
-                <div className="space-y-2">
-                  {timelineEvents.map((event, index) => (
-                    <div key={event.id} className="flex gap-2">
-                      <div className="flex flex-col items-center">
-                        {event.completed ? (
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                        ) : (
-                          <Circle className="h-4 w-4 text-muted-foreground" />
-                        )}
-                        {index < timelineEvents.length - 1 && (
-                          <div className="w-px h-6 bg-border mt-1" />
-                        )}
-                      </div>
-                      <div className="flex-1 pb-2">
-                        <p className="text-xs font-medium">{event.description}</p>
-                        {event.detail && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{event.detail}</p>
-                        )}
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {format(event.date, "MMM dd, yyyy 'at' h:mm a")}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <Separator />
-            </>
-          )}
-
           {/* Items */}
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2">Items</p>
@@ -946,9 +883,242 @@ export function OrderQuickPreview({
               </div>
             )}
           </div>
-        </div>
+          </TabsContent>
 
-        {/* STICKY FOOTER - Call Status Controls */}
+          {/* SCROLLABLE BODY - Shipment Tab */}
+          <TabsContent value="shipment" className="flex-1 overflow-y-auto px-4 py-3 space-y-4 mt-0">
+            {/* Shipping Address */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-muted-foreground">Shipping Address</p>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setEditAddressOpen(true)}
+                  data-testid="button-edit-address-shipment"
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div className="rounded-lg border p-3 space-y-1.5">
+                <p className="text-sm font-medium">{orderDetails?.customerName || order.customerName}</p>
+                <p className="text-xs text-muted-foreground">{orderDetails?.customerPhone || order.customerPhone}</p>
+                {(() => {
+                  const displayAddress = orderDetails 
+                    ? [
+                        orderDetails.shippingAddressLine1,
+                        orderDetails.shippingAddressLine2,
+                        orderDetails.shippingCity,
+                        orderDetails.shippingState,
+                        orderDetails.shippingPincode,
+                        orderDetails.shippingCountry
+                      ].filter(Boolean).join(", ")
+                    : order.shippingAddress;
+                  return displayAddress ? (
+                    <p className="text-xs text-muted-foreground" data-testid="text-shipment-address">{displayAddress}</p>
+                  ) : null;
+                })()}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Shipment Status Timeline */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-3">Shipment Status</p>
+              {shipmentLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <Skeleton className="h-6 w-6 rounded-full" />
+                      <div className="flex-1">
+                        <Skeleton className="h-4 w-24 mb-1" />
+                        <Skeleton className="h-3 w-32" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="relative">
+                  {/* Vertical Timeline */}
+                  {(() => {
+                    const shipmentStatus = shipmentData?.shipment?.status || order.status;
+                    const steps = [
+                      { key: "created", label: "Order Created", icon: FileText },
+                      { key: "unfulfilled", label: "Processing", icon: Package },
+                      { key: "shipped", label: "Shipped", icon: Truck },
+                      { key: "delivered", label: "Delivered", icon: CheckCircle2 },
+                    ];
+                    
+                    const getStepStatus = (stepKey: string) => {
+                      const statusOrder = ["pending", "assigned", "confirmed", "shipped", "delivered"];
+                      const currentIdx = statusOrder.indexOf(shipmentStatus?.toLowerCase() || "pending");
+                      const stepMap: Record<string, number> = {
+                        created: 0,
+                        unfulfilled: 1,
+                        shipped: 3,
+                        delivered: 4,
+                      };
+                      return currentIdx >= stepMap[stepKey] ? "completed" : "pending";
+                    };
+
+                    return (
+                      <div className="space-y-0">
+                        {steps.map((step, index) => {
+                          const status = getStepStatus(step.key);
+                          const isCompleted = status === "completed";
+                          const Icon = step.icon;
+                          const isLast = index === steps.length - 1;
+                          
+                          return (
+                            <div key={step.key} className="flex items-start gap-3 relative">
+                              {/* Vertical line */}
+                              {!isLast && (
+                                <div 
+                                  className={`absolute left-3 top-6 w-0.5 h-8 ${isCompleted ? 'bg-green-500' : 'bg-muted'}`}
+                                  style={{ transform: 'translateX(-50%)' }}
+                                />
+                              )}
+                              {/* Icon */}
+                              <div className={`relative z-10 flex items-center justify-center w-6 h-6 rounded-full flex-shrink-0 ${
+                                isCompleted 
+                                  ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' 
+                                  : 'bg-muted text-muted-foreground'
+                              }`}>
+                                <Icon className="h-3.5 w-3.5" />
+                              </div>
+                              {/* Content */}
+                              <div className="flex-1 pb-6">
+                                <p className={`text-sm font-medium ${isCompleted ? 'text-foreground' : 'text-muted-foreground'}`}>
+                                  {step.label}
+                                </p>
+                                {isCompleted && step.key === "shipped" && shipmentData?.shipment?.awb && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    AWB: <span className="font-mono">{shipmentData.shipment.awb}</span>
+                                  </p>
+                                )}
+                                {isCompleted && step.key === "shipped" && shipmentData?.shipment?.courierName && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Courier: {shipmentData.shipment.courierName}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* Track Shipment Link */}
+            {shipmentData?.shipment?.trackingUrl && (
+              <>
+                <Separator />
+                <a
+                  href={shipmentData.shipment.trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 py-2 px-4 rounded-lg border text-sm text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                  data-testid="link-track-shipment-tab"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Track Shipment
+                </a>
+              </>
+            )}
+
+            {/* NDR Events if any */}
+            {shipmentData?.ndrEvents && shipmentData.ndrEvents.length > 0 && (
+              <>
+                <Separator />
+                <div>
+                  <p className="text-xs font-medium text-destructive mb-2">NDR Events</p>
+                  <div className="space-y-2">
+                    {shipmentData.ndrEvents.map((ndr: any, idx: number) => (
+                      <div key={idx} className="rounded-lg border border-destructive/20 bg-destructive/5 p-2">
+                        <p className="text-xs font-medium text-destructive">{ndr.ndrReason}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {format(new Date(ndr.ndrDate), "MMM dd, yyyy 'at' h:mm a")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </TabsContent>
+
+          {/* SCROLLABLE BODY - History Tab */}
+          <TabsContent value="history" className="flex-1 overflow-y-auto px-4 py-3 space-y-4 mt-0">
+            {/* Order Status History */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-3">Status History</p>
+              {historyLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <Skeleton className="h-8 w-8 rounded-full" />
+                      <div className="flex-1">
+                        <Skeleton className="h-4 w-32 mb-1" />
+                        <Skeleton className="h-3 w-48" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : timelineEvents.length > 0 ? (
+                <div className="space-y-3">
+                  {timelineEvents.map((event, index) => (
+                    <div key={event.id} className="flex gap-3 items-start">
+                      <div className="flex flex-col items-center">
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0 ${
+                          event.completed 
+                            ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                            : 'bg-muted text-muted-foreground'
+                        }`}>
+                          <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        {index < timelineEvents.length - 1 && (
+                          <div className="w-0.5 h-full min-h-[24px] bg-muted mt-1" />
+                        )}
+                      </div>
+                      <div className="flex-1 pb-2">
+                        <p className="text-sm font-medium">{event.description}</p>
+                        {event.detail && (
+                          <p className="text-xs text-muted-foreground mt-0.5">{event.detail}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {format(event.date, "MMM dd, yyyy 'at' h:mm a")}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <History className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">No history yet</p>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Call Logs Placeholder */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-3">Call Logs</p>
+              <div className="text-center py-6 rounded-lg border border-dashed">
+                <Phone className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No call recordings available</p>
+                <p className="text-xs text-muted-foreground mt-1">Call logs will appear here after customer verification calls</p>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* STICKY FOOTER - Call Status Controls */}
         <div className="flex-shrink-0 border-t bg-card px-3 py-2 rounded-bl-xl">
           <div className="flex items-center justify-between gap-4">
             {/* Left: Prev Navigation */}
@@ -1019,6 +1189,7 @@ export function OrderQuickPreview({
             </Button>
           </div>
         </div>
+        </Tabs>
       </SheetContent>
 
       {/* Confirm Dialog */}
