@@ -29,6 +29,7 @@ import {
   canManageIVR,
   isFullControlAdmin,
 } from "./permissions";
+import { mapShopifyStatus } from "./utils/orderStatus";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -749,6 +750,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: mapShopifyStatus(
             shopifyOrder.financial_status,
             shopifyOrder.fulfillment_status,
+            shopifyOrder.fulfillments?.[0]?.shipment_status || null,
+            shopifyOrder.cancelled_at || null,
           ),
           fulfillmentStatus: shopifyOrder.fulfillment_status || null,
           fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
@@ -3695,29 +3698,3 @@ export async function registerRoutes(app: Express): Promise<Server> {
   return httpServer;
 }
 
-// Helper function to map Shopify statuses
-function mapShopifyStatus(
-  financialStatus?: string,
-  fulfillmentStatus?: string,
-): string {
-  if (financialStatus === "refunded" || financialStatus === "voided") {
-    return "Cancelled";
-  }
-
-  if (fulfillmentStatus === "fulfilled") {
-    return "Shipped";
-  }
-  if (fulfillmentStatus === "partial") {
-    return "Shipped";
-  }
-  if (fulfillmentStatus === "unfulfilled" || fulfillmentStatus === null) {
-    if (financialStatus === "paid") {
-      return "Processing";
-    }
-    if (financialStatus === "pending" || financialStatus === "authorized") {
-      return "Pending";
-    }
-  }
-
-  return "Pending";
-}

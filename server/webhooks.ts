@@ -3,6 +3,7 @@ import { shopifyClient } from "./shopify";
 import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
+import { mapShopifyStatus } from "./utils/orderStatus";
 
 // Helper function to verify webhook authenticity
 // Supports both direct Shopify webhooks and n8n relay
@@ -391,34 +392,3 @@ export async function handleOrderCancelled(req: Request, res: Response) {
   }
 }
 
-// Helper function to map Shopify statuses to our system
-// Simplified logic based purely on fulfillment lifecycle (no payment status dependency)
-// Truth Table:
-//   1. cancelled_at NOT NULL → 'Cancelled'
-//   2. shipment_status = 'delivered' → 'Delivered'
-//   3. fulfillment_status = 'fulfilled' OR 'partial' → 'Shipped'
-//   4. Everything else → 'Unfulfilled'
-function mapShopifyStatus(
-  _financialStatus?: string, // Kept for signature compatibility but not used
-  fulfillmentStatus?: string,
-  shipmentStatus?: string | null,
-  cancelledAt?: string | null,
-): string {
-  // 1. Cancelled ONLY if the order was actually cancelled in Shopify
-  if (cancelledAt) {
-    return "Cancelled";
-  }
-
-  // 2. Delivered if shipment tracking confirms delivery
-  if (shipmentStatus === "delivered") {
-    return "Delivered";
-  }
-
-  // 3. Shipped if fulfilled or partially fulfilled (partial = physical item shipped)
-  if (fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial") {
-    return "Shipped";
-  }
-
-  // 4. Everything else (null, unfulfilled) = Unfulfilled
-  return "Unfulfilled";
-}
