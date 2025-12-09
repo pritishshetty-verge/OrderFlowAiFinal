@@ -3,7 +3,7 @@ import { shopifyClient } from "./shopify";
 import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
-import { mapShopifyStatus } from "./utils/orderStatus";
+import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 
 // Helper function to verify webhook authenticity
 // Supports both direct Shopify webhooks and n8n relay
@@ -105,8 +105,8 @@ export async function handleOrderCreated(req: Request, res: Response) {
                   rawPaymentMethod.toLowerCase() === "cash on delivery";
     const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
 
-    // Extract shipment status from fulfillments
-    const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
+    // Extract shipment status and tracking info from fulfillments
+    const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
 
     // Extract and parse tags (Shopify sends as comma-separated string)
     const tags = shopifyOrder.tags 
@@ -121,7 +121,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       customerName: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() || shopifyOrder.billing_address?.name || "Guest",
       customerEmail: shopifyOrder.email || null,
       customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
-      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, shipmentStatus, shopifyOrder.cancelled_at),
+      status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, fulfillmentTracking.shipmentStatus, shopifyOrder.cancelled_at),
       fulfillmentStatus: shopifyOrder.fulfillment_status || null,
       fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
       financialStatus: shopifyOrder.financial_status || null,
@@ -144,7 +144,10 @@ export async function handleOrderCreated(req: Request, res: Response) {
       itemsSummary: shopifyOrder.line_items?.map((item: any) => item.name).join(", ") || null,
       assignedTo: null,
       assignedAt: null,
-      shipmentStatus: shipmentStatus,
+      shipmentStatus: fulfillmentTracking.shipmentStatus,
+      trackingNumber: fulfillmentTracking.trackingNumber,
+      trackingUrl: fulfillmentTracking.trackingUrl,
+      courierName: fulfillmentTracking.trackingCompany,
       tags: tags,
       rawShopifyData: shopifyOrder,
       shopifyCreatedAt: new Date(shopifyOrder.created_at),
@@ -275,8 +278,8 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       await storage.updateCustomer(existingOrder.customerId, customerData);
     }
 
-    // Extract shipment status from fulfillments
-    const shipmentStatus = shopifyOrder.fulfillments?.[0]?.shipment_status || null;
+    // Extract shipment status and tracking info from fulfillments
+    const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
 
     // Extract and parse tags (Shopify sends as comma-separated string)
     const tags = shopifyOrder.tags 
@@ -287,7 +290,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
     const newStatus = mapShopifyStatus(
       shopifyOrder.financial_status,
       shopifyOrder.fulfillment_status,
-      shipmentStatus,
+      fulfillmentTracking.shipmentStatus,
       shopifyOrder.cancelled_at,
     );
 
@@ -303,7 +306,10 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shippingAddress: shopifyOrder.shipping_address || null,
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
-      shipmentStatus: shipmentStatus,
+      shipmentStatus: fulfillmentTracking.shipmentStatus,
+      trackingNumber: fulfillmentTracking.trackingNumber,
+      trackingUrl: fulfillmentTracking.trackingUrl,
+      courierName: fulfillmentTracking.trackingCompany,
       tags: tags,
       rawShopifyData: shopifyOrder,
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),

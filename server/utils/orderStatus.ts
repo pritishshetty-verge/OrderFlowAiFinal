@@ -56,3 +56,42 @@ export function mapShopifyStatus(
   // The assignment logic will update to 'assigned' when an agent is selected.
   return "Unfulfilled";
 }
+
+/**
+ * Extracts tracking information from Shopify fulfillments array.
+ * 
+ * Shopify stores tracking data in the fulfillments array. Each fulfillment contains:
+ * - tracking_number: The carrier tracking number (AWB)
+ * - tracking_url: Direct link to track the shipment
+ * - tracking_company: The shipping carrier name
+ * - shipment_status: Current shipment status from carrier
+ * 
+ * We extract from the first fulfillment as most orders have a single fulfillment.
+ * 
+ * @param fulfillments - Shopify's fulfillments array from order payload
+ * @returns Object with extracted tracking fields (all may be null if no fulfillment)
+ */
+export function extractFulfillmentTracking(fulfillments?: any[] | null): {
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  trackingCompany: string | null;
+  shipmentStatus: string | null;
+} {
+  const firstFulfillment = fulfillments?.[0];
+  
+  if (!firstFulfillment) {
+    return {
+      trackingNumber: null,
+      trackingUrl: null,
+      trackingCompany: null,
+      shipmentStatus: null,
+    };
+  }
+
+  return {
+    trackingNumber: firstFulfillment.tracking_number || null,
+    trackingUrl: firstFulfillment.tracking_url || null,
+    trackingCompany: firstFulfillment.tracking_company || null,
+    shipmentStatus: firstFulfillment.shipment_status || null,
+  };
+}

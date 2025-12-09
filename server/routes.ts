@@ -29,7 +29,7 @@ import {
   canManageIVR,
   isFullControlAdmin,
 } from "./permissions";
-import { mapShopifyStatus } from "./utils/orderStatus";
+import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
@@ -739,6 +739,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+        // Extract fulfillment tracking info
+        const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
+
         // Create order
         const orderData = {
           shopifyOrderId: shopifyOrder.id.toString(),
@@ -750,7 +753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: mapShopifyStatus(
             shopifyOrder.financial_status,
             shopifyOrder.fulfillment_status,
-            shopifyOrder.fulfillments?.[0]?.shipment_status || null,
+            fulfillmentTracking.shipmentStatus,
             shopifyOrder.cancelled_at || null,
           ),
           fulfillmentStatus: shopifyOrder.fulfillment_status || null,
@@ -775,7 +778,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           itemsSummary: shopifyOrder.line_items?.map((item: any) => item.name).join(", ") || null,
           assignedTo: null,
           assignedAt: null,
-          shipmentStatus: shopifyOrder.fulfillments?.[0]?.shipment_status || null,
+          shipmentStatus: fulfillmentTracking.shipmentStatus,
+          trackingNumber: fulfillmentTracking.trackingNumber,
+          trackingUrl: fulfillmentTracking.trackingUrl,
+          courierName: fulfillmentTracking.trackingCompany,
           rawShopifyData: shopifyOrder,
           shopifyCreatedAt: new Date(shopifyOrder.created_at),
           shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
