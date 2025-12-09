@@ -56,6 +56,14 @@ The "Orders" page provides role-based filtering, allowing agents to see only the
 
 The Shiprocket integration manages advanced shipment tracking, failed delivery (NDR) management, and automated reattempt scheduling. It involves creating Shiprocket shipments for confirmed orders, monitoring delivery status via webhooks (at `/api/webhooks/courier-events` - renamed from `/shiprocket` due to Shiprocket URL restrictions), and allowing agents to handle NDR cases with address updates and reattempt scheduling through dedicated UI components and API endpoints. Webhook security is enforced via HMAC-SHA256 signature verification using the `SHIPROCKET_WEBHOOK_SECRET` environment variable.
 
+### Shopify Fulfillment Tracking Sync
+
+Fulfillment tracking data from Shopify is now properly synced across all order ingestion paths:
+- **Shared Helper**: `extractFulfillmentTracking()` in `server/utils/orderStatus.ts` extracts tracking_number, tracking_url, tracking_company, and shipment_status from fulfillments[0]
+- **Synced Fields**: trackingNumber, trackingUrl, courierName, shipmentStatus are persisted to orders table
+- **Code Paths**: Webhook handlers (handleOrderCreated, handleOrderUpdated) and manual sync all use the shared helper for consistency
+- **Display**: Tracking details appear prominently in the Order Quick Preview Shipment tab with clickable AWB links
+
 ### Learning Center (LMS)
 
 A comprehensive Learning Management System inspired by Skool.com provides structured training for team members. The system includes:
