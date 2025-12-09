@@ -100,6 +100,13 @@ export function OrderQuickPreview({
     enabled: open && !!order?.id,
   });
 
+  // Unified tracking abstraction: prioritize Shiprocket data, fallback to order tracking fields
+  const activeTracking = {
+    awb: shipmentData?.shipment?.awb || orderDetails?.trackingNumber,
+    url: shipmentData?.shipment?.trackingUrl || orderDetails?.trackingUrl,
+    courier: shipmentData?.shipment?.courierName || orderDetails?.courierName,
+  };
+
   const updateTagsMutation = useMutation({
     mutationFn: async (tags: string[]) => {
       if (!order?.id) return;
@@ -888,28 +895,28 @@ export function OrderQuickPreview({
           {/* SCROLLABLE BODY - Shipment Tab */}
           <TabsContent value="shipment" className="flex-1 overflow-y-auto px-4 py-3 space-y-4 mt-0">
             {/* Tracking Details */}
-            {shipmentData?.shipment?.awb && (
+            {activeTracking.awb && (
               <div className="rounded-lg border p-3">
                 <p className="text-xs font-medium text-muted-foreground mb-1.5">Tracking Number</p>
-                {shipmentData.shipment.trackingUrl ? (
+                {activeTracking.url ? (
                   <a
-                    href={shipmentData.shipment.trackingUrl}
+                    href={activeTracking.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-600 font-medium hover:underline flex items-center gap-2"
                     data-testid="link-tracking-number"
                   >
-                    <span className="font-mono">{shipmentData.shipment.awb}</span>
+                    <span className="font-mono">{activeTracking.awb}</span>
                     <ExternalLink className="h-4 w-4" />
                   </a>
                 ) : (
                   <span className="font-mono font-medium" data-testid="text-tracking-number">
-                    {shipmentData.shipment.awb}
+                    {activeTracking.awb}
                   </span>
                 )}
-                {shipmentData.shipment.courierName && (
+                {activeTracking.courier && (
                   <p className="text-xs text-muted-foreground mt-1">
-                    via {shipmentData.shipment.courierName}
+                    via {activeTracking.courier}
                   </p>
                 )}
               </div>
@@ -1021,14 +1028,14 @@ export function OrderQuickPreview({
                                 <p className={`text-sm font-medium ${isCompleted ? 'text-foreground' : 'text-muted-foreground'}`}>
                                   {step.label}
                                 </p>
-                                {isCompleted && step.key === "shipped" && shipmentData?.shipment?.awb && (
+                                {isCompleted && step.key === "shipped" && activeTracking.awb && (
                                   <p className="text-xs text-muted-foreground mt-0.5">
-                                    AWB: <span className="font-mono">{shipmentData.shipment.awb}</span>
+                                    AWB: <span className="font-mono">{activeTracking.awb}</span>
                                   </p>
                                 )}
-                                {isCompleted && step.key === "shipped" && shipmentData?.shipment?.courierName && (
+                                {isCompleted && step.key === "shipped" && activeTracking.courier && (
                                   <p className="text-xs text-muted-foreground">
-                                    Courier: {shipmentData.shipment.courierName}
+                                    Courier: {activeTracking.courier}
                                   </p>
                                 )}
                               </div>
@@ -1043,11 +1050,11 @@ export function OrderQuickPreview({
             </div>
 
             {/* Track Shipment Link */}
-            {shipmentData?.shipment?.trackingUrl && (
+            {activeTracking.url && (
               <>
                 <Separator />
                 <a
-                  href={shipmentData.shipment.trackingUrl}
+                  href={activeTracking.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-center gap-2 py-2 px-4 rounded-lg border text-sm text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
