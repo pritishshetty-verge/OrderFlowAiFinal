@@ -887,6 +887,34 @@ export function OrderQuickPreview({
 
           {/* SCROLLABLE BODY - Shipment Tab */}
           <TabsContent value="shipment" className="flex-1 overflow-y-auto px-4 py-3 space-y-4 mt-0">
+            {/* Tracking Details */}
+            {shipmentData?.shipment?.awb && (
+              <div className="rounded-lg border p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Tracking Number</p>
+                {shipmentData.shipment.trackingUrl ? (
+                  <a
+                    href={shipmentData.shipment.trackingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 font-medium hover:underline flex items-center gap-2"
+                    data-testid="link-tracking-number"
+                  >
+                    <span className="font-mono">{shipmentData.shipment.awb}</span>
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                ) : (
+                  <span className="font-mono font-medium" data-testid="text-tracking-number">
+                    {shipmentData.shipment.awb}
+                  </span>
+                )}
+                {shipmentData.shipment.courierName && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    via {shipmentData.shipment.courierName}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Shipping Address */}
             <div>
               <div className="flex items-center justify-between mb-2">
