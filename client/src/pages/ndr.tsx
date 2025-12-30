@@ -91,7 +91,7 @@ function ReattemptDeliveryModal({
       actionBy: string;
       notes?: string;
     }) => {
-      const response = await fetch(`/api/shiprocket/ndr/${data.awb}/reattempt`, {
+      const response = await fetch(`/api/ndr/${data.awb}/reattempt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -105,7 +105,7 @@ function ReattemptDeliveryModal({
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/shiprocket/ndr"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ndr"] });
       toast({
         title: "Reattempt Scheduled",
         description: "Delivery reattempt has been scheduled successfully.",
@@ -256,7 +256,7 @@ export default function NDRPage() {
   const [pageSize, setPageSize] = useState(50);
 
   const { data, isLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
-    queryKey: ["/api/shiprocket/ndr"],
+    queryKey: ["/api/ndr"],
   });
 
   const ndrEvents = data?.events || [];

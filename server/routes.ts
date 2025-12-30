@@ -46,6 +46,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { handleShiprocketWebhook } = await import("./shiprocketWebhook");
   app.post("/api/webhooks/courier-events", handleShiprocketWebhook);
 
+  // Delhivery webhook handler for NDR events
+  app.post("/api/webhooks/delhivery", async (req, res) => {
+    try {
+      const webhookData = req.body;
+      console.log("[Delhivery Webhook] Received:", JSON.stringify(webhookData).substring(0, 500));
+
+      // Delhivery sends updates in various formats - extract the key fields
+      const awb = webhookData.Awb || webhookData.waybill || webhookData.awb;
+      const statusCode = webhookData.ScanCode || webhookData.StatusCode || webhookData.status_code;
+      const status = webhookData.Scan || webhookData.Status || webhookData.status;
+      const remarks = webhookData.Remarks || webhookData.remarks || webhookData.Instructions || "";
+      const scanDateTime = webhookData.ScanDateTime || webhookData.StatusDateTime || webhookData.scan_datetime;
+
+      if (!awb) {
+        console.log("[Delhivery Webhook] No AWB found in payload");
+        return res.status(400).json({ success: false, error: "No AWB found in payload" });
+      }
+
+      // Find the shipment by AWB first
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (!shipment) {
+        console.warn(`[Delhivery Webhook] Shipment not found for AWB: ${awb}`);
+        return res.status(404).json({ success: false, error: "Shipment not found" });
+      }
+
+      // Import delhivery service to check if this is an NDR status
+      const { delhiveryService } = await import("./services/delhivery");
+
+      // Check if this is an NDR status code (only if statusCode is defined)
+      if (statusCode && delhiveryService.isNDRStatus(statusCode)) {
+        console.log(`[Delhivery Webhook] NDR event detected for AWB ${awb}: ${statusCode}`);
+
+        // Map Delhivery status code to our NDR status
+        const ndrStatus = delhiveryService.mapNDRStatus(statusCode);
+
+        // Create NDR event in database
+        await storage.createNDREvent({
+          shipmentId: shipment.id,
+          orderId: shipment.orderId,
+          awb: awb,
+          ndrStatus: ndrStatus,
+          ndrReason: remarks || `NDR: ${status || statusCode}`,
+          ndrDate: scanDateTime ? new Date(scanDateTime) : new Date(),
+          rawNdrData: webhookData,
+        });
+
+        // Update shipment status
+        await storage.updateShipment(shipment.id, {
+          status: "ndr",
+          currentStatus: status || statusCode,
+          statusUpdatedAt: new Date(),
+        });
+
+        // Update order status
+        await storage.updateOrder(shipment.orderId, {
+          status: "ndr",
+          shipmentStatus: "ndr",
+        });
+
+        console.log(`[Delhivery Webhook] Created NDR event for shipment ${shipment.id}`);
+      } else if (status) {
+        // Regular status update - only update if we have a status
+        console.log(`[Delhivery Webhook] Status update for AWB ${awb}: ${status}`);
+        
+        await storage.updateShipment(shipment.id, {
+          currentStatus: status,
+          statusUpdatedAt: new Date(),
+        });
+      } else {
+        console.log(`[Delhivery Webhook] Ignoring event with no status for AWB ${awb}`);
+      }
+
+      res.status(200).json({ success: true, message: "Webhook processed" });
+    } catch (error: any) {
+      console.error("[Delhivery Webhook] Error:", error);
+      res.status(500).json({ error: error.message || "Internal server error" });
+    }
+  });
+
   // ============================================================================
   // ORDERS API
   // ============================================================================
@@ -2484,12 +2563,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get all NDR shipments
-  app.get("/api/shiprocket/ndr", async (req, res) => {
+  // Get all NDR events (generic endpoint - supports both Shiprocket and Delhivery)
+  app.get("/api/ndr", async (req, res) => {
     try {
       const { limit, offset } = req.query;
 
-      // Get NDR events from database
+      // Get NDR events from database (all couriers)
       const result = await storage.listUnresolvedNDREvents({
         limit: limit ? parseInt(limit as string) : 50,
         offset: offset ? parseInt(offset as string) : 0,
@@ -2502,7 +2581,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Reattempt delivery for NDR shipment
+  // Legacy route for backward compatibility
+  app.get("/api/shiprocket/ndr", async (req, res) => {
+    try {
+      const { limit, offset } = req.query;
+      const result = await storage.listUnresolvedNDREvents({
+        limit: limit ? parseInt(limit as string) : 50,
+        offset: offset ? parseInt(offset as string) : 0,
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error fetching NDR events:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+    }
+  });
+
+  // Reattempt delivery for NDR shipment (generic with courier switchboard)
+  app.post("/api/ndr/:awb/reattempt", async (req, res) => {
+    try {
+      const { awb } = req.params;
+      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+
+      if (!address1 || !phone) {
+        return res.status(400).json({ error: "Address and phone are required" });
+      }
+
+      // Get shipment to determine courier
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found" });
+      }
+
+      // Courier switchboard - route to appropriate service
+      const courierName = shipment.courierName?.toLowerCase() || "";
+
+      if (courierName.includes("delhivery")) {
+        // Use Delhivery API
+        const { delhiveryService } = await import("./services/delhivery");
+        const result = await delhiveryService.actionNDR(awb, "reattempt", {
+          deferredDate: deferredDate,
+          address: [address1, address2].filter(Boolean).join(", "),
+          phone: phone,
+        });
+
+        if (!result.success) {
+          return res.status(500).json({ error: result.error || "Delhivery reattempt failed" });
+        }
+      } else {
+        // Default to Shiprocket
+        const result = await shiprocketService.reattemptDelivery({
+          awb,
+          address1,
+          address2,
+          phone,
+          deferred_date: deferredDate,
+        });
+      }
+
+      // Get NDR events for this shipment
+      const ndrEvents = await storage.getNDREventsByShipmentId(shipment.id);
+      const latestNdr = ndrEvents[0];
+
+      if (latestNdr) {
+        // Update NDR event with reattempt info
+        await storage.updateNDREvent(latestNdr.id, {
+          actionTaken: "reattempt_scheduled",
+          actionBy,
+          actionNotes: notes,
+          actionAt: new Date(),
+          reattemptScheduled: true,
+          reattemptDate: deferredDate ? new Date(deferredDate) : new Date(),
+          updatedPhone: phone,
+          updatedAddress: { address1, address2 },
+        });
+      }
+
+      res.json({ success: true, message: "Reattempt scheduled successfully" });
+    } catch (error: any) {
+      console.error("Error scheduling reattempt:", error);
+      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+    }
+  });
+
+  // Legacy route for backward compatibility
   app.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
@@ -2512,13 +2673,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Address and phone are required" });
       }
 
-      // Get shipment
       const shipment = await storage.getShipmentByAWB(awb);
       if (!shipment) {
         return res.status(404).json({ error: "Shipment not found" });
       }
 
-      // Schedule reattempt in Shiprocket
+      // Legacy route always uses Shiprocket
       const result = await shiprocketService.reattemptDelivery({
         awb,
         address1,
@@ -2527,12 +2687,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deferred_date: deferredDate,
       });
 
-      // Get NDR events for this shipment
       const ndrEvents = await storage.getNDREventsByShipmentId(shipment.id);
       const latestNdr = ndrEvents[0];
 
       if (latestNdr) {
-        // Update NDR event with reattempt info
         await storage.updateNDREvent(latestNdr.id, {
           actionTaken: "reattempt_scheduled",
           actionBy,
