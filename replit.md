@@ -52,9 +52,26 @@ A simplified three-status workflow (Confirmed, Cancelled, Follow Up) enables sys
 
 The "Orders" page provides role-based filtering, allowing agents to see only their assigned orders, while admins view all orders. Filters include "All Orders", "Pending", "Confirmed", "Cancelled", and "Follow Up" tabs. The "Fulfil" page displays only confirmed orders for shipment processing, accessible to all agents and admins.
 
-### Shiprocket Integration
+### Multi-Courier Integration (Shiprocket & Delhivery)
 
-The Shiprocket integration manages advanced shipment tracking, failed delivery (NDR) management, and automated reattempt scheduling. It involves creating Shiprocket shipments for confirmed orders, monitoring delivery status via webhooks (at `/api/webhooks/courier-events` - renamed from `/shiprocket` due to Shiprocket URL restrictions), and allowing agents to handle NDR cases with address updates and reattempt scheduling through dedicated UI components and API endpoints. Webhook security is enforced via HMAC-SHA256 signature verification using the `SHIPROCKET_WEBHOOK_SECRET` environment variable.
+The platform supports multiple courier partners with unified NDR management:
+
+**Shiprocket Integration:**
+- Creates shipments for confirmed orders via Shiprocket API
+- Webhook handler at `/api/webhooks/courier-events` (renamed from `/shiprocket` due to URL restrictions)
+- HMAC-SHA256 signature verification using `SHIPROCKET_WEBHOOK_SECRET`
+
+**Delhivery Integration:**
+- Service module: `server/services/delhivery.ts` with createShipment, trackShipment, actionNDR methods
+- Webhook handler at `/api/webhooks/delhivery` for tracking updates and NDR events
+- NDR status code mapping for Delhivery-specific codes (CR, REAT, PEND-RTO, etc.)
+- Action codes: RE-ATTEMPT, RTO, DEFER_DLV, EDIT_DETAILS
+
+**Unified NDR Management:**
+- Generic API endpoints at `/api/ndr` and `/api/ndr/:awb/reattempt`
+- Courier detection switchboard: routes to Delhivery or Shiprocket based on `shipment.courierName`
+- Legacy `/api/shiprocket/ndr` routes maintained for backward compatibility
+- Unified `activeTracking` object in order-quick-preview.tsx merges tracking data from all sources
 
 ### Shopify Fulfillment Tracking Sync
 
