@@ -2097,7 +2097,21 @@ export class DbStorage implements IStorage {
     deliveredOrders: number;
     pendingOrders: number;
   }> {
-    // Query 1: Get workload metrics from order_assignments + orders (current state)
+    // Helper function to build attribution condition for history-based queries
+    // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
+    const buildAttributionCondition = (userIdParam: string) => or(
+      eq(orderStatusHistory.changedBy, userIdParam),
+      and(
+        sql`${orderStatusHistory.changedBy} IS NULL`,
+        eq(orderAssignments.userId, userIdParam)
+      )
+    )!;
+
+    // =========================================================================
+    // PERFORMANCE METRICS (Date-Filtered - What agent achieved in date range)
+    // =========================================================================
+
+    // Query 1: Assigned Orders in date range (from order_assignments table)
     const assignmentConditions = [];
     if (userId) {
       assignmentConditions.push(eq(orderAssignments.userId, userId));
@@ -2108,85 +2122,112 @@ export class DbStorage implements IStorage {
     if (endDate) {
       assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
-    const assignmentWhereClause = assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined;
-
-    const [workloadResult] = await db
-      .select({
-        assignedOrders: count(),
-        followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
-        fulfilledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} IN ('fulfilled', 'shipped'))`,
-        deliveredOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} = 'delivered')`,
-        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.status} = 'pending')`,
-      })
+    const [assignedResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderAssignments.orderId})` })
       .from(orderAssignments)
-      .innerJoin(orders, eq(orderAssignments.orderId, orders.id))
-      .where(assignmentWhereClause);
+      .where(assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined);
 
-    // Query 2: Get CONFIRMED count from order_status_history (action-based metrics)
-    // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
-    const confirmedConditions = [eq(orderStatusHistory.status, 'confirmed')];
-    if (startDate) {
-      confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
-    }
-    if (endDate) {
-      confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
-    }
-    if (userId) {
-      confirmedConditions.push(
-        or(
-          eq(orderStatusHistory.changedBy, userId),
-          and(
-            sql`${orderStatusHistory.changedBy} IS NULL`,
-            eq(orderAssignments.userId, userId)
-          )
-        )!
-      );
-    }
+    // Query 2: Confirmed Orders (LOWER(status) = 'confirmed' in history within date range)
+    const confirmedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+    if (startDate) confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) confirmedConditions.push(buildAttributionCondition(userId));
 
     const [confirmedResult] = await db
-      .select({
-        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
-      })
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...confirmedConditions));
 
-    // Query 3: Get CANCELLED count from order_status_history (action-based metrics)
-    const cancelledConditions = [eq(orderStatusHistory.status, 'cancelled')];
-    if (startDate) {
-      cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
-    }
-    if (endDate) {
-      cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
-    }
-    if (userId) {
-      cancelledConditions.push(
-        or(
-          eq(orderStatusHistory.changedBy, userId),
-          and(
-            sql`${orderStatusHistory.changedBy} IS NULL`,
-            eq(orderAssignments.userId, userId)
-          )
-        )!
-      );
-    }
+    // Query 3: Cancelled Orders (LOWER(status) = 'cancelled' in history within date range)
+    const cancelledConditions = [sql`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
+    if (startDate) cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) cancelledConditions.push(buildAttributionCondition(userId));
 
     const [cancelledResult] = await db
-      .select({
-        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
-      })
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...cancelledConditions));
 
+    // Query 4: Fulfilled/Shipped Orders
+    // Combines: (1) History records with LOWER(status) = 'shipped' in date range
+    //           (2) Orders with fulfillment_status = 'fulfilled' AND fulfilled_at in date range
+    const historyShippedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'shipped'`];
+    if (startDate) historyShippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) historyShippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) historyShippedConditions.push(buildAttributionCondition(userId));
+
+    const [historyShippedResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(and(...historyShippedConditions));
+
+    // Fallback: Orders with fulfillment_status = 'fulfilled' and fulfilled_at in date range
+    const ordersShippedConditions = [eq(orders.fulfillmentStatus, 'fulfilled')];
+    if (startDate) ordersShippedConditions.push(gte(orders.fulfilledAt, startDate));
+    if (endDate) ordersShippedConditions.push(lte(orders.fulfilledAt, endDate));
+    if (userId) ordersShippedConditions.push(eq(orderAssignments.userId, userId));
+
+    const [ordersShippedResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
+      .from(orders)
+      .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
+      .where(and(...ordersShippedConditions));
+
+    // Query 5: Delivered Orders (history-only, orders table doesn't have delivered_at)
+    const deliveredConditions = [sql`LOWER(${orderStatusHistory.status}) = 'delivered'`];
+    if (startDate) deliveredConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) deliveredConditions.push(buildAttributionCondition(userId));
+
+    const [deliveredResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(and(...deliveredConditions));
+
+    // Combine history + orders table counts for fulfilled (take max to avoid double-counting)
+    const fulfilledTotal = Math.max(
+      Number(historyShippedResult?.count) || 0,
+      Number(ordersShippedResult?.count) || 0
+    );
+    const deliveredTotal = Number(deliveredResult?.count) || 0;
+
+    // =========================================================================
+    // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
+    // =========================================================================
+
+    // Query 6: Pending Orders (current call_status = 'Pending', live state)
+    const pendingConditions = [eq(orders.callStatus, 'Pending')];
+    if (userId) pendingConditions.push(eq(orderAssignments.userId, userId));
+
+    const [pendingResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
+      .from(orders)
+      .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
+      .where(and(...pendingConditions));
+
+    // Query 7: Follow-up Queue (current call_status = 'Follow Up', live state)
+    const followUpConditions = [eq(orders.callStatus, 'Follow Up')];
+    if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
+
+    const [followUpResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
+      .from(orders)
+      .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
+      .where(and(...followUpConditions));
+
     return {
-      assignedOrders: workloadResult?.assignedOrders || 0,
+      assignedOrders: Number(assignedResult?.count) || 0,
       confirmedOrders: Number(confirmedResult?.count) || 0,
       cancelledOrders: Number(cancelledResult?.count) || 0,
-      followUpOrders: Number(workloadResult?.followUpOrders) || 0,
-      fulfilledOrders: Number(workloadResult?.fulfilledOrders) || 0,
-      deliveredOrders: Number(workloadResult?.deliveredOrders) || 0,
-      pendingOrders: Number(workloadResult?.pendingOrders) || 0,
+      followUpOrders: Number(followUpResult?.count) || 0,
+      fulfilledOrders: fulfilledTotal,
+      deliveredOrders: deliveredTotal,
+      pendingOrders: Number(pendingResult?.count) || 0,
     };
   }
 }

@@ -1,0 +1,29 @@
+We have performed a full audit of the database files. You must use these exact specifications to finalize the dashboard metrics.
+
+**Step 1: The Definitions (Source of Truth)**
+Use these mappings to ensure 100% accuracy:
+- **Assigned Orders (Performance):** Use the `order_assignments` table. Count orders assigned to the agent within the date range.
+- **Confirmed Orders:** Count events in `order_status_history` where `LOWER(status) = 'confirmed'` within the date range.
+- **Cancelled Orders:** Count events in `order_status_history` where `LOWER(status) = 'cancelled'` within the date range.
+- **Fulfilled (Shipped):** Count orders where `fulfillment_status = 'fulfilled'` or history shows `status = 'Shipped'` in the date range.
+- **Delivered:** Count orders where `shipment_status = 'delivered'` or history shows `status = 'Delivered'` in the date range.
+
+**Step 2: Corrected Metric Formulas**
+1. **Confirmation Rate (CRITICAL FIX):**
+   - Formula: `(Total Confirmed in range / Total Assigned in range) * 100`.
+   - *Example:* If 100 orders were assigned to the agent today and they confirmed 50, show 50%.
+2. **Delivery Rate:** - Formula: `(Total Delivered in range / Total Fulfilled in range) * 100`.
+   - This measures how successfully the agent coordinated the delivery with the customer.
+
+**Step 3: Pipeline vs. Performance Split**
+- **Performance (Date Filter ON):** Confirmed, Cancelled, Fulfilled, Delivery Rate, Confirmation Rate.
+- **Pipeline (Date Filter OFF - Live Total):** - **Pending Orders:** Current `call_status = 'Pending'` and `status = 'Unfulfilled'`.
+  - **Follow-up Queue:** Current `call_status = 'Follow Up'`.
+  - **Total Assigned:** Current count of all active orders assigned to the agent.
+
+**Step 4: The "NULL" and Attribution Rules**
+- When `order_status_history.changed_by` is NULL (due to Shopify syncs), attribute the action to the agent currently found in the `orders.assigned_to` column or the `order_assignments` table.
+- ALWAYS use `LOWER(status)` in your SQL/code queries to prevent casing errors.
+
+**Action:**
+Update the analytics backend to follow this logic exactly. Ensure only the numbers in the cards show a loading state (no full page flashing).

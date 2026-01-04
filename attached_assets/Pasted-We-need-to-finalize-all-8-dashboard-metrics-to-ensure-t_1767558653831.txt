@@ -1,0 +1,30 @@
+We need to finalize all 8 dashboard metrics to ensure they accurately reflect Agent Performance vs. Current Workload. 
+
+**Part 1: Investigation (Verification Required)**
+Before writing any code, query the database and answer these questions:
+1. **Assignment Logic:** How are assignments recorded? Do we use the 'assigned' status in `order_status_history` or the `order_assignments` table?
+2. **Shopify Statuses:** The user states that "Shipped" is identified by `fulfilment_status = 'fulfilled'` and "Delivered" by `delivery_status = 'delivered'`. Verify if these exist in the `orders` table or as history events.
+3. **The Null Mystery:** Check `order_status_history`. If 'changed_by' is NULL for Shopify updates, confirm you can join with the assignments table to attribute the action to the current agent.
+
+**Part 2: Performance Metrics (History-Based + Date Filtered)**
+These measure what the agent ACHIEVED during the selected dates:
+- **Confirmed Orders:** Count of `order_id` where status moved to 'confirmed' (lowercase) in history.
+- **Cancelled Orders:** Count of `order_id` where status moved to 'cancelled' (lowercase) in history.
+- **Confirmation Rate (REVISED):** (Total Confirmed Orders / Total Assigned Orders) * 100. 
+  - *Logic:* This must be based on the number of orders assigned to the agent in that date range.
+- **Fulfilled (Shipped):** Count of orders that reached 'fulfilled' status in the date range.
+- **Delivery Rate:** (Orders reaching 'Delivered' / Total Orders reaching 'Shipped') * 100.
+  - *Logic:* This measures the agent's success in coordinating with the customer to ensure receipt.
+
+**Part 3: Pipeline Metrics (Live-State + Ignore Date Filter)**
+These show the agent's current "To-Do" list (Always show the live total):
+- **Pending Orders:** Current status 'Pending' or 'Unfulfilled'.
+- **Follow-up Queue:** Current status 'followup_scheduled'.
+- **Total Assigned:** All active orders currently in the agent's name.
+
+**Part 4: Protection Rules**
+- **Case Sensitivity:** Use `LOWER(status)` for all database comparisons.
+- **No Page Flashing:** Do NOT replace the whole UI with skeletons when loading. Only show skeletons/spinners inside the individual metric cards where the numbers appear.
+- **Attribution Fallback:** If `changed_by` is NULL (deleted users or automated syncs), attribute the action to the agent currently assigned to that order.
+
+Please report the database findings from Part 1 before you finalize the implementation.
