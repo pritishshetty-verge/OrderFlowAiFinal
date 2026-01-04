@@ -62,8 +62,8 @@ function parseHistoryNote(note: string | null | undefined): { systemText: string
 // Fieldset-style note component with bordered box and "Notes" legend
 function FieldsetNote({ note }: { note: string }) {
   return (
-    <div className="relative mt-2 rounded-md border border-border px-3 py-2">
-      <span className="absolute -top-2 left-2 bg-card px-1 text-[10px] font-medium text-muted-foreground">
+    <div className="relative mt-3 rounded-md border border-zinc-800 dark:border-zinc-400 px-3 py-2">
+      <span className="absolute -top-2 left-2 bg-white dark:bg-zinc-900 px-1 text-[10px] font-medium text-muted-foreground">
         Notes
       </span>
       <p className="text-xs text-foreground">{note}</p>
