@@ -497,70 +497,65 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       description={userRole === "agent" ? "Manage your assigned orders" : "Manage all Shopify orders"}
     >
       <div className="p-6 space-y-6">
-        {isLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-24 w-full" data-testid="skeleton-progress-bar" />
-            <Skeleton className="h-16 w-full" data-testid="skeleton-filter" />
-            <Skeleton className="h-96 w-full" data-testid="skeleton-table" />
-          </div>
-        ) : (
-          <>
-            {/* Hide progress bar for admins - they use filters to oversee, not track targets */}
-            {userRole === "agent" && (
-              <OrderProgressBar
-                steps={progressSteps}
-                activeStep={activeTab}
-                onStepClick={handleStepClick}
-              />
-            )}
-
-            <div className="space-y-4">
-              <OrdersFilter
-                onSearch={handleSearch}
-                searchValue={searchQuery}
-                onPaymentChange={handlePaymentChange}
-                onClearFilters={handleClearFilters}
-                isAdmin={isAdmin}
-                agents={agentsData || []}
-                onCallStatusChange={handleCallStatusFilterChange}
-                onAgentChange={handleAgentFilterChange}
-                callStatusValue={callStatusFilter}
-                agentValue={agentFilter}
-              />
-
-              {filteredOrders.length === 0 ? (
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-12">
-                    <Package className="h-12 w-12 text-muted-foreground mb-4" />
-                    <p className="text-lg font-medium">No orders found</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {baseFilteredOrders.length === 0
-                        ? userRole === "agent" 
-                          ? "No orders have been assigned to you yet"
-                          : "No orders have been synced from Shopify yet"
-                        : "Try adjusting your filters or search query"}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <OrdersTable
-                  orders={filteredOrders}
-                  totalCount={ordersResponse?.total}
-                  userRole={userRole}
-                  onCallCustomer={handleCallCustomer}
-                  onViewDetails={handleViewDetails}
-                  onAssignOrder={handleAssignOrder}
-                  onCallStatusChange={handleCallStatusChange}
-                  showAgentColumn={isAdmin}
-                  currentPage={currentPage}
-                  pageSize={pageSize}
-                  onPageChange={handlePageChange}
-                  onPageSizeChange={handlePageSizeChange}
-                />
-              )}
-            </div>
-          </>
+        {/* Progress bar - always visible for agents (uses separate stats query) */}
+        {userRole === "agent" && (
+          <OrderProgressBar
+            steps={progressSteps}
+            activeStep={activeTab}
+            onStepClick={handleStepClick}
+          />
         )}
+
+        <div className="space-y-4">
+          {/* Search/Filter bar - ALWAYS rendered to prevent unmount on loading */}
+          <OrdersFilter
+            onSearch={handleSearch}
+            searchValue={searchQuery}
+            onPaymentChange={handlePaymentChange}
+            onClearFilters={handleClearFilters}
+            isAdmin={isAdmin}
+            agents={agentsData || []}
+            onCallStatusChange={handleCallStatusFilterChange}
+            onAgentChange={handleAgentFilterChange}
+            callStatusValue={callStatusFilter}
+            agentValue={agentFilter}
+          />
+
+          {/* Loading state - only affects table content, not filter bar */}
+          {/* Show skeleton until data is actually available to prevent empty-state flash */}
+          {(isLoading || !ordersResponse) ? (
+            <Skeleton className="h-96 w-full" data-testid="skeleton-table" />
+          ) : filteredOrders.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <Package className="h-12 w-12 text-muted-foreground mb-4" />
+                <p className="text-lg font-medium">No orders found</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {baseFilteredOrders.length === 0
+                    ? userRole === "agent" 
+                      ? "No orders have been assigned to you yet"
+                      : "No orders have been synced from Shopify yet"
+                    : "Try adjusting your filters or search query"}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <OrdersTable
+              orders={filteredOrders}
+              totalCount={ordersResponse?.total}
+              userRole={userRole}
+              onCallCustomer={handleCallCustomer}
+              onViewDetails={handleViewDetails}
+              onAssignOrder={handleAssignOrder}
+              onCallStatusChange={handleCallStatusChange}
+              showAgentColumn={isAdmin}
+              currentPage={currentPage}
+              pageSize={pageSize}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          )}
+        </div>
       </div>
 
       <OrderQuickPreview
