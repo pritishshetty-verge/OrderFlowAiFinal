@@ -72,6 +72,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
   
@@ -85,6 +86,19 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   
   // Agent scope toggle from global context (controlled by header toggle)
   const { isGlobalView } = useScope();
+  
+  // Debounce search query (500ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+  
+  // Reset pagination when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch]);
   
   // Reset pagination when scope changes
   useEffect(() => {
@@ -139,7 +153,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView],
+    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -169,6 +183,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       // Admin agent filter
       if (isAdmin && agentFilter !== "all") {
         params.append("agentId", agentFilter);
+      }
+      
+      // Server-side search
+      if (debouncedSearch.trim()) {
+        params.append("search", debouncedSearch.trim());
       }
       
       const res = await fetch(`/api/orders?${params.toString()}`, {
@@ -254,29 +273,19 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return ordersResponse.orders.map((order) => transformOrder(order));
   }, [ordersResponse, usersData]);
 
-  // Apply search/payment filters on top of server-filtered orders
-  // Tab filtering is now handled server-side via callStatus param
+  // Apply payment filter on top of server-filtered orders
+  // Tab filtering and search are now handled server-side
   const filteredOrders = useMemo(() => {
     let filtered = [...baseFilteredOrders];
 
-    // Search filter (client-side for current page)
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (order) =>
-          order.shopifyOrderId.toLowerCase().includes(query) ||
-          order.customerName.toLowerCase().includes(query) ||
-          order.customerPhone.includes(query)
-      );
-    }
-
     // Payment method filter (client-side for current page)
+    // TODO: Consider moving this to server-side as well
     if (paymentFilter !== "all") {
       filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
     }
 
     return filtered;
-  }, [baseFilteredOrders, searchQuery, paymentFilter]);
+  }, [baseFilteredOrders, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 
