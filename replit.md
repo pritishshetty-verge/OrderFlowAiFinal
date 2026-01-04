@@ -2,7 +2,7 @@
 
 ## Overview
 
-OrderSync is a real-time order management system for Indian e-commerce brands on Shopify. It aims to reduce high COD/RTO rates and streamline multi-courier logistics through systematic customer verification. The platform offers a comprehensive team operations dashboard for real-time order tracking, assignment, customer communication, and performance analytics, functioning as a full-stack SaaS application with bidirectional Shopify synchronization.
+OrderSync is a real-time order management system for Indian e-commerce brands on Shopify. Its primary purpose is to reduce high Cash-on-Delivery (COD) and Return-to-Origin (RTO) rates and streamline multi-courier logistics through systematic customer verification. The platform provides a comprehensive team operations dashboard for real-time order tracking, assignment, customer communication, and performance analytics, functioning as a full-stack SaaS application with bidirectional Shopify synchronization.
 
 ## User Preferences
 
@@ -12,209 +12,61 @@ Preferred communication style: Simple, everyday language.
 
 ### Frontend
 
-The frontend uses React with TypeScript, Vite for building, Wouter for routing, and TanStack Query for server state management. The UI is built with shadcn/ui (based on Radix UI) and Tailwind CSS, following Material Design principles with a custom color palette for light/dark modes and semantic status colors. Components are modular, utilizing React hooks, TanStack Query, localStorage for authentication, and a context provider for themes.
+The frontend is built with React, TypeScript, Vite, Wouter for routing, and TanStack Query for server state management. It utilizes shadcn/ui (based on Radix UI) and Tailwind CSS, adhering to Material Design principles with a custom color palette for light/dark modes.
 
 ### Backend
 
-The backend is built with Node.js, Express, and TypeScript, using Drizzle ORM for type-safe SQL queries against a Neon Serverless PostgreSQL database. It features a modular route system, a storage abstraction layer, and custom middleware. API endpoints are RESTful, prefixed with `/api`, use credential-based session management, and provide structured JSON error responses.
+The backend uses Node.js, Express, and TypeScript, with Drizzle ORM for type-safe SQL queries against a Neon Serverless PostgreSQL database. It features a modular route system, a storage abstraction layer, custom middleware, and RESTful API endpoints. Authentication uses localStorage for user data, with plans for a JWT/session-based system.
 
 ### Database Schema
 
-The system uses PostgreSQL via Neon with Drizzle ORM. Key tables include Users (with UUIDs, roles, admin types, and granular permissions), Invites (for team member onboarding), Orders, Order Items, Customers, and Calls (for IVR Click-to-Call tracking). A 2-role permission system (Admin with Full or Partial Control, and Agent) is implemented, with permissions stored as JSONB.
+The system uses PostgreSQL via Neon with Drizzle ORM. Key tables include Users (with UUIDs, roles, admin types, and granular permissions), Invites, Orders, Order Items, Customers, and Calls. A 2-role permission system (Admin with Full or Partial Control, and Agent) is implemented with permissions stored as JSONB.
 
 ### Authentication & Authorization
 
-A 2-role permission system (Admin and Agent) allows for "Full Control" or "Partial Control" admins with customizable permissions. Permissions are stored as JSONB and validated server-side. The current authentication uses localStorage for user data (userId, userEmail, userRole) after login, with plans for a future JWT/session-based system. A two-modal email-based invite system with secure, expiring tokens facilitates team member onboarding and permission configuration.
+A 2-role permission system (Admin and Agent) with customizable permissions stored as JSONB. An email-based invite system with secure, expiring tokens facilitates team member onboarding.
 
 ### Real-Time Capabilities
 
-Planned features include WebSocket connections for live order updates, bidirectional sync with Shopify, and real-time notifications for order assignments and status changes.
+Planned features include WebSocket connections for live order updates, bidirectional Shopify sync, and real-time notifications.
 
 ### Theme System
 
-A custom theme system supports light and dark modes via CSS variables and a theme provider, with semantic color tokens.
+A custom theme system supports light and dark modes via CSS variables and a theme provider.
 
 ### Avatar System
 
-Users have graphical avatar images instead of text initials. Features:
-- **6 Preset Avatars**: Stored in `client/public/avatars/` as `avatar_1.png` through `avatar_6.png`
-- **Random Assignment**: New users automatically receive a random avatar on signup via `getRandomAvatar()` in `server/storage.ts`
-- **User Selection**: Settings Profile page includes "Choose Avatar" section with clickable grid
-- **Graceful Fallback**: Avatar component uses `AvatarImage` with `AvatarFallback` - shows initials if image fails to load
-- **Real-time Updates**: Avatar changes immediately update sidebar via query invalidation
-- **Database Field**: `avatarImage` column in users table stores the filename (e.g., "avatar_1.png")
+Users have graphical avatar images (6 presets) randomly assigned on signup, with user selection available. Avatars are stored as filenames in the `users` table.
 
 ### Call Status Workflow
 
-A simplified three-status workflow (Confirmed, Cancelled, Follow Up) enables systematic customer verification. Each status action involves modals for data capture, automatically creating order history entries and, for "Follow Up", scheduling notifications. Notifications are managed by a background checker that creates `followup_reminder` notifications when due.
+A simplified three-status workflow (Confirmed, Cancelled, Follow Up) for customer verification. This involves modals for data capture, automatic order history entries, and scheduled notifications for "Follow Up" orders.
 
 ### Orders and Fulfil Pages
 
-The "Orders" page provides role-based filtering, allowing agents to see only their assigned orders, while admins view all orders. Filters include "All Orders", "Pending", "Confirmed", "Cancelled", and "Follow Up" tabs. The "Fulfil" page displays only confirmed orders for shipment processing, accessible to all agents and admins.
+The "Orders" page provides role-based filtering, allowing agents to see assigned orders and admins to view all. The "Fulfil" page displays only confirmed orders for shipment processing.
 
-### Multi-Courier Integration (Shiprocket & Delhivery)
+### Attendance & Shift Controller
 
-The platform supports multiple courier partners with unified NDR management:
+Timezone-safe attendance tracking with break management for payroll. It features a 3-state workflow (Offline, Working, On Break) and automatically closes open sessions.
 
-**Shiprocket Integration:**
-- Creates shipments for confirmed orders via Shiprocket API
-- Webhook handler at `/api/webhooks/courier-events` (renamed from `/shiprocket` due to URL restrictions)
-- HMAC-SHA256 signature verification using `SHIPROCKET_WEBHOOK_SECRET`
+### Multi-Courier Integration
 
-**Delhivery Integration:**
-- Service module: `server/services/delhivery.ts` with createShipment, trackShipment, actionNDR methods
-- Webhook handler at `/api/webhooks/delhivery` for tracking updates and NDR events
-- NDR status code mapping for Delhivery-specific codes (CR, REAT, PEND-RTO, etc.)
-- Action codes: RE-ATTEMPT, RTO, DEFER_DLV, EDIT_DETAILS
-
-**Unified NDR Management:**
-- Generic API endpoints at `/api/ndr` and `/api/ndr/:awb/reattempt`
-- Courier detection switchboard: routes to Delhivery or Shiprocket based on `shipment.courierName`
-- Legacy `/api/shiprocket/ndr` routes maintained for backward compatibility
-- Unified `activeTracking` object in order-quick-preview.tsx merges tracking data from all sources
+The platform supports Shiprocket and Delhivery, including shipment creation, tracking, and unified NDR (Non-Delivery Report) management via dedicated service modules and webhook handlers.
 
 ### Shopify Fulfillment Tracking Sync
 
-Fulfillment tracking data from Shopify is now properly synced across all order ingestion paths:
-- **Shared Helper**: `extractFulfillmentTracking()` in `server/utils/orderStatus.ts` extracts tracking_number, tracking_url, tracking_company, and shipment_status from fulfillments[0]
-- **Synced Fields**: trackingNumber, trackingUrl, courierName, shipmentStatus are persisted to orders table
-- **Code Paths**: Webhook handlers (handleOrderCreated, handleOrderUpdated) and manual sync all use the shared helper for consistency
-- **Display**: Tracking details appear prominently in the Order Quick Preview Shipment tab with clickable AWB links
+Fulfillment tracking data (trackingNumber, trackingUrl, courierName, shipmentStatus) is consistently synced from Shopify across all order ingestion paths and displayed prominently.
 
 ### Learning Center (LMS)
 
-A comprehensive Learning Management System inspired by Skool.com provides structured training for team members. The system includes:
-
-**Core Features:**
-- Course/Lesson hierarchy with progress tracking
-- Video embedding support (YouTube, Vimeo) via embed URL (iframe)
-- Rich text lesson content with TipTap WYSIWYG editor (supports bold, italic, underline, links, images, lists, alignment)
-- Lesson prerequisites to enforce learning sequences (frontend checks prerequisite completion)
-- Progress tracking (completion percentage, time spent, bookmarks)
-- Category-based course organization (onboarding, operations, training)
-- Difficulty levels (beginner, intermediate, advanced)
-- **Publish/Draft System**: Courses and lessons have `isPublished` flag; agents only see published content, admins see all
-
-**Database Schema:**
-- `courses`: Course metadata, categories, difficulty, estimated duration, isPublished, order
-- `lessons`: Individual lessons with content, videos, sequencing, isPublished, prerequisiteLessonIds
-- `resources`: Downloadable files and reference materials
-- `user_lesson_progress`: Tracks completion, time spent, bookmarks
-- `lesson_analytics`: View counts and engagement metrics
-- `onboarding_checklists`: Role-based onboarding tasks
-- `user_onboarding_progress`: Checklist completion tracking
-
-**API Endpoints (Student/Agent):**
-- `GET /api/learning/courses` - List published courses with user progress (defaults to `isPublished=true`)
-- `GET /api/learning/courses?isPublished=all` - List all courses (admin use)
-- `GET /api/learning/courses/:slug` - Course details with published lessons only
-- `GET /api/learning/lessons/:slug` - Individual lesson content
-- `POST /api/learning/lessons/:lessonId/progress` - Update progress (completion %, time spent, isCompleted)
-- `POST /api/learning/lessons/:lessonId/bookmark` - Toggle bookmark
-- `GET /api/learning/resources` - List resources
-- `GET /api/learning/onboarding/:userId` - User's onboarding progress
-
-**API Endpoints (Admin):**
-- `GET /api/admin/learning/courses/:courseId` - Get course by ID for editing
-- `POST /api/admin/learning/courses` - Create new course
-- `PATCH /api/admin/learning/courses/:courseId` - Update course (including isPublished toggle)
-- `DELETE /api/admin/learning/courses/:courseId` - Delete course
-- `GET /api/admin/learning/courses/:courseId/lessons` - Get lessons for course
-- `GET /api/admin/learning/lessons/:lessonId` - Get lesson by ID for editing
-- `POST /api/admin/learning/lessons` - Create new lesson
-- `PATCH /api/admin/learning/lessons/:lessonId` - Update lesson
-- `DELETE /api/admin/learning/lessons/:lessonId` - Delete lesson
-
-**Frontend Pages (Agent/Student):**
-- Learning Dashboard (`/learning`) - Course catalog with progress cards, category tabs
-- Course Detail (`/learning/courses/:slug`) - Lesson list with prerequisites, lock icons, progress tracking
-- Lesson View (`/learning/lessons/:slug`) - Video embed, rich content, mark complete button, bookmark, progress bar
-
-**Frontend Pages (Admin):**
-- Admin Learning Dashboard (`/learning/admin`) - All courses table with lesson counts, publish/draft toggle buttons
-- Course Form (`/learning/admin/courses/:id`) - Create/edit course with metadata, slug generation
-- Lesson Form (`/learning/admin/lessons/:id`) - Create/edit lesson with TipTap editor, video embed URL, prerequisites
-
-**Known Implementation Status:**
-✅ **Production-Ready & Fully Tested:**
-- **Publish/Draft System**: 
-  - Course publish toggle in admin dashboard table (one-click)
-  - Lesson publish toggle in lesson edit form (Switch component, data-testid="toggle-publish")
-  - Agents see only published courses/lessons (filtering enforced backend + frontend)
-  - Admin publish workflow tested end-to-end (create → publish → verify agent access)
-- **Progress Tracking**: 
-  - Completion percentage calculated correctly (33%, 67%, 100% verified)
-  - Progress persists across sessions (cache invalidation for both lesson and course queries)
-  - Backend field `percentage` matches frontend interface
-- **Course Browsing**: 
-  - Published courses displayed with progress cards
-  - Category tabs functional (onboarding, operations, training)
-  - Progress indicators show completion percentage
-- **Lesson Viewing**:
-  - Mark complete button updates progress immediately
-  - Automatic time tracking on lesson page
-  - Progress bar reflects completion state
-- **Bookmark System**: 
-  - Toggle bookmark button persists state
-  - Bookmark status loads correctly on page refresh
-- **Prerequisite System**: 
-  - Lessons with unmet prerequisites show lock icon
-  - Prerequisites unlock automatically when dependencies complete
-  - Frontend checks prerequisite completion before allowing access
-- **TipTap Rich Text Editor**: 
-  - All formatting options functional (bold, italic, underline, links, images, lists, alignment)
-  - StarterKit properly configured (duplicate extension warnings resolved)
-  - Content saves and loads correctly
-- **Video Embeds**: 
-  - YouTube/Vimeo iframe embedding via embed URL
-  - Video displays in lesson view
-- **Admin Course/Lesson Management**:
-  - Create/edit course form with metadata, slug auto-generation
-  - Create/edit lesson form with TipTap editor, video URL, prerequisites, publish toggle
-  - All CRUD operations functional
-
-**Testing Summary (December 2024):**
-- 10+ automated end-to-end Playwright tests executed
-- All core workflows verified: publish, progress tracking, bookmarks, prerequisites, video embeds, admin CRUD
-- Architect approved as production-ready
-- No critical bugs remaining
-
-⚠️ **Needs Testing:**
-- Resource library (file uploads, downloads, tracking)
-- Onboarding checklists (role-based task tracking)
-- Analytics dashboard (view counts, completion rates)
-- Multi-level prerequisite chains (>2 levels deep)
-- Course completion calculation with complex lesson hierarchies
-
-📋 **Not Yet Implemented:**
-- Lesson reordering UI (drag-and-drop)
-- Bulk lesson operations
-- Course duplication
-- Content versioning
-- Student roster/enrollment management
+A comprehensive Learning Management System with a course/lesson hierarchy, video embedding, rich text content, lesson prerequisites, progress tracking, and category-based organization. It includes a publish/draft system for courses and lessons, ensuring agents only see published content. Admin interfaces are provided for course and lesson management.
 
 ## External Dependencies
 
-### Shopify Integration
-
-OAuth is used for secure store connection. The Shopify Admin API facilitates historical order fetching and real-time sync via an n8n webhook relay system. Webhooks for `orders/create`, `orders/updated`, and `orders/cancelled` are verified using HMAC for direct Shopify calls and header-based checks for n8n relays.
-
-### UI Component Libraries
-
-Radix UI Primitives provide accessible, unstyled components, which are styled with shadcn/ui and Tailwind CSS.
-
-### Telephony Integration
-
-IVR (Interactive Voice Response) is integrated via environment variables for API tokens and DID numbers. A Click-to-Call API (`POST /api/calls/initiate`) integrates with an IVR Solutions API, tracking call attempts in the database.
-
-### Styling & Design
-
-Inter is used for the primary UI font, and JetBrains Mono for monospace. Tailwind CSS with PostCSS provides styling, supporting responsive design and custom utilities.
-
-### Development Tools
-
-Vite is used for client bundling and HMR. TypeScript and esbuild are used for server bundling. Cartographer aids code navigation within Replit.
-
-### Date Handling
-
-date-fns is used for date formatting, manipulation, and relative time displays.
+- **Shopify Integration**: OAuth for store connection, Shopify Admin API for historical data, and n8n webhook relay for real-time sync (`orders/create`, `orders/updated`, `orders/cancelled`).
+- **UI Component Libraries**: Radix UI Primitives, shadcn/ui.
+- **Telephony Integration**: IVR solutions API via environment variables for Click-to-Call functionality.
+- **Styling & Design**: Tailwind CSS with PostCSS, Inter (UI font), JetBrains Mono (monospace).
+- **Development Tools**: Vite, TypeScript, esbuild, Cartographer.
+- **Date Handling**: date-fns.
