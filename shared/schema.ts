@@ -504,6 +504,26 @@ export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
 export type Attendance = typeof attendance.$inferSelect;
 
 // ============================================================================
+// ATTENDANCE BREAKS (Break Tracking for Payroll)
+// ============================================================================
+
+export const attendanceBreaks = pgTable("attendance_breaks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  attendanceId: varchar("attendance_id").notNull().references(() => attendance.id, { onDelete: "cascade" }),
+  breakStart: timestamp("break_start").notNull(),
+  breakEnd: timestamp("break_end"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAttendanceBreakSchema = createInsertSchema(attendanceBreaks).omit({ 
+  id: true, 
+  createdAt: true 
+});
+
+export type InsertAttendanceBreak = z.infer<typeof insertAttendanceBreakSchema>;
+export type AttendanceBreak = typeof attendanceBreaks.$inferSelect;
+
+// ============================================================================
 // CALLS (IVR Click-to-Call Tracking)
 // ============================================================================
 

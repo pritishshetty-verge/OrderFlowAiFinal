@@ -33,6 +33,8 @@ import {
   type InsertShopifyCredentials,
   type Attendance,
   type InsertAttendance,
+  type AttendanceBreak,
+  type InsertAttendanceBreak,
   type Call,
   type InsertCall,
   type Notification,
@@ -71,6 +73,7 @@ import {
   webhookLogs,
   shopifyCredentials,
   attendance,
+  attendanceBreaks,
   calls,
   notifications,
   shopifySyncLogs,
@@ -258,6 +261,13 @@ export interface IStorage {
     startDate?: Date;
     endDate?: Date;
   }): Promise<Attendance[]>;
+
+  // Attendance Breaks
+  startBreak(attendanceId: string): Promise<AttendanceBreak>;
+  endBreak(breakId: string, endTime: Date): Promise<AttendanceBreak | undefined>;
+  getActiveBreak(attendanceId: string): Promise<AttendanceBreak | undefined>;
+  getBreaksByAttendanceId(attendanceId: string): Promise<AttendanceBreak[]>;
+  closeOpenBreaksForAttendance(attendanceId: string, endTime: Date): Promise<void>;
 
   // Calls
   createCall(call: InsertCall): Promise<Call>;
@@ -1323,6 +1333,64 @@ export class DbStorage implements IStorage {
     }
 
     return await query;
+  }
+
+  // ============================================================================
+  // ATTENDANCE BREAKS
+  // ============================================================================
+
+  async startBreak(attendanceId: string): Promise<AttendanceBreak> {
+    const [breakRecord] = await db
+      .insert(attendanceBreaks)
+      .values({
+        attendanceId,
+        breakStart: new Date(),
+      })
+      .returning();
+    return breakRecord;
+  }
+
+  async endBreak(breakId: string, endTime: Date): Promise<AttendanceBreak | undefined> {
+    const [updated] = await db
+      .update(attendanceBreaks)
+      .set({ breakEnd: endTime })
+      .where(eq(attendanceBreaks.id, breakId))
+      .returning();
+    return updated;
+  }
+
+  async getActiveBreak(attendanceId: string): Promise<AttendanceBreak | undefined> {
+    const [activeBreak] = await db
+      .select()
+      .from(attendanceBreaks)
+      .where(
+        and(
+          eq(attendanceBreaks.attendanceId, attendanceId),
+          isNull(attendanceBreaks.breakEnd)
+        )
+      )
+      .limit(1);
+    return activeBreak;
+  }
+
+  async getBreaksByAttendanceId(attendanceId: string): Promise<AttendanceBreak[]> {
+    return await db
+      .select()
+      .from(attendanceBreaks)
+      .where(eq(attendanceBreaks.attendanceId, attendanceId))
+      .orderBy(asc(attendanceBreaks.breakStart));
+  }
+
+  async closeOpenBreaksForAttendance(attendanceId: string, endTime: Date): Promise<void> {
+    await db
+      .update(attendanceBreaks)
+      .set({ breakEnd: endTime })
+      .where(
+        and(
+          eq(attendanceBreaks.attendanceId, attendanceId),
+          isNull(attendanceBreaks.breakEnd)
+        )
+      );
   }
 
   // ============================================================================
