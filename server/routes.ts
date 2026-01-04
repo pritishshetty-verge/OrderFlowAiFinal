@@ -1731,6 +1731,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get today's attendance for all team members (bulk endpoint for Team Management)
+  app.get("/api/attendance/team-today", async (req, res) => {
+    try {
+      const attendanceRecords = await storage.getTeamTodayAttendance();
+      res.json(attendanceRecords);
+    } catch (error) {
+      console.error("Error fetching team attendance:", error);
+      res.status(500).json({ error: "Failed to fetch team attendance" });
+    }
+  });
+
   // ============================================================================
   // CALLS API (IVR Click-to-Call Integration)
   // ============================================================================

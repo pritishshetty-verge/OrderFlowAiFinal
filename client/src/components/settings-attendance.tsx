@@ -39,11 +39,12 @@ export function AttendanceSettings({ userRole }: AttendanceProps) {
   // Clock In Mutation
   const clockInMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/api/attendance/clock-in", {});
+      return await apiRequest("POST", "/api/attendance/clock-in", { userId });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/records"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/team-today"] });
       toast({
         title: "Clocked In",
         description: "Your attendance has been recorded.",
@@ -61,11 +62,12 @@ export function AttendanceSettings({ userRole }: AttendanceProps) {
   // Clock Out Mutation
   const clockOutMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/api/attendance/clock-out", {});
+      return await apiRequest("POST", "/api/attendance/clock-out", { userId });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/records"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/team-today"] });
       toast({
         title: "Clocked Out",
         description: "Your work hours have been recorded.",

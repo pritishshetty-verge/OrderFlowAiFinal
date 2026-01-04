@@ -246,6 +246,7 @@ export interface IStorage {
 
   // Attendance
   getTodayAttendance(userId: string): Promise<Attendance | undefined>;
+  getTeamTodayAttendance(): Promise<Attendance[]>;
   clockIn(userId: string, time: Date): Promise<Attendance>;
   clockOut(userId: string, time: Date, totalHours: number): Promise<Attendance | undefined>;
   getAttendanceRecords(filters?: {
@@ -1117,6 +1118,24 @@ export class DbStorage implements IStorage {
         )
       );
     return record;
+  }
+
+  async getTeamTodayAttendance(): Promise<Attendance[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const records = await db
+      .select()
+      .from(attendance)
+      .where(
+        and(
+          gte(attendance.date, today),
+          lte(attendance.date, tomorrow)
+        )
+      );
+    return records;
   }
 
   async clockIn(userId: string, time: Date): Promise<Attendance> {

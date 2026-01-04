@@ -95,7 +95,7 @@ export function AssignOrderDialog({
     assignMutation.mutate({ orderId: order.id, userId: selectedUserId });
   };
 
-  // Filter available users (agents and managers, present status)
+  // Filter available users (agents and managers, active status)
   const availableUsers = users?.filter(
     (u) => (u.role === "agent" || u.role === "manager") && u.presenceStatus === "present"
   ) || [];
@@ -158,7 +158,7 @@ export function AssignOrderDialog({
                             variant="outline"
                             className="ml-auto bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20"
                           >
-                            Present
+                            Active
                           </Badge>
                         </div>
                       </SelectItem>

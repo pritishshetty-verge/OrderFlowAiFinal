@@ -11,8 +11,8 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Users, UserCheck, UserX, Package } from "lucide-react";
-import type { User, Order as BackendOrder } from "@shared/schema";
+import { Users, UserCheck, UserX, Package, Clock } from "lucide-react";
+import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 
 interface TeamPresenceProps {
   userRole: "admin" | "manager" | "agent";
@@ -29,6 +29,17 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
   // Fetch orders to calculate workload
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders"],
+  });
+
+  // Fetch today's attendance for all team members
+  const { data: teamAttendance, isLoading: attendanceLoading } = useQuery<Attendance[]>({
+    queryKey: ["/api/attendance/team-today"],
+  });
+
+  // Create a map of userId -> attendance record for quick lookup
+  const attendanceMap = new Map<string, Attendance>();
+  teamAttendance?.forEach((record) => {
+    attendanceMap.set(record.userId, record);
   });
 
   // Calculate workload for each user
@@ -48,8 +59,8 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({
-        title: "Presence Updated",
-        description: "Team member presence status has been updated.",
+        title: "Status Updated",
+        description: "Team member account status has been updated.",
       });
     },
     onError: (error: Error) => {
@@ -78,13 +89,13 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
     }
   };
 
-  const isLoading = usersLoading || ordersLoading;
+  const isLoading = usersLoading || ordersLoading || attendanceLoading;
 
   // Filter to agents and managers only
   const teamMembers = users?.filter((u) => u.role === "agent" || u.role === "manager") || [];
 
-  // Stats
-  const presentCount = teamMembers.filter((u) => u.presenceStatus === "present").length;
+  // Stats - count Active (presenceStatus="present"), not daily attendance
+  const activeCount = teamMembers.filter((u) => u.presenceStatus === "present").length;
   const onLeaveCount = teamMembers.filter((u) => u.presenceStatus === "onleave").length;
   const totalWorkload = Array.from(workloadMap.values()).reduce((sum, count) => sum + count, 0);
 
@@ -109,16 +120,16 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
           </CardContent>
         </Card>
 
-        <Card data-testid="card-present-members">
+        <Card data-testid="card-active-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Present</CardTitle>
+            <CardTitle className="text-sm font-medium">Active</CardTitle>
             <UserCheck className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold text-green-500">{presentCount}</div>
+              <div className="text-2xl font-bold text-green-500">{activeCount}</div>
             )}
           </CardContent>
         </Card>
@@ -155,11 +166,11 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
       {/* Team Members Table */}
       <Card data-testid="card-team-members">
         <CardHeader>
-          <CardTitle>Team Presence & Workload</CardTitle>
+          <CardTitle>Team Status & Workload</CardTitle>
           <CardDescription>
             {canManagePresence 
-              ? "Manage presence status and view current workload for each team member"
-              : "View team presence status and current workload distribution"
+              ? "Manage account status and view current workload for each team member"
+              : "View team account status and current workload distribution"
             }
           </CardDescription>
         </CardHeader>
@@ -179,7 +190,9 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
             <div className="space-y-4">
               {teamMembers.map((member) => {
                 const workload = workloadMap.get(member.id) || 0;
-                const presenceStatus = member.presenceStatus || "inactive";
+                const accountStatus = member.presenceStatus || "inactive";
+                const memberAttendance = attendanceMap.get(member.id);
+                const isClockedIn = memberAttendance?.clockInTime && !memberAttendance?.clockOutTime;
                 
                 return (
                   <div
@@ -207,33 +220,50 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                         </div>
                       </div>
 
-                      {/* Presence Status */}
+                      {/* Today's Attendance - conditional display */}
+                      <div className="w-24 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Attendance</p>
+                        <div data-testid={`attendance-${member.id}`}>
+                          {accountStatus !== "present" ? (
+                            <span className="text-muted-foreground">—</span>
+                          ) : isClockedIn ? (
+                            <Badge className="bg-green-500 text-white">
+                              <Clock className="h-3 w-3 mr-1" />
+                              Present
+                            </Badge>
+                          ) : (
+                            <Badge variant="destructive">Absent</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Account Status (was Presence) */}
                       <div className="w-40">
-                        <p className="text-xs text-muted-foreground mb-1">Presence</p>
+                        <p className="text-xs text-muted-foreground mb-1">Account Status</p>
                         {canManagePresence ? (
                           <Select
-                            value={presenceStatus}
+                            value={accountStatus}
                             onValueChange={(value) => handlePresenceChange(member.id, value as "present" | "onleave" | "inactive")}
                             disabled={updatePresenceMutation.isPending}
                           >
-                            <SelectTrigger data-testid={`select-presence-${member.id}`}>
+                            <SelectTrigger data-testid={`select-status-${member.id}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="present">Present</SelectItem>
+                              <SelectItem value="present">Active</SelectItem>
                               <SelectItem value="onleave">On Leave</SelectItem>
                               <SelectItem value="inactive">Inactive</SelectItem>
                             </SelectContent>
                           </Select>
                         ) : (
-                          <div data-testid={`presence-display-${member.id}`}>
-                            {presenceStatus === "present" && (
-                              <Badge className="bg-green-500 text-white">Present</Badge>
+                          <div data-testid={`status-display-${member.id}`}>
+                            {accountStatus === "present" && (
+                              <Badge className="bg-green-500 text-white">Active</Badge>
                             )}
-                            {presenceStatus === "onleave" && (
+                            {accountStatus === "onleave" && (
                               <Badge variant="outline">On Leave</Badge>
                             )}
-                            {presenceStatus === "inactive" && (
+                            {accountStatus === "inactive" && (
                               <Badge variant="secondary">Inactive</Badge>
                             )}
                           </div>
