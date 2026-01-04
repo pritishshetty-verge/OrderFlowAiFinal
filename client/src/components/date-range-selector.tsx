@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -81,13 +81,14 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     return { from: initial.startDate, to: initial.endDate };
   });
 
-  useEffect(() => {
-    if (isOpen) {
+  const handleOpenChange = (open: boolean) => {
+    if (open) {
       setPendingRange(committedRange);
       setPendingPreset(committedPreset);
       setPendingCalendarRange({ from: committedRange.startDate, to: committedRange.endDate });
     }
-  }, [isOpen, committedRange, committedPreset]);
+    setIsOpen(open);
+  };
 
   const handlePresetClick = (preset: DatePreset) => {
     const range = getPresetRange(preset);
@@ -141,7 +142,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
   };
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
