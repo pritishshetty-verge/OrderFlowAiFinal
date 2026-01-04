@@ -354,11 +354,14 @@ export interface IStorage {
   getLastProductSync(): Promise<Date | null>;
 
   // Dashboard Metrics
-  getDashboardMetrics(): Promise<{
-    totalOrders: number;
+  getDashboardMetrics(userId?: string): Promise<{
+    assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
-    codOrders: number;
+    followUpOrders: number;
+    fulfilledOrders: number;
+    deliveredOrders: number;
+    pendingOrders: number;
   }>;
 }
 
@@ -2086,29 +2089,38 @@ export class DbStorage implements IStorage {
   // ============================================================================
 
   async getDashboardMetrics(userId?: string): Promise<{
-    totalOrders: number;
+    assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
-    codOrders: number;
+    followUpOrders: number;
+    fulfilledOrders: number;
+    deliveredOrders: number;
+    pendingOrders: number;
   }> {
     // Build base query - if userId provided, filter ALL metrics by assignedTo
     const baseCondition = userId ? eq(orders.assignedTo, userId) : undefined;
 
     const [result] = await db
       .select({
-        totalOrders: count(),
+        assignedOrders: count(),
         confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
         cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
-        codOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.paymentMethod} = 'cod')`,
+        followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
+        fulfilledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} IN ('fulfilled', 'shipped'))`,
+        deliveredOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} = 'delivered')`,
+        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Pending' OR ${orders.callStatus} IS NULL)`,
       })
       .from(orders)
       .where(baseCondition);
 
     return {
-      totalOrders: result?.totalOrders || 0,
+      assignedOrders: result?.assignedOrders || 0,
       confirmedOrders: Number(result?.confirmedOrders) || 0,
       cancelledOrders: Number(result?.cancelledOrders) || 0,
-      codOrders: Number(result?.codOrders) || 0,
+      followUpOrders: Number(result?.followUpOrders) || 0,
+      fulfilledOrders: Number(result?.fulfilledOrders) || 0,
+      deliveredOrders: Number(result?.deliveredOrders) || 0,
+      pendingOrders: Number(result?.pendingOrders) || 0,
     };
   }
 }

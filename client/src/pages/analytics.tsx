@@ -56,10 +56,13 @@ function InsightCard({ title, value, change, trend, icon }: InsightCardProps) {
 }
 
 interface DashboardMetrics {
-  totalOrders: number;
+  assignedOrders: number;
   confirmedOrders: number;
   cancelledOrders: number;
-  codOrders: number;
+  followUpOrders: number;
+  fulfilledOrders: number;
+  deliveredOrders: number;
+  pendingOrders: number;
 }
 
 export default function AnalyticsPage() {
@@ -112,22 +115,14 @@ export default function AnalyticsPage() {
 
   // Use backend metrics for stats
   const stats = {
-    totalOrders: metrics?.totalOrders || 0,
+    assignedOrders: metrics?.assignedOrders || 0,
     confirmedOrders: metrics?.confirmedOrders || 0,
     cancelledOrders: metrics?.cancelledOrders || 0,
-    codOrders: metrics?.codOrders || 0,
+    followUpOrders: metrics?.followUpOrders || 0,
+    fulfilledOrders: metrics?.fulfilledOrders || 0,
+    deliveredOrders: metrics?.deliveredOrders || 0,
+    pendingOrders: metrics?.pendingOrders || 0,
   };
-
-  const conversionRate = useMemo(
-    () =>
-      stats.totalOrders > 0 ? ((stats.confirmedOrders / stats.totalOrders) * 100).toFixed(1) : "0",
-    [stats]
-  );
-
-  const activeAgents = useMemo(
-    () => new Set(allOrders.filter((o) => o.assignedTo).map((o) => o.assignedTo)).size,
-    [allOrders]
-  );
 
   // Build personalized greeting
   const userName = currentUser?.fullName || currentUser?.username || "there";
@@ -157,40 +152,8 @@ export default function AnalyticsPage() {
           </>
         ) : (
           <>
-            {/* KPI Cards */}
+            {/* KPI Cards - 8 metrics in 2 rows of 4 */}
             <DashboardStats {...stats} />
-
-            {/* Additional Insights */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <InsightCard
-                title="Conversion Rate"
-                value={`${conversionRate}%`}
-                change="Based on confirmed orders"
-                trend="up"
-                icon={<Activity className="h-4 w-4 text-muted-foreground" />}
-              />
-              <InsightCard
-                title="Active Agents"
-                value={activeAgents.toString()}
-                change="With assigned orders"
-                trend="up"
-                icon={<Activity className="h-4 w-4 text-muted-foreground" />}
-              />
-              <InsightCard
-                title="Pending Actions"
-                value={(stats.totalOrders - stats.confirmedOrders - stats.cancelledOrders).toString()}
-                change="Orders awaiting verification"
-                trend="down"
-                icon={<DollarSign className="h-4 w-4 text-muted-foreground" />}
-              />
-              <InsightCard
-                title="Cancellation Rate"
-                value={stats.totalOrders > 0 ? `${((stats.cancelledOrders / stats.totalOrders) * 100).toFixed(1)}%` : "0%"}
-                change="Focus on reduction"
-                trend="down"
-                icon={<TrendingDown className="h-4 w-4 text-muted-foreground" />}
-              />
-            </div>
 
             {/* Charts and Visualizations */}
             <AnalyticsOverview orders={allOrders} />
