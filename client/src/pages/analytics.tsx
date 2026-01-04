@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { AnalyticsOverview } from "@/components/analytics-overview";
@@ -6,8 +6,7 @@ import { DashboardStats } from "@/components/dashboard-stats";
 import { DateRangeSelector } from "@/components/date-range-selector";
 import type { Order } from "@/components/orders-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { TrendingUp, TrendingDown, Activity, DollarSign } from "lucide-react";
+import { TrendingUp, TrendingDown } from "lucide-react";
 import { startOfDay, endOfDay } from "date-fns";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
@@ -124,8 +123,6 @@ export default function AnalyticsPage() {
     return ordersResponse.orders.map((order) => transformOrder(order, usersData));
   }, [ordersResponse, usersData]);
 
-  const isLoading = metricsLoading || ordersLoading || usersLoading;
-
   // Use backend metrics for stats
   const stats = {
     assignedOrders: metrics?.assignedOrders || 0,
@@ -147,36 +144,16 @@ export default function AnalyticsPage() {
       description="Your analytics dashboard and performance metrics"
     >
       <div className="p-6 space-y-6">
-        {isLoading ? (
-          <>
-            <div className="grid gap-4 md:grid-cols-4">
-              <Skeleton className="h-32" data-testid="skeleton-stat-1" />
-              <Skeleton className="h-32" data-testid="skeleton-stat-2" />
-              <Skeleton className="h-32" data-testid="skeleton-stat-3" />
-              <Skeleton className="h-32" data-testid="skeleton-stat-4" />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <Skeleton className="h-32" data-testid="skeleton-insight-1" />
-              <Skeleton className="h-32" data-testid="skeleton-insight-2" />
-              <Skeleton className="h-32" data-testid="skeleton-insight-3" />
-              <Skeleton className="h-32" data-testid="skeleton-insight-4" />
-            </div>
-            <Skeleton className="h-96 w-full" data-testid="skeleton-chart" />
-          </>
-        ) : (
-          <>
-            {/* Date Range Selector */}
-            <div className="flex items-center justify-between">
-              <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
-            </div>
-            
-            {/* KPI Cards - 8 metrics in 2 rows of 4 */}
-            <DashboardStats {...stats} />
+        {/* Date Range Selector - always visible */}
+        <div className="flex items-center justify-between">
+          <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
+        </div>
+        
+        {/* KPI Cards - 8 metrics in 2 rows of 4 */}
+        <DashboardStats {...stats} isLoading={metricsLoading} />
 
-            {/* Charts and Visualizations */}
-            <AnalyticsOverview orders={allOrders} />
-          </>
-        )}
+        {/* Charts and Visualizations */}
+        <AnalyticsOverview orders={allOrders} />
       </div>
     </PageLayout>
   );
