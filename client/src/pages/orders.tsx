@@ -86,6 +86,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [callStatusFilter, setCallStatusFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
   
+  // Sort order state - 'desc' = Newest First (default), 'asc' = Oldest First
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  
   // Pagination state - lifted from OrdersTable for server-side pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -179,7 +182,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch],
+    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -215,6 +218,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       if (debouncedSearch.trim()) {
         params.append("search", debouncedSearch.trim());
       }
+      
+      // Sort order
+      params.append("sortOrder", sortOrder);
       
       const res = await fetch(`/api/orders?${params.toString()}`, {
         credentials: "include",
@@ -411,6 +417,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setSearchQuery("");
     setDebouncedSearch(""); // Clear immediately to avoid stale API call
     setPaymentFilter("all");
+    setSortOrder("desc"); // Reset to default Newest First
     // Reset admin filters too
     if (isAdmin) {
       setCallStatusFilter("all");
@@ -519,6 +526,8 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             onAgentChange={handleAgentFilterChange}
             callStatusValue={callStatusFilter}
             agentValue={agentFilter}
+            onSortChange={setSortOrder}
+            sortValue={sortOrder}
           />
 
           {/* Loading state - only affects table content, not filter bar */}

@@ -132,7 +132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -160,6 +160,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         callStatus: callStatus as string | undefined,
         agentId: agentId as string | undefined, // 'unassigned' for NULL, or agent UUID
         search: search as string | undefined, // Server-side search across orderId, customerName, phone, email, city
+        sortOrder: (sortOrder === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc', // Default to 'desc' (Newest First)
         startDate: parsedStartDate,
         endDate: parsedEndDate,
         limit: parsedLimit,

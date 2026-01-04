@@ -27,6 +27,9 @@ interface OrdersFilterProps {
   onAgentChange?: (value: string) => void;
   callStatusValue?: string;
   agentValue?: string;
+  // Sort order
+  onSortChange?: (value: 'asc' | 'desc') => void;
+  sortValue?: 'asc' | 'desc';
 }
 
 export function OrdersFilter({
@@ -40,6 +43,8 @@ export function OrdersFilter({
   onAgentChange,
   callStatusValue = "all",
   agentValue = "all",
+  onSortChange,
+  sortValue = "desc",
 }: OrdersFilterProps) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -56,6 +61,17 @@ export function OrdersFilter({
       </div>
 
       <div className="flex flex-wrap gap-2">
+        {/* Sort By dropdown */}
+        <Select value={sortValue} onValueChange={(v) => onSortChange?.(v as 'asc' | 'desc')}>
+          <SelectTrigger className="w-[140px]" data-testid="select-sort-order">
+            <SelectValue placeholder="Sort By" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="desc">Newest First</SelectItem>
+            <SelectItem value="asc">Oldest First</SelectItem>
+          </SelectContent>
+        </Select>
+
         <Select onValueChange={onPaymentChange} defaultValue="all">
           <SelectTrigger className="w-[140px]" data-testid="select-payment-filter">
             <SelectValue placeholder="Payment" />

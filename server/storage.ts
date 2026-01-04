@@ -185,6 +185,7 @@ export interface IStorage {
     assignedTo?: string;
     agentId?: string; // 'unassigned' for NULL, or agent UUID
     search?: string; // Server-side search across orderId, customerName, phone
+    sortOrder?: 'asc' | 'desc'; // Sort by date: 'asc' = Oldest First, 'desc' = Newest First (default)
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -594,6 +595,7 @@ export class DbStorage implements IStorage {
     assignedTo?: string;
     agentId?: string; // 'unassigned' for NULL, or agent UUID
     search?: string; // Server-side search across orderId, customerName, phone, email, city
+    sortOrder?: 'asc' | 'desc'; // Sort by date: 'asc' = Oldest First, 'desc' = Newest First (default)
     startDate?: Date; // Filter orders created on or after this date
     endDate?: Date; // Filter orders created on or before this date
     limit?: number;
@@ -717,7 +719,7 @@ export class DbStorage implements IStorage {
       .from(orders)
       .leftJoin(users, eq(orders.assignedTo, users.id))
       .where(whereClause)
-      .orderBy(desc(orders.shopifyCreatedAt))
+      .orderBy(filters?.sortOrder === 'asc' ? asc(orders.shopifyCreatedAt) : desc(orders.shopifyCreatedAt))
       .limit(filters?.limit ?? 50)
       .offset(filters?.offset ?? 0);
 
