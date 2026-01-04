@@ -354,7 +354,7 @@ export interface IStorage {
   getLastProductSync(): Promise<Date | null>;
 
   // Dashboard Metrics
-  getDashboardMetrics(userId?: string): Promise<{
+  getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date): Promise<{
     assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
@@ -2088,7 +2088,7 @@ export class DbStorage implements IStorage {
   // DASHBOARD METRICS
   // ============================================================================
 
-  async getDashboardMetrics(userId?: string): Promise<{
+  async getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date): Promise<{
     assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
@@ -2097,8 +2097,23 @@ export class DbStorage implements IStorage {
     deliveredOrders: number;
     pendingOrders: number;
   }> {
-    // Build base query - if userId provided, filter ALL metrics by assignedTo
-    const baseCondition = userId ? eq(orders.assignedTo, userId) : undefined;
+    // Build conditions array for filtering
+    const conditions = [];
+    
+    // Filter by agent's assignments (join with order_assignments)
+    if (userId) {
+      conditions.push(eq(orderAssignments.userId, userId));
+    }
+    
+    // Filter by assignment date range (cohort analysis)
+    if (startDate) {
+      conditions.push(gte(orderAssignments.createdAt, startDate));
+    }
+    if (endDate) {
+      conditions.push(lte(orderAssignments.createdAt, endDate));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [result] = await db
       .select({
@@ -2108,10 +2123,11 @@ export class DbStorage implements IStorage {
         followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
         fulfilledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} IN ('fulfilled', 'shipped'))`,
         deliveredOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} = 'delivered')`,
-        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Pending' OR ${orders.callStatus} IS NULL)`,
+        pendingOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.status} = 'pending')`,
       })
-      .from(orders)
-      .where(baseCondition);
+      .from(orderAssignments)
+      .innerJoin(orders, eq(orderAssignments.orderId, orders.id))
+      .where(whereClause);
 
     return {
       assignedOrders: result?.assignedOrders || 0,

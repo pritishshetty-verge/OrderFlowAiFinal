@@ -1,12 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { AnalyticsOverview } from "@/components/analytics-overview";
 import { DashboardStats } from "@/components/dashboard-stats";
+import { DateRangeSelector } from "@/components/date-range-selector";
 import type { Order } from "@/components/orders-table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, Activity, DollarSign } from "lucide-react";
+import { startOfDay, endOfDay } from "date-fns";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Transform backend order to frontend order format
@@ -71,6 +73,15 @@ export default function AnalyticsPage() {
   const userId = localStorage.getItem("userId");
   const userRole = localStorage.getItem("userRole");
   
+  // Date range state - default to "Today"
+  const [dateRange, setDateRange] = useState(() => {
+    const now = new Date();
+    return {
+      startDate: startOfDay(now),
+      endDate: endOfDay(now),
+    };
+  });
+  
   // Fetch current user profile for personalized greeting
   const { data: currentUser } = useQuery<User>({
     queryKey: [`/api/users/by-email/${userEmail}`],
@@ -80,14 +91,16 @@ export default function AnalyticsPage() {
   // For agents, filter metrics by their assigned orders; for admins, show global metrics
   const metricsUserId = userRole === "agent" ? userId : undefined;
   
-  // Fetch dashboard metrics from backend aggregation query
+  // Fetch dashboard metrics from backend aggregation query with date range
   const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
-    queryKey: ["/api/dashboard/metrics", metricsUserId],
+    queryKey: ["/api/dashboard/metrics", metricsUserId, dateRange.startDate.toISOString(), dateRange.endDate.toISOString()],
     queryFn: async () => {
-      const url = metricsUserId 
-        ? `/api/dashboard/metrics?userId=${metricsUserId}`
-        : "/api/dashboard/metrics";
-      const res = await fetch(url, { credentials: "include" });
+      const params = new URLSearchParams();
+      if (metricsUserId) params.append("userId", metricsUserId);
+      params.append("startDate", dateRange.startDate.toISOString());
+      params.append("endDate", dateRange.endDate.toISOString());
+      
+      const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch metrics");
       return res.json();
     },
@@ -152,6 +165,11 @@ export default function AnalyticsPage() {
           </>
         ) : (
           <>
+            {/* Date Range Selector */}
+            <div className="flex items-center justify-between">
+              <DateRangeSelector onDateChange={setDateRange} />
+            </div>
+            
             {/* KPI Cards - 8 metrics in 2 rows of 4 */}
             <DashboardStats {...stats} />
 

@@ -177,10 +177,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Dashboard metrics - aggregated counts for overview
   // Pass userId query param to filter metrics by agent's assigned orders
+  // Pass startDate/endDate to filter by order_assignments.created_at (cohort analysis)
   app.get("/api/dashboard/metrics", async (req, res) => {
     try {
       const userId = req.query.userId as string | undefined;
-      const metrics = await storage.getDashboardMetrics(userId);
+      const { startDate, endDate } = req.query;
+      
+      let parsedStartDate: Date | undefined;
+      let parsedEndDate: Date | undefined;
+      
+      if (startDate) {
+        const d = new Date(startDate as string);
+        if (!Number.isNaN(d.getTime())) parsedStartDate = d;
+      }
+      if (endDate) {
+        const d = new Date(endDate as string);
+        if (!Number.isNaN(d.getTime())) parsedEndDate = d;
+      }
+      
+      const metrics = await storage.getDashboardMetrics(userId, parsedStartDate, parsedEndDate);
       res.json(metrics);
     } catch (error) {
       console.error("Error fetching dashboard metrics:", error);
