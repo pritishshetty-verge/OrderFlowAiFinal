@@ -2124,7 +2124,7 @@ export class DbStorage implements IStorage {
 
     // Query 2: Get CONFIRMED count from order_status_history (action-based metrics)
     // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
-    const confirmedConditions = [eq(orderStatusHistory.status, 'Confirmed')];
+    const confirmedConditions = [eq(orderStatusHistory.status, 'confirmed')];
     if (startDate) {
       confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     }
@@ -2152,7 +2152,7 @@ export class DbStorage implements IStorage {
       .where(and(...confirmedConditions));
 
     // Query 3: Get CANCELLED count from order_status_history (action-based metrics)
-    const cancelledConditions = [eq(orderStatusHistory.status, 'Cancelled')];
+    const cancelledConditions = [eq(orderStatusHistory.status, 'cancelled')];
     if (startDate) {
       cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
     }
