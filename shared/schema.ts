@@ -487,6 +487,7 @@ export const attendance = pgTable("attendance", {
   date: timestamp("date").notNull(),
   clockInTime: timestamp("clock_in_time"),
   clockOutTime: timestamp("clock_out_time"),
+  status: text("status").notNull().default("present"), // present, absent, leave
   totalHours: decimal("total_hours", { precision: 5, scale: 2 }), // Calculated field
   notes: text("notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

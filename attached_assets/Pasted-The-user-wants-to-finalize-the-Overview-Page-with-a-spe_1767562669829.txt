@@ -1,0 +1,50 @@
+The user wants to finalize the Overview Page with a specific "3-Column" layout for the bottom section. They also want to replace the old attendance system entirely.
+
+**Part 1: Legacy Cleanup (Crucial)**
+1.  **Remove:** Delete the "Attendance" tab from the Settings page.
+2.  **Clean:** Remove the old Clock In/Clock Out logic associated with that settings tab to prevent conflicts.
+
+**Part 2: Database Requirement**
+Check if a table named `attendance` exists.
+* **If NO:** Create a table `attendance` with:
+    * `id` (UUID/Int)
+    * `user_id` (Foreign Key to Agent)
+    * `date` (Date type)
+    * `clock_in` (Timestamp)
+    * `clock_out` (Timestamp)
+    * `status` (Enum/String: 'present', 'absent', 'leave')
+    * `total_hours` (Float)
+
+**Part 3: The New Overview Layout (3 Columns)**
+Add a new row below the metrics grid with 3 cards of equal width (Span 4 out of 12).
+
+**Left Column - Card 1: Attendance Calendar (The "Streak")**
+* **Visual:** A compact Monthly Calendar (just the days grid).
+* **Logic:** Query `attendance` table.
+* **Indicators:**
+    * **Green Dot:** Present.
+    * **Yellow Dot:** Leave.
+    * **Red/Grey:** Absent.
+    * **Today:** Highlighted border.
+
+**Middle Column - Card 2: Hourly Activity Chart (The "Hustle")**
+* **Visual:** **Stacked Area Chart** (Smoother than bars for small spaces).
+* **Data Source:** `order_status_history` for Today.
+* **X-Axis:** Hours (9 AM - 9 PM).
+* **Y-Axis:** Total Actions.
+* **Segments:**
+    * Confirmed (Green area).
+    * Cancelled (Red area).
+    * Follow-up (Blue area).
+* **Style:** Minimalist (Hide grid lines if possible) to look good in the narrow card.
+
+**Right Column - Card 3: Shift Controller (The Clock)**
+* **Visual:** Action-focused Card.
+* **Logic:** Check `attendance` for Today.
+* **States:**
+    * **Offline:** Big Green "CLOCK IN" button.
+    * **Online:** Digital Timer (HH:MM:SS) + Red "CLOCK OUT" button.
+* **Action:** Clicking updates the `attendance` table and immediately adds a green dot to the Calendar in Col 1.
+
+**Action:**
+Implement this 3-column layout. Ensure the Activity Chart uses a responsive container so it fits the narrower width.

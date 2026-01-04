@@ -4,7 +4,6 @@ import { PreferencesSettings } from "@/components/settings-preferences";
 import { NotificationsSettings } from "@/components/settings-notifications";
 import { SecuritySettings } from "@/components/settings-security";
 import { ShopifySettingsMain } from "@/components/settings-shopify-main";
-import { AttendanceSettings } from "@/components/settings-attendance";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
@@ -60,11 +59,8 @@ export default function SettingsPage() {
       description="Manage your account settings and preferences"
     >
       <div className="p-6 space-y-6">
-        <Tabs defaultValue="attendance" className="space-y-6">
+        <Tabs defaultValue="preferences" className="space-y-6">
           <TabsList data-testid="tabs-settings">
-            <TabsTrigger value="attendance" data-testid="tab-attendance">
-              Attendance
-            </TabsTrigger>
             <TabsTrigger value="preferences" data-testid="tab-preferences">
               Preferences
             </TabsTrigger>
@@ -80,10 +76,6 @@ export default function SettingsPage() {
               </TabsTrigger>
             )}
           </TabsList>
-
-          <TabsContent value="attendance">
-            <AttendanceSettings userRole={userRole} />
-          </TabsContent>
 
           <TabsContent value="preferences">
             <PreferencesSettings />
