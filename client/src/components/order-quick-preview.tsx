@@ -59,15 +59,13 @@ function parseHistoryNote(note: string | null | undefined): { systemText: string
   return { systemText: note, userNote: null };
 }
 
-// Fieldset-style note component with bordered box and "Notes" legend
+// Fieldset-style note component using native fieldset/legend for automatic border-cut
 function FieldsetNote({ note }: { note: string }) {
   return (
-    <div className="relative mt-3 rounded-md border border-zinc-800 dark:border-zinc-400 px-3 py-2">
-      <span className="absolute -top-2 left-2 bg-white dark:bg-zinc-900 px-1 text-[10px] font-medium text-muted-foreground">
-        Notes
-      </span>
+    <fieldset className="mt-3 rounded-md border border-zinc-800 dark:border-zinc-400 px-3 py-2">
+      <legend className="px-1 text-[10px] font-medium text-muted-foreground">Notes</legend>
       <p className="text-xs text-foreground">{note}</p>
-    </div>
+    </fieldset>
   );
 }
 
