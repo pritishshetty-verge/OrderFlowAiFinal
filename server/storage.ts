@@ -2097,29 +2097,22 @@ export class DbStorage implements IStorage {
     deliveredOrders: number;
     pendingOrders: number;
   }> {
-    // Build conditions array for filtering
-    const conditions = [];
-    
-    // Filter by agent's assignments (join with order_assignments)
+    // Query 1: Get workload metrics from order_assignments + orders (current state)
+    const assignmentConditions = [];
     if (userId) {
-      conditions.push(eq(orderAssignments.userId, userId));
+      assignmentConditions.push(eq(orderAssignments.userId, userId));
     }
-    
-    // Filter by assignment date range (cohort analysis)
     if (startDate) {
-      conditions.push(gte(orderAssignments.createdAt, startDate));
+      assignmentConditions.push(gte(orderAssignments.createdAt, startDate));
     }
     if (endDate) {
-      conditions.push(lte(orderAssignments.createdAt, endDate));
+      assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
+    const assignmentWhereClause = assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined;
 
-    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-
-    const [result] = await db
+    const [workloadResult] = await db
       .select({
         assignedOrders: count(),
-        confirmedOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Confirmed')`,
-        cancelledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Cancelled')`,
         followUpOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.callStatus} = 'Follow Up')`,
         fulfilledOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} IN ('fulfilled', 'shipped'))`,
         deliveredOrders: sql<number>`COUNT(*) FILTER (WHERE ${orders.fulfillmentStatus} = 'delivered')`,
@@ -2127,16 +2120,73 @@ export class DbStorage implements IStorage {
       })
       .from(orderAssignments)
       .innerJoin(orders, eq(orderAssignments.orderId, orders.id))
-      .where(whereClause);
+      .where(assignmentWhereClause);
+
+    // Query 2: Get CONFIRMED count from order_status_history (action-based metrics)
+    // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
+    const confirmedConditions = [eq(orderStatusHistory.status, 'Confirmed')];
+    if (startDate) {
+      confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    }
+    if (endDate) {
+      confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    }
+    if (userId) {
+      confirmedConditions.push(
+        or(
+          eq(orderStatusHistory.changedBy, userId),
+          and(
+            sql`${orderStatusHistory.changedBy} IS NULL`,
+            eq(orderAssignments.userId, userId)
+          )
+        )!
+      );
+    }
+
+    const [confirmedResult] = await db
+      .select({
+        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
+      })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(and(...confirmedConditions));
+
+    // Query 3: Get CANCELLED count from order_status_history (action-based metrics)
+    const cancelledConditions = [eq(orderStatusHistory.status, 'Cancelled')];
+    if (startDate) {
+      cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    }
+    if (endDate) {
+      cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    }
+    if (userId) {
+      cancelledConditions.push(
+        or(
+          eq(orderStatusHistory.changedBy, userId),
+          and(
+            sql`${orderStatusHistory.changedBy} IS NULL`,
+            eq(orderAssignments.userId, userId)
+          )
+        )!
+      );
+    }
+
+    const [cancelledResult] = await db
+      .select({
+        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
+      })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(and(...cancelledConditions));
 
     return {
-      assignedOrders: result?.assignedOrders || 0,
-      confirmedOrders: Number(result?.confirmedOrders) || 0,
-      cancelledOrders: Number(result?.cancelledOrders) || 0,
-      followUpOrders: Number(result?.followUpOrders) || 0,
-      fulfilledOrders: Number(result?.fulfilledOrders) || 0,
-      deliveredOrders: Number(result?.deliveredOrders) || 0,
-      pendingOrders: Number(result?.pendingOrders) || 0,
+      assignedOrders: workloadResult?.assignedOrders || 0,
+      confirmedOrders: Number(confirmedResult?.count) || 0,
+      cancelledOrders: Number(cancelledResult?.count) || 0,
+      followUpOrders: Number(workloadResult?.followUpOrders) || 0,
+      fulfilledOrders: Number(workloadResult?.fulfilledOrders) || 0,
+      deliveredOrders: Number(workloadResult?.deliveredOrders) || 0,
+      pendingOrders: Number(workloadResult?.pendingOrders) || 0,
     };
   }
 }
