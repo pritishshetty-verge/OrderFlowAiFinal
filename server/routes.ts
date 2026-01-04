@@ -132,13 +132,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
       const parsedPage = page ? parseInt(page as string) : 1;
       // Calculate offset from page number: page 1 = offset 0, page 2 = offset 50, etc.
       const calculatedOffset = (parsedPage - 1) * parsedLimit;
+      
+      // Parse date filters (ISO strings from frontend) - validate to avoid Invalid Date
+      let parsedStartDate: Date | undefined;
+      let parsedEndDate: Date | undefined;
+      
+      if (startDate) {
+        const d = new Date(startDate as string);
+        if (!Number.isNaN(d.getTime())) parsedStartDate = d;
+      }
+      if (endDate) {
+        const d = new Date(endDate as string);
+        if (!Number.isNaN(d.getTime())) parsedEndDate = d;
+      }
 
       const filters = {
         status: status as string | undefined,
@@ -146,7 +159,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         assignedTo: assignedTo as string | undefined,
         callStatus: callStatus as string | undefined,
         agentId: agentId as string | undefined, // 'unassigned' for NULL, or agent UUID
-        search: search as string | undefined, // Server-side search across orderId, customerName, phone
+        search: search as string | undefined, // Server-side search across orderId, customerName, phone, email, city
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
         limit: parsedLimit,
         offset: calculatedOffset,
       };

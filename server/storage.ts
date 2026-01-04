@@ -593,7 +593,9 @@ export class DbStorage implements IStorage {
     paymentMethod?: string;
     assignedTo?: string;
     agentId?: string; // 'unassigned' for NULL, or agent UUID
-    search?: string; // Server-side search across orderId, customerName, phone
+    search?: string; // Server-side search across orderId, customerName, phone, email, city
+    startDate?: Date; // Filter orders created on or after this date
+    endDate?: Date; // Filter orders created on or before this date
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -631,14 +633,28 @@ export class DbStorage implements IStorage {
       }
     }
     
-    // Server-side search: ILIKE matching across shopifyOrderId, customerName, customerPhone
+    // Server-side search: ILIKE matching across 5 fields (grouped in parentheses)
+    // Fields: shopifyOrderId, customerName, customerPhone, customerEmail, shippingCity
     if (filters?.search && filters.search.trim()) {
       const searchPattern = `%${filters.search.trim()}%`;
       conditions.push(sql`(
         ${orders.shopifyOrderId} ILIKE ${searchPattern} OR
         ${orders.customerName} ILIKE ${searchPattern} OR
-        ${orders.customerPhone} ILIKE ${searchPattern}
+        ${orders.customerPhone} ILIKE ${searchPattern} OR
+        ${orders.customerEmail} ILIKE ${searchPattern} OR
+        ${orders.shippingCity} ILIKE ${searchPattern}
       )`);
+    }
+    
+    // Server-side date filtering on shopifyCreatedAt
+    if (filters?.startDate) {
+      conditions.push(gte(orders.shopifyCreatedAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      // Add 1 day to endDate to include the entire day
+      const endOfDay = new Date(filters.endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(lte(orders.shopifyCreatedAt, endOfDay));
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
