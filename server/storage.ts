@@ -634,11 +634,11 @@ export class DbStorage implements IStorage {
     }
     
     // Server-side search: ILIKE matching across 5 fields (grouped in parentheses)
-    // Fields: shopifyOrderId, customerName, customerPhone, customerEmail, shippingCity
+    // Fields: shopifyOrderNumber (visual order #), customerName, customerPhone, customerEmail, shippingCity
     if (filters?.search && filters.search.trim()) {
       const searchPattern = `%${filters.search.trim()}%`;
       conditions.push(sql`(
-        ${orders.shopifyOrderId} ILIKE ${searchPattern} OR
+        ${orders.shopifyOrderNumber} ILIKE ${searchPattern} OR
         ${orders.customerName} ILIKE ${searchPattern} OR
         ${orders.customerPhone} ILIKE ${searchPattern} OR
         ${orders.customerEmail} ILIKE ${searchPattern} OR
