@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -8,12 +8,13 @@ import type { DateRange as CalendarDateRange } from "react-day-picker";
 
 type DatePreset = "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "custom";
 
-interface DateRangeOutput {
+export interface DateRangeOutput {
   startDate: Date;
   endDate: Date;
 }
 
 interface DateRangeSelectorProps {
+  dateRange: DateRangeOutput;
   onDateChange: (range: DateRangeOutput) => void;
 }
 
@@ -47,7 +48,10 @@ const getPresetRange = (preset: DatePreset): DateRangeOutput => {
   }
 };
 
-const detectPresetFromRange = (range: DateRangeOutput): DatePreset => {
+const detectPresetFromRange = (range: DateRangeOutput | undefined): DatePreset => {
+  if (!range?.startDate || !range?.endDate) {
+    return "today";
+  }
   const rangeStart = startOfDay(range.startDate);
   const rangeEnd = startOfDay(range.endDate);
 
@@ -68,24 +72,47 @@ const getPresetLabel = (preset: DatePreset): string | null => {
   return found ? found.label : null;
 };
 
-export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
+export function DateRangeSelector({ dateRange, onDateChange }: DateRangeSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   
-  const [committedRange, setCommittedRange] = useState<DateRangeOutput>(() => getPresetRange("today"));
-  const [committedPreset, setCommittedPreset] = useState<DatePreset>("today");
+  // Fallback range for initialization
+  const initialRange = dateRange ?? getPresetRange("today");
   
-  const [pendingRange, setPendingRange] = useState<DateRangeOutput>(() => getPresetRange("today"));
-  const [pendingPreset, setPendingPreset] = useState<DatePreset>("today");
-  const [pendingCalendarRange, setPendingCalendarRange] = useState<CalendarDateRange | undefined>(() => {
-    const initial = getPresetRange("today");
-    return { from: initial.startDate, to: initial.endDate };
-  });
+  // Pending state for draft selection before Apply
+  const [pendingRange, setPendingRange] = useState<DateRangeOutput>(() => initialRange);
+  const [pendingPreset, setPendingPreset] = useState<DatePreset>(() => detectPresetFromRange(initialRange));
+  const [pendingCalendarRange, setPendingCalendarRange] = useState<CalendarDateRange | undefined>(() => ({
+    from: initialRange.startDate,
+    to: initialRange.endDate,
+  }));
+
+  // Derive display label from dateRange prop using useMemo
+  const displayLabel = useMemo(() => {
+    const range = dateRange ?? getPresetRange("today");
+    const detectedPreset = detectPresetFromRange(range);
+    const presetLabel = getPresetLabel(detectedPreset);
+    
+    if (presetLabel && detectedPreset !== "custom") {
+      return presetLabel;
+    }
+    
+    const { startDate, endDate } = range;
+    const startYear = startDate.getFullYear();
+    const endYear = endDate.getFullYear();
+    
+    if (startYear === endYear) {
+      return `${format(startDate, "MMM d")} - ${format(endDate, "MMM d, yyyy")}`;
+    }
+    return `${format(startDate, "MMM d, yyyy")} - ${format(endDate, "MMM d, yyyy")}`;
+  }, [dateRange]);
 
   const handleOpenChange = (open: boolean) => {
     if (open) {
-      setPendingRange(committedRange);
-      setPendingPreset(committedPreset);
-      setPendingCalendarRange({ from: committedRange.startDate, to: committedRange.endDate });
+      // Reset pending state to current committed value (from prop)
+      const range = dateRange ?? getPresetRange("today");
+      setPendingRange(range);
+      setPendingPreset(detectPresetFromRange(range));
+      setPendingCalendarRange({ from: range.startDate, to: range.endDate });
     }
     setIsOpen(open);
   };
@@ -114,8 +141,6 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
 
   const handleApply = (e?: { preventDefault: () => void }) => {
     if (e) e.preventDefault();
-    setCommittedRange(pendingRange);
-    setCommittedPreset(pendingPreset);
     onDateChange(pendingRange);
     setIsOpen(false);
   };
@@ -123,24 +148,6 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
   const handleCancel = (e?: { preventDefault: () => void }) => {
     if (e) e.preventDefault();
     setIsOpen(false);
-  };
-
-  const formatDisplayLabel = (): string => {
-    const detectedPreset = detectPresetFromRange(committedRange);
-    const presetLabel = getPresetLabel(detectedPreset);
-    
-    if (presetLabel && detectedPreset !== "custom") {
-      return presetLabel;
-    }
-    
-    const { startDate, endDate } = committedRange;
-    const startYear = startDate.getFullYear();
-    const endYear = endDate.getFullYear();
-    
-    if (startYear === endYear) {
-      return `${format(startDate, "MMM d")} - ${format(endDate, "MMM d, yyyy")}`;
-    }
-    return `${format(startDate, "MMM d, yyyy")} - ${format(endDate, "MMM d, yyyy")}`;
   };
 
   return (
@@ -153,7 +160,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
           data-testid="btn-date-range-trigger"
         >
           <CalendarIcon className="mr-2 h-4 w-4" />
-          <span>{formatDisplayLabel()}</span>
+          <span>{displayLabel}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">

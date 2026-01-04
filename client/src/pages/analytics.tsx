@@ -167,7 +167,7 @@ export default function AnalyticsPage() {
           <>
             {/* Date Range Selector */}
             <div className="flex items-center justify-between">
-              <DateRangeSelector onDateChange={setDateRange} />
+              <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
             </div>
             
             {/* KPI Cards - 8 metrics in 2 rows of 4 */}
