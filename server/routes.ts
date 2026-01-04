@@ -1747,12 +1747,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Calculate total hours
+      // Close any open breaks before clocking out
+      await storage.closeOpenBreaksForAttendance(existing.id, now);
+
+      // Get all breaks and calculate total break duration
+      const breaks = await storage.getBreaksByAttendanceId(existing.id);
+      let totalBreakMs = 0;
+      for (const brk of breaks) {
+        if (brk.breakStart && brk.breakEnd) {
+          totalBreakMs += new Date(brk.breakEnd).getTime() - new Date(brk.breakStart).getTime();
+        }
+      }
+      const totalBreakHours = totalBreakMs / (1000 * 60 * 60);
+
+      // Calculate total hours: (ClockOut - ClockIn) - BreakDuration
       const clockInTime = new Date(existing.clockInTime);
-      const totalHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+      const rawHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
+      const totalHours = Math.max(0, rawHours - totalBreakHours);
 
       const attendance = await storage.clockOutById(existing.id, now, totalHours);
-      res.json({ success: true, attendance });
+      res.json({ success: true, attendance, breakDeducted: totalBreakHours.toFixed(2) });
     } catch (error) {
       console.error("Error clocking out:", error);
       res.status(500).json({ error: "Failed to clock out" });
@@ -1811,6 +1825,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching team attendance:", error);
       res.status(500).json({ error: "Failed to fetch team attendance" });
+    }
+  });
+
+  // Start a break (sets status to 'break')
+  app.post("/api/attendance/break/start", async (req, res) => {
+    try {
+      const { userId, localDate } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      // Get attendance for the date
+      const now = new Date();
+      const dateStr = localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate) 
+        ? localDate 
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      const attendance = await storage.getAttendanceByDate(userId, dateStr);
+      if (!attendance || !attendance.clockInTime) {
+        return res.status(400).json({ error: "Not clocked in today" });
+      }
+
+      if (attendance.clockOutTime) {
+        return res.status(400).json({ error: "Already clocked out today" });
+      }
+
+      // Check if already on break
+      const activeBreak = await storage.getActiveBreak(attendance.id);
+      if (activeBreak) {
+        return res.status(400).json({ error: "Already on break", activeBreak });
+      }
+
+      // Start the break
+      const breakRecord = await storage.startBreak(attendance.id);
+
+      // Update attendance status to 'break'
+      const { attendance: attendanceSchema } = await import("@shared/schema");
+      await db
+        .update(attendanceSchema)
+        .set({ status: 'break', updatedAt: new Date() })
+        .where(eq(attendanceSchema.id, attendance.id));
+
+      res.json({ success: true, breakRecord });
+    } catch (error) {
+      console.error("Error starting break:", error);
+      res.status(500).json({ error: "Failed to start break" });
+    }
+  });
+
+  // End a break (sets status back to 'present')
+  app.post("/api/attendance/break/end", async (req, res) => {
+    try {
+      const { userId, localDate } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+      }
+
+      const now = new Date();
+      const dateStr = localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate) 
+        ? localDate 
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      const attendance = await storage.getAttendanceByDate(userId, dateStr);
+      if (!attendance) {
+        return res.status(400).json({ error: "No attendance record found" });
+      }
+
+      // Find the active break
+      const activeBreak = await storage.getActiveBreak(attendance.id);
+      if (!activeBreak) {
+        return res.status(400).json({ error: "Not currently on break" });
+      }
+
+      // End the break
+      const breakRecord = await storage.endBreak(activeBreak.id, now);
+
+      // Update attendance status back to 'present'
+      const { attendance: attendanceSchema } = await import("@shared/schema");
+      await db
+        .update(attendanceSchema)
+        .set({ status: 'present', updatedAt: new Date() })
+        .where(eq(attendanceSchema.id, attendance.id));
+
+      res.json({ success: true, breakRecord });
+    } catch (error) {
+      console.error("Error ending break:", error);
+      res.status(500).json({ error: "Failed to end break" });
+    }
+  });
+
+  // Get active break for a user's today attendance
+  app.get("/api/attendance/break/active/:userId", async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const dateParam = req.query.date as string | undefined;
+
+      const now = new Date();
+      const dateStr = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) 
+        ? dateParam 
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+      const attendance = await storage.getAttendanceByDate(userId, dateStr);
+      if (!attendance) {
+        return res.json(null);
+      }
+
+      const activeBreak = await storage.getActiveBreak(attendance.id);
+      res.json(activeBreak || null);
+    } catch (error) {
+      console.error("Error fetching active break:", error);
+      res.status(500).json({ error: "Failed to fetch active break" });
+    }
+  });
+
+  // Get all breaks for a specific attendance record
+  app.get("/api/attendance/:attendanceId/breaks", async (req, res) => {
+    try {
+      const { attendanceId } = req.params;
+      const breaks = await storage.getBreaksByAttendanceId(attendanceId);
+      res.json(breaks);
+    } catch (error) {
+      console.error("Error fetching breaks:", error);
+      res.status(500).json({ error: "Failed to fetch breaks" });
     }
   });
 

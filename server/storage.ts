@@ -1154,10 +1154,23 @@ export class DbStorage implements IStorage {
         const day = sessionDate.getDate();
         const endOfDay = new Date(year, month, day, 23, 59, 59, 0);
         
-        // Calculate total hours from clockIn to end of that day
+        // SAFETY: Close any open breaks at 23:59:59 to prevent NaN in payroll calculation
+        await this.closeOpenBreaksForAttendance(session.id, endOfDay);
+        
+        // Get all breaks and calculate total break duration
+        const breaks = await this.getBreaksByAttendanceId(session.id);
+        let totalBreakMs = 0;
+        for (const brk of breaks) {
+          if (brk.breakStart && brk.breakEnd) {
+            totalBreakMs += new Date(brk.breakEnd).getTime() - new Date(brk.breakStart).getTime();
+          }
+        }
+        const totalBreakHours = totalBreakMs / (1000 * 60 * 60);
+        
+        // Calculate total hours: (ClockOut - ClockIn) - BreakDuration
         const clockInTime = new Date(session.clockInTime);
-        const totalMs = endOfDay.getTime() - clockInTime.getTime();
-        const totalHours = Math.max(0, totalMs / (1000 * 60 * 60));
+        const rawMs = endOfDay.getTime() - clockInTime.getTime();
+        const totalHours = Math.max(0, (rawMs / (1000 * 60 * 60)) - totalBreakHours);
         
         // Update the record
         await db
@@ -1165,6 +1178,7 @@ export class DbStorage implements IStorage {
           .set({
             clockOutTime: endOfDay,
             totalHours: totalHours.toFixed(2),
+            status: 'present', // Reset status from 'break' if applicable
             updatedAt: new Date(),
           })
           .where(eq(attendance.id, session.id));
