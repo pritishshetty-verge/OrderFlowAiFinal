@@ -71,8 +71,14 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  // Initialize search from URL param for persistence on refresh
+  const initialSearch = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("search") || "";
+  }, []); // Only run once on mount
+  
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("all");
   
@@ -87,7 +93,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Agent scope toggle from global context (controlled by header toggle)
   const { isGlobalView } = useScope();
   
-  // Debounce search query (500ms delay)
+  // Debounce search query (500ms delay) - only updates debouncedSearch, never touches searchQuery
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
@@ -95,10 +101,30 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return () => clearTimeout(timer);
   }, [searchQuery]);
   
-  // Reset pagination when search changes
+  // Reset pagination when debounced search changes
   useEffect(() => {
     setCurrentPage(1);
   }, [debouncedSearch]);
+  
+  // Sync debouncedSearch to URL for persistence on refresh
+  useEffect(() => {
+    // Build URL preserving other params but updating search
+    const params = new URLSearchParams(window.location.search);
+    const currentSearch = params.get("search") || "";
+    
+    // Only update if the value actually changed to avoid loops
+    if (currentSearch !== debouncedSearch) {
+      if (debouncedSearch) {
+        params.set("search", debouncedSearch);
+      } else {
+        params.delete("search");
+      }
+      const newSearch = params.toString();
+      const newUrl = newSearch ? `/orders?${newSearch}` : "/orders";
+      // Use replace to avoid polluting browser history with every keystroke
+      setLocation(newUrl, { replace: true });
+    }
+  }, [debouncedSearch, setLocation]);
   
   // Reset pagination when scope changes
   useEffect(() => {
@@ -373,7 +399,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   const handleSearch = (value: string) => {
     setSearchQuery(value);
-    setCurrentPage(1); // Reset to first page when searching
+    // Pagination reset is handled by the debouncedSearch effect
   };
 
   const handlePaymentChange = (value: string) => {
@@ -383,6 +409,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   const handleClearFilters = () => {
     setSearchQuery("");
+    setDebouncedSearch(""); // Clear immediately to avoid stale API call
     setPaymentFilter("all");
     // Reset admin filters too
     if (isAdmin) {
@@ -490,6 +517,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             <div className="space-y-4">
               <OrdersFilter
                 onSearch={handleSearch}
+                searchValue={searchQuery}
                 onPaymentChange={handlePaymentChange}
                 onClearFilters={handleClearFilters}
                 isAdmin={isAdmin}

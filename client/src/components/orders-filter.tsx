@@ -17,6 +17,7 @@ interface Agent {
 
 interface OrdersFilterProps {
   onSearch?: (value: string) => void;
+  searchValue?: string;
   onPaymentChange?: (value: string) => void;
   onClearFilters?: () => void;
   // Admin-only filters
@@ -30,6 +31,7 @@ interface OrdersFilterProps {
 
 export function OrdersFilter({
   onSearch,
+  searchValue = "",
   onPaymentChange,
   onClearFilters,
   isAdmin = false,
@@ -47,6 +49,7 @@ export function OrdersFilter({
           type="search"
           placeholder="Search by order ID, customer name, phone..."
           className="pl-9"
+          value={searchValue}
           onChange={(e) => onSearch?.(e.target.value)}
           data-testid="input-search-orders"
         />
