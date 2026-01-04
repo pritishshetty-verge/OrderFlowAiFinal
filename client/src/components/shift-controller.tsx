@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,19 @@ export function ShiftController() {
   const userId = localStorage.getItem("userId") || "";
   const [elapsedTime, setElapsedTime] = useState<number>(0);
 
+  // Get user's local date in YYYY-MM-DD format (timezone-safe)
+  const localDate = useMemo(() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
   const { data: todayAttendance, isLoading } = useQuery<Attendance | null>({
-    queryKey: ["/api/attendance/today", userId],
+    queryKey: ["/api/attendance/today", userId, localDate],
     queryFn: async () => {
-      const res = await fetch(`/api/attendance/today/${userId}`, { credentials: "include" });
+      const res = await fetch(`/api/attendance/today/${userId}?date=${localDate}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch attendance");
       return res.json();
     },

@@ -1761,9 +1761,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get today's attendance for a user
+  // Get today's attendance for a user (client-driven date for timezone safety)
   app.get("/api/attendance/today/:userId", async (req, res) => {
     try {
+      const userId = req.params.userId;
+      const dateParam = req.query.date as string | undefined;
+      
+      // If client provides a date (YYYY-MM-DD), use timezone-safe lookup
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        // First, auto-close any ghost sessions from previous days
+        await storage.autoCloseGhostSessions(userId, dateParam);
+        
+        // Then get attendance for the specific date
+        const attendance = await storage.getAttendanceByDate(userId, dateParam);
+        return res.json(attendance || null);
+      }
+      
+      // Fallback to legacy server-time based lookup
       const attendance = await storage.getTodayAttendance(req.params.userId);
       res.json(attendance || null);
     } catch (error) {

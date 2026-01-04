@@ -1,4 +1,4 @@
-import {  eq, and, desc, asc, or, count, gte, lte, sql } from "drizzle-orm";
+import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull } from "drizzle-orm";
 import { db } from "./db";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
@@ -245,6 +245,8 @@ export interface IStorage {
   updateCredentialTestStatus(id: string, status: 'success' | 'failed', message?: string): Promise<void>;
 
   // Attendance
+  autoCloseGhostSessions(userId: string, currentDateStr: string): Promise<void>;
+  getAttendanceByDate(userId: string, dateStr: string): Promise<Attendance | undefined>;
   getTodayAttendance(userId: string): Promise<Attendance | undefined>;
   getTeamTodayAttendance(): Promise<Attendance[]>;
   clockIn(userId: string, time: Date): Promise<Attendance>;
@@ -1112,6 +1114,71 @@ export class DbStorage implements IStorage {
   // ATTENDANCE
   // ============================================================================
 
+  // Auto-close any ghost sessions (unclosed sessions from previous days)
+  async autoCloseGhostSessions(userId: string, currentDateStr: string): Promise<void> {
+    // Parse the client's current date
+    const currentDate = new Date(currentDateStr + 'T00:00:00');
+    
+    // Find all unclosed sessions for this user from dates before currentDate
+    const ghostSessions = await db
+      .select()
+      .from(attendance)
+      .where(
+        and(
+          eq(attendance.userId, userId),
+          isNull(attendance.clockOutTime),
+          isNotNull(attendance.clockInTime),
+          lt(attendance.date, currentDate)
+        )
+      );
+
+    // Close each ghost session at 23:59:59 of its original date
+    for (const session of ghostSessions) {
+      if (session.clockInTime && session.date) {
+        // Create 23:59:59 on the session's original date
+        const sessionDate = new Date(session.date);
+        const endOfDay = new Date(sessionDate);
+        endOfDay.setHours(23, 59, 59, 0);
+        
+        // Calculate total hours: (23:59:59 - clockInTime) in hours
+        const clockInTime = new Date(session.clockInTime);
+        const totalMs = endOfDay.getTime() - clockInTime.getTime();
+        const totalHours = Math.max(0, totalMs / (1000 * 60 * 60));
+        
+        // Update the record
+        await db
+          .update(attendance)
+          .set({
+            clockOutTime: endOfDay,
+            totalHours: totalHours.toFixed(2),
+            updatedAt: new Date(),
+          })
+          .where(eq(attendance.id, session.id));
+      }
+    }
+  }
+
+  // Get attendance for a specific date (client-driven, timezone-safe)
+  async getAttendanceByDate(userId: string, dateStr: string): Promise<Attendance | undefined> {
+    // Parse YYYY-MM-DD format and create date range for that day
+    const targetDate = new Date(dateStr + 'T00:00:00');
+    const nextDate = new Date(dateStr + 'T00:00:00');
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    const [record] = await db
+      .select()
+      .from(attendance)
+      .where(
+        and(
+          eq(attendance.userId, userId),
+          gte(attendance.date, targetDate),
+          lt(attendance.date, nextDate)
+        )
+      );
+    return record;
+  }
+
+  // Legacy method - uses server time (kept for backward compatibility)
   async getTodayAttendance(userId: string): Promise<Attendance | undefined> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
