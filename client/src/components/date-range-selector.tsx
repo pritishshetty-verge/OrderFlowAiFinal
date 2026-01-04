@@ -95,6 +95,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     setPendingPreset(preset);
     setPendingRange(range);
     setPendingCalendarRange({ from: range.startDate, to: range.endDate });
+    handleApply(range, preset);
   };
 
   const handleCalendarSelect = (range: CalendarDateRange | undefined) => {
@@ -112,10 +113,12 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     }
   };
 
-  const handleApply = () => {
-    setCommittedRange(pendingRange);
-    setCommittedPreset(pendingPreset);
-    onDateChange(pendingRange);
+  const handleApply = (overrideRange?: DateRangeOutput, overridePreset?: DatePreset) => {
+    const rangeToApply = overrideRange || pendingRange;
+    const presetToApply = overridePreset || pendingPreset;
+    setCommittedRange(rangeToApply);
+    setCommittedPreset(presetToApply);
+    onDateChange(rangeToApply);
     setIsOpen(false);
   };
 
@@ -194,7 +197,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
             </Button>
             <Button
               size="sm"
-              onClick={handleApply}
+              onClick={() => handleApply()}
               disabled={!pendingCalendarRange?.from || !pendingCalendarRange?.to}
               data-testid="btn-date-apply"
             >
