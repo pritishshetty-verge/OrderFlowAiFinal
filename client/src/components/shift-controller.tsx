@@ -6,14 +6,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { LogIn, LogOut, Clock, Timer } from "lucide-react";
+import { LogIn, LogOut, Clock, Timer, Coffee, Play } from "lucide-react";
 import { format } from "date-fns";
-import type { Attendance } from "@shared/schema";
+import type { Attendance, AttendanceBreak } from "@shared/schema";
 
 export function ShiftController() {
   const { toast } = useToast();
   const userId = localStorage.getItem("userId") || "";
   const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [breakElapsedTime, setBreakElapsedTime] = useState<number>(0);
 
   // Get user's local date in YYYY-MM-DD format (timezone-safe)
   const localDate = useMemo(() => {
@@ -35,9 +36,25 @@ export function ShiftController() {
     refetchInterval: 60000,
   });
 
-  const isClockedIn = todayAttendance?.clockInTime && !todayAttendance?.clockOutTime;
-  const isClockedOut = todayAttendance?.clockInTime && todayAttendance?.clockOutTime;
+  // Query for active break
+  const { data: activeBreak } = useQuery<AttendanceBreak | null>({
+    queryKey: ["/api/attendance/break/active", userId, localDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/attendance/break/active/${userId}?date=${localDate}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch active break");
+      return res.json();
+    },
+    enabled: !!userId && !!todayAttendance?.clockInTime && !todayAttendance?.clockOutTime,
+    refetchInterval: 30000,
+  });
 
+  // Derive states
+  const isClockedIn = !!todayAttendance?.clockInTime && !todayAttendance?.clockOutTime;
+  const isClockedOut = !!todayAttendance?.clockInTime && !!todayAttendance?.clockOutTime;
+  const isOnBreak = isClockedIn && !!activeBreak;
+  const isWorking = isClockedIn && !isOnBreak;
+
+  // Timer for working time
   useEffect(() => {
     if (!isClockedIn || !todayAttendance?.clockInTime) {
       setElapsedTime(0);
@@ -54,6 +71,24 @@ export function ShiftController() {
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
   }, [isClockedIn, todayAttendance?.clockInTime]);
+
+  // Timer for break time
+  useEffect(() => {
+    if (!isOnBreak || !activeBreak?.breakStart) {
+      setBreakElapsedTime(0);
+      return;
+    }
+
+    const breakStartTime = new Date(activeBreak.breakStart).getTime();
+    const updateBreakTimer = () => {
+      const now = Date.now();
+      setBreakElapsedTime(Math.floor((now - breakStartTime) / 1000));
+    };
+
+    updateBreakTimer();
+    const interval = setInterval(updateBreakTimer, 1000);
+    return () => clearInterval(interval);
+  }, [isOnBreak, activeBreak?.breakStart]);
 
   const clockInMutation = useMutation({
     mutationFn: async () => {
@@ -83,6 +118,7 @@ export function ShiftController() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/break/active"] });
       toast({
         title: "Clocked Out",
         description: "Great work today! Your hours have been recorded.",
@@ -91,6 +127,48 @@ export function ShiftController() {
     onError: (error: Error) => {
       toast({
         title: "Clock Out Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const startBreakMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/attendance/break/start", { userId, localDate });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/break/active"] });
+      toast({
+        title: "Break Started",
+        description: "Enjoy your break! Resume when you're ready.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Start Break Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const endBreakMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/attendance/break/end", { userId, localDate });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/break/active"] });
+      toast({
+        title: "Break Ended",
+        description: "Welcome back! You're now on shift.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "End Break Failed",
         description: error.message,
         variant: "destructive",
       });
@@ -108,7 +186,10 @@ export function ShiftController() {
     if (isClockedOut) {
       return <Badge variant="secondary" className="text-xs" data-testid="badge-shift-complete">Shift Complete</Badge>;
     }
-    if (isClockedIn) {
+    if (isOnBreak) {
+      return <Badge variant="outline" className="text-xs" data-testid="badge-on-break">On Break</Badge>;
+    }
+    if (isWorking) {
       return <Badge className="bg-green-500/10 text-green-600 border-green-500/20 text-xs" data-testid="badge-on-shift">On Shift</Badge>;
     }
     return <Badge variant="outline" className="text-xs" data-testid="badge-not-started">Not Started</Badge>;
@@ -117,7 +198,7 @@ export function ShiftController() {
   return (
     <Card data-testid="card-shift-controller">
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <Clock className="h-4 w-4" />
             Shift Control
@@ -130,11 +211,24 @@ export function ShiftController() {
           <Skeleton className="h-24 w-full" />
         ) : (
           <div className="space-y-3">
-            {isClockedIn && (
+            {/* Timer Display */}
+            {isOnBreak && (
+              <div className="text-center py-2">
+                <div className="flex items-center justify-center gap-2 text-muted-foreground text-xs mb-1">
+                  <Coffee className="h-3 w-3" />
+                  On Break
+                </div>
+                <div className="text-2xl font-mono font-bold tabular-nums" data-testid="text-break-time">
+                  {formatElapsedTime(breakElapsedTime)}
+                </div>
+              </div>
+            )}
+
+            {isWorking && (
               <div className="text-center py-2">
                 <div className="flex items-center justify-center gap-2 text-muted-foreground text-xs mb-1">
                   <Timer className="h-3 w-3" />
-                  Shift Duration
+                  Working
                 </div>
                 <div className="text-2xl font-mono font-bold tabular-nums" data-testid="text-elapsed-time">
                   {formatElapsedTime(elapsedTime)}
@@ -157,7 +251,9 @@ export function ShiftController() {
               </div>
             )}
 
+            {/* Action Buttons */}
             <div className="flex flex-col gap-2">
+              {/* State: Offline - Show Clock In */}
               {!todayAttendance?.clockInTime && (
                 <Button
                   className="w-full"
@@ -170,20 +266,47 @@ export function ShiftController() {
                 </Button>
               )}
 
-              {isClockedIn && (
+              {/* State: Working - Show Take Break + Clock Out */}
+              {isWorking && (
+                <>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => startBreakMutation.mutate()}
+                    disabled={startBreakMutation.isPending}
+                    data-testid="button-take-break"
+                  >
+                    <Coffee className="h-4 w-4 mr-2" />
+                    {startBreakMutation.isPending ? "Starting Break..." : "Take Break"}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="w-full"
+                    onClick={() => clockOutMutation.mutate()}
+                    disabled={clockOutMutation.isPending}
+                    data-testid="button-clock-out"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    {clockOutMutation.isPending ? "Clocking Out..." : "End Shift"}
+                  </Button>
+                </>
+              )}
+
+              {/* State: On Break - Show Resume Work only */}
+              {isOnBreak && (
                 <Button
-                  variant="outline"
                   className="w-full"
-                  onClick={() => clockOutMutation.mutate()}
-                  disabled={clockOutMutation.isPending}
-                  data-testid="button-clock-out"
+                  onClick={() => endBreakMutation.mutate()}
+                  disabled={endBreakMutation.isPending}
+                  data-testid="button-resume-work"
                 >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  {clockOutMutation.isPending ? "Clocking Out..." : "Clock Out"}
+                  <Play className="h-4 w-4 mr-2" />
+                  {endBreakMutation.isPending ? "Resuming..." : "Resume Work"}
                 </Button>
               )}
             </div>
 
+            {/* Clock In/Out Times */}
             {todayAttendance?.clockInTime && (
               <div className="pt-2 border-t text-xs text-muted-foreground">
                 <div className="flex justify-between">
