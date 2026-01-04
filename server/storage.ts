@@ -363,6 +363,14 @@ export interface IStorage {
     deliveredOrders: number;
     pendingOrders: number;
   }>;
+
+  // Hourly Activity for Dashboard Chart
+  getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date): Promise<Array<{
+    hour: string;
+    confirmed: number;
+    cancelled: number;
+    followUp: number;
+  }>>;
 }
 
 export class DbStorage implements IStorage {
@@ -2233,6 +2241,81 @@ export class DbStorage implements IStorage {
       deliveredOrders: Number(deliveredResult?.count) || 0,
       pendingOrders: Number(pendingResult?.count) || 0,
     };
+  }
+
+  // ============================================================================
+  // HOURLY ACTIVITY CHART
+  // ============================================================================
+
+  async getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date): Promise<Array<{
+    hour: string;
+    confirmed: number;
+    cancelled: number;
+    followUp: number;
+  }>> {
+    // Build attribution condition for user filtering
+    const buildAttributionCondition = (userIdParam: string) => or(
+      eq(orderStatusHistory.changedBy, userIdParam),
+      and(
+        sql`${orderStatusHistory.changedBy} IS NULL`,
+        eq(orderAssignments.userId, userIdParam)
+      )
+    )!;
+
+    // Get hourly counts from order_status_history grouped by hour and status
+    const conditions = [];
+    if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) conditions.push(buildAttributionCondition(userId));
+    
+    // Only count confirmed, cancelled, and follow_up status changes
+    conditions.push(sql`LOWER(${orderStatusHistory.status}) IN ('confirmed', 'cancelled', 'follow up', 'follow_up')`);
+
+    const results = await db
+      .select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})::integer`,
+        status: sql<string>`LOWER(${orderStatusHistory.status})`,
+        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
+      })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .groupBy(sql`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})`, orderStatusHistory.status);
+
+    // Initialize all hours (9 AM to 9 PM typical work hours, can be adjusted)
+    const hourlyData: Map<number, { confirmed: number; cancelled: number; followUp: number }> = new Map();
+    for (let h = 0; h < 24; h++) {
+      hourlyData.set(h, { confirmed: 0, cancelled: 0, followUp: 0 });
+    }
+
+    // Populate with actual data
+    for (const row of results) {
+      const hourData = hourlyData.get(row.hour);
+      if (hourData) {
+        const status = row.status.toLowerCase().replace(' ', '_');
+        if (status === 'confirmed') {
+          hourData.confirmed = Number(row.count);
+        } else if (status === 'cancelled') {
+          hourData.cancelled = Number(row.count);
+        } else if (status === 'follow_up' || status === 'follow up') {
+          hourData.followUp = Number(row.count);
+        }
+      }
+    }
+
+    // Convert to array format, filtering to working hours (9 AM - 9 PM)
+    const formattedData = [];
+    for (let h = 9; h <= 21; h++) {
+      const data = hourlyData.get(h) || { confirmed: 0, cancelled: 0, followUp: 0 };
+      formattedData.push({
+        hour: `${h}:00`,
+        confirmed: data.confirmed,
+        cancelled: data.cancelled,
+        followUp: data.followUp,
+      });
+    }
+
+    return formattedData;
   }
 }
 

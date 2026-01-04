@@ -203,6 +203,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get hourly activity for dashboard chart (from order_status_history)
+  app.get("/api/dashboard/hourly-activity", async (req, res) => {
+    try {
+      const userId = req.query.userId as string | undefined;
+      const { startDate, endDate } = req.query;
+      
+      let parsedStartDate: Date | undefined;
+      let parsedEndDate: Date | undefined;
+      
+      if (startDate) {
+        const d = new Date(startDate as string);
+        if (!Number.isNaN(d.getTime())) parsedStartDate = d;
+      }
+      if (endDate) {
+        const d = new Date(endDate as string);
+        if (!Number.isNaN(d.getTime())) parsedEndDate = d;
+      }
+      
+      const data = await storage.getHourlyActivity(userId, parsedStartDate, parsedEndDate);
+      res.json({ data });
+    } catch (error) {
+      console.error("Error fetching hourly activity:", error);
+      res.status(500).json({ error: "Failed to fetch hourly activity" });
+    }
+  });
+
   // Get single order by ID
   app.get("/api/orders/:id", async (req, res) => {
     try {
