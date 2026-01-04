@@ -1,60 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
-import { AnalyticsOverview } from "@/components/analytics-overview";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { DateRangeSelector } from "@/components/date-range-selector";
-import type { Order } from "@/components/orders-table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { AttendanceCalendar } from "@/components/attendance-calendar";
+import { HourlyActivityChart } from "@/components/hourly-activity-chart";
+import { ShiftController } from "@/components/shift-controller";
 import { startOfDay, endOfDay } from "date-fns";
-import type { Order as BackendOrder, User } from "@shared/schema";
-
-// Transform backend order to frontend order format
-function transformOrder(order: BackendOrder, users: User[]): Order {
-  const assignedUser = order.assignedTo
-    ? users.find((u) => u.id === order.assignedTo)
-    : undefined;
-
-  return {
-    id: order.id,
-    shopifyOrderId: order.shopifyOrderNumber,
-    customerName: order.customerName,
-    customerPhone: order.customerPhone,
-    items: order.itemsSummary || "",
-    total: parseFloat(order.totalPrice),
-    paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
-    status: order.status as Order["status"],
-    assignedTo: assignedUser?.fullName,
-    createdAt: new Date(order.shopifyCreatedAt),
-  };
-}
-
-interface InsightCardProps {
-  title: string;
-  value: string;
-  change: string;
-  trend: "up" | "down";
-  icon: React.ReactNode;
-}
-
-function InsightCard({ title, value, change, trend, icon }: InsightCardProps) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        {icon}
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        <p className={`text-xs flex items-center gap-1 mt-1 ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-          {trend === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-          {change}
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
+import type { User } from "@shared/schema";
 
 interface DashboardMetrics {
   assignedOrders: number;
@@ -106,23 +59,6 @@ export default function AnalyticsPage() {
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time updates
   });
 
-  // Fetch orders from backend with auto-refresh every 30 seconds
-  const { data: ordersResponse, isLoading: ordersLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders"],
-    refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
-  });
-
-  // Fetch users for assignment display
-  const { data: usersData, isLoading: usersLoading } = useQuery<User[]>({
-    queryKey: ["/api/users"],
-  });
-
-  // Transform backend orders to frontend format (for charts)
-  const allOrders = useMemo(() => {
-    if (!ordersResponse?.orders || !usersData) return [];
-    return ordersResponse.orders.map((order) => transformOrder(order, usersData));
-  }, [ordersResponse, usersData]);
-
   // Use backend metrics for stats
   const stats = {
     assignedOrders: metrics?.assignedOrders || 0,
@@ -152,8 +88,12 @@ export default function AnalyticsPage() {
         {/* KPI Cards - 8 metrics in 2 rows of 4 */}
         <DashboardStats {...stats} isLoading={metricsLoading} />
 
-        {/* Charts and Visualizations */}
-        <AnalyticsOverview orders={allOrders} />
+        {/* 3-Column Layout: Attendance Calendar | Hourly Activity | Shift Controller */}
+        <div className="grid gap-4 md:grid-cols-3">
+          <AttendanceCalendar />
+          <HourlyActivityChart dateRange={dateRange} />
+          <ShiftController />
+        </div>
       </div>
     </PageLayout>
   );

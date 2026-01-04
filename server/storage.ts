@@ -2275,7 +2275,7 @@ export class DbStorage implements IStorage {
       .select({
         hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})::integer`,
         status: sql<string>`LOWER(${orderStatusHistory.status})`,
-        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
+        count: sql<number>`COUNT(*)`,
       })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
