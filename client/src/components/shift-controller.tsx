@@ -57,7 +57,7 @@ export function ShiftController() {
 
   const clockInMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/api/attendance/clock-in", { userId });
+      return await apiRequest("POST", "/api/attendance/clock-in", { userId, localDate });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
@@ -78,7 +78,7 @@ export function ShiftController() {
 
   const clockOutMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/api/attendance/clock-out", { userId });
+      return await apiRequest("POST", "/api/attendance/clock-out", { userId, localDate });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });

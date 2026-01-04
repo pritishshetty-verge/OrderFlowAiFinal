@@ -250,6 +250,8 @@ export interface IStorage {
   getTodayAttendance(userId: string): Promise<Attendance | undefined>;
   getTeamTodayAttendance(): Promise<Attendance[]>;
   clockIn(userId: string, time: Date): Promise<Attendance>;
+  clockInWithDate(userId: string, time: Date, dateForRecord: Date): Promise<Attendance>;
+  clockOutById(attendanceId: string, time: Date, totalHours: number): Promise<Attendance | undefined>;
   clockOut(userId: string, time: Date, totalHours: number): Promise<Attendance | undefined>;
   getAttendanceRecords(filters?: {
     userId?: string;
@@ -1246,6 +1248,21 @@ export class DbStorage implements IStorage {
     return record;
   }
 
+  // Clock in with explicit date (timezone-safe)
+  async clockInWithDate(userId: string, time: Date, dateForRecord: Date): Promise<Attendance> {
+    // Create new attendance record with the specified date
+    const [record] = await db
+      .insert(attendance)
+      .values({
+        userId,
+        date: dateForRecord,
+        clockInTime: time,
+        status: 'present',
+      })
+      .returning();
+    return record;
+  }
+
   async clockOut(userId: string, time: Date, totalHours: number): Promise<Attendance | undefined> {
     const existing = await this.getTodayAttendance(userId);
 
@@ -1261,6 +1278,20 @@ export class DbStorage implements IStorage {
         updatedAt: new Date(),
       })
       .where(eq(attendance.id, existing.id))
+      .returning();
+    return updated;
+  }
+
+  // Clock out by attendance ID (timezone-safe)
+  async clockOutById(attendanceId: string, time: Date, totalHours: number): Promise<Attendance | undefined> {
+    const [updated] = await db
+      .update(attendance)
+      .set({
+        clockOutTime: time,
+        totalHours: totalHours.toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(eq(attendance.id, attendanceId))
       .returning();
     return updated;
   }

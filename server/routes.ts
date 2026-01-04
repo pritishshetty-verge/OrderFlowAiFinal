@@ -1676,20 +1676,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ATTENDANCE API (HR/Payroll Tracking)
   // ============================================================================
 
-  // Clock in
+  // Clock in (accepts client's local date for timezone safety)
   app.post("/api/attendance/clock-in", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, localDate } = req.body;
 
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
       }
 
       const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      // Use client's local date if provided (YYYY-MM-DD format)
+      // Store as noon UTC to avoid timezone truncation issues
+      let dateForRecord: Date;
+      if (localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+        // Parse YYYY-MM-DD and create a UTC noon timestamp for that date
+        const [year, month, day] = localDate.split('-').map(Number);
+        dateForRecord = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+      } else {
+        // Fallback to server time
+        dateForRecord = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+      }
 
-      // Check if already clocked in today
-      const existing = await storage.getTodayAttendance(userId);
+      // Check if already clocked in for this date
+      const dateStr = localDate || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const existing = await storage.getAttendanceByDate(userId, dateStr);
       if (existing && existing.clockInTime) {
         return res.status(400).json({ 
           error: "Already clocked in today",
@@ -1697,8 +1709,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Create or update attendance record
-      const attendance = await storage.clockIn(userId, now);
+      // Create or update attendance record with client's local date
+      const attendance = await storage.clockInWithDate(userId, now, dateForRecord);
       res.json({ success: true, attendance });
     } catch (error) {
       console.error("Error clocking in:", error);
@@ -1706,19 +1718,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Clock out
+  // Clock out (accepts client's local date for timezone safety)
   app.post("/api/attendance/clock-out", async (req, res) => {
     try {
-      const { userId } = req.body;
+      const { userId, localDate } = req.body;
 
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
       }
 
       const now = new Date();
+      
+      // Use client's local date if provided
+      const dateStr = localDate && /^\d{4}-\d{2}-\d{2}$/.test(localDate) 
+        ? localDate 
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-      // Get today's attendance
-      const existing = await storage.getTodayAttendance(userId);
+      // Get attendance for the specific date
+      const existing = await storage.getAttendanceByDate(userId, dateStr);
       if (!existing || !existing.clockInTime) {
         return res.status(400).json({ error: "Not clocked in today" });
       }
@@ -1734,7 +1751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const clockInTime = new Date(existing.clockInTime);
       const totalHours = (now.getTime() - clockInTime.getTime()) / (1000 * 60 * 60);
 
-      const attendance = await storage.clockOut(userId, now, totalHours);
+      const attendance = await storage.clockOutById(existing.id, now, totalHours);
       res.json({ success: true, attendance });
     } catch (error) {
       console.error("Error clocking out:", error);
