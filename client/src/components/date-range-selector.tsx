@@ -148,6 +148,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
+          type="button"
           variant="outline"
           className="justify-start text-left font-normal"
           data-testid="btn-date-range-trigger"
@@ -163,6 +164,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
               {presets.map((preset) => (
                 <Button
                   key={preset.key}
+                  type="button"
                   variant="ghost"
                   size="sm"
                   className={`justify-start toggle-elevate ${
@@ -188,6 +190,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
           </div>
           <div className="flex items-center justify-end gap-2 border-t p-2">
             <Button
+              type="button"
               variant="ghost"
               size="sm"
               onClick={handleCancel}
@@ -196,6 +199,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
               Cancel
             </Button>
             <Button
+              type="button"
               size="sm"
               onClick={() => handleApply()}
               disabled={!pendingCalendarRange?.from || !pendingCalendarRange?.to}
