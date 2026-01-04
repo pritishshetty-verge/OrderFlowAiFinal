@@ -122,10 +122,24 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Get current user's ID from localStorage for agent filtering
   const localStorageUserId = localStorage.getItem("userId");
   
+  // Map activeTab to API callStatus parameter for server-side filtering
+  const tabToCallStatus: Record<string, string | undefined> = {
+    all: undefined,
+    pending: "Pending",
+    confirmed: "Confirmed",
+    followup: "Follow Up",
+    cancelled: "Cancelled",
+  };
+  
+  // Reset pagination when tab changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab]);
+  
   // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView],
+    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -137,10 +151,22 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         params.append("assignedTo", localStorageUserId);
       }
       
-      // Add admin filters if set
+      // Server-side tab filtering - pass callStatus based on active tab
+      // For admins, callStatusFilter dropdown takes precedence if set
+      let effectiveCallStatus: string | undefined;
       if (isAdmin && callStatusFilter !== "all") {
-        params.append("callStatus", callStatusFilter);
+        // Admin dropdown filter overrides tab
+        effectiveCallStatus = callStatusFilter;
+      } else {
+        // Use tab-based filtering
+        effectiveCallStatus = tabToCallStatus[activeTab];
       }
+      
+      if (effectiveCallStatus) {
+        params.append("callStatus", effectiveCallStatus);
+      }
+      
+      // Admin agent filter
       if (isAdmin && agentFilter !== "all") {
         params.append("agentId", agentFilter);
       }
@@ -228,27 +254,12 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return ordersResponse.orders.map((order) => transformOrder(order));
   }, [ordersResponse, usersData]);
 
-  // Apply tab filters and search/payment filters on top of base filtered orders
+  // Apply search/payment filters on top of server-filtered orders
+  // Tab filtering is now handled server-side via callStatus param
   const filteredOrders = useMemo(() => {
     let filtered = [...baseFilteredOrders];
 
-    // Tab-based filtering (call status)
-    if (activeTab === "all") {
-      // Show all assigned orders, no additional filtering
-    } else if (activeTab === "pending") {
-      // Pending includes orders with "Pending" status OR null/undefined callStatus
-      filtered = filtered.filter((order) => 
-        order.callStatus === "Pending" || !order.callStatus
-      );
-    } else if (activeTab === "confirmed") {
-      filtered = filtered.filter((order) => order.callStatus === "Confirmed");
-    } else if (activeTab === "cancelled") {
-      filtered = filtered.filter((order) => order.callStatus === "Cancelled");
-    } else if (activeTab === "followup") {
-      filtered = filtered.filter((order) => order.callStatus === "Follow Up");
-    }
-
-    // Search filter
+    // Search filter (client-side for current page)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -259,13 +270,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       );
     }
 
-    // Payment method filter
+    // Payment method filter (client-side for current page)
     if (paymentFilter !== "all") {
       filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
     }
 
     return filtered;
-  }, [baseFilteredOrders, activeTab, searchQuery, paymentFilter]);
+  }, [baseFilteredOrders, searchQuery, paymentFilter]);
 
   const isLoading = ordersLoading || usersLoading;
 

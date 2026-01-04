@@ -113,6 +113,10 @@ export async function handleOrderCreated(req: Request, res: Response) {
       ? shopifyOrder.tags.split(',').map((tag: string) => tag.trim()).filter((tag: string) => tag.length > 0)
       : [];
 
+    // Auto-confirm prepaid orders - they skip the call verification queue
+    const isPrepaid = shopifyOrder.financial_status === "paid";
+    const autoCallStatus = isPrepaid ? "Confirmed" : undefined;
+
     // Create order
     const orderData: InsertOrder = {
       shopifyOrderId: shopifyOrder.id.toString(),
@@ -122,6 +126,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
       customerEmail: shopifyOrder.email || null,
       customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
       status: mapShopifyStatus(shopifyOrder.financial_status, shopifyOrder.fulfillment_status, fulfillmentTracking.shipmentStatus, shopifyOrder.cancelled_at),
+      callStatus: autoCallStatus,
       fulfillmentStatus: shopifyOrder.fulfillment_status || null,
       fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
       financialStatus: shopifyOrder.financial_status || null,

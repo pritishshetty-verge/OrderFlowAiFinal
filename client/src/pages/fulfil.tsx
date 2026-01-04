@@ -43,9 +43,27 @@ export default function FulfilPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Fetch confirmed orders
+  // Fetch confirmed orders with server-side filtering
   const { data: ordersResponse, isLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders"],
+    queryKey: ["/api/orders", "Confirmed", currentPage, pageSize, agentFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: pageSize.toString(),
+        callStatus: "Confirmed",
+      });
+      
+      // Add agent filter if set
+      if (agentFilter !== "all") {
+        params.append("agentId", agentFilter);
+      }
+      
+      const res = await fetch(`/api/orders?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch orders");
+      return res.json();
+    },
   });
 
   // Fetch users for agent filter
@@ -53,11 +71,10 @@ export default function FulfilPage() {
     queryKey: ["/api/users"],
   });
 
-  const confirmedOrders = ordersResponse?.orders.filter(
-    (order) => order.callStatus === "Confirmed"
-  ) || [];
+  // Server returns only Confirmed orders, apply remaining client-side filters
+  const confirmedOrders = ordersResponse?.orders || [];
 
-  // Apply filters
+  // Apply client-side filters (search, payment, date)
   const filteredOrders = confirmedOrders.filter((order) => {
     // Search filter
     if (searchQuery) {
@@ -71,11 +88,6 @@ export default function FulfilPage() {
 
     // Payment method filter
     if (paymentFilter !== "all" && order.paymentMethod !== paymentFilter) {
-      return false;
-    }
-
-    // Agent filter
-    if (agentFilter !== "all" && order.assignedTo !== agentFilter) {
       return false;
     }
 
@@ -94,12 +106,14 @@ export default function FulfilPage() {
     return true;
   });
 
-  // Pagination
-  const totalOrders = filteredOrders.length;
+  // Server-side pagination - use API's total count for accurate pagination
+  const totalOrders = ordersResponse?.total || 0;
   const totalPages = Math.ceil(totalOrders / pageSize);
+  // For display, use client-filtered orders from current page
+  const paginatedOrders = filteredOrders;
+  // Calculate display range for "Showing X-Y of Z orders"
   const startIndex = (currentPage - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalOrders);
-  const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+  const endIndex = Math.min(startIndex + paginatedOrders.length, totalOrders);
 
   const agents = users?.filter((u) => u.role === "agent") || [];
   const allSelected = paginatedOrders.length > 0 && selectedOrders.size === paginatedOrders.length;
