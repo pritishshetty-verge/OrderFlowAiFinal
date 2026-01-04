@@ -95,7 +95,6 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     setPendingPreset(preset);
     setPendingRange(range);
     setPendingCalendarRange({ from: range.startDate, to: range.endDate });
-    handleApply(range, preset);
   };
 
   const handleCalendarSelect = (range: CalendarDateRange | undefined) => {
@@ -113,16 +112,16 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
     }
   };
 
-  const handleApply = (overrideRange?: DateRangeOutput, overridePreset?: DatePreset) => {
-    const rangeToApply = overrideRange || pendingRange;
-    const presetToApply = overridePreset || pendingPreset;
-    setCommittedRange(rangeToApply);
-    setCommittedPreset(presetToApply);
-    onDateChange(rangeToApply);
+  const handleApply = (e?: { preventDefault: () => void }) => {
+    if (e) e.preventDefault();
+    setCommittedRange(pendingRange);
+    setCommittedPreset(pendingPreset);
+    onDateChange(pendingRange);
     setIsOpen(false);
   };
 
-  const handleCancel = () => {
+  const handleCancel = (e?: { preventDefault: () => void }) => {
+    if (e) e.preventDefault();
     setIsOpen(false);
   };
 
@@ -193,7 +192,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={handleCancel}
+              onClick={(e) => handleCancel(e)}
               data-testid="btn-date-cancel"
             >
               Cancel
@@ -201,7 +200,7 @@ export function DateRangeSelector({ onDateChange }: DateRangeSelectorProps) {
             <Button
               type="button"
               size="sm"
-              onClick={() => handleApply()}
+              onClick={(e) => handleApply(e)}
               disabled={!pendingCalendarRange?.from || !pendingCalendarRange?.to}
               data-testid="btn-date-apply"
             >
