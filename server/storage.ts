@@ -2111,7 +2111,11 @@ export class DbStorage implements IStorage {
     // PERFORMANCE METRICS (Date-Filtered - What agent achieved in date range)
     // =========================================================================
 
-    // Query 1: Assigned Orders in date range (from order_assignments table)
+    // Query 1: Assigned Orders in date range
+    // UNION of: (1) Orders assigned in date range + (2) Orders confirmed in date range
+    // This captures both "New Leads" AND "Backlog Hustle" for the Confirmation Rate denominator
+    
+    // Part A: Get order IDs assigned to agent within date range
     const assignmentConditions = [];
     if (userId) {
       assignmentConditions.push(eq(orderAssignments.userId, userId));
@@ -2122,10 +2126,30 @@ export class DbStorage implements IStorage {
     if (endDate) {
       assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
-    const [assignedResult] = await db
-      .select({ count: sql<number>`COUNT(DISTINCT ${orderAssignments.orderId})` })
+    
+    const assignedOrderIds = await db
+      .selectDistinct({ orderId: orderAssignments.orderId })
       .from(orderAssignments)
       .where(assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined);
+    
+    // Part B: Get order IDs confirmed by agent within date range (even if assigned earlier)
+    const confirmedInRangeConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+    if (startDate) confirmedInRangeConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
+    
+    const confirmedOrderIds = await db
+      .selectDistinct({ orderId: orderStatusHistory.orderId })
+      .from(orderStatusHistory)
+      .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
+      .where(and(...confirmedInRangeConditions));
+    
+    // Combine both sets (UNION in JS) and count unique order IDs
+    const allAssignedIds = new Set([
+      ...assignedOrderIds.map(r => r.orderId),
+      ...confirmedOrderIds.map(r => r.orderId)
+    ]);
+    const assignedCount = allAssignedIds.size;
 
     // Query 2: Confirmed Orders (LOWER(status) = 'confirmed' in history within date range)
     const confirmedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
@@ -2151,31 +2175,18 @@ export class DbStorage implements IStorage {
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...cancelledConditions));
 
-    // Query 4: Fulfilled/Shipped Orders
-    // Combines: (1) History records with LOWER(status) = 'shipped' in date range
-    //           (2) Orders with fulfillment_status = 'fulfilled' AND fulfilled_at in date range
-    const historyShippedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'shipped'`];
-    if (startDate) historyShippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
-    if (endDate) historyShippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
-    if (userId) historyShippedConditions.push(buildAttributionCondition(userId));
+    // Query 4: Fulfilled/Shipped Orders (HISTORY ONLY - fulfilled_at column is empty)
+    // Uses LOWER(status) IN ('shipped', 'fulfilled') from order_status_history
+    const shippedConditions = [sql`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
+    if (startDate) shippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
+    if (userId) shippedConditions.push(buildAttributionCondition(userId));
 
-    const [historyShippedResult] = await db
+    const [shippedResult] = await db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
-      .where(and(...historyShippedConditions));
-
-    // Fallback: Orders with fulfillment_status = 'fulfilled' and fulfilled_at in date range
-    const ordersShippedConditions = [eq(orders.fulfillmentStatus, 'fulfilled')];
-    if (startDate) ordersShippedConditions.push(gte(orders.fulfilledAt, startDate));
-    if (endDate) ordersShippedConditions.push(lte(orders.fulfilledAt, endDate));
-    if (userId) ordersShippedConditions.push(eq(orderAssignments.userId, userId));
-
-    const [ordersShippedResult] = await db
-      .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
-      .from(orders)
-      .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
-      .where(and(...ordersShippedConditions));
+      .where(and(...shippedConditions));
 
     // Query 5: Delivered Orders (history-only, orders table doesn't have delivered_at)
     const deliveredConditions = [sql`LOWER(${orderStatusHistory.status}) = 'delivered'`];
@@ -2188,13 +2199,6 @@ export class DbStorage implements IStorage {
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...deliveredConditions));
-
-    // Combine history + orders table counts for fulfilled (take max to avoid double-counting)
-    const fulfilledTotal = Math.max(
-      Number(historyShippedResult?.count) || 0,
-      Number(ordersShippedResult?.count) || 0
-    );
-    const deliveredTotal = Number(deliveredResult?.count) || 0;
 
     // =========================================================================
     // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
@@ -2221,12 +2225,12 @@ export class DbStorage implements IStorage {
       .where(and(...followUpConditions));
 
     return {
-      assignedOrders: Number(assignedResult?.count) || 0,
+      assignedOrders: assignedCount,
       confirmedOrders: Number(confirmedResult?.count) || 0,
       cancelledOrders: Number(cancelledResult?.count) || 0,
       followUpOrders: Number(followUpResult?.count) || 0,
-      fulfilledOrders: fulfilledTotal,
-      deliveredOrders: deliveredTotal,
+      fulfilledOrders: Number(shippedResult?.count) || 0,
+      deliveredOrders: Number(deliveredResult?.count) || 0,
       pendingOrders: Number(pendingResult?.count) || 0,
     };
   }
