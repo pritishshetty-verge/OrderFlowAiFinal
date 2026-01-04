@@ -1115,11 +1115,10 @@ export class DbStorage implements IStorage {
   // ============================================================================
 
   // Auto-close any ghost sessions (unclosed sessions from previous days)
+  // Uses SQL DATE comparison to avoid timezone issues
   async autoCloseGhostSessions(userId: string, currentDateStr: string): Promise<void> {
-    // Parse the client's current date
-    const currentDate = new Date(currentDateStr + 'T00:00:00');
-    
-    // Find all unclosed sessions for this user from dates before currentDate
+    // Find all unclosed sessions for this user where the DATE part is before currentDateStr
+    // Using SQL DATE cast to compare just the date portion, avoiding timezone issues
     const ghostSessions = await db
       .select()
       .from(attendance)
@@ -1128,19 +1127,22 @@ export class DbStorage implements IStorage {
           eq(attendance.userId, userId),
           isNull(attendance.clockOutTime),
           isNotNull(attendance.clockInTime),
-          lt(attendance.date, currentDate)
+          sql`DATE(${attendance.date}) < DATE(${currentDateStr})`
         )
       );
 
     // Close each ghost session at 23:59:59 of its original date
     for (const session of ghostSessions) {
       if (session.clockInTime && session.date) {
-        // Create 23:59:59 on the session's original date
+        // Get the session's date as a simple date string for end-of-day calculation
         const sessionDate = new Date(session.date);
-        const endOfDay = new Date(sessionDate);
-        endOfDay.setHours(23, 59, 59, 0);
+        // Create 23:59:59 on the session's original date in a timezone-neutral way
+        const year = sessionDate.getFullYear();
+        const month = sessionDate.getMonth();
+        const day = sessionDate.getDate();
+        const endOfDay = new Date(year, month, day, 23, 59, 59, 0);
         
-        // Calculate total hours: (23:59:59 - clockInTime) in hours
+        // Calculate total hours from clockIn to end of that day
         const clockInTime = new Date(session.clockInTime);
         const totalMs = endOfDay.getTime() - clockInTime.getTime();
         const totalHours = Math.max(0, totalMs / (1000 * 60 * 60));
@@ -1159,20 +1161,16 @@ export class DbStorage implements IStorage {
   }
 
   // Get attendance for a specific date (client-driven, timezone-safe)
+  // Uses SQL DATE comparison to match just the date portion
   async getAttendanceByDate(userId: string, dateStr: string): Promise<Attendance | undefined> {
-    // Parse YYYY-MM-DD format and create date range for that day
-    const targetDate = new Date(dateStr + 'T00:00:00');
-    const nextDate = new Date(dateStr + 'T00:00:00');
-    nextDate.setDate(nextDate.getDate() + 1);
-
+    // Use SQL DATE cast to compare just the date portion, avoiding timezone issues
     const [record] = await db
       .select()
       .from(attendance)
       .where(
         and(
           eq(attendance.userId, userId),
-          gte(attendance.date, targetDate),
-          lt(attendance.date, nextDate)
+          sql`DATE(${attendance.date}) = DATE(${dateStr})`
         )
       );
     return record;
