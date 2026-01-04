@@ -67,18 +67,18 @@ export function DashboardStats({
     ? ((confirmedOrders / assignedOrders) * 100).toFixed(1) 
     : "0.0";
     
-  const deliveryRate = assignedOrders > 0
-    ? ((deliveredOrders / assignedOrders) * 100).toFixed(1)
+  const deliveryRate = fulfilledOrders > 0
+    ? ((deliveredOrders / fulfilledOrders) * 100).toFixed(1)
     : "0.0";
 
   return (
     <div className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Assigned Orders"
+          title="Total Assigned"
           value={assignedOrders}
           icon={<Package className="h-4 w-4 text-muted-foreground" />}
-          description="My total workload"
+          description="Pipeline: Active workload"
           isLoading={isLoading}
         />
         <StatCard
@@ -96,19 +96,19 @@ export function DashboardStats({
           isLoading={isLoading}
         />
         <StatCard
-          title="Follow-up Orders"
+          title="Follow-up Queue"
           value={followUpOrders}
           icon={<Clock className="h-4 w-4 text-amber-600" />}
-          description="Requires callback"
+          description="Pipeline: Requires callback"
           isLoading={isLoading}
         />
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Fulfilled Orders"
+          title="Fulfilled (Shipped)"
           value={fulfilledOrders}
           icon={<Truck className="h-4 w-4 text-blue-600" />}
-          description="Shipped or fulfilled"
+          description="Orders shipped out"
           isLoading={isLoading}
         />
         <StatCard
@@ -122,14 +122,14 @@ export function DashboardStats({
           title="Delivery Rate"
           value={`${deliveryRate}%`}
           icon={<Target className="h-4 w-4 text-purple-600" />}
-          description="Delivered / Assigned"
+          description="Delivered / Shipped"
           isLoading={isLoading}
         />
         <StatCard
           title="Pending Orders"
           value={pendingOrders}
           icon={<AlertCircle className="h-4 w-4 text-orange-600" />}
-          description="Awaiting verification"
+          description="Pipeline: Awaiting verification"
           isLoading={isLoading}
         />
       </div>
