@@ -37,6 +37,40 @@ import {
 import { Label } from "@/components/ui/label";
 import { EditAddressDialog } from "@/components/edit-address-dialog";
 
+// Helper to parse history notes and extract user comments
+// Example input: "Follow-up scheduled for 1/3/2026, 2:00:24 PM: SWITCH OFF"
+// Returns: { systemText: "Follow-up scheduled for 1/3/2026, 2:00:24 PM", userNote: "SWITCH OFF" }
+function parseHistoryNote(note: string | null | undefined): { systemText: string | null; userNote: string | null } {
+  if (!note) return { systemText: null, userNote: null };
+  
+  // Pattern: Look for timestamp pattern followed by colon and user note
+  // Matches formats like "MM/DD/YYYY, H:MM:SS AM/PM:" or "MMM DD, YYYY at H:MM AM:"
+  const timestampColonPattern = /^(.+?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)\s*:\s*(.+)$/i;
+  const match = note.match(timestampColonPattern);
+  
+  if (match) {
+    return {
+      systemText: match[1].trim(),
+      userNote: match[2].trim()
+    };
+  }
+  
+  // No timestamp pattern found - treat entire string as system text
+  return { systemText: note, userNote: null };
+}
+
+// Fieldset-style note component with bordered box and "Notes" legend
+function FieldsetNote({ note }: { note: string }) {
+  return (
+    <div className="relative mt-2 rounded-md border border-border px-3 py-2">
+      <span className="absolute -top-2 left-2 bg-card px-1 text-[10px] font-medium text-muted-foreground">
+        Notes
+      </span>
+      <p className="text-xs text-foreground">{note}</p>
+    </div>
+  );
+}
+
 interface OrderQuickPreviewProps {
   order: Order | null;
   open: boolean;
@@ -544,13 +578,17 @@ export function OrderQuickPreview({
     }
   };
 
-  const timelineEvents = orderHistory.map((history) => ({
-    id: history.id,
-    description: `Status changed to ${history.status}`,
-    detail: history.note || undefined,
-    date: new Date(history.createdAt),
-    completed: true,
-  }));
+  const timelineEvents = orderHistory.map((history) => {
+    const parsed = parseHistoryNote(history.note);
+    return {
+      id: history.id,
+      description: `Status changed to ${history.status}`,
+      systemText: parsed.systemText,
+      userNote: parsed.userNote,
+      date: new Date(history.createdAt),
+      completed: true,
+    };
+  });
 
   const isTerminalStatus = order.callStatus === "Confirmed" || order.callStatus === "Cancelled";
   const isMutating = confirmOrderMutation.isPending || cancelOrderMutation.isPending || followupOrderMutation.isPending;
@@ -1122,12 +1160,15 @@ export function OrderQuickPreview({
                       </div>
                       <div className="flex-1 pb-2">
                         <p className="text-sm font-medium">{event.description}</p>
-                        {event.detail && (
-                          <p className="text-xs text-muted-foreground mt-0.5">{event.detail}</p>
+                        {event.systemText && (
+                          <p className="text-xs text-muted-foreground mt-0.5">{event.systemText}</p>
                         )}
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {format(event.date, "MMM dd, yyyy 'at' h:mm a")}
                         </p>
+                        {event.userNote && (
+                          <FieldsetNote note={event.userNote} />
+                        )}
                       </div>
                     </div>
                   ))}
