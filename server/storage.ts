@@ -2443,9 +2443,8 @@ export class DbStorage implements IStorage {
       )
     )!;
 
-    // Get hourly counts from order_status_history grouped by hour and status
-    // Use COUNT(DISTINCT orderId) to match the Metric Card counting logic
-    // Convert timestamp to user's local timezone before extracting hour
+    // Get individual records with timestamps for JavaScript timezone conversion
+    // This avoids complex SQL timezone math that breaks with parameterized queries
     const conditions = [];
     if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
@@ -2454,34 +2453,47 @@ export class DbStorage implements IStorage {
     // Only count confirmed, cancelled, and follow_up status changes
     conditions.push(sql`LOWER(${orderStatusHistory.status}) IN ('confirmed', 'cancelled', 'follow up', 'follow_up')`);
 
+    // Fetch raw records with timestamps
     const results = await db
       .select({
-        hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE ${safeTimezone})::integer`,
+        orderId: orderStatusHistory.orderId,
         status: sql<string>`LOWER(${orderStatusHistory.status})`,
-        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
+        createdAt: orderStatusHistory.createdAt,
       })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .groupBy(sql`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE ${safeTimezone})`, orderStatusHistory.status);
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
 
     // Initialize all 24 hours (full day coverage)
-    const hourlyData: Map<number, { confirmed: number; cancelled: number; followUp: number }> = new Map();
+    const hourlyData: Map<number, { confirmed: Set<string>; cancelled: Set<string>; followUp: Set<string> }> = new Map();
     for (let h = 0; h < 24; h++) {
-      hourlyData.set(h, { confirmed: 0, cancelled: 0, followUp: 0 });
+      hourlyData.set(h, { confirmed: new Set(), cancelled: new Set(), followUp: new Set() });
     }
 
-    // Populate with actual data
+    // Convert each timestamp to user's local hour using JavaScript
+    // Then count DISTINCT orders per hour per status
     for (const row of results) {
-      const hourData = hourlyData.get(row.hour);
-      if (hourData) {
+      if (!row.createdAt) continue;
+      
+      // Convert UTC timestamp to user's local hour
+      const localHour = parseInt(
+        new Date(row.createdAt).toLocaleString('en-US', { 
+          timeZone: safeTimezone, 
+          hour: 'numeric', 
+          hour12: false 
+        }),
+        10
+      );
+      
+      const hourData = hourlyData.get(localHour);
+      if (hourData && row.orderId) {
         const status = row.status.toLowerCase().replace(' ', '_');
         if (status === 'confirmed') {
-          hourData.confirmed = Number(row.count);
+          hourData.confirmed.add(row.orderId);
         } else if (status === 'cancelled') {
-          hourData.cancelled = Number(row.count);
+          hourData.cancelled.add(row.orderId);
         } else if (status === 'follow_up' || status === 'follow up') {
-          hourData.followUp = Number(row.count);
+          hourData.followUp.add(row.orderId);
         }
       }
     }
@@ -2494,15 +2506,15 @@ export class DbStorage implements IStorage {
       return `${h - 12} PM`;
     };
 
-    // Convert to array format for all 24 hours
+    // Convert to array format for all 24 hours (counting distinct orders via Set.size)
     const formattedData = [];
     for (let h = 0; h < 24; h++) {
-      const data = hourlyData.get(h) || { confirmed: 0, cancelled: 0, followUp: 0 };
+      const data = hourlyData.get(h) || { confirmed: new Set(), cancelled: new Set(), followUp: new Set() };
       formattedData.push({
         hour: formatHour(h),
-        confirmed: data.confirmed,
-        cancelled: data.cancelled,
-        followUp: data.followUp,
+        confirmed: data.confirmed.size,
+        cancelled: data.cancelled.size,
+        followUp: data.followUp.size,
       });
     }
 
