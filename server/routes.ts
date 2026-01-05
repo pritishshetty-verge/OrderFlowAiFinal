@@ -47,83 +47,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/courier-events", handleShiprocketWebhook);
 
   // Delhivery webhook handler for NDR events
-  app.post("/api/webhooks/delhivery", async (req, res) => {
-    try {
-      const webhookData = req.body;
-      console.log("[Delhivery Webhook] Received:", JSON.stringify(webhookData).substring(0, 500));
-
-      // Delhivery sends updates in various formats - extract the key fields
-      const awb = webhookData.Awb || webhookData.waybill || webhookData.awb;
-      const statusCode = webhookData.ScanCode || webhookData.StatusCode || webhookData.status_code;
-      const status = webhookData.Scan || webhookData.Status || webhookData.status;
-      const remarks = webhookData.Remarks || webhookData.remarks || webhookData.Instructions || "";
-      const scanDateTime = webhookData.ScanDateTime || webhookData.StatusDateTime || webhookData.scan_datetime;
-
-      if (!awb) {
-        console.log("[Delhivery Webhook] No AWB found in payload");
-        return res.status(400).json({ success: false, error: "No AWB found in payload" });
-      }
-
-      // Find the shipment by AWB first
-      const shipment = await storage.getShipmentByAWB(awb);
-      if (!shipment) {
-        console.warn(`[Delhivery Webhook] Shipment not found for AWB: ${awb}`);
-        return res.status(404).json({ success: false, error: "Shipment not found" });
-      }
-
-      // Import delhivery service to check if this is an NDR status
-      const { delhiveryService } = await import("./services/delhivery");
-
-      // Check if this is an NDR status code (only if statusCode is defined)
-      if (statusCode && delhiveryService.isNDRStatus(statusCode)) {
-        console.log(`[Delhivery Webhook] NDR event detected for AWB ${awb}: ${statusCode}`);
-
-        // Map Delhivery status code to our NDR status
-        const ndrStatus = delhiveryService.mapNDRStatus(statusCode);
-
-        // Create NDR event in database
-        await storage.createNDREvent({
-          shipmentId: shipment.id,
-          orderId: shipment.orderId,
-          awb: awb,
-          ndrStatus: ndrStatus,
-          ndrReason: remarks || `NDR: ${status || statusCode}`,
-          ndrDate: scanDateTime ? new Date(scanDateTime) : new Date(),
-          rawNdrData: webhookData,
-        });
-
-        // Update shipment status
-        await storage.updateShipment(shipment.id, {
-          status: "ndr",
-          currentStatus: status || statusCode,
-          statusUpdatedAt: new Date(),
-        });
-
-        // Update order status
-        await storage.updateOrder(shipment.orderId, {
-          status: "ndr",
-          shipmentStatus: "ndr",
-        });
-
-        console.log(`[Delhivery Webhook] Created NDR event for shipment ${shipment.id}`);
-      } else if (status) {
-        // Regular status update - only update if we have a status
-        console.log(`[Delhivery Webhook] Status update for AWB ${awb}: ${status}`);
-        
-        await storage.updateShipment(shipment.id, {
-          currentStatus: status,
-          statusUpdatedAt: new Date(),
-        });
-      } else {
-        console.log(`[Delhivery Webhook] Ignoring event with no status for AWB ${awb}`);
-      }
-
-      res.status(200).json({ success: true, message: "Webhook processed" });
-    } catch (error: any) {
-      console.error("[Delhivery Webhook] Error:", error);
-      res.status(500).json({ error: error.message || "Internal server error" });
-    }
-  });
+  // Supports both Default Payload format (Shipment.AWB) and legacy formats
+  const { handleDelhiveryWebhook } = await import("./delhiveryWebhook");
+  app.post("/api/webhooks/delhivery", handleDelhiveryWebhook);
 
   // ============================================================================
   // ORDERS API
