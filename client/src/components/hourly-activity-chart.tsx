@@ -38,13 +38,17 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   const userRole = localStorage.getItem("userRole");
   const metricsUserId = userRole === "agent" ? userId : undefined;
 
+  // Detect user's browser timezone for accurate hourly grouping
+  const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   const { data: hourlyData, isLoading } = useQuery<HourlyActivityResponse>({
-    queryKey: ["/api/dashboard/hourly-activity", metricsUserId, dateRange.startDate.toISOString(), dateRange.endDate.toISOString()],
+    queryKey: ["/api/dashboard/hourly-activity", metricsUserId, dateRange.startDate.toISOString(), dateRange.endDate.toISOString(), userTimezone],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricsUserId) params.append("userId", metricsUserId);
       params.append("startDate", dateRange.startDate.toISOString());
       params.append("endDate", dateRange.endDate.toISOString());
+      params.append("timezone", userTimezone);
       
       const res = await fetch(`/api/dashboard/hourly-activity?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch hourly activity");

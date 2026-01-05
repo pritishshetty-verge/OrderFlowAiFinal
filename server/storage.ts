@@ -379,7 +379,7 @@ export interface IStorage {
   }>;
 
   // Hourly Activity for Dashboard Chart
-  getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date): Promise<Array<{
+  getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date, timezone?: string): Promise<Array<{
     hour: string;
     confirmed: number;
     cancelled: number;
@@ -2425,12 +2425,15 @@ export class DbStorage implements IStorage {
   // HOURLY ACTIVITY CHART
   // ============================================================================
 
-  async getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date): Promise<Array<{
+  async getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date, timezone?: string): Promise<Array<{
     hour: string;
     confirmed: number;
     cancelled: number;
     followUp: number;
   }>> {
+    // Fallback to UTC if timezone is not provided
+    const safeTimezone = timezone || 'UTC';
+    
     // Build attribution condition for user filtering
     const buildAttributionCondition = (userIdParam: string) => or(
       eq(orderStatusHistory.changedBy, userIdParam),
@@ -2442,6 +2445,7 @@ export class DbStorage implements IStorage {
 
     // Get hourly counts from order_status_history grouped by hour and status
     // Use COUNT(DISTINCT orderId) to match the Metric Card counting logic
+    // Convert timestamp to user's local timezone before extracting hour
     const conditions = [];
     if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
@@ -2452,14 +2456,14 @@ export class DbStorage implements IStorage {
 
     const results = await db
       .select({
-        hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})::integer`,
+        hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE ${safeTimezone})::integer`,
         status: sql<string>`LOWER(${orderStatusHistory.status})`,
         count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
       })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .groupBy(sql`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})`, orderStatusHistory.status);
+      .groupBy(sql`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE ${safeTimezone})`, orderStatusHistory.status);
 
     // Initialize all 24 hours (full day coverage)
     const hourlyData: Map<number, { confirmed: number; cancelled: number; followUp: number }> = new Map();

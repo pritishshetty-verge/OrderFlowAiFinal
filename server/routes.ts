@@ -207,6 +207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/dashboard/hourly-activity", async (req, res) => {
     try {
       const userId = req.query.userId as string | undefined;
+      const timezone = req.query.timezone as string | undefined;
       const { startDate, endDate } = req.query;
       
       let parsedStartDate: Date | undefined;
@@ -221,7 +222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
       
-      const data = await storage.getHourlyActivity(userId, parsedStartDate, parsedEndDate);
+      const data = await storage.getHourlyActivity(userId, parsedStartDate, parsedEndDate, timezone);
       res.json({ data });
     } catch (error) {
       console.error("Error fetching hourly activity:", error);
