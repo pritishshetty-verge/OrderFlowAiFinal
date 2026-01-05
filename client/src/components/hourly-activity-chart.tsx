@@ -55,8 +55,14 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
 
   const chartData = useMemo(() => {
     if (!hourlyData?.data) {
-      return Array.from({ length: 12 }, (_, i) => ({
-        hour: `${(i + 9) % 24}:00`,
+      const formatHour = (h: number): string => {
+        if (h === 0) return '12 AM';
+        if (h === 12) return '12 PM';
+        if (h < 12) return `${h} AM`;
+        return `${h - 12} PM`;
+      };
+      return Array.from({ length: 24 }, (_, i) => ({
+        hour: formatHour(i),
         confirmed: 0,
         cancelled: 0,
         followUp: 0,
@@ -123,9 +129,10 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis
                 dataKey="hour"
-                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
                 tickLine={false}
                 axisLine={false}
+                interval={3}
               />
               <YAxis
                 tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}

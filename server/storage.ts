@@ -2441,6 +2441,7 @@ export class DbStorage implements IStorage {
     )!;
 
     // Get hourly counts from order_status_history grouped by hour and status
+    // Use COUNT(DISTINCT orderId) to match the Metric Card counting logic
     const conditions = [];
     if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
@@ -2453,14 +2454,14 @@ export class DbStorage implements IStorage {
       .select({
         hour: sql<number>`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})::integer`,
         status: sql<string>`LOWER(${orderStatusHistory.status})`,
-        count: sql<number>`COUNT(*)`,
+        count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})`,
       })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .groupBy(sql`EXTRACT(HOUR FROM ${orderStatusHistory.createdAt})`, orderStatusHistory.status);
 
-    // Initialize all hours (9 AM to 9 PM typical work hours, can be adjusted)
+    // Initialize all 24 hours (full day coverage)
     const hourlyData: Map<number, { confirmed: number; cancelled: number; followUp: number }> = new Map();
     for (let h = 0; h < 24; h++) {
       hourlyData.set(h, { confirmed: 0, cancelled: 0, followUp: 0 });
@@ -2481,12 +2482,20 @@ export class DbStorage implements IStorage {
       }
     }
 
-    // Convert to array format, filtering to working hours (9 AM - 9 PM)
+    // Helper to format hour as 12-hour AM/PM
+    const formatHour = (h: number): string => {
+      if (h === 0) return '12 AM';
+      if (h === 12) return '12 PM';
+      if (h < 12) return `${h} AM`;
+      return `${h - 12} PM`;
+    };
+
+    // Convert to array format for all 24 hours
     const formattedData = [];
-    for (let h = 9; h <= 21; h++) {
+    for (let h = 0; h < 24; h++) {
       const data = hourlyData.get(h) || { confirmed: 0, cancelled: 0, followUp: 0 };
       formattedData.push({
-        hour: `${h}:00`,
+        hour: formatHour(h),
         confirmed: data.confirmed,
         cancelled: data.cancelled,
         followUp: data.followUp,
