@@ -94,9 +94,22 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
   // Filter to agents and managers only
   const teamMembers = users?.filter((u) => u.role === "agent" || u.role === "manager") || [];
 
-  // Stats - count Active (presenceStatus="present"), not daily attendance
-  const activeCount = teamMembers.filter((u) => u.presenceStatus === "present").length;
-  const onLeaveCount = teamMembers.filter((u) => u.presenceStatus === "onleave").length;
+  // Helper to derive live status from attendance record
+  const getLiveStatus = (userId: string, accountStatus: string): "online" | "break" | "offline" => {
+    if (accountStatus === "onleave" || accountStatus === "inactive") {
+      return "offline";
+    }
+    const attendance = attendanceMap.get(userId);
+    if (!attendance) return "offline";
+    if (attendance.clockOutTime) return "offline";
+    if (attendance.status === "break") return "break";
+    return "online";
+  };
+
+  // Stats - count based on LIVE attendance status
+  const onlineCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "online").length;
+  const onBreakCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "break").length;
+  const offlineCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "offline").length;
   const totalWorkload = Array.from(workloadMap.values()).reduce((sum, count) => sum + count, 0);
 
   // Only allow admins to manage presence
@@ -120,30 +133,30 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
           </CardContent>
         </Card>
 
-        <Card data-testid="card-active-members">
+        <Card data-testid="card-online-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active</CardTitle>
+            <CardTitle className="text-sm font-medium">Online</CardTitle>
             <UserCheck className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold text-green-500">{activeCount}</div>
+              <div className="text-2xl font-bold text-green-500">{onlineCount}</div>
             )}
           </CardContent>
         </Card>
 
-        <Card data-testid="card-onleave-members">
+        <Card data-testid="card-break-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">On Leave</CardTitle>
-            <UserX className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">On Break</CardTitle>
+            <Clock className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{onLeaveCount}</div>
+              <div className="text-2xl font-bold text-orange-500">{onBreakCount}</div>
             )}
           </CardContent>
         </Card>
@@ -191,8 +204,7 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
               {teamMembers.map((member) => {
                 const workload = workloadMap.get(member.id) || 0;
                 const accountStatus = member.presenceStatus || "inactive";
-                const memberAttendance = attendanceMap.get(member.id);
-                const isClockedIn = memberAttendance?.clockInTime && !memberAttendance?.clockOutTime;
+                const liveStatus = getLiveStatus(member.id, accountStatus);
                 
                 return (
                   <div
@@ -220,24 +232,23 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                         </div>
                       </div>
 
-                      {/* Today's Attendance - conditional display */}
+                      {/* Live Status - derived from attendance */}
                       <div className="w-24 text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Attendance</p>
-                        <div data-testid={`attendance-${member.id}`}>
-                          {accountStatus !== "present" ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : isClockedIn ? (
-                            <Badge className="bg-green-500 text-white">
-                              <Clock className="h-3 w-3 mr-1" />
-                              Present
-                            </Badge>
-                          ) : (
-                            <Badge variant="destructive">Absent</Badge>
+                        <p className="text-xs text-muted-foreground mb-1">Live Status</p>
+                        <div data-testid={`live-status-${member.id}`}>
+                          {liveStatus === "online" && (
+                            <Badge className="bg-green-500 text-white">Online</Badge>
+                          )}
+                          {liveStatus === "break" && (
+                            <Badge className="bg-orange-500 text-white">On Break</Badge>
+                          )}
+                          {liveStatus === "offline" && (
+                            <Badge variant="secondary">Offline</Badge>
                           )}
                         </div>
                       </div>
 
-                      {/* Account Status (was Presence) */}
+                      {/* Account Status (admin can change) */}
                       <div className="w-40">
                         <p className="text-xs text-muted-foreground mb-1">Account Status</p>
                         {canManagePresence ? (
@@ -258,7 +269,7 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                         ) : (
                           <div data-testid={`status-display-${member.id}`}>
                             {accountStatus === "present" && (
-                              <Badge className="bg-green-500 text-white">Active</Badge>
+                              <Badge className="bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30">Active</Badge>
                             )}
                             {accountStatus === "onleave" && (
                               <Badge variant="outline">On Leave</Badge>

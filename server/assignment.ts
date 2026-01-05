@@ -185,7 +185,7 @@ export class OrderAssignmentEngine {
   }
 
   /**
-   * Get workload statistics for all agents
+   * Get workload statistics for all agents with LIVE attendance status
    */
   async getAgentWorkloads(): Promise<
     Array<{
@@ -193,6 +193,7 @@ export class OrderAssignmentEngine {
       agentName: string;
       role: string;
       presenceStatus: string;
+      liveStatus: "online" | "break" | "offline";
       assignedOrders: number;
       activeOrders: number;
     }>
@@ -201,6 +202,28 @@ export class OrderAssignmentEngine {
     const agents = allUsers.filter(
       (user) => (user.role === "agent" || user.role === "manager") && user.isActive
     );
+
+    // Fetch today's attendance for all team members
+    const teamAttendance = await this.storage.getTeamTodayAttendance();
+    const attendanceMap = new Map<string, { clockOutTime: Date | null; status: string }>();
+    teamAttendance.forEach((record) => {
+      attendanceMap.set(record.userId, {
+        clockOutTime: record.clockOutTime,
+        status: record.status,
+      });
+    });
+
+    // Helper to derive live status from attendance
+    const getLiveStatus = (userId: string, accountStatus: string): "online" | "break" | "offline" => {
+      if (accountStatus === "onleave" || accountStatus === "inactive") {
+        return "offline";
+      }
+      const attendance = attendanceMap.get(userId);
+      if (!attendance) return "offline";
+      if (attendance.clockOutTime) return "offline";
+      if (attendance.status === "break") return "break";
+      return "online";
+    };
 
     const workloads = await Promise.all(
       agents.map(async (agent) => {
@@ -217,11 +240,15 @@ export class OrderAssignmentEngine {
             order.status === "ndr"
         );
 
+        const accountStatus = agent.presenceStatus || "present";
+        const liveStatus = getLiveStatus(agent.id, accountStatus);
+
         return {
           agentId: agent.id,
           agentName: agent.fullName,
           role: agent.role,
-          presenceStatus: agent.presenceStatus || "present",
+          presenceStatus: accountStatus,
+          liveStatus,
           assignedOrders: assignedOrders.total,
           activeOrders: activeOrders.length,
         };
