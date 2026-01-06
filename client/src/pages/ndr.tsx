@@ -307,9 +307,36 @@ export default function NDRPage() {
   const ndrEvents = ndrData?.events || [];
   const ofdOrders = ofdData?.orders || [];
 
-  // Apply filters for NDR
+  // Calculate attempt counts per AWB
+  const attemptCountByAwb = useMemo(() => {
+    const counts: Record<string, number> = {};
+    ndrEvents.forEach(event => {
+      counts[event.awb] = (counts[event.awb] || 0) + 1;
+    });
+    return counts;
+  }, [ndrEvents]);
+
+  // Deduplicate NDR events by AWB - show only latest event per AWB
+  const deduplicatedEvents = useMemo(() => {
+    const latestByAwb = new Map<string, NdrEvent>();
+    
+    // Sort by date descending so we keep the most recent
+    const sortedEvents = [...ndrEvents].sort((a, b) => 
+      new Date(b.ndrDate).getTime() - new Date(a.ndrDate).getTime()
+    );
+    
+    sortedEvents.forEach(event => {
+      if (!latestByAwb.has(event.awb)) {
+        latestByAwb.set(event.awb, event);
+      }
+    });
+    
+    return Array.from(latestByAwb.values());
+  }, [ndrEvents]);
+
+  // Apply filters for NDR (on deduplicated events)
   const filteredEvents = useMemo(() => {
-    return ndrEvents.filter((event) => {
+    return deduplicatedEvents.filter((event) => {
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
         if (!event.awb.toLowerCase().includes(query)) {
@@ -344,7 +371,7 @@ export default function NDRPage() {
 
       return true;
     });
-  }, [ndrEvents, searchQuery, statusFilter, actionFilter, dateRange]);
+  }, [deduplicatedEvents, searchQuery, statusFilter, actionFilter, dateRange]);
 
   // Apply filters for OFD
   const filteredOfdOrders = useMemo(() => {
@@ -382,20 +409,6 @@ export default function NDRPage() {
 
     const config = statusMap[status] || statusMap.other;
     return <Badge variant={config.variant} data-testid={`badge-status-${status}`}>{config.label}</Badge>;
-  };
-
-  const getActionBadge = (actionTaken?: string) => {
-    if (!actionTaken) return <Badge variant="outline" data-testid="badge-action-pending">Pending</Badge>;
-
-    const actionMap: Record<string, { label: string; variant: any }> = {
-      reattempt_scheduled: { label: "Reattempt Scheduled", variant: "default" },
-      customer_contacted: { label: "Customer Contacted", variant: "secondary" },
-      rto_initiated: { label: "RTO Initiated", variant: "destructive" },
-      resolved: { label: "Resolved", variant: "default" },
-    };
-
-    const config = actionMap[actionTaken] || { label: actionTaken, variant: "outline" };
-    return <Badge variant={config.variant} data-testid={`badge-action-${actionTaken}`}>{config.label}</Badge>;
   };
 
   const handleReattempt = (event: NdrEvent) => {
@@ -590,42 +603,39 @@ export default function NDRPage() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {paginatedNdrEvents.map((event) => {
-                              const attemptCount = ndrEvents.filter(e => e.awb === event.awb).length;
-                              return (
-                                <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
-                                  <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
-                                    {event.awb}
-                                  </TableCell>
-                                  <TableCell data-testid={`cell-date-${event.id}`}>
-                                    <div className="flex flex-col">
-                                      <span>{format(new Date(event.ndrDate), "MMM dd, yyyy")}</span>
-                                      <span className="text-xs text-muted-foreground">{format(new Date(event.ndrDate), "h:mm a")}</span>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="max-w-md" data-testid={`cell-reason-${event.id}`}>
-                                    <span className="line-clamp-2">{event.ndrReason}</span>
-                                  </TableCell>
-                                  <TableCell className="text-center" data-testid={`cell-attempts-${event.id}`}>
-                                    <Badge variant="secondary">{attemptCount}</Badge>
-                                  </TableCell>
-                                  <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
-                                    <div className="flex items-center justify-end gap-2">
-                                      {!event.resolved && (
-                                        <Button
-                                          size="sm"
-                                          onClick={() => handleReattempt(event)}
-                                          data-testid={`button-reattempt-${event.id}`}
-                                        >
-                                          <RotateCcw className="h-4 w-4 mr-1" />
-                                          Reattempt
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
+                            {paginatedNdrEvents.map((event) => (
+                              <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
+                                <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
+                                  {event.awb}
+                                </TableCell>
+                                <TableCell data-testid={`cell-date-${event.id}`}>
+                                  <div className="flex flex-col">
+                                    <span>{format(new Date(event.ndrDate), "MMM dd, yyyy")}</span>
+                                    <span className="text-xs text-muted-foreground">{format(new Date(event.ndrDate), "h:mm a")}</span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="max-w-md" data-testid={`cell-reason-${event.id}`}>
+                                  <span className="line-clamp-2">{event.ndrReason}</span>
+                                </TableCell>
+                                <TableCell className="text-center" data-testid={`cell-attempts-${event.id}`}>
+                                  <Badge variant="secondary">{attemptCountByAwb[event.awb] || 1}</Badge>
+                                </TableCell>
+                                <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
+                                  <div className="flex items-center justify-end gap-2">
+                                    {!event.resolved && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleReattempt(event)}
+                                        data-testid={`button-reattempt-${event.id}`}
+                                      >
+                                        <RotateCcw className="h-4 w-4 mr-1" />
+                                        Reattempt
+                                      </Button>
+                                    )}
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
                           </TableBody>
                         </Table>
                       </div>
