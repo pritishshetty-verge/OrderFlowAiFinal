@@ -2806,9 +2806,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { awb } = req.params;
       const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
 
-      if (!address1 || !phone) {
-        return res.status(400).json({ error: "Address and phone are required" });
-      }
+      // Address and phone are now OPTIONAL - one-click reattempt support
+      // If not provided, courier will use existing details on file
 
       // Get shipment to determine courier
       const shipment = await storage.getShipmentByAWB(awb);
@@ -2820,26 +2819,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courierName = shipment.courierName?.toLowerCase() || "";
 
       if (courierName.includes("delhivery")) {
-        // Use Delhivery API
+        // Use Delhivery API - only include address/phone if provided
         const { delhiveryService } = await import("./services/delhivery");
-        const result = await delhiveryService.actionNDR(awb, "reattempt", {
-          deferredDate: deferredDate,
-          address: [address1, address2].filter(Boolean).join(", "),
-          phone: phone,
-        });
+        const actionData: any = {};
+        
+        if (deferredDate) {
+          actionData.deferredDate = deferredDate;
+        }
+        if (address1 || address2) {
+          actionData.address = [address1, address2].filter(Boolean).join(", ");
+        }
+        if (phone) {
+          actionData.phone = phone;
+        }
+        
+        const result = await delhiveryService.actionNDR(awb, "reattempt", actionData);
 
         if (!result.success) {
           return res.status(500).json({ error: result.error || "Delhivery reattempt failed" });
         }
       } else {
-        // Default to Shiprocket
-        const result = await shiprocketService.reattemptDelivery({
-          awb,
-          address1,
-          address2,
-          phone,
-          deferred_date: deferredDate,
-        });
+        // Default to Shiprocket - only include fields if provided
+        const shiprocketData: any = { awb };
+        if (address1) shiprocketData.address1 = address1;
+        if (address2) shiprocketData.address2 = address2;
+        if (phone) shiprocketData.phone = phone;
+        if (deferredDate) shiprocketData.deferred_date = deferredDate;
+        
+        const result = await shiprocketService.reattemptDelivery(shiprocketData);
       }
 
       // Get NDR events for this shipment

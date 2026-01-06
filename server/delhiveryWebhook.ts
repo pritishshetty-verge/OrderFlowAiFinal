@@ -52,21 +52,52 @@ function extractPayloadFields(body: any): {
   remarks: string | undefined;
   statusDateTime: string | undefined;
 } {
+  // Priority order for remarks/reasons (most specific first):
+  // 1. Remarks/remarks field (usually has the actual NDR reason like "Consignee refused to accept")
+  // 2. Instructions field (sometimes contains the reason)
+  // 3. scans[].remark if available
+  // 4. Status as last resort
+  
+  let extractedRemarks = '';
+  
+  // Check for scans array with remark field (Delhivery One format)
+  if (body.scans && Array.isArray(body.scans) && body.scans.length > 0) {
+    // Get the most recent scan's remark
+    const latestScan = body.scans[body.scans.length - 1];
+    if (latestScan.remark || latestScan.Remark) {
+      extractedRemarks = latestScan.remark || latestScan.Remark;
+    }
+  }
+  
   if (body.Shipment && body.Shipment.AWB) {
+    // Default format
+    const shipmentRemarks = body.Shipment.Status?.Instructions || 
+                           body.Shipment.Status?.Remarks || 
+                           body.Shipment.Remarks ||
+                           extractedRemarks;
     return {
       awb: body.Shipment.AWB,
       status: body.Shipment.Status?.Status,
       statusCode: undefined,
-      remarks: body.Shipment.Status?.Instructions,
+      remarks: shipmentRemarks,
       statusDateTime: body.Shipment.Status?.StatusDateTime,
     };
   }
 
+  // Legacy/alternative format - prioritize specific reason fields
+  const legacyRemarks = body.Remarks || 
+                        body.remarks || 
+                        body.Instructions || 
+                        body.instructions ||
+                        body.ndr_reason ||
+                        body.NDRReason ||
+                        extractedRemarks;
+  
   return {
     awb: body.Awb || body.waybill || body.awb,
     status: body.Scan || body.Status || body.status,
     statusCode: body.ScanCode || body.StatusCode || body.status_code,
-    remarks: body.Remarks || body.remarks || body.Instructions || '',
+    remarks: legacyRemarks,
     statusDateTime: body.ScanDateTime || body.StatusDateTime || body.scan_datetime,
   };
 }

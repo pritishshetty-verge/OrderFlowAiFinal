@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Package, Phone, Truck } from "lucide-react";
+import { AlertTriangle, Calendar, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Package, Phone, RotateCcw, Truck } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -92,21 +92,20 @@ function ReattemptDeliveryModal({
   onSuccess: () => void;
 }) {
   const { toast } = useToast();
+  const [showEditDetails, setShowEditDetails] = useState(false);
   const [address1, setAddress1] = useState("");
   const [address2, setAddress2] = useState("");
   const [phone, setPhone] = useState("");
   const [deferredDate, setDeferredDate] = useState("");
-  const [notes, setNotes] = useState("");
 
   const reattemptMutation = useMutation({
     mutationFn: async (data: {
       awb: string;
-      address1: string;
+      address1?: string;
       address2?: string;
-      phone: string;
+      phone?: string;
       deferredDate?: string;
       actionBy: string;
-      notes?: string;
     }) => {
       const response = await fetch(`/api/ndr/${data.awb}/reattempt`, {
         method: "POST",
@@ -129,6 +128,11 @@ function ReattemptDeliveryModal({
       });
       onSuccess();
       onOpenChange(false);
+      setShowEditDetails(false);
+      setAddress1("");
+      setAddress2("");
+      setPhone("");
+      setDeferredDate("");
     },
     onError: (error: Error) => {
       toast({
@@ -140,15 +144,6 @@ function ReattemptDeliveryModal({
   });
 
   const handleSubmit = () => {
-    if (!address1 || !phone) {
-      toast({
-        variant: "destructive",
-        title: "Missing Information",
-        description: "Please provide address and phone number.",
-      });
-      return;
-    }
-
     if (!ndrEvent) return;
 
     const userId = localStorage.getItem("userId");
@@ -161,63 +156,51 @@ function ReattemptDeliveryModal({
       return;
     }
 
-    reattemptMutation.mutate({
+    const payload: any = {
       awb: ndrEvent.awb,
-      address1,
-      address2,
-      phone,
-      deferredDate,
       actionBy: userId,
-      notes,
-    });
+    };
+
+    if (deferredDate) payload.deferredDate = deferredDate;
+    if (showEditDetails) {
+      if (address1) payload.address1 = address1;
+      if (address2) payload.address2 = address2;
+      if (phone) payload.phone = phone;
+    }
+
+    reattemptMutation.mutate(payload);
+  };
+
+  const handleClose = () => {
+    onOpenChange(false);
+    setShowEditDetails(false);
+    setAddress1("");
+    setAddress2("");
+    setPhone("");
+    setDeferredDate("");
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl" data-testid="dialog-reattempt-delivery">
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-md" data-testid="dialog-reattempt-delivery">
         <DialogHeader>
-          <DialogTitle>Schedule Delivery Reattempt</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <RotateCcw className="h-5 w-5" />
+            Reattempt Delivery
+          </DialogTitle>
           <DialogDescription>
-            Update delivery details and schedule a reattempt for AWB: {ndrEvent?.awb}
+            AWB: <span className="font-mono">{ndrEvent?.awb}</span>
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="address1">Address Line 1 *</Label>
-            <Input
-              id="address1"
-              data-testid="input-address1"
-              placeholder="Enter updated address"
-              value={address1}
-              onChange={(e) => setAddress1(e.target.value)}
-            />
+          <div className="p-4 rounded-lg bg-muted/50">
+            <p className="text-sm text-muted-foreground mb-1">NDR Reason:</p>
+            <p className="font-medium">{ndrEvent?.ndrReason}</p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="address2">Address Line 2</Label>
-            <Input
-              id="address2"
-              data-testid="input-address2"
-              placeholder="Apartment, suite, etc. (optional)"
-              value={address2}
-              onChange={(e) => setAddress2(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number *</Label>
-            <Input
-              id="phone"
-              data-testid="input-phone"
-              placeholder="Enter updated phone number"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="deferredDate">Reattempt Date (Optional)</Label>
+            <Label htmlFor="deferredDate">Schedule Date (Optional)</Label>
             <Input
               id="deferredDate"
               data-testid="input-deferred-date"
@@ -226,25 +209,62 @@ function ReattemptDeliveryModal({
               onChange={(e) => setDeferredDate(e.target.value)}
               min={new Date().toISOString().split("T")[0]}
             />
+            <p className="text-xs text-muted-foreground">Leave empty for next available slot</p>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="notes">Notes</Label>
-            <Textarea
-              id="notes"
-              data-testid="textarea-notes"
-              placeholder="Add any additional notes..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-            />
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowEditDetails(!showEditDetails)}
+            className="w-full justify-between"
+            data-testid="button-toggle-edit-details"
+          >
+            <span>Edit Address/Phone</span>
+            {showEditDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+
+          {showEditDetails && (
+            <div className="space-y-3 pt-2 border-t">
+              <div className="space-y-2">
+                <Label htmlFor="address1">Address Line 1</Label>
+                <Input
+                  id="address1"
+                  data-testid="input-address1"
+                  placeholder="Updated address (optional)"
+                  value={address1}
+                  onChange={(e) => setAddress1(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="address2">Address Line 2</Label>
+                <Input
+                  id="address2"
+                  data-testid="input-address2"
+                  placeholder="Apartment, suite, etc."
+                  value={address2}
+                  onChange={(e) => setAddress2(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="phone">Phone Number</Label>
+                <Input
+                  id="phone"
+                  data-testid="input-phone"
+                  placeholder="Updated phone (optional)"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={handleClose}
             data-testid="button-cancel"
           >
             Cancel
@@ -252,9 +272,9 @@ function ReattemptDeliveryModal({
           <Button
             onClick={handleSubmit}
             disabled={reattemptMutation.isPending}
-            data-testid="button-schedule-reattempt"
+            data-testid="button-confirm-reattempt"
           >
-            {reattemptMutation.isPending ? "Scheduling..." : "Schedule Reattempt"}
+            {reattemptMutation.isPending ? "Scheduling..." : "Confirm Reattempt"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -563,42 +583,49 @@ export default function NDRPage() {
                           <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                             <TableRow>
                               <TableHead className="bg-card" data-testid="header-awb">AWB</TableHead>
-                              <TableHead className="bg-card" data-testid="header-ndr-date">NDR Date</TableHead>
-                              <TableHead className="bg-card" data-testid="header-status">Status</TableHead>
-                              <TableHead className="bg-card" data-testid="header-reason">Reason</TableHead>
-                              <TableHead className="bg-card" data-testid="header-action">Action Taken</TableHead>
+                              <TableHead className="bg-card" data-testid="header-ndr-date">Last Update</TableHead>
+                              <TableHead className="bg-card" data-testid="header-reason">NDR Reason</TableHead>
+                              <TableHead className="bg-card text-center" data-testid="header-attempts">Attempts</TableHead>
                               <TableHead className="text-right bg-card" data-testid="header-actions">Actions</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {paginatedNdrEvents.map((event) => (
-                              <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
-                                <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
-                                  {event.awb}
-                                </TableCell>
-                                <TableCell data-testid={`cell-date-${event.id}`}>
-                                  {format(new Date(event.ndrDate), "MMM dd, yyyy")}
-                                </TableCell>
-                                <TableCell data-testid={`cell-status-${event.id}`}>{getStatusBadge(event.ndrStatus)}</TableCell>
-                                <TableCell className="max-w-xs truncate" data-testid={`cell-reason-${event.id}`}>
-                                  {event.ndrReason}
-                                </TableCell>
-                                <TableCell data-testid={`cell-action-taken-${event.id}`}>{getActionBadge(event.actionTaken)}</TableCell>
-                                <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
-                                  {!event.resolved && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => handleReattempt(event)}
-                                      data-testid={`button-reattempt-${event.id}`}
-                                    >
-                                      <Calendar className="h-4 w-4 mr-1" />
-                                      Reattempt
-                                    </Button>
-                                  )}
-                                </TableCell>
-                              </TableRow>
-                            ))}
+                            {paginatedNdrEvents.map((event) => {
+                              const attemptCount = ndrEvents.filter(e => e.awb === event.awb).length;
+                              return (
+                                <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
+                                  <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
+                                    {event.awb}
+                                  </TableCell>
+                                  <TableCell data-testid={`cell-date-${event.id}`}>
+                                    <div className="flex flex-col">
+                                      <span>{format(new Date(event.ndrDate), "MMM dd, yyyy")}</span>
+                                      <span className="text-xs text-muted-foreground">{format(new Date(event.ndrDate), "h:mm a")}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="max-w-md" data-testid={`cell-reason-${event.id}`}>
+                                    <span className="line-clamp-2">{event.ndrReason}</span>
+                                  </TableCell>
+                                  <TableCell className="text-center" data-testid={`cell-attempts-${event.id}`}>
+                                    <Badge variant="secondary">{attemptCount}</Badge>
+                                  </TableCell>
+                                  <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
+                                    <div className="flex items-center justify-end gap-2">
+                                      {!event.resolved && (
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleReattempt(event)}
+                                          data-testid={`button-reattempt-${event.id}`}
+                                        >
+                                          <RotateCcw className="h-4 w-4 mr-1" />
+                                          Reattempt
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
                           </TableBody>
                         </Table>
                       </div>
