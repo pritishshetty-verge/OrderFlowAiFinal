@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Package } from "lucide-react";
+import { AlertTriangle, Calendar, ChevronLeft, ChevronRight, Package, Phone, Truck } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
@@ -60,6 +61,22 @@ interface NdrEvent {
   resolved: boolean;
   resolvedAt?: string;
   resolution?: string;
+  createdAt: string;
+}
+
+interface OfdOrder {
+  id: string;
+  shopifyOrderNumber: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  shippingAddress: any;
+  trackingNumber: string;
+  trackingUrl: string;
+  courierName: string;
+  shipmentStatus: string;
+  status: string;
+  assignedTo: string;
   createdAt: string;
 }
 
@@ -254,17 +271,25 @@ export default function NDRPage() {
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [activeTab, setActiveTab] = useState<string>("ndr");
+  const { toast } = useToast();
 
-  const { data, isLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
+  // Fetch NDR events
+  const { data: ndrData, isLoading: ndrLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
     queryKey: ["/api/ndr"],
   });
 
-  const ndrEvents = data?.events || [];
+  // Fetch OFD orders
+  const { data: ofdData, isLoading: ofdLoading } = useQuery<{ orders: OfdOrder[]; total: number }>({
+    queryKey: ["/api/orders/ofd"],
+  });
 
-  // Apply filters
+  const ndrEvents = ndrData?.events || [];
+  const ofdOrders = ofdData?.orders || [];
+
+  // Apply filters for NDR
   const filteredEvents = useMemo(() => {
     return ndrEvents.filter((event) => {
-      // Search filter (AWB)
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
         if (!event.awb.toLowerCase().includes(query)) {
@@ -272,12 +297,10 @@ export default function NDRPage() {
         }
       }
 
-      // Status filter
       if (statusFilter !== "all" && event.ndrStatus !== statusFilter) {
         return false;
       }
 
-      // Action filter
       if (actionFilter === "pending" && event.actionTaken) {
         return false;
       }
@@ -288,7 +311,6 @@ export default function NDRPage() {
         return false;
       }
 
-      // Date range filter
       if (dateRange.from && event.ndrDate) {
         const ndrDate = new Date(event.ndrDate);
         if (ndrDate < dateRange.from) return false;
@@ -304,12 +326,31 @@ export default function NDRPage() {
     });
   }, [ndrEvents, searchQuery, statusFilter, actionFilter, dateRange]);
 
-  // Pagination
-  const totalEvents = filteredEvents.length;
-  const totalPages = Math.ceil(totalEvents / pageSize);
+  // Apply filters for OFD
+  const filteredOfdOrders = useMemo(() => {
+    return ofdOrders.filter((order) => {
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesName = order.customerName?.toLowerCase().includes(query);
+        const matchesPhone = order.customerPhone?.toLowerCase().includes(query);
+        const matchesAwb = order.trackingNumber?.toLowerCase().includes(query);
+        const matchesOrder = order.shopifyOrderNumber?.toLowerCase().includes(query);
+        if (!matchesName && !matchesPhone && !matchesAwb && !matchesOrder) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [ofdOrders, searchQuery]);
+
+  // Pagination for active tab
+  const activeData = activeTab === "ndr" ? filteredEvents : filteredOfdOrders;
+  const totalItems = activeData.length;
+  const totalPages = Math.ceil(totalItems / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
-  const endIndex = Math.min(startIndex + pageSize, totalEvents);
-  const paginatedEvents = filteredEvents.slice(startIndex, endIndex);
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
+  const paginatedNdrEvents = filteredEvents.slice(startIndex, endIndex);
+  const paginatedOfdOrders = filteredOfdOrders.slice(startIndex, endIndex);
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { label: string; variant: any }> = {
@@ -349,212 +390,424 @@ export default function NDRPage() {
     setActionFilter("all");
   };
 
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setCurrentPage(1);
+    setSearchQuery("");
+  };
+
+  const handleCallNow = (order: OfdOrder) => {
+    if (!order.customerPhone) {
+      toast({
+        variant: "destructive",
+        title: "No Phone Number",
+        description: "Customer phone number is not available.",
+      });
+      return;
+    }
+    
+    // Trigger click-to-call or open phone dialer
+    window.location.href = `tel:${order.customerPhone}`;
+    toast({
+      title: "Initiating Call",
+      description: `Calling ${order.customerName} at ${order.customerPhone}`,
+    });
+  };
+
+  const isLoading = activeTab === "ndr" ? ndrLoading : ofdLoading;
+
+  // Dynamic KPI stats based on active tab
+  const getKpiStats = () => {
+    if (activeTab === "ndr") {
+      return {
+        totalLabel: "Total NDR Cases",
+        totalValue: ndrData?.total || 0,
+        pendingLabel: "Pending Action",
+        pendingValue: ndrEvents.filter((e) => !e.actionTaken).length,
+        scheduledLabel: "Reattempt Scheduled",
+        scheduledValue: ndrEvents.filter((e) => e.reattemptScheduled).length,
+        resolvedLabel: "Resolved",
+        resolvedValue: ndrEvents.filter((e) => e.resolved).length,
+      };
+    } else {
+      return {
+        totalLabel: "Out for Delivery",
+        totalValue: ofdData?.total || 0,
+        pendingLabel: "Awaiting Confirmation",
+        pendingValue: ofdOrders.length,
+        scheduledLabel: "With Phone",
+        scheduledValue: ofdOrders.filter((o) => o.customerPhone).length,
+        resolvedLabel: "COD Orders",
+        resolvedValue: 0, // We don't have payment method in OFD data
+      };
+    }
+  };
+
+  const kpiStats = getKpiStats();
+
   return (
     <PageLayout
       title="NDR Management"
-      description="Track and manage failed delivery attempts"
+      description="Track and manage deliveries"
     >
       <div className="p-6 space-y-6" data-testid="page-ndr">
-        {isLoading ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {[...Array(4)].map((_, i) => (
-                <Skeleton key={i} className="h-24 w-full" />
-              ))}
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-2" data-testid="tabs-ndr-ofd">
+            <TabsTrigger value="ndr" data-testid="tab-ndr-cases">
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              NDR Cases
+            </TabsTrigger>
+            <TabsTrigger value="ofd" data-testid="tab-ofd">
+              <Truck className="h-4 w-4 mr-2" />
+              Out for Delivery
+            </TabsTrigger>
+          </TabsList>
+
+          {isLoading ? (
+            <div className="space-y-4 mt-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, i) => (
+                  <Skeleton key={i} className="h-24 w-full" />
+                ))}
+              </div>
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-96 w-full" />
             </div>
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-96 w-full" />
-          </div>
-        ) : (
-          <>
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Total NDR Cases</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold" data-testid="text-total-ndr">{data?.total || 0}</div>
-                </CardContent>
-              </Card>
+          ) : (
+            <>
+              {/* Stats Cards - Dynamic based on tab */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium">{kpiStats.totalLabel}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold" data-testid="text-total-kpi">{kpiStats.totalValue}</div>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Pending Action</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold" data-testid="text-pending-action">
-                    {ndrEvents.filter((e) => !e.actionTaken).length}
-                  </div>
-                </CardContent>
-              </Card>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium">{kpiStats.pendingLabel}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold" data-testid="text-pending-kpi">
+                      {kpiStats.pendingValue}
+                    </div>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Reattempt Scheduled</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold" data-testid="text-reattempt-scheduled">
-                    {ndrEvents.filter((e) => e.reattemptScheduled).length}
-                  </div>
-                </CardContent>
-              </Card>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium">{kpiStats.scheduledLabel}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold" data-testid="text-scheduled-kpi">
+                      {kpiStats.scheduledValue}
+                    </div>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium">Resolved</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold" data-testid="text-resolved">
-                    {ndrEvents.filter((e) => e.resolved).length}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium">{kpiStats.resolvedLabel}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold" data-testid="text-resolved-kpi">
+                      {kpiStats.resolvedValue}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
 
-            {/* Filters */}
-            <NdrFilter
-              searchQuery={searchQuery}
-              onSearchChange={setSearchQuery}
-              dateRange={dateRange}
-              onDateRangeChange={setDateRange}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              actionFilter={actionFilter}
-              onActionFilterChange={setActionFilter}
-              onClearFilters={handleClearFilters}
-            />
+              {/* NDR Tab Content */}
+              <TabsContent value="ndr" className="mt-0">
+                {/* Filters */}
+                <NdrFilter
+                  searchQuery={searchQuery}
+                  onSearchChange={setSearchQuery}
+                  dateRange={dateRange}
+                  onDateRangeChange={setDateRange}
+                  statusFilter={statusFilter}
+                  onStatusFilterChange={setStatusFilter}
+                  actionFilter={actionFilter}
+                  onActionFilterChange={setActionFilter}
+                  onClearFilters={handleClearFilters}
+                />
 
-            {/* NDR Table */}
-            {filteredEvents.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-12">
-                  <Package className="h-12 w-12 text-muted-foreground mb-4" />
-                  <p className="text-lg font-medium">No NDR cases found</p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {ndrEvents.length === 0
-                      ? "NDR cases will appear here"
-                      : "No cases match your filters"}
-                  </p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="flex flex-col gap-4">
-                {/* Summary Info */}
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {startIndex + 1}-{endIndex} of {totalEvents} case{totalEvents !== 1 ? "s" : ""}
-                  </p>
-                </div>
+                {/* NDR Table */}
+                {filteredEvents.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12">
+                      <Package className="h-12 w-12 text-muted-foreground mb-4" />
+                      <p className="text-lg font-medium">No NDR cases found</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {ndrEvents.length === 0
+                          ? "NDR cases will appear here"
+                          : "No cases match your filters"}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Showing {startIndex + 1}-{endIndex} of {totalItems} case{totalItems !== 1 ? "s" : ""}
+                      </p>
+                    </div>
 
-                {/* Table with Sticky Header and Footer */}
-                <div className="rounded-lg border bg-card">
-                  <div className="relative">
-                    <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
-                        <TableRow>
-                          <TableHead className="bg-card" data-testid="header-awb">AWB</TableHead>
-                          <TableHead className="bg-card" data-testid="header-ndr-date">NDR Date</TableHead>
-                          <TableHead className="bg-card" data-testid="header-status">Status</TableHead>
-                          <TableHead className="bg-card" data-testid="header-reason">Reason</TableHead>
-                          <TableHead className="bg-card" data-testid="header-action">Action Taken</TableHead>
-                          <TableHead className="text-right bg-card" data-testid="header-actions">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {paginatedEvents.map((event) => (
-                          <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
-                            <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
-                              {event.awb}
-                            </TableCell>
-                            <TableCell data-testid={`cell-date-${event.id}`}>
-                              {format(new Date(event.ndrDate), "MMM dd, yyyy")}
-                            </TableCell>
-                            <TableCell data-testid={`cell-status-${event.id}`}>{getStatusBadge(event.ndrStatus)}</TableCell>
-                            <TableCell className="max-w-xs truncate" data-testid={`cell-reason-${event.id}`}>
-                              {event.ndrReason}
-                            </TableCell>
-                            <TableCell data-testid={`cell-action-taken-${event.id}`}>{getActionBadge(event.actionTaken)}</TableCell>
-                            <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
-                              {!event.resolved && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleReattempt(event)}
-                                  data-testid={`button-reattempt-${event.id}`}
-                                >
-                                  <Calendar className="h-4 w-4 mr-1" />
-                                  Reattempt
-                                </Button>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  {/* Pagination Footer */}
-                  <div className="sticky bottom-0 bg-card border-t p-4 z-10">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          Showing {totalEvents === 0 ? 0 : startIndex + 1}-{endIndex} of {totalEvents} cases
-                        </span>
+                    <div className="rounded-lg border bg-card">
+                      <div className="relative">
+                        <Table>
+                          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                            <TableRow>
+                              <TableHead className="bg-card" data-testid="header-awb">AWB</TableHead>
+                              <TableHead className="bg-card" data-testid="header-ndr-date">NDR Date</TableHead>
+                              <TableHead className="bg-card" data-testid="header-status">Status</TableHead>
+                              <TableHead className="bg-card" data-testid="header-reason">Reason</TableHead>
+                              <TableHead className="bg-card" data-testid="header-action">Action Taken</TableHead>
+                              <TableHead className="text-right bg-card" data-testid="header-actions">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paginatedNdrEvents.map((event) => (
+                              <TableRow key={event.id} className="hover-elevate" data-testid={`row-ndr-${event.id}`}>
+                                <TableCell className="font-mono text-sm" data-testid={`cell-awb-${event.id}`}>
+                                  {event.awb}
+                                </TableCell>
+                                <TableCell data-testid={`cell-date-${event.id}`}>
+                                  {format(new Date(event.ndrDate), "MMM dd, yyyy")}
+                                </TableCell>
+                                <TableCell data-testid={`cell-status-${event.id}`}>{getStatusBadge(event.ndrStatus)}</TableCell>
+                                <TableCell className="max-w-xs truncate" data-testid={`cell-reason-${event.id}`}>
+                                  {event.ndrReason}
+                                </TableCell>
+                                <TableCell data-testid={`cell-action-taken-${event.id}`}>{getActionBadge(event.actionTaken)}</TableCell>
+                                <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
+                                  {!event.resolved && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleReattempt(event)}
+                                      data-testid={`button-reattempt-${event.id}`}
+                                    >
+                                      <Calendar className="h-4 w-4 mr-1" />
+                                      Reattempt
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
 
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">Rows per page:</span>
-                          <Select value={String(pageSize)} onValueChange={(value) => {
-                            setPageSize(Number(value));
-                            setCurrentPage(1);
-                          }}>
-                            <SelectTrigger className="w-[80px]" data-testid="select-page-size">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="10">10</SelectItem>
-                              <SelectItem value="25">25</SelectItem>
-                              <SelectItem value="50">50</SelectItem>
-                              <SelectItem value="100">100</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
+                      {/* Pagination Footer */}
+                      <div className="sticky bottom-0 bg-card border-t p-4 z-10">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">
+                              Showing {totalItems === 0 ? 0 : startIndex + 1}-{endIndex} of {totalItems} cases
+                            </span>
+                          </div>
 
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                            disabled={currentPage === 1}
-                            data-testid="button-prev-page"
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                            Previous
-                          </Button>
-                          <span className="text-sm text-muted-foreground px-4">
-                            Page {currentPage} of {totalPages || 1}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                            disabled={currentPage >= totalPages}
-                            data-testid="button-next-page"
-                          >
-                            Next
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">Rows per page:</span>
+                              <Select value={String(pageSize)} onValueChange={(value) => {
+                                setPageSize(Number(value));
+                                setCurrentPage(1);
+                              }}>
+                                <SelectTrigger className="w-[80px]" data-testid="select-page-size">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="10">10</SelectItem>
+                                  <SelectItem value="25">25</SelectItem>
+                                  <SelectItem value="50">50</SelectItem>
+                                  <SelectItem value="100">100</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                                data-testid="button-prev-page"
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Previous
+                              </Button>
+                              <span className="text-sm text-muted-foreground px-4">
+                                Page {currentPage} of {totalPages || 1}
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={currentPage >= totalPages}
+                                data-testid="button-next-page"
+                              >
+                                Next
+                                <ChevronRight className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
+                )}
+              </TabsContent>
+
+              {/* OFD Tab Content */}
+              <TabsContent value="ofd" className="mt-0">
+                {/* Search for OFD */}
+                <div className="flex items-center gap-4 mb-4">
+                  <Input
+                    placeholder="Search by name, phone, AWB, or order..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="max-w-sm"
+                    data-testid="input-ofd-search"
+                  />
                 </div>
-              </div>
-            )}
-          </>
-        )}
+
+                {/* OFD Table */}
+                {filteredOfdOrders.length === 0 ? (
+                  <Card>
+                    <CardContent className="flex flex-col items-center justify-center py-12">
+                      <Truck className="h-12 w-12 text-muted-foreground mb-4" />
+                      <p className="text-lg font-medium">No deliveries out for delivery</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Orders with OFD status will appear here
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Showing {startIndex + 1}-{Math.min(endIndex, filteredOfdOrders.length)} of {filteredOfdOrders.length} order{filteredOfdOrders.length !== 1 ? "s" : ""}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg border bg-card">
+                      <div className="relative">
+                        <Table>
+                          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                            <TableRow>
+                              <TableHead className="bg-card" data-testid="header-ofd-customer">Customer</TableHead>
+                              <TableHead className="bg-card" data-testid="header-ofd-phone">Phone</TableHead>
+                              <TableHead className="bg-card" data-testid="header-ofd-awb">AWB</TableHead>
+                              <TableHead className="bg-card" data-testid="header-ofd-status">Status</TableHead>
+                              <TableHead className="text-right bg-card" data-testid="header-ofd-actions">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paginatedOfdOrders.map((order) => (
+                              <TableRow key={order.id} className="hover-elevate" data-testid={`row-ofd-${order.id}`}>
+                                <TableCell data-testid={`cell-ofd-customer-${order.id}`}>
+                                  <div className="flex flex-col">
+                                    <span className="font-medium">{order.customerName}</span>
+                                    <span className="text-xs text-muted-foreground">#{order.shopifyOrderNumber}</span>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="font-mono text-sm" data-testid={`cell-ofd-phone-${order.id}`}>
+                                  {order.customerPhone || "-"}
+                                </TableCell>
+                                <TableCell className="font-mono text-sm" data-testid={`cell-ofd-awb-${order.id}`}>
+                                  {order.trackingNumber || "-"}
+                                </TableCell>
+                                <TableCell data-testid={`cell-ofd-status-${order.id}`}>
+                                  <Badge variant="default">
+                                    {order.shipmentStatus || "Out for Delivery"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right" data-testid={`cell-ofd-actions-${order.id}`}>
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleCallNow(order)}
+                                    disabled={!order.customerPhone}
+                                    data-testid={`button-call-now-${order.id}`}
+                                  >
+                                    <Phone className="h-4 w-4 mr-1" />
+                                    Call Now
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Pagination Footer */}
+                      <div className="sticky bottom-0 bg-card border-t p-4 z-10">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-muted-foreground">
+                              Showing {filteredOfdOrders.length === 0 ? 0 : startIndex + 1}-{Math.min(endIndex, filteredOfdOrders.length)} of {filteredOfdOrders.length} orders
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">Rows per page:</span>
+                              <Select value={String(pageSize)} onValueChange={(value) => {
+                                setPageSize(Number(value));
+                                setCurrentPage(1);
+                              }}>
+                                <SelectTrigger className="w-[80px]" data-testid="select-ofd-page-size">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="10">10</SelectItem>
+                                  <SelectItem value="25">25</SelectItem>
+                                  <SelectItem value="50">50</SelectItem>
+                                  <SelectItem value="100">100</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                                disabled={currentPage === 1}
+                                data-testid="button-ofd-prev-page"
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Previous
+                              </Button>
+                              <span className="text-sm text-muted-foreground px-4">
+                                Page {currentPage} of {Math.ceil(filteredOfdOrders.length / pageSize) || 1}
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setCurrentPage((p) => Math.min(Math.ceil(filteredOfdOrders.length / pageSize), p + 1))}
+                                disabled={currentPage >= Math.ceil(filteredOfdOrders.length / pageSize)}
+                                data-testid="button-ofd-next-page"
+                              >
+                                Next
+                                <ChevronRight className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+            </>
+          )}
+        </Tabs>
       </div>
 
       <ReattemptDeliveryModal

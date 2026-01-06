@@ -7,7 +7,7 @@ import {
   attendance, orderAssignments, calls, notifications, ndrEvents, 
   courses, resources, userLessonProgress, userOnboardingProgress, users 
 } from "@shared/schema";
-import { eq, or } from "drizzle-orm";
+import { eq, or, sql, desc } from "drizzle-orm";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
@@ -2759,6 +2759,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error fetching NDR events:", error);
       res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+    }
+  });
+
+  // Get orders that are Out for Delivery (OFD)
+  app.get("/api/orders/ofd", async (req, res) => {
+    try {
+      // Filter orders by shipmentStatus containing OFD patterns
+      const ofdPatterns = ['out for delivery', 'ofd', 'Out for Delivery', 'OFD'];
+      
+      // Query orders with OFD status
+      const result = await db.select({
+        id: orders.id,
+        shopifyOrderNumber: orders.shopifyOrderNumber,
+        customerName: orders.customerName,
+        customerEmail: orders.customerEmail,
+        customerPhone: orders.customerPhone,
+        shippingAddress: orders.shippingAddress,
+        trackingNumber: orders.trackingNumber,
+        trackingUrl: orders.trackingUrl,
+        courierName: orders.courierName,
+        shipmentStatus: orders.shipmentStatus,
+        status: orders.status,
+        assignedTo: orders.assignedTo,
+        createdAt: orders.createdAt,
+      })
+      .from(orders)
+      .where(
+        sql`LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%' 
+            OR LOWER(${orders.shipmentStatus}) LIKE '%ofd%'
+            OR ${orders.shipmentStatus} = 'UD'`
+      )
+      .orderBy(desc(orders.createdAt))
+      .limit(100);
+
+      res.json({ orders: result, total: result.length });
+    } catch (error: any) {
+      console.error("Error fetching OFD orders:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch OFD orders" });
     }
   });
 
