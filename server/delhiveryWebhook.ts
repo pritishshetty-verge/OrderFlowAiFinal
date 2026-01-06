@@ -113,15 +113,36 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       return res.status(200).json({ success: true, message: 'No status to process' });
     }
 
-    const shipment = await storage.getShipmentByAWB(awb);
-    if (!shipment) {
-      console.warn(`[Delhivery Webhook] Shipment not found for AWB: ${awb}`);
-      return res.status(200).json({ success: false, error: 'Shipment not found' });
+    // Primary lookup: Find order by tracking_number in orders table
+    let order = await storage.getOrderByTrackingNumber(awb);
+    let shipment = null;
+    
+    // Fallback: Try shipments table if order not found by tracking number
+    if (!order) {
+      shipment = await storage.getShipmentByAWB(awb);
+      if (shipment) {
+        order = await storage.getOrder(shipment.orderId);
+      }
+    }
+    
+    if (!order) {
+      console.warn(`[Delhivery Webhook] Order not found for AWB: ${awb}`);
+      return res.status(200).json({ success: false, error: 'Order not found for AWB' });
     }
 
-    await storage.updateShipment(shipment.id, {
-      currentStatus: effectiveStatus,
-      statusUpdatedAt: new Date(),
+    console.log(`[Delhivery Webhook] Found order ${order.id} for AWB ${awb}`);
+
+    // Update shipment if it exists
+    if (shipment) {
+      await storage.updateShipment(shipment.id, {
+        currentStatus: effectiveStatus,
+        statusUpdatedAt: new Date(),
+      });
+    }
+    
+    // Update order's shipment status
+    await storage.updateOrder(order.id, {
+      shipmentStatus: effectiveStatus,
     });
 
     const { delhiveryService } = await import('./services/delhivery');
@@ -177,37 +198,42 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
         }
       }
 
-      await storage.createNDREvent({
-        shipmentId: shipment.id,
-        orderId: shipment.orderId,
-        awb,
-        ndrStatus: ndrStatusValue,
-        ndrReason: remarks || effectiveStatus,
-        ndrDate: statusDateTime ? new Date(statusDateTime) : new Date(),
-        rawNdrData: req.body,
-      });
+      // Only create NDR event if we have a shipment (schema requires shipmentId)
+      if (shipment) {
+        await storage.createNDREvent({
+          shipmentId: shipment.id,
+          orderId: order.id,
+          awb,
+          ndrStatus: ndrStatusValue,
+          ndrReason: remarks || effectiveStatus,
+          ndrDate: statusDateTime ? new Date(statusDateTime) : new Date(),
+          rawNdrData: req.body,
+        });
+      } else {
+        console.log(`[Delhivery Webhook] Skipping NDR event creation - no shipment record for AWB ${awb}`);
+      }
 
       const shipmentStatusLabel = isRTO ? 'RTO' : 'NDR';
 
-      await storage.updateOrder(shipment.orderId, {
+      await storage.updateOrder(order.id, {
         status: 'ndr',
         shipmentStatus: shipmentStatusLabel,
       });
 
-      await storage.updateShipment(shipment.id, {
-        status: isRTO ? 'rto' : 'ndr',
-      });
-
-      const order = await storage.getOrder(shipment.orderId);
+      if (shipment) {
+        await storage.updateShipment(shipment.id, {
+          status: isRTO ? 'rto' : 'ndr',
+        });
+      }
       
-      if (order && order.assignedTo) {
+      if (order.assignedTo) {
         await storage.createNotification({
           userId: order.assignedTo,
-          orderId: shipment.orderId,
+          orderId: order.id,
           type: 'ndr_alert',
           title: isRTO ? 'RTO Alert: Return to Origin' : 'NDR Alert: Failed Delivery',
           message: `Order #${order.shopifyOrderNumber} has a delivery issue: ${remarks || effectiveStatus}. AWB: ${awb}`,
-          actionUrl: `/orders?orderId=${shipment.orderId}`,
+          actionUrl: `/orders?orderId=${order.id}`,
         });
 
         console.log('[Delhivery Webhook] NDR notification created for agent:', order.assignedTo);
@@ -222,12 +248,14 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     if (isDelivered && !isRTO) {
       console.log('[Delhivery Webhook] Delivery completed:', awb);
       
-      await storage.updateShipment(shipment.id, {
-        status: 'delivered',
-        deliveredAt: statusDateTime ? new Date(statusDateTime) : new Date(),
-      });
+      if (shipment) {
+        await storage.updateShipment(shipment.id, {
+          status: 'delivered',
+          deliveredAt: statusDateTime ? new Date(statusDateTime) : new Date(),
+        });
+      }
 
-      await storage.updateOrder(shipment.orderId, {
+      await storage.updateOrder(order.id, {
         status: 'delivered',
         shipmentStatus: 'Delivered',
       });
@@ -239,11 +267,13 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     );
 
     if (isInTransit && !isNDR && !isRTO && !isDelivered) {
-      await storage.updateShipment(shipment.id, {
-        status: 'in_transit',
-      });
+      if (shipment) {
+        await storage.updateShipment(shipment.id, {
+          status: 'in_transit',
+        });
+      }
 
-      await storage.updateOrder(shipment.orderId, {
+      await storage.updateOrder(order.id, {
         shipmentStatus: effectiveStatus,
       });
     }
