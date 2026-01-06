@@ -597,6 +597,14 @@ export class DbStorage implements IStorage {
     return order;
   }
 
+  async getOrderByTrackingNumber(trackingNumber: string): Promise<Order | undefined> {
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.trackingNumber, trackingNumber));
+    return order;
+  }
+
   async createOrder(insertOrder: InsertOrder): Promise<Order> {
     const [order] = await db.insert(orders).values(insertOrder).returning();
     return order;
