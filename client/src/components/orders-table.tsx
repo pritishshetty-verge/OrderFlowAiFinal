@@ -106,7 +106,7 @@ export interface Order {
   total: number;
   paymentMethod: "cod" | "prepaid";
   financialStatus?: string | null; // Shopify financial status: paid, pending, voided, refunded
-  status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr";
+  status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr" | "Unfulfilled" | "unfulfilled";
   callStatus?: "Pending" | "Confirmed" | "Cancelled" | "Follow Up";
   assignedTo?: string;
   assignedToUser?: {
@@ -581,7 +581,7 @@ export function OrdersTable({
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-1">
-                  {order.paymentMethod === "cod" && (order.status === "assigned" || order.status === "pending") && (
+                  {order.paymentMethod === "cod" && (order.status === "assigned" || order.status === "pending" || order.status === "Unfulfilled" || order.status === "unfulfilled") && (
                     <Button
                       variant="ghost"
                       size="icon"
