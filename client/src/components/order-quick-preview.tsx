@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { CancelOrderModal } from "@/components/cancel-order-modal";
 import { FollowupOrderModal } from "@/components/followup-order-modal";
 import { PaymentBadge } from "@/components/payment-badge";
+import { StatusBadge } from "@/components/status-badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -688,9 +689,7 @@ export function OrderQuickPreview({
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Status</p>
-              <Badge variant={getStatusColor(order.status) as any}>
-                {order.status}
-              </Badge>
+              <StatusBadge status={order.status as any} shipmentStatus={order.shipmentStatus} />
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Tags</p>

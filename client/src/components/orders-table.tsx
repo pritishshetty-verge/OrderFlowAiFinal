@@ -107,6 +107,7 @@ export interface Order {
   paymentMethod: "cod" | "prepaid";
   financialStatus?: string | null; // Shopify financial status: paid, pending, voided, refunded
   status: "pending" | "assigned" | "confirmed" | "cancelled" | "shipped" | "delivered" | "ndr" | "Unfulfilled" | "unfulfilled";
+  shipmentStatus?: string | null; // Carrier status: In Transit, Out for Delivery, Delivered, etc.
   callStatus?: "Pending" | "Confirmed" | "Cancelled" | "Follow Up";
   assignedTo?: string;
   assignedToUser?: {

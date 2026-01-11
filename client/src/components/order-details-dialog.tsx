@@ -32,7 +32,7 @@ export function OrderDetailsDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             Order #{order.shopifyOrderId}
-            <StatusBadge status={order.status} />
+            <StatusBadge status={order.status} shipmentStatus={order.shipmentStatus} />
           </DialogTitle>
           <DialogDescription>
             Created {format(order.createdAt, "PPpp")}
