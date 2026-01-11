@@ -2819,21 +2819,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courierName = shipment.courierName?.toLowerCase() || "";
 
       if (courierName.includes("delhivery")) {
-        // Use Delhivery API - only include address/phone if provided
+        // Use Delhivery API - select correct action based on what's provided
         const { delhiveryService } = await import("./services/delhivery");
+        
+        const hasAddress = Boolean(address1 || address2);
+        const hasPhone = Boolean(phone);
+        const hasDate = Boolean(deferredDate);
+        
+        // Determine the correct action type:
+        // - EDIT_DETAILS: Only when address or phone is provided
+        // - DEFER_DLV: Only when date is provided (without address/phone changes)
+        // - RE-ATTEMPT: Default when nothing is changed (one-click reattempt)
+        let actionType: 'reattempt' | 'defer' | 'edit' = 'reattempt';
         const actionData: any = {};
         
-        if (deferredDate) {
+        if (hasAddress || hasPhone) {
+          // User wants to update delivery details
+          actionType = 'edit';
+          if (hasAddress) {
+            actionData.address = [address1, address2].filter(Boolean).join(", ");
+          }
+          if (hasPhone) {
+            actionData.phone = phone;
+          }
+        } else if (hasDate) {
+          // User wants to defer delivery to a specific date
+          actionType = 'defer';
           actionData.deferredDate = deferredDate;
         }
-        if (address1 || address2) {
-          actionData.address = [address1, address2].filter(Boolean).join(", ");
-        }
-        if (phone) {
-          actionData.phone = phone;
-        }
+        // else: Use 'reattempt' (RE-ATTEMPT) - no action_data needed
         
-        const result = await delhiveryService.actionNDR(awb, "reattempt", actionData);
+        console.log(`[NDR Reattempt] AWB: ${awb}, Action: ${actionType}, Data:`, actionData);
+        
+        const result = await delhiveryService.actionNDR(awb, actionType, actionData);
 
         if (!result.success) {
           return res.status(500).json({ error: result.error || "Delhivery reattempt failed" });

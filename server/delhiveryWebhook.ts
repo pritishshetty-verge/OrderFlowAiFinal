@@ -52,46 +52,80 @@ function extractPayloadFields(body: any): {
   remarks: string | undefined;
   statusDateTime: string | undefined;
 } {
-  // Priority order for remarks/reasons (most specific first):
-  // 1. Remarks/remarks field (usually has the actual NDR reason like "Consignee refused to accept")
-  // 2. Instructions field (sometimes contains the reason)
-  // 3. scans[].remark if available
-  // 4. Status as last resort
+  // Priority order for NDR reasons (most specific first):
+  // 1. payload.Status.Instructions (contains "Consignee refused..." etc.)
+  // 2. payload.Status.Remarks
+  // 3. scans[0].Instructions or scans[0].remark
+  // 4. Top-level Instructions/Remarks fields
+  // 5. FALLBACK: Only use generic Status if above are empty/useless (UD, RTO, etc.)
+  
+  const isGenericStatus = (val: string | undefined): boolean => {
+    if (!val) return true;
+    const generic = ['ud', 'rto', 'ndr', 'return accepted', 'undelivered', 'in transit'];
+    return generic.some(g => val.toLowerCase().trim() === g || val.toLowerCase().includes('return accepted'));
+  };
   
   let extractedRemarks = '';
   
-  // Check for scans array with remark field (Delhivery One format)
+  // Check for scans array with remark/Instructions field (Delhivery One format)
   if (body.scans && Array.isArray(body.scans) && body.scans.length > 0) {
-    // Get the most recent scan's remark
-    const latestScan = body.scans[body.scans.length - 1];
-    if (latestScan.remark || latestScan.Remark) {
-      extractedRemarks = latestScan.remark || latestScan.Remark;
+    // Get the first scan's remark/Instructions (usually most relevant for NDR)
+    const firstScan = body.scans[0];
+    const scanRemark = firstScan.Instructions || firstScan.instructions || 
+                       firstScan.remark || firstScan.Remark || '';
+    if (scanRemark && !isGenericStatus(scanRemark)) {
+      extractedRemarks = scanRemark;
     }
   }
   
   if (body.Shipment && body.Shipment.AWB) {
-    // Default format
-    const shipmentRemarks = body.Shipment.Status?.Instructions || 
-                           body.Shipment.Status?.Remarks || 
-                           body.Shipment.Remarks ||
-                           extractedRemarks;
+    // Default format - check Instructions first, then Remarks
+    const statusInstructions = body.Shipment.Status?.Instructions;
+    const statusRemarks = body.Shipment.Status?.Remarks;
+    const shipmentRemarks = body.Shipment.Remarks;
+    
+    // Priority: Instructions > Remarks > scans > fallback to Status
+    let finalRemarks = '';
+    if (statusInstructions && !isGenericStatus(statusInstructions)) {
+      finalRemarks = statusInstructions;
+    } else if (statusRemarks && !isGenericStatus(statusRemarks)) {
+      finalRemarks = statusRemarks;
+    } else if (shipmentRemarks && !isGenericStatus(shipmentRemarks)) {
+      finalRemarks = shipmentRemarks;
+    } else if (extractedRemarks) {
+      finalRemarks = extractedRemarks;
+    } else {
+      // Fallback to Status only if nothing else is available
+      finalRemarks = body.Shipment.Status?.Status || '';
+    }
+    
     return {
       awb: body.Shipment.AWB,
       status: body.Shipment.Status?.Status,
       statusCode: undefined,
-      remarks: shipmentRemarks,
+      remarks: finalRemarks,
       statusDateTime: body.Shipment.Status?.StatusDateTime,
     };
   }
 
   // Legacy/alternative format - prioritize specific reason fields
-  const legacyRemarks = body.Remarks || 
-                        body.remarks || 
-                        body.Instructions || 
-                        body.instructions ||
-                        body.ndr_reason ||
-                        body.NDRReason ||
-                        extractedRemarks;
+  const instructionsField = body.Instructions || body.instructions;
+  const remarksField = body.Remarks || body.remarks;
+  const ndrReason = body.ndr_reason || body.NDRReason;
+  
+  // Priority: Instructions > Remarks > ndr_reason > scans > fallback
+  let legacyRemarks = '';
+  if (instructionsField && !isGenericStatus(instructionsField)) {
+    legacyRemarks = instructionsField;
+  } else if (remarksField && !isGenericStatus(remarksField)) {
+    legacyRemarks = remarksField;
+  } else if (ndrReason && !isGenericStatus(ndrReason)) {
+    legacyRemarks = ndrReason;
+  } else if (extractedRemarks) {
+    legacyRemarks = extractedRemarks;
+  } else {
+    legacyRemarks = body.Scan || body.Status || body.status || '';
+  }
   
   return {
     awb: body.Awb || body.waybill || body.awb,
