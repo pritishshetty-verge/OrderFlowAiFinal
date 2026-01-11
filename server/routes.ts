@@ -8,7 +8,7 @@ import {
   courses, resources, userLessonProgress, userOnboardingProgress, users 
 } from "@shared/schema";
 import { eq, or, sql, desc } from "drizzle-orm";
-import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled } from "./webhooks";
+import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
 import { ZodError } from "zod";
@@ -39,6 +39,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/orders/create", handleOrderCreated);
   app.post("/api/webhooks/orders/update", handleOrderUpdated);
   app.post("/api/webhooks/orders/cancelled", handleOrderCancelled);
+  app.post("/api/webhooks/fulfillments/update", handleFulfillmentUpdate);
   
   // Courier webhook (Shiprocket)
   // Note: Renamed from /api/webhooks/shiprocket to /api/webhooks/courier-events
@@ -2762,13 +2763,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get orders that are Out for Delivery (OFD)
+  // Get orders that are Out for Delivery (OFD) or In Transit
+  // Uses a BROAD filter to catch ANY order physically moving
   app.get("/api/orders/ofd", async (req, res) => {
     try {
-      // Filter orders by shipmentStatus containing OFD patterns
-      const ofdPatterns = ['out for delivery', 'ofd', 'Out for Delivery', 'OFD'];
-      
-      // Query orders with OFD status
+      // Query orders with active delivery status
+      // PRIMARY: Check shipmentStatus for carrier status codes and patterns
+      // FALLBACK: Check main status for orders where webhooks were missed
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -2786,9 +2787,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       })
       .from(orders)
       .where(
-        sql`LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%' 
-            OR LOWER(${orders.shipmentStatus}) LIKE '%ofd%'
-            OR ${orders.shipmentStatus} = 'UD'`
+        sql`(
+          -- Primary: Match shipmentStatus (carrier status)
+          LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
+          OR LOWER(${orders.shipmentStatus}) LIKE '%in transit%'
+          OR LOWER(${orders.shipmentStatus}) LIKE '%in-transit%'
+          OR LOWER(${orders.shipmentStatus}) LIKE '%dispatched%'
+          OR LOWER(${orders.shipmentStatus}) LIKE '%ofd%'
+          OR ${orders.shipmentStatus} = 'OT'
+          OR ${orders.shipmentStatus} = 'IT'
+          OR ${orders.shipmentStatus} = 'UD'
+          -- Fallback: Match main status (for missed webhooks)
+          OR LOWER(${orders.status}) = 'out_for_delivery'
+          OR LOWER(${orders.status}) = 'in_transit'
+          -- Also include Shipped orders WITH a tracking number (they're moving)
+          OR (LOWER(${orders.status}) = 'shipped' AND ${orders.trackingNumber} IS NOT NULL AND ${orders.trackingNumber} != '')
+        )
+        -- Exclude delivered, cancelled, and NDR orders
+        AND LOWER(COALESCE(${orders.status}, '')) NOT IN ('delivered', 'cancelled', 'ndr')
+        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%delivered%'
+        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%rto%'`
       )
       .orderBy(desc(orders.createdAt))
       .limit(100);

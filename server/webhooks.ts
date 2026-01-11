@@ -403,3 +403,142 @@ export async function handleOrderCancelled(req: Request, res: Response) {
   }
 }
 
+/**
+ * Handle Shopify fulfillments/update webhook
+ * 
+ * IMPORTANT: The payload is a Fulfillment object, NOT an Order object.
+ * This webhook fires when shipment status changes (e.g., "out_for_delivery", "in_transit", "delivered").
+ * 
+ * Payload structure:
+ * {
+ *   id: number,
+ *   order_id: number,
+ *   status: string,           // "pending", "open", "success", "cancelled", "error", "failure"
+ *   shipment_status: string,  // "confirmed", "in_transit", "out_for_delivery", "delivered", etc.
+ *   tracking_number: string,
+ *   tracking_url: string,
+ *   tracking_company: string,
+ *   ...
+ * }
+ */
+export async function handleFulfillmentUpdate(req: Request, res: Response) {
+  try {
+    // Verify webhook authenticity (supports both Shopify direct and n8n relay)
+    const verification = verifyWebhookAuth(req);
+    if (!verification.valid) {
+      return res.status(401).json({ error: verification.error });
+    }
+
+    const fulfillment = req.body;
+
+    // Log incoming payload for debugging
+    console.log("[Fulfillment Update] Incoming webhook:", JSON.stringify(fulfillment, null, 2));
+
+    // Validate required fields - this is a Fulfillment object, not an Order
+    if (!fulfillment || !fulfillment.order_id) {
+      console.error("[Fulfillment Update] Invalid payload: missing order_id");
+      return res.status(400).json({ 
+        error: "Invalid payload: missing order_id",
+        receivedKeys: Object.keys(fulfillment || {})
+      });
+    }
+
+    // Log webhook receipt
+    await storage.createWebhookLog({
+      topic: "fulfillments/update",
+      shopifyOrderId: fulfillment.order_id?.toString() || null,
+      payload: fulfillment,
+    });
+
+    // Find the order by Shopify order ID
+    const existingOrder = await storage.getOrderByShopifyId(
+      fulfillment.order_id.toString(),
+    );
+
+    if (!existingOrder) {
+      console.log(`[Fulfillment Update] Order not found for Shopify ID: ${fulfillment.order_id}`);
+      return res.status(200).json({ message: "Order not found, ignoring" });
+    }
+
+    // Extract shipment status from fulfillment
+    const shopifyShipmentStatus = fulfillment.shipment_status || null;
+    const trackingNumber = fulfillment.tracking_number || existingOrder.trackingNumber;
+    const trackingUrl = fulfillment.tracking_url || existingOrder.trackingUrl;
+    const trackingCompany = fulfillment.tracking_company || existingOrder.courierName;
+
+    console.log(`[Fulfillment Update] Order ${existingOrder.shopifyOrderNumber}: shipment_status = "${shopifyShipmentStatus}"`);
+
+    // Map Shopify shipment_status to our internal status
+    // Shopify values: "confirmed", "in_transit", "out_for_delivery", "delivered", "failure", etc.
+    const mapShipmentStatusToInternal = (status: string | null): string | null => {
+      if (!status) return null;
+      
+      const statusLower = status.toLowerCase();
+      
+      // Map to user-friendly display values
+      const statusMap: Record<string, string> = {
+        "confirmed": "Confirmed",
+        "in_transit": "In Transit",
+        "out_for_delivery": "Out for Delivery",
+        "delivered": "Delivered",
+        "attempted_delivery": "Attempted Delivery",
+        "failure": "Delivery Failed",
+        "ready_for_pickup": "Ready for Pickup",
+        "picked_up": "Picked Up",
+      };
+      
+      return statusMap[statusLower] || status;
+    };
+
+    const mappedShipmentStatus = mapShipmentStatusToInternal(shopifyShipmentStatus);
+
+    // Determine if we should also update the main order status
+    // For "out_for_delivery" and "in_transit", we want the order to appear in the OFD tab
+    let newOrderStatus: string | undefined = undefined;
+    
+    if (shopifyShipmentStatus) {
+      const statusLower = shopifyShipmentStatus.toLowerCase();
+      
+      if (statusLower === "out_for_delivery") {
+        newOrderStatus = "out_for_delivery";
+      } else if (statusLower === "in_transit") {
+        newOrderStatus = "in_transit";
+      } else if (statusLower === "delivered") {
+        newOrderStatus = "Delivered";
+      }
+    }
+
+    // Build update object
+    const updateData: any = {
+      shipmentStatus: mappedShipmentStatus,
+      trackingNumber: trackingNumber,
+      trackingUrl: trackingUrl,
+      courierName: trackingCompany,
+    };
+
+    // Only update main status if we have a mapped value
+    if (newOrderStatus) {
+      updateData.status = newOrderStatus;
+    }
+
+    await storage.updateOrder(existingOrder.id, updateData);
+
+    // Create status history if main status changed
+    if (newOrderStatus && newOrderStatus !== existingOrder.status) {
+      await storage.createOrderStatus({
+        orderId: existingOrder.id,
+        status: newOrderStatus,
+        previousStatus: existingOrder.status,
+        changedBy: null,
+        note: `Shipment status updated: ${mappedShipmentStatus}`,
+      });
+    }
+
+    console.log(`[Fulfillment Update] Successfully updated order ${existingOrder.shopifyOrderNumber} - shipmentStatus: ${mappedShipmentStatus}, status: ${newOrderStatus || '(unchanged)'}`);
+    res.status(200).json({ message: "Fulfillment update processed successfully" });
+  } catch (error) {
+    console.error("[Fulfillment Update] Error processing webhook:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
