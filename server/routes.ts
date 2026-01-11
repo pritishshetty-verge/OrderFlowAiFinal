@@ -102,7 +102,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get orders that are Out for Delivery (OFD) or In Transit
+  // Get orders that are Out for Delivery (OFD) - STRICT MODE
+  // This is a CALL LIST for agents to confirm "delivery TODAY" with customers
+  // ONLY show orders where the package is physically with the rider
   // IMPORTANT: Must be defined BEFORE /api/orders/:id to avoid route conflict
   app.get("/api/orders/ofd", async (req, res) => {
     try {
@@ -124,25 +126,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .from(orders)
       .where(
         sql`(
-          -- Primary: Match shipmentStatus (carrier status)
+          -- STRICT MODE: Only match Out for Delivery statuses
+          -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
-          OR LOWER(${orders.shipmentStatus}) LIKE '%in transit%'
-          OR LOWER(${orders.shipmentStatus}) LIKE '%in-transit%'
-          OR LOWER(${orders.shipmentStatus}) LIKE '%dispatched%'
+          OR LOWER(${orders.shipmentStatus}) = 'dispatched'
           OR LOWER(${orders.shipmentStatus}) LIKE '%ofd%'
           OR ${orders.shipmentStatus} = 'OT'
-          OR ${orders.shipmentStatus} = 'IT'
-          OR ${orders.shipmentStatus} = 'UD'
-          -- Fallback: Match main status (for missed webhooks)
+          -- Fallback: Match main order status
           OR LOWER(${orders.status}) = 'out_for_delivery'
-          OR LOWER(${orders.status}) = 'in_transit'
-          -- Also include Shipped orders WITH a tracking number (they're moving)
-          OR (LOWER(${orders.status}) = 'shipped' AND ${orders.trackingNumber} IS NOT NULL AND ${orders.trackingNumber} != '')
         )
-        -- Exclude delivered, cancelled, and NDR orders
-        AND LOWER(COALESCE(${orders.status}, '')) NOT IN ('delivered', 'cancelled', 'ndr')
+        -- Exclude delivered, cancelled, NDR, RTO, and In Transit orders
+        AND LOWER(COALESCE(${orders.status}, '')) NOT IN ('delivered', 'cancelled', 'ndr', 'in_transit')
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%delivered%'
-        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%rto%'`
+        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%rto%'
+        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in transit%'
+        AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in-transit%'
+        AND ${orders.shipmentStatus} != 'IT'`
       )
       .orderBy(desc(orders.createdAt))
       .limit(100);
