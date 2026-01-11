@@ -171,7 +171,24 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       return res.status(200).json({ success: false, error: 'No AWB found in payload' });
     }
 
-    const effectiveStatus = status || statusCode || '';
+    // Extract Instructions field for OFD detection
+    // Delhivery sends Status: "Dispatched" but Instructions: "Out for delivery"
+    const rawInstructions = 
+      req.body.Shipment?.Status?.Instructions || 
+      req.body.Instructions || 
+      req.body.instructions || 
+      '';
+    
+    // Check if Instructions indicates "Out for Delivery" (case-insensitive)
+    const isOFDByInstructions = rawInstructions.toLowerCase().includes('out for delivery');
+    
+    // Determine effective status - prioritize OFD detection over generic "Dispatched"
+    let effectiveStatus = status || statusCode || '';
+    
+    if (isOFDByInstructions && effectiveStatus.toLowerCase() === 'dispatched') {
+      console.log(`[Delhivery Webhook] Overriding "Dispatched" → "Out for Delivery" based on Instructions field`);
+      effectiveStatus = 'Out for Delivery';
+    }
     
     if (!effectiveStatus) {
       console.log(`[Delhivery Webhook] Ignoring event with no status for AWB ${awb}`);
@@ -230,11 +247,26 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
     ) && !isRTO;
 
+    // Detect Out for Delivery and In Transit statuses for OFD tab
+    const isOutForDelivery = isOFDByInstructions || 
+      effectiveStatus.toLowerCase().includes('out for delivery') ||
+      effectiveStatus.toLowerCase() === 'ot' ||
+      effectiveStatus.toLowerCase() === 'ofd';
+    
+    const isInTransit = !isOutForDelivery && !isNDR && !isRTO && !isDelivered && (
+      effectiveStatus.toLowerCase().includes('in transit') ||
+      effectiveStatus.toLowerCase().includes('in-transit') ||
+      effectiveStatus.toLowerCase() === 'it' ||
+      effectiveStatus.toLowerCase() === 'dispatched'
+    );
+
     // Determine initial shipment status based on event type
     const determineShipmentStatus = (): string => {
       if (isRTO) return 'rto';
       if (isNDR) return 'ndr';
       if (isDelivered) return 'delivered';
+      if (isOutForDelivery) return 'out_for_delivery';
+      if (isInTransit) return 'in_transit';
       return 'in_transit';
     };
 
@@ -273,10 +305,24 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
     }
     
-    // Update order's shipment status
-    await storage.updateOrder(order.id, {
+    // Update order's shipment status AND main status for OFD tab visibility
+    const orderUpdate: Record<string, any> = {
       shipmentStatus: effectiveStatus,
-    });
+    };
+    
+    // Also update main order status for delivery state changes
+    if (isOutForDelivery) {
+      orderUpdate.status = 'out_for_delivery';
+      console.log(`[Delhivery Webhook] Updating order ${order.id} status to out_for_delivery`);
+    } else if (isInTransit) {
+      orderUpdate.status = 'in_transit';
+      console.log(`[Delhivery Webhook] Updating order ${order.id} status to in_transit`);
+    } else if (isDelivered) {
+      orderUpdate.status = 'Delivered';
+      console.log(`[Delhivery Webhook] Updating order ${order.id} status to Delivered`);
+    }
+    
+    await storage.updateOrder(order.id, orderUpdate);
 
     if (isNDR || isRTO) {
       console.log('[Delhivery Webhook] NDR/RTO event detected:', {
@@ -363,19 +409,10 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
     }
 
-    const transitPatterns = ['in transit', 'in-transit', 'dispatched', 'manifested', 'picked up', 'out for delivery', 'ofd'];
-    const isInTransit = transitPatterns.some(pattern =>
-      effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
-    );
-
-    // Handle transit status (skip if shipment was just created with correct status)
-    if (isInTransit && !isNDR && !isRTO && !isDelivered && !shipmentJustCreated) {
+    // Handle transit/OFD status (skip if shipment was just created with correct status)
+    if ((isInTransit || isOutForDelivery) && !isNDR && !isRTO && !isDelivered && !shipmentJustCreated) {
       await storage.updateShipment(shipment.id, {
-        status: 'in_transit',
-      });
-
-      await storage.updateOrder(order.id, {
-        shipmentStatus: effectiveStatus,
+        status: isOutForDelivery ? 'out_for_delivery' : 'in_transit',
       });
     }
 
@@ -386,6 +423,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       isNDR,
       isRTO,
       isDelivered,
+      isOutForDelivery,
       isInTransit,
       elapsedMs: elapsedTime,
     });
