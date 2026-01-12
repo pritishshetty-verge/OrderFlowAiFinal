@@ -2782,6 +2782,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get all NDR events (generic endpoint - supports both Shiprocket and Delhivery)
+  // Enriches NDR events with order-level fields (nslCode, failureReason, lastFailedAt)
   app.get("/api/ndr", async (req, res) => {
     try {
       const { limit, offset } = req.query;
@@ -2792,7 +2793,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset: offset ? parseInt(offset as string) : 0,
       });
 
-      res.json(result);
+      // Enrich each NDR event with order-level NDR fields
+      const enrichedEvents = await Promise.all(
+        result.events.map(async (event) => {
+          const order = await storage.getOrder(event.orderId);
+          return {
+            ...event,
+            // Order-level NDR fields from Delhivery webhook
+            nslCode: order?.nslCode || null,
+            failureReason: order?.failureReason || event.ndrReason,
+            lastFailedAt: order?.lastFailedAt || event.ndrDate,
+            // Additional order context for display
+            shopifyOrderNumber: order?.shopifyOrderNumber,
+            customerName: order?.customerName,
+            customerPhone: order?.customerPhone,
+          };
+        })
+      );
+
+      res.json({ 
+        events: enrichedEvents, 
+        total: result.total 
+      });
     } catch (error: any) {
       console.error("Error fetching NDR events:", error);
       res.status(500).json({ error: error.message || "Failed to fetch NDR events" });

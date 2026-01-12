@@ -62,6 +62,58 @@ interface NdrEvent {
   resolvedAt?: string;
   resolution?: string;
   createdAt: string;
+  // Enhanced fields from order-level NDR data
+  nslCode?: string | null;
+  failureReason?: string | null;
+  lastFailedAt?: string | null;
+  shopifyOrderNumber?: string;
+  customerName?: string;
+  customerPhone?: string;
+}
+
+// Delhivery NSL codes that are ACTIONABLE (customer can fix the issue)
+// These codes indicate issues that can be resolved with customer contact/info update
+const ACTIONABLE_CODES: string[] = [
+  'EOD-74',  // Customer unavailable - can reschedule
+  'EOD-3',   // Customer unavailable - can reschedule  
+  'EOD-15',  // Address issue - can update address
+  'EOD-16',  // Address issue - can update address
+  'EOD-104', // Address incomplete - can provide correct address
+  'EOD-11',  // Refused delivery - can re-confirm with customer
+  'EOD-43',  // Refused - can clarify with customer
+];
+
+// Non-actionable codes (informational only, cannot fix via customer contact)
+const NON_ACTIONABLE_CODES: string[] = [
+  'EOD-6',   // Out of delivery area - courier limitation
+  'ST-108',  // System/internal issue
+  'EOD-86',  // Weather/external factor
+  'EOD-69',  // Holiday/closure
+];
+
+// Helper to check if an NSL code is actionable
+function isActionableCode(nslCode: string | null | undefined): boolean {
+  if (!nslCode) return true; // Default to actionable if no code
+  return ACTIONABLE_CODES.includes(nslCode);
+}
+
+// Get friendly label for NSL code
+function getNslCodeLabel(nslCode: string | null | undefined): string {
+  if (!nslCode) return 'Unknown';
+  const labels: Record<string, string> = {
+    'EOD-74': 'Customer Unavailable',
+    'EOD-3': 'Customer Not Reachable',
+    'EOD-15': 'Wrong Address',
+    'EOD-16': 'Incomplete Address',
+    'EOD-104': 'Address Not Found',
+    'EOD-11': 'Delivery Refused',
+    'EOD-43': 'Customer Refused',
+    'EOD-6': 'Out of Delivery Area',
+    'ST-108': 'System Issue',
+    'EOD-86': 'Weather Delay',
+    'EOD-69': 'Holiday/Closure',
+  };
+  return labels[nslCode] || nslCode;
 }
 
 interface OfdOrder {
@@ -615,7 +667,20 @@ export default function NDRPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell className="max-w-md" data-testid={`cell-reason-${event.id}`}>
-                                  <span className="line-clamp-2">{event.ndrReason}</span>
+                                  <div className="flex flex-col gap-1">
+                                    {event.nslCode && (
+                                      <Badge 
+                                        variant={isActionableCode(event.nslCode) ? "default" : "secondary"}
+                                        className="w-fit text-xs"
+                                        data-testid={`badge-nsl-${event.id}`}
+                                      >
+                                        {getNslCodeLabel(event.nslCode)}
+                                      </Badge>
+                                    )}
+                                    <span className="line-clamp-2 text-sm text-muted-foreground">
+                                      {event.failureReason || event.ndrReason}
+                                    </span>
+                                  </div>
                                 </TableCell>
                                 <TableCell className="text-center" data-testid={`cell-attempts-${event.id}`}>
                                   <Badge variant="secondary">{attemptCountByAwb[event.awb] || 1}</Badge>
@@ -623,14 +688,24 @@ export default function NDRPage() {
                                 <TableCell className="text-right" data-testid={`cell-actions-${event.id}`}>
                                   <div className="flex items-center justify-end gap-2">
                                     {!event.resolved && (
-                                      <Button
-                                        size="sm"
-                                        onClick={() => handleReattempt(event)}
-                                        data-testid={`button-reattempt-${event.id}`}
-                                      >
-                                        <RotateCcw className="h-4 w-4 mr-1" />
-                                        Reattempt
-                                      </Button>
+                                      isActionableCode(event.nslCode) ? (
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleReattempt(event)}
+                                          data-testid={`button-reattempt-${event.id}`}
+                                        >
+                                          <RotateCcw className="h-4 w-4 mr-1" />
+                                          Reattempt
+                                        </Button>
+                                      ) : (
+                                        <Badge 
+                                          variant="outline" 
+                                          className="text-muted-foreground"
+                                          data-testid={`badge-non-actionable-${event.id}`}
+                                        >
+                                          Non-Actionable
+                                        </Badge>
+                                      )
                                     )}
                                   </div>
                                 </TableCell>
