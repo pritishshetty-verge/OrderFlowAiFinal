@@ -8,6 +8,7 @@ interface DelhiveryDefaultPayload {
       StatusDateTime: string;
       StatusLocation: string;
       Instructions?: string;
+      NSLCode?: string; // NDR code (e.g., "EOD-6", "EOD-74")
     };
     AWB: string;
     ReferenceNo?: string;
@@ -51,6 +52,7 @@ function extractPayloadFields(body: any): {
   statusCode: string | undefined;
   remarks: string | undefined;
   statusDateTime: string | undefined;
+  nslCode: string | undefined;
 } {
   // Priority order for NDR reasons (most specific first):
   // 1. payload.Status.Instructions (contains "Consignee refused..." etc.)
@@ -105,6 +107,7 @@ function extractPayloadFields(body: any): {
       statusCode: undefined,
       remarks: finalRemarks,
       statusDateTime: body.Shipment.Status?.StatusDateTime,
+      nslCode: body.Shipment.Status?.NSLCode,
     };
   }
 
@@ -133,6 +136,7 @@ function extractPayloadFields(body: any): {
     statusCode: body.ScanCode || body.StatusCode || body.status_code,
     remarks: legacyRemarks,
     statusDateTime: body.ScanDateTime || body.StatusDateTime || body.scan_datetime,
+    nslCode: body.NSLCode || body.nslCode || body.nsl_code,
   };
 }
 
@@ -164,7 +168,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
     console.log('[Delhivery Webhook] Token verified successfully');
 
-    const { awb, status, statusCode, remarks, statusDateTime } = extractPayloadFields(req.body);
+    const { awb, status, statusCode, remarks, statusDateTime, nslCode } = extractPayloadFields(req.body);
 
     if (!awb) {
       console.error('[Delhivery Webhook] No AWB found in payload');
@@ -365,9 +369,13 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
       const shipmentStatusLabel = isRTO ? 'RTO' : 'NDR';
 
+      // Update order with NDR details including nslCode, failureReason, lastFailedAt
       await storage.updateOrder(order.id, {
         status: 'ndr',
         shipmentStatus: shipmentStatusLabel,
+        nslCode: nslCode || statusCode || null, // Use NSLCode or fallback to statusCode
+        failureReason: remarks || effectiveStatus,
+        lastFailedAt: statusDateTime ? new Date(statusDateTime) : new Date(),
       });
 
       await storage.updateShipment(shipment.id, {

@@ -1,0 +1,48 @@
+The user wants to implement a **"Real-Time NDR" (Failed Delivery) System** with smart permissions.
+
+**The Goal:**
+1.  **Capture:** Automatically save the specific "Failure Reason" and "NSL Code" from Delhivery webhooks when an order fails.
+2.  **Display:** Show **ALL** failed orders in the NDR tab so we have a complete history.
+3.  **Control:** Only allow the "Reattempt" action for specific, valid Delhivery codes (the "Actionable" ones).
+
+**Please perform these 4 Specific Steps:**
+
+### Step 1: Database Schema (`shared/schema.ts`)
+* Update the `orders` table definition.
+* Add these new columns if they don't exist:
+    * `nslCode` (text): To store the specific error code (e.g., "EOD-6").
+    * `failureReason` (text): To store the readable message (e.g., "Consignee refused to accept").
+    * `lastFailedAt` (timestamp): To store exactly when the failure happened.
+
+### Step 2: Webhook Handler (`routes.ts`)
+* Locate the `/api/delhivery/webhook` endpoint.
+* **Logic:** When the webhook receives a status update of `"UD"` (Undelivered):
+    1.  Extract `nslCode` from `payload.Shipment.Status.NSLCode`.
+    2.  Extract `failureReason` from `payload.Shipment.Status.Instructions`.
+    3.  Extract `lastFailedAt` from `payload.Shipment.Status.StatusDateTime`.
+    4.  Update the order in the database with these 3 fields.
+
+### Step 3: The API Query (`routes.ts`)
+* Update the `GET /api/orders/ndr` endpoint.
+* **Filter:** Return all orders where `shipmentStatus` is `"UD"` (Undelivered) OR `"RTO"` (Return to Origin).
+* **Sort:** Sort by `lastFailedAt` DESC (so the freshest failures appear at the top).
+* **Response:** Ensure `nslCode` and `failureReason` are included in the JSON response.
+
+### Step 4: The Frontend Button Logic (`ndr-table.tsx` or similar)
+* Define the **"Actionable List"**:
+    `const ACTIONABLE_CODES = ["EOD-74", "EOD-15", "EOD-104", "EOD-43", "EOD-86", "EOD-11", "EOD-69", "EOD-6"];`
+* **Smart Button:** In the table Actions column, wrap the "Reattempt" button in a condition:
+    ```tsx
+    {ACTIONABLE_CODES.includes(row.original.nslCode) ? (
+      <Button onClick={() => handleReattempt(row.original.id)}>
+        Reattempt Delivery
+      </Button>
+    ) : (
+      <Badge variant="outline" className="text-gray-500">
+        Non-Actionable
+      </Badge>
+    )}
+    ```
+
+**Outcome:**
+The NDR tab will be a live feed of all failures, but agents will clearly see which orders can be saved (Active Button) vs. which ones are dead ends (Non-Actionable Badge).

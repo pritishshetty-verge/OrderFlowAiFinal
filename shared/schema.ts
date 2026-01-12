@@ -246,6 +246,11 @@ export const orders = pgTable("orders", {
   trackingUrl: text("tracking_url"),
   shipmentStatus: text("shipment_status"),
   
+  // NDR (Non-Delivery Report) fields
+  nslCode: text("nsl_code"), // Delhivery NDR code (e.g., "EOD-6", "EOD-74")
+  failureReason: text("failure_reason"), // Human-readable failure reason
+  lastFailedAt: timestamp("last_failed_at"), // Timestamp of last delivery failure
+  
   // Metadata
   tags: text("tags").array(),
   notes: text("notes"),
