@@ -92,8 +92,10 @@ const NON_ACTIONABLE_CODES: string[] = [
 ];
 
 // Helper to check if an NSL code is actionable
+// Missing or unknown codes default to NON-ACTIONABLE for safety
+// Only explicitly listed ACTIONABLE_CODES can trigger reattempt actions
 function isActionableCode(nslCode: string | null | undefined): boolean {
-  if (!nslCode) return true; // Default to actionable if no code
+  if (!nslCode) return false; // Default to non-actionable if no code (safer)
   return ACTIONABLE_CODES.includes(nslCode);
 }
 

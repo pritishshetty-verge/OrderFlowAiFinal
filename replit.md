@@ -54,6 +54,17 @@ Timezone-safe attendance tracking with break management for payroll. It features
 
 The platform supports Shiprocket and Delhivery, including shipment creation, tracking, and unified NDR (Non-Delivery Report) management via dedicated service modules and webhook handlers.
 
+### Real-Time NDR System
+
+The platform features a Real-Time NDR (Non-Delivery Report) system with intelligent actionable/non-actionable routing based on Delhivery NSLCodes:
+
+- **Database Fields**: Orders table includes `nslCode`, `failureReason`, and `lastFailedAt` columns for NDR tracking
+- **Webhook Integration**: Delhivery webhook handler (`server/delhiveryWebhook.ts`) extracts NSLCode from `Shipment.Status.NSLCode` and saves to orders
+- **Actionable Codes**: ACTIONABLE_CODES list in `client/src/pages/ndr.tsx` defines which codes allow Reattempt actions (e.g., EOD-74 Customer Unavailable, EOD-15 Address Issue)
+- **Non-Actionable Codes**: Issues like EOD-6 (Out of Delivery Area) show informational badge instead of action button
+- **Safety Default**: Missing or unknown NSLCodes default to non-actionable for safety
+- **API Enrichment**: GET `/api/ndr` enriches events with order-level NDR fields
+
 ### Shopify Fulfillment Tracking Sync
 
 Fulfillment tracking data (trackingNumber, trackingUrl, courierName, shipmentStatus) is consistently synced from Shopify across all order ingestion paths and displayed prominently.
