@@ -758,8 +758,10 @@ export class DbStorage implements IStorage {
       .offset(filters?.offset ?? 0);
 
     // Transform results to include assignedToUser and ensure tags is always an array
+    // Explicitly include shipmentStatus to ensure it's not dropped during serialization
     const ordersList = ordersWithAgent.map(row => ({
       ...row.order,
+      shipmentStatus: row.order.shipmentStatus || null, // Explicitly include for frontend
       tags: parsePostgresArray(row.order.tags),
       assignedToUser: row.assignedToUser?.id ? row.assignedToUser : null,
     }));
