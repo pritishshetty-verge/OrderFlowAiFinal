@@ -83,8 +83,10 @@ async function createTestData() {
     shippingAddressLine1: "Test Address Line 1",
     shippingCity: "Delhi",
     shippingState: "Delhi",
-    shippingPostcode: "110001",
+    shippingPincode: "110001",
     shippingCountry: "India",
+    shopifyCreatedAt: now,
+    shopifyUpdatedAt: now,
     createdAt: now,
     updatedAt: now,
   }).returning();
@@ -111,8 +113,10 @@ async function createTestData() {
     shippingAddressLine1: "Remote Location Address",
     shippingCity: "Remote Village",
     shippingState: "Arunachal Pradesh",
-    shippingPostcode: "790001",
+    shippingPincode: "790001",
     shippingCountry: "India",
+    shopifyCreatedAt: now,
+    shopifyUpdatedAt: now,
     createdAt: now,
     updatedAt: now,
   }).returning();
