@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings, CreditCard, ArrowLeftRight, Save } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -329,6 +329,9 @@ export function ShopifySettingsMain() {
       {/* Product Catalog Sync */}
       <ProductCatalogSync />
 
+      {/* Payment Mapping Settings */}
+      <PaymentMappingSettings />
+
       {/* IVR Connection Status */}
       <IVRConnectionStatus />
 
@@ -635,6 +638,220 @@ function ProductCatalogSync() {
               </AlertDescription>
             </Alert>
           )}
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+interface PaymentMethodsResponse {
+  methods: string[];
+}
+
+interface PaymentSettingsResponse {
+  prepaidMethods: string[];
+}
+
+function PaymentMappingSettings() {
+  const { toast } = useToast();
+  const [prepaidMethods, setPrepaidMethods] = useState<string[]>([]);
+  const [hasChanges, setHasChanges] = useState(false);
+  const initializedRef = useRef(false);
+
+  const { data: detectedData, isLoading: isLoadingDetected } = useQuery<PaymentMethodsResponse>({
+    queryKey: ["/api/orders/payment-methods"],
+  });
+
+  const { data: savedData, isLoading: isLoadingSaved } = useQuery<PaymentSettingsResponse>({
+    queryKey: ["/api/settings/payments"],
+  });
+
+  // Initialize from saved data using useEffect
+  useEffect(() => {
+    if (savedData?.prepaidMethods && !initializedRef.current) {
+      // Filter out any "cod" that might have been saved accidentally
+      const cleanedMethods = savedData.prepaidMethods.filter(
+        m => m.toLowerCase() !== 'cod'
+      );
+      setPrepaidMethods(cleanedMethods);
+      initializedRef.current = true;
+    }
+  }, [savedData]);
+
+  // Reset initialization when savedData changes after save
+  useEffect(() => {
+    if (!hasChanges && savedData?.prepaidMethods) {
+      const cleanedMethods = savedData.prepaidMethods.filter(
+        m => m.toLowerCase() !== 'cod'
+      );
+      setPrepaidMethods(cleanedMethods);
+    }
+  }, [savedData, hasChanges]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (methods: string[]) => {
+      const response = await apiRequest("POST", "/api/settings/payments", { prepaidMethods: methods });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/payments"] });
+      setHasChanges(false);
+      toast({
+        title: "Settings Saved",
+        description: "Prepaid payment methods updated. Orders with these payment methods will now auto-confirm.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Save Failed",
+        description: error.message || "Failed to save payment settings.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const detectedMethods = detectedData?.methods || [];
+  
+  // Filter out COD from detected (never show as option to move to prepaid)
+  // Also filter out methods already in prepaid list
+  const unmappedMethods = detectedMethods.filter(
+    m => m.toLowerCase() !== 'cod' && 
+         !prepaidMethods.some(p => p.toLowerCase() === m.toLowerCase())
+  );
+
+  const moveToPrepaids = (method: string) => {
+    if (method.toLowerCase() === 'cod') return; // Safety: never allow COD
+    setPrepaidMethods(prev => [...prev, method]);
+    setHasChanges(true);
+  };
+
+  const removeFromPrepaid = (method: string) => {
+    setPrepaidMethods(prev => prev.filter(m => m.toLowerCase() !== method.toLowerCase()));
+    setHasChanges(true);
+  };
+
+  const handleSave = () => {
+    // Double-check: filter out COD before saving
+    const safeMethodsToSave = prepaidMethods.filter(m => m.toLowerCase() !== 'cod');
+    saveMutation.mutate(safeMethodsToSave);
+  };
+
+  const isLoading = isLoadingDetected || isLoadingSaved;
+
+  return (
+    <SettingsCard
+      icon={CreditCard}
+      title="Prepaid Payment Mapping"
+      description="Configure which payment methods are treated as prepaid for auto-confirmation"
+      testId="card-payment-mapping"
+      action={
+        prepaidMethods.length > 0 ? (
+          <StatusBadge status="active" label={`${prepaidMethods.length} Configured`} />
+        ) : (
+          <StatusBadge status="inactive" label="Not Configured" />
+        )
+      }
+    >
+      {isLoading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Orders with payment methods marked as "Prepaid" will be auto-confirmed when their payment status is "paid". 
+              This prevents COD orders from polluting agent metrics when they are marked paid after delivery.
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm font-medium">Detected on Store</p>
+              </div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Click to move to Prepaid column
+              </p>
+              <div className="min-h-[100px] rounded-lg border border-dashed p-3 space-y-2">
+                {unmappedMethods.length > 0 ? (
+                  unmappedMethods.map((method) => (
+                    <button
+                      key={method}
+                      onClick={() => moveToPrepaids(method)}
+                      className="inline-flex items-center px-3 py-1.5 rounded-md text-sm bg-muted hover:bg-accent transition-colors cursor-pointer mr-2 mb-1"
+                      data-testid={`badge-detected-${method.replace(/\s+/g, '-').toLowerCase()}`}
+                    >
+                      {method}
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">
+                    {detectedMethods.length === 0 
+                      ? "No payment methods detected in orders yet" 
+                      : "All detected methods are mapped"}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <p className="text-sm font-medium">Treat as Prepaid</p>
+              </div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Click to remove from Prepaid
+              </p>
+              <div className="min-h-[100px] rounded-lg border border-green-500/30 bg-green-500/5 p-3 space-y-2">
+                {prepaidMethods.length > 0 ? (
+                  prepaidMethods.map((method) => (
+                    <button
+                      key={method}
+                      onClick={() => removeFromPrepaid(method)}
+                      className="inline-flex items-center px-3 py-1.5 rounded-md text-sm bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/60 transition-colors cursor-pointer mr-2 mb-1"
+                      data-testid={`badge-prepaid-${method.replace(/\s+/g, '-').toLowerCase()}`}
+                    >
+                      {method}
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">
+                    No prepaid methods configured
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            <Button
+              onClick={handleSave}
+              disabled={!hasChanges || saveMutation.isPending}
+              data-testid="button-save-payment-mapping"
+              className="gap-2"
+            >
+              {saveMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+            {hasChanges && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                You have unsaved changes
+              </p>
+            )}
+          </div>
         </div>
       )}
     </SettingsCard>
