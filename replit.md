@@ -69,6 +69,17 @@ The platform features a Real-Time NDR (Non-Delivery Report) system with intellig
 
 Fulfillment tracking data (trackingNumber, trackingUrl, courierName, shipmentStatus) is consistently synced from Shopify across all order ingestion paths and displayed prominently.
 
+### Prepaid Payment Mapping (Metrics Pollution Fix)
+
+The platform includes a Prepaid Payment Mapping system to prevent agent metrics pollution from COD orders:
+
+- **Database**: `app_settings` table stores `prepaid_payment_methods` as JSONB array
+- **Auto-Confirm Logic**: Orders auto-confirm only when `financial_status === "paid"` AND `paymentMethod` (case-insensitive) is in the prepaid methods list
+- **COD Safety**: Multiple layers filter out "COD" from ever being added to prepaid list - UI filtering, moveToPrepaids guard, and handleSave double-check
+- **Admin UI**: Settings > Shopify tab includes "Prepaid Payment Mapping" section with drag-and-drop interface for detected vs prepaid payment methods
+- **API Endpoints**: `GET /api/orders/payment-methods` (detected methods), `GET/POST /api/settings/payments` (prepaid settings)
+- **Default Seeds**: On app startup, seeds common prepaid methods (PayU, Cards/UPI/NB) if none configured
+
 ### Learning Center (LMS)
 
 A comprehensive Learning Management System with a course/lesson hierarchy, video embedding, rich text content, lesson prerequisites, progress tracking, and category-based organization. It includes a publish/draft system for courses and lessons, ensuring agents only see published content. Admin interfaces are provided for course and lesson management.
