@@ -1220,6 +1220,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // PAYMENT SETTINGS API
+  // ============================================================================
+
+  // Get all distinct payment methods from orders (for auto-detect feature)
+  app.get("/api/orders/payment-methods", async (req, res) => {
+    try {
+      const methods = await storage.getDistinctPaymentMethods();
+      res.json({ methods });
+    } catch (error: any) {
+      console.error("Error fetching payment methods:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch payment methods" });
+    }
+  });
+
+  // Get configured prepaid payment methods
+  app.get("/api/settings/payments", async (req, res) => {
+    try {
+      const methods = await storage.getPrepaidPaymentMethods();
+      res.json({ prepaidMethods: methods });
+    } catch (error: any) {
+      console.error("Error fetching payment settings:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch payment settings" });
+    }
+  });
+
+  // Update prepaid payment methods configuration
+  app.post("/api/settings/payments", async (req, res) => {
+    try {
+      const { prepaidMethods } = req.body;
+      
+      if (!Array.isArray(prepaidMethods)) {
+        return res.status(400).json({ error: "prepaidMethods must be an array" });
+      }
+
+      const setting = await storage.setAppSetting('prepaid_payment_methods', prepaidMethods);
+      res.json({ 
+        success: true, 
+        prepaidMethods: setting.value,
+        message: "Payment settings updated successfully" 
+      });
+    } catch (error: any) {
+      console.error("Error updating payment settings:", error);
+      res.status(500).json({ error: error.message || "Failed to update payment settings" });
+    }
+  });
+
+  // ============================================================================
   // PRODUCTS SYNC API
   // ============================================================================
 
