@@ -1,6 +1,6 @@
 import { db } from "../server/db";
 import { orders, appSettings } from "@shared/schema";
-import { eq, and, isNotNull, gt, inArray, sql, notInArray } from "drizzle-orm";
+import { eq, and, isNotNull, gt, sql } from "drizzle-orm";
 
 async function fixMetricsPollution() {
   console.log("=== Metrics Pollution Cleanup Script ===\n");
@@ -24,6 +24,9 @@ async function fixMetricsPollution() {
 
   console.log(`Found ${prepaidMethods.length} prepaid methods: ${prepaidMethods.join(", ")}\n`);
 
+  // Create PostgreSQL array literal
+  const prepaidArrayLiteral = `{${prepaidMethods.map(m => `"${m}"`).join(",")}}`;
+
   // Task 1: Unassign wrongly assigned prepaid orders
   console.log("Task 1: Finding prepaid orders with agent assignments...");
   
@@ -33,7 +36,7 @@ async function fixMetricsPollution() {
     .where(
       and(
         isNotNull(orders.assignedTo),
-        sql`LOWER(${orders.paymentMethod}) = ANY(${prepaidMethods})`
+        sql`LOWER(${orders.paymentMethod}) = ANY(${prepaidArrayLiteral}::text[])`
       )
     )
     .returning({ id: orders.id });
@@ -50,7 +53,7 @@ async function fixMetricsPollution() {
     .where(
       and(
         isNotNull(orders.assignedTo),
-        sql`LOWER(${orders.paymentMethod}) != ALL(${prepaidMethods})`,
+        sql`LOWER(${orders.paymentMethod}) != ALL(${prepaidArrayLiteral}::text[])`,
         isNotNull(orders.confirmedAt),
         isNotNull(orders.fulfilledAt),
         gt(orders.confirmedAt, orders.fulfilledAt)
