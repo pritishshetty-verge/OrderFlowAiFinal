@@ -2574,6 +2574,15 @@ export class DbStorage implements IStorage {
       .map(r => r.paymentMethod)
       .filter((m): m is string => m !== null && m !== '');
   }
+
+  async seedDefaultSettings(): Promise<void> {
+    const existing = await this.getAppSetting('prepaid_payment_methods');
+    if (!existing) {
+      console.log('Seeding default prepaid_payment_methods setting...');
+      await this.setAppSetting('prepaid_payment_methods', ['PayU', 'Cards, UPI, NB by PayU India']);
+      console.log('Default prepaid_payment_methods seeded successfully');
+    }
+  }
 }
 
 export const storage = new DbStorage();
