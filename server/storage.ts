@@ -87,6 +87,8 @@ import {
   onboardingChecklists,
   userOnboardingProgress,
   products,
+  appSettings,
+  type AppSetting,
 } from "@shared/schema";
 
 /**
@@ -2529,6 +2531,48 @@ export class DbStorage implements IStorage {
     }
 
     return formattedData;
+  }
+
+  // ============================================================================
+  // APP SETTINGS METHODS
+  // ============================================================================
+
+  async getAppSetting(key: string): Promise<AppSetting | undefined> {
+    const [setting] = await db
+      .select()
+      .from(appSettings)
+      .where(eq(appSettings.key, key));
+    return setting;
+  }
+
+  async setAppSetting(key: string, value: unknown): Promise<AppSetting> {
+    const [setting] = await db
+      .insert(appSettings)
+      .values({ key, value, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value, updatedAt: new Date() },
+      })
+      .returning();
+    return setting;
+  }
+
+  async getPrepaidPaymentMethods(): Promise<string[]> {
+    const setting = await this.getAppSetting('prepaid_payment_methods');
+    if (!setting || !Array.isArray(setting.value)) {
+      return [];
+    }
+    return setting.value as string[];
+  }
+
+  async getDistinctPaymentMethods(): Promise<string[]> {
+    const results = await db
+      .selectDistinct({ paymentMethod: orders.paymentMethod })
+      .from(orders)
+      .where(isNotNull(orders.paymentMethod));
+    return results
+      .map(r => r.paymentMethod)
+      .filter((m): m is string => m !== null && m !== '');
   }
 }
 

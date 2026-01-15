@@ -930,3 +930,18 @@ export const insertNdrEventSchema = createInsertSchema(ndrEvents).omit({
 
 export type InsertNdrEvent = z.infer<typeof insertNdrEventSchema>;
 export type NdrEvent = typeof ndrEvents.$inferSelect;
+
+// ============================================================================
+// APP SETTINGS (Global Configuration)
+// ============================================================================
+
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertAppSettingSchema = createInsertSchema(appSettings);
+
+export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
+export type AppSetting = typeof appSettings.$inferSelect;

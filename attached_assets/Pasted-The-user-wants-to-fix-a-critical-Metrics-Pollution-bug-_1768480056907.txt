@@ -1,0 +1,48 @@
+The user wants to fix a critical "Metrics Pollution" bug and simultaneously build a "Payment Mapping" UI inside the existing Admin Settings.
+
+**The Problem:**
+Currently, the system auto-confirms ANY order where `financial_status` becomes `'paid'`.
+However, **Delivered COD orders** also become `'paid'`, causing them to be wrongly auto-confirmed. This inflates agent statistics with "free wins."
+
+**The Goal:**
+1.  **Smart Auto-Confirm:** The "Auto-Confirm" logic must ONLY trigger if the order's payment method matches a specific list of "Prepaid" methods.
+2.  **Smart Settings UI:** Add a section in **Admin > Settings > Shopify Tab** where the user can manage this list. It should "Auto-Detect" available payment methods from the database to make setup easy.
+
+**Please implement this 4-Part Solution:**
+
+### Part 1: Database Schema (`shared/schema.ts`)
+* Create a new table `app_settings` to store global configuration.
+    * `key` (text, primary key)
+    * `value` (jsonb)
+* **Seed Data:** Ensure that when the app starts, if the key `prepaid_payment_methods` does not exist, insert this default list:
+    * Value: `["PayU", "Cards, UPI, NB by PayU India"]`
+
+### Part 2: Backend Logic (The Fix)
+* Locate the **Auto-Confirm Logic** (likely in `services/orders.ts` or the webhook handler).
+* **Current Logic:** It likely checks `if (financial_status === 'paid')`.
+* **New Logic:**
+    1. Fetch the allowed list from `app_settings` (key: `prepaid_payment_methods`).
+    2. Check if the order's `paymentMethod` is IN that list.
+    3. **Strict Rule:**
+       * IF `financial_status === 'paid'` **AND** `paymentMethod` IS in the list -> **Auto-Confirm**.
+       * ELSE -> **Do NOT Auto-Confirm** (treat as COD/Delivered).
+
+### Part 3: Backend API (Settings & Detection)
+* **Endpoint 1:** `GET /api/orders/payment-methods`
+    * Query: `SELECT DISTINCT payment_method FROM orders WHERE payment_method IS NOT NULL`.
+    * Return: A list of unique strings (e.g., `["COD", "PayU", "Razorpay"]`).
+* **Endpoint 2:** `GET/POST /api/settings/payments`
+    * Read/Write the `prepaid_payment_methods` list in the `app_settings` table.
+
+### Part 4: Frontend Integration (The "Shopify" Tab)
+* Open the component that renders the **Admin Settings > Shopify Tab** (e.g., `admin-settings.tsx` or similar).
+* **Add a New Section:** "Prepaid Payment Mapping".
+* **The Interface:**
+    * Fetch `detectedMethods` (from Endpoint 1) and `savedPrepaidMethods` (from Endpoint 2).
+    * **Left Column ("Detected on Store"):** Display badges for methods found in the DB that are NOT yet mapped.
+    * **Right Column ("Treat as Prepaid"):** Display badges for methods currently in the saved config.
+    * **Interaction:** Clicking a badge moves it between the two columns.
+    * **Save Button:** Saves the "Right Column" list to the backend.
+
+**Outcome:**
+The user can go to the Shopify Settings, see "Razorpay" appeared in the "Detected" list, click it to move it to "Prepaid", and hit Save. The metrics bug is then fixed instantly.
