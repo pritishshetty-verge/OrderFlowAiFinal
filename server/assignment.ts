@@ -44,14 +44,19 @@ export class OrderAssignmentEngine {
         });
 
         // Count only active orders (assigned, confirmed, pending, shipped, ndr)
-        const activeOrders = assignedOrders.orders.filter(
-          (order) =>
-            order.status === "assigned" ||
-            order.status === "confirmed" ||
-            order.status === "pending" ||
-            order.status === "shipped" ||
-            order.status === "ndr"
-        );
+        // Use case-insensitive comparison since DB has mixed-case statuses
+        const activeOrders = assignedOrders.orders.filter((order) => {
+          const status = (order.status || "").toLowerCase();
+          return (
+            status === "assigned" ||
+            status === "confirmed" ||
+            status === "pending" ||
+            status === "shipped" ||
+            status === "ndr" ||
+            status === "unfulfilled" ||
+            status === "processing"
+          );
+        });
 
         // Find most recent assignment time
         const lastAssignmentTime = assignedOrders.orders.length > 0
@@ -231,14 +236,19 @@ export class OrderAssignmentEngine {
           assignedTo: agent.id,
         });
 
-        const activeOrders = assignedOrders.orders.filter(
-          (order) =>
-            order.status === "assigned" ||
-            order.status === "confirmed" ||
-            order.status === "pending" ||
-            order.status === "shipped" ||
-            order.status === "ndr"
-        );
+        // Use case-insensitive comparison since DB has mixed-case statuses
+        const activeOrders = assignedOrders.orders.filter((order) => {
+          const status = (order.status || "").toLowerCase();
+          return (
+            status === "assigned" ||
+            status === "confirmed" ||
+            status === "pending" ||
+            status === "shipped" ||
+            status === "ndr" ||
+            status === "unfulfilled" ||
+            status === "processing"
+          );
+        });
 
         const accountStatus = agent.presenceStatus || "present";
         const liveStatus = getLiveStatus(agent.id, accountStatus);
