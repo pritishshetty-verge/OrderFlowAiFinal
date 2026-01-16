@@ -43,19 +43,28 @@ export class OrderAssignmentEngine {
           status: undefined, // We'll filter in memory
         });
 
-        // Count only active orders (assigned, confirmed, pending, shipped, ndr)
-        // Use case-insensitive comparison since DB has mixed-case statuses
+        // Count only truly active orders that need agent attention
+        // An order is "active" only if:
+        // 1. Status is pending/new/assigned/processing/ndr/unfulfilled
+        // 2. AND call_status is NOT confirmed or cancelled (agent hasn't completed verification)
         const activeOrders = assignedOrders.orders.filter((order) => {
           const status = (order.status || "").toLowerCase();
-          return (
-            status === "assigned" ||
-            status === "confirmed" ||
-            status === "pending" ||
-            status === "shipped" ||
-            status === "ndr" ||
-            status === "unfulfilled" ||
-            status === "processing"
-          );
+          const callStatus = (order.callStatus || "").toLowerCase();
+          
+          // Exclude completed statuses - agent is free
+          const completedStatuses = ["confirmed", "shipped", "delivered", "cancelled", "rto"];
+          if (completedStatuses.includes(status)) {
+            return false;
+          }
+          
+          // If call_status is confirmed or cancelled, agent completed their job
+          if (callStatus === "confirmed" || callStatus === "cancelled") {
+            return false;
+          }
+          
+          // Only these statuses count as active work
+          const activeStatuses = ["pending", "new", "assigned", "processing", "ndr", "unfulfilled"];
+          return activeStatuses.includes(status);
         });
 
         // Find most recent assignment time
@@ -236,18 +245,28 @@ export class OrderAssignmentEngine {
           assignedTo: agent.id,
         });
 
-        // Use case-insensitive comparison since DB has mixed-case statuses
+        // Count only truly active orders that need agent attention
+        // An order is "active" only if:
+        // 1. Status is pending/new/assigned/processing/ndr/unfulfilled
+        // 2. AND call_status is NOT confirmed or cancelled (agent hasn't completed verification)
         const activeOrders = assignedOrders.orders.filter((order) => {
           const status = (order.status || "").toLowerCase();
-          return (
-            status === "assigned" ||
-            status === "confirmed" ||
-            status === "pending" ||
-            status === "shipped" ||
-            status === "ndr" ||
-            status === "unfulfilled" ||
-            status === "processing"
-          );
+          const callStatus = (order.callStatus || "").toLowerCase();
+          
+          // Exclude completed statuses - agent is free
+          const completedStatuses = ["confirmed", "shipped", "delivered", "cancelled", "rto"];
+          if (completedStatuses.includes(status)) {
+            return false;
+          }
+          
+          // If call_status is confirmed or cancelled, agent completed their job
+          if (callStatus === "confirmed" || callStatus === "cancelled") {
+            return false;
+          }
+          
+          // Only these statuses count as active work
+          const activeStatuses = ["pending", "new", "assigned", "processing", "ndr", "unfulfilled"];
+          return activeStatuses.includes(status);
         });
 
         const accountStatus = agent.presenceStatus || "present";
