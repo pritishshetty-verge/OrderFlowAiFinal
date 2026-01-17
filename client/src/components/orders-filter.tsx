@@ -30,6 +30,10 @@ interface OrdersFilterProps {
   // Sort order
   onSortChange?: (value: 'asc' | 'desc') => void;
   sortValue?: 'asc' | 'desc';
+  // Tags filter
+  tags?: string[];
+  onTagChange?: (value: string) => void;
+  tagValue?: string;
 }
 
 export function OrdersFilter({
@@ -45,6 +49,9 @@ export function OrdersFilter({
   agentValue = "all",
   onSortChange,
   sortValue = "desc",
+  tags = [],
+  onTagChange,
+  tagValue = "all",
 }: OrdersFilterProps) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -111,6 +118,23 @@ export function OrdersFilter({
               {agents.map((agent) => (
                 <SelectItem key={agent.id} value={agent.id}>
                   {agent.fullName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Tags Filter */}
+        {tags.length > 0 && (
+          <Select value={tagValue} onValueChange={onTagChange}>
+            <SelectTrigger className="w-[160px]" data-testid="select-tag-filter">
+              <SelectValue placeholder="All Tags" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Tags</SelectItem>
+              {tags.map((tag) => (
+                <SelectItem key={tag} value={tag}>
+                  {tag}
                 </SelectItem>
               ))}
             </SelectContent>

@@ -59,7 +59,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all orders with optional filters
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder, tag } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -90,6 +90,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sortOrder: (sortOrder === 'asc' ? 'asc' : 'desc') as 'asc' | 'desc', // Default to 'desc' (Newest First)
         startDate: parsedStartDate,
         endDate: parsedEndDate,
+        tag: tag as string | undefined, // Filter by tag (exact match in tags array)
         limit: parsedLimit,
         offset: calculatedOffset,
       };
@@ -1216,6 +1217,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting credentials:", error);
       res.status(500).json({ error: "Failed to delete credentials" });
+    }
+  });
+
+  // ============================================================================
+  // TAGS API
+  // ============================================================================
+
+  // Get all distinct tags from orders (for filter dropdown)
+  app.get("/api/tags", async (req, res) => {
+    try {
+      const tags = await storage.getDistinctTags();
+      res.json({ tags });
+    } catch (error: any) {
+      console.error("Error fetching tags:", error);
+      res.status(500).json({ error: error.message || "Failed to fetch tags" });
     }
   });
 

@@ -85,6 +85,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Admin-only filter state
   const [callStatusFilter, setCallStatusFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
+  const [tagFilter, setTagFilter] = useState("all");
   
   // Sort order state - 'desc' = Newest First (default), 'asc' = Oldest First
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -161,6 +162,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     queryKey: ["/api/users/agents"],
     enabled: isAdmin, // Only fetch for admins
   });
+  
+  // Fetch tags list for filter dropdown
+  const { data: tagsData } = useQuery<{ tags: string[] }>({
+    queryKey: ["/api/tags"],
+  });
 
   // Get current user's ID from localStorage for agent filtering
   const localStorageUserId = localStorage.getItem("userId");
@@ -182,7 +188,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
+    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -221,6 +227,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       
       // Sort order
       params.append("sortOrder", sortOrder);
+      
+      // Tag filter - use encodeURIComponent for special characters
+      if (tagFilter !== "all") {
+        params.append("tag", tagFilter);
+      }
       
       const res = await fetch(`/api/orders?${params.toString()}`, {
         credentials: "include",
@@ -418,6 +429,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setDebouncedSearch(""); // Clear immediately to avoid stale API call
     setPaymentFilter("all");
     setSortOrder("desc"); // Reset to default Newest First
+    setTagFilter("all"); // Reset tag filter
     // Reset admin filters too
     if (isAdmin) {
       setCallStatusFilter("all");
@@ -528,6 +540,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             agentValue={agentFilter}
             onSortChange={setSortOrder}
             sortValue={sortOrder}
+            tags={tagsData?.tags || []}
+            onTagChange={setTagFilter}
+            tagValue={tagFilter}
           />
 
           {/* Loading state - only affects table content, not filter bar */}

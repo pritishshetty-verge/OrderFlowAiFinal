@@ -191,6 +191,7 @@ export interface IStorage {
     agentId?: string; // 'unassigned' for NULL, or agent UUID
     search?: string; // Server-side search across orderId, customerName, phone
     sortOrder?: 'asc' | 'desc'; // Sort by date: 'asc' = Oldest First, 'desc' = Newest First (default)
+    tag?: string; // Filter by tag (exact match in tags array)
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -368,6 +369,12 @@ export interface IStorage {
   listProducts(): Promise<Product[]>;
   getProductCount(): Promise<number>;
   getLastProductSync(): Promise<Date | null>;
+
+  // Tags
+  getDistinctTags(): Promise<string[]>;
+  
+  // Payment Methods
+  getDistinctPaymentMethods(): Promise<string[]>;
 
   // Dashboard Metrics
   getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date): Promise<{
@@ -634,6 +641,7 @@ export class DbStorage implements IStorage {
     sortOrder?: 'asc' | 'desc'; // Sort by date: 'asc' = Oldest First, 'desc' = Newest First (default)
     startDate?: Date; // Filter orders created on or after this date
     endDate?: Date; // Filter orders created on or before this date
+    tag?: string; // Filter by tag (exact match in tags array using @> operator)
     limit?: number;
     offset?: number;
   }): Promise<{ 
@@ -693,6 +701,11 @@ export class DbStorage implements IStorage {
       const endOfDay = new Date(filters.endDate);
       endOfDay.setHours(23, 59, 59, 999);
       conditions.push(lte(orders.shopifyCreatedAt, endOfDay));
+    }
+    
+    // Filter by tag (exact match using PostgreSQL @> array contains operator)
+    if (filters?.tag && filters.tag.trim()) {
+      conditions.push(sql`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -2573,6 +2586,15 @@ export class DbStorage implements IStorage {
     return results
       .map(r => r.paymentMethod)
       .filter((m): m is string => m !== null && m !== '');
+  }
+
+  async getDistinctTags(): Promise<string[]> {
+    const result = await db.execute(
+      sql`SELECT DISTINCT UNNEST(tags) AS tag FROM orders WHERE tags IS NOT NULL ORDER BY tag`
+    );
+    return (result.rows as { tag: string }[])
+      .map(r => r.tag)
+      .filter((t): t is string => t !== null && t !== '');
   }
 
   async seedDefaultSettings(): Promise<void> {
