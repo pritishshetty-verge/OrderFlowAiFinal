@@ -43,28 +43,21 @@ export class OrderAssignmentEngine {
           status: undefined, // We'll filter in memory
         });
 
-        // Count only truly active orders that need agent attention
-        // An order is "active" only if:
-        // 1. Status is pending/new/assigned/processing/ndr/unfulfilled
-        // 2. AND call_status is NOT confirmed or cancelled (agent hasn't completed verification)
+        // Count only truly active orders using the AND rule:
+        // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
+        // This means an order is active ONLY when BOTH agent AND warehouse haven't finished
         const activeOrders = assignedOrders.orders.filter((order) => {
-          const status = (order.status || "").toLowerCase();
-          const callStatus = (order.callStatus || "").toLowerCase();
+          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
+          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
           
-          // Exclude completed statuses - agent is free
-          const completedStatuses = ["confirmed", "shipped", "delivered", "cancelled", "rto"];
-          if (completedStatuses.includes(status)) {
-            return false;
-          }
+          // Condition A: Agent hasn't finished (call_status NOT confirmed/cancelled)
+          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
           
-          // If call_status is confirmed or cancelled, agent completed their job
-          if (callStatus === "confirmed" || callStatus === "cancelled") {
-            return false;
-          }
+          // Condition B: Warehouse hasn't finished (fulfillment_status NOT fulfilled/partial)
+          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
           
-          // Only these statuses count as active work
-          const activeStatuses = ["pending", "new", "assigned", "processing", "ndr", "unfulfilled"];
-          return activeStatuses.includes(status);
+          // Active ONLY if BOTH haven't finished
+          return !agentFinished && !warehouseFinished;
         });
 
         // Find most recent assignment time
@@ -245,28 +238,21 @@ export class OrderAssignmentEngine {
           assignedTo: agent.id,
         });
 
-        // Count only truly active orders that need agent attention
-        // An order is "active" only if:
-        // 1. Status is pending/new/assigned/processing/ndr/unfulfilled
-        // 2. AND call_status is NOT confirmed or cancelled (agent hasn't completed verification)
+        // Count only truly active orders using the AND rule:
+        // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
+        // This means an order is active ONLY when BOTH agent AND warehouse haven't finished
         const activeOrders = assignedOrders.orders.filter((order) => {
-          const status = (order.status || "").toLowerCase();
-          const callStatus = (order.callStatus || "").toLowerCase();
+          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
+          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
           
-          // Exclude completed statuses - agent is free
-          const completedStatuses = ["confirmed", "shipped", "delivered", "cancelled", "rto"];
-          if (completedStatuses.includes(status)) {
-            return false;
-          }
+          // Condition A: Agent hasn't finished (call_status NOT confirmed/cancelled)
+          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
           
-          // If call_status is confirmed or cancelled, agent completed their job
-          if (callStatus === "confirmed" || callStatus === "cancelled") {
-            return false;
-          }
+          // Condition B: Warehouse hasn't finished (fulfillment_status NOT fulfilled/partial)
+          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
           
-          // Only these statuses count as active work
-          const activeStatuses = ["pending", "new", "assigned", "processing", "ndr", "unfulfilled"];
-          return activeStatuses.includes(status);
+          // Active ONLY if BOTH haven't finished
+          return !agentFinished && !warehouseFinished;
         });
 
         const accountStatus = agent.presenceStatus || "present";

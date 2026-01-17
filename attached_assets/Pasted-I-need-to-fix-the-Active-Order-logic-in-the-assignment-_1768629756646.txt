@@ -1,0 +1,31 @@
+I need to fix the "Active Order" logic in the assignment system to match our real-world workflow. The current logic is incorrect and unfairly blocks agents from getting new leads.
+
+Please update the `activeOrders` filter in "server/utils/assignment.ts" (and the corresponding count logic in "server/routes.ts") to use this STRICT definition.
+
+1. **The Core Logic (The "AND" Rule):**
+   An order counts as "Active Workload" (+1) ONLY IF **BOTH** of these conditions are true:
+   
+   * **Condition A (Agent hasn't finished):**
+       The `call_status` is NOT 'confirmed' AND NOT 'cancelled'.
+       *(This captures 'pending', 'follow_up', 'new', or null)*
+       
+   * **Condition B (Warehouse hasn't finished):**
+       The `fulfillment_status` is NOT 'fulfilled' AND NOT 'partial'.
+       *(This captures 'unfulfilled', 'on_hold', or null)*
+
+2. **Crucial Scenarios This Must Handle:**
+   * **The "Silent Ship":** If an order is auto-shipped (`fulfillment_status` = 'fulfilled') but the agent never called (`call_status` = 'pending').
+       -> Result: **INACTIVE** (0). Agent is free.
+   * **The "Confirmed Sale":** If the agent confirms the order (`call_status` = 'confirmed') but it is still in the warehouse (`fulfillment_status` = 'unfulfilled').
+       -> Result: **INACTIVE** (0). Agent is free.
+   * **The "Follow-Up":** The agent needs to call back (`call_status` = 'follow_up') and it hasn't shipped (`fulfillment_status` = 'unfulfilled').
+       -> Result: **ACTIVE** (+1). Agent is busy.
+
+3. **Implementation Details:**
+   * Ensure all checks are **case-insensitive** (use `.trim().toLowerCase()`).
+   * Handle `null` or `undefined` values safely (treat null `call_status` as 'pending' / active).
+
+4. **Verification:**
+   * After applying the fix, please run a test case for an order with `call_status: "pending"` and `fulfillment_status: "fulfilled"`.
+   * Confirm it returns `false` (Not Active).
+   * Run the live test for agent 'Sneha Babu' again and report her new active count.
