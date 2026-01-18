@@ -4142,6 +4142,182 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // ANALYTICS API
+  // ============================================================================
+
+  // RTO Insights Dashboard
+  // GET /api/analytics/rto-insights
+  // Returns KPIs, weekly cohorts, and top offenders for RTO analysis
+  app.get("/api/analytics/rto-insights", async (req, res) => {
+    try {
+      // Query all orders to calculate metrics
+      const allOrders = await db.select({
+        id: orders.id,
+        status: orders.status,
+        shipmentStatus: orders.shipmentStatus,
+        totalPrice: orders.totalPrice,
+        shippingCity: orders.shippingCity,
+        courierName: orders.courierName,
+        assignedTo: orders.assignedTo,
+        createdAt: orders.createdAt,
+        fulfillmentStatus: orders.fulfillmentStatus,
+      }).from(orders);
+
+      // Filter for shipped orders (has tracking info or fulfillment status indicates shipped)
+      const shippedOrders = allOrders.filter(o => 
+        o.fulfillmentStatus === 'fulfilled' || 
+        o.fulfillmentStatus === 'partial' ||
+        o.shipmentStatus
+      );
+
+      // Master flag: Order is RTO if shipmentStatus = 'RTO'
+      const rtoOrders = allOrders.filter(o => 
+        o.shipmentStatus?.toUpperCase() === 'RTO'
+      );
+
+      // Stage 1: RTO In-Transit (Returning) - shipmentStatus is 'RTO' AND status is NOT 'RTO'
+      const rtoInTransit = rtoOrders.filter(o => 
+        o.status?.toUpperCase() !== 'RTO'
+      );
+
+      // Stage 2: RTO Delivered (Returned) - shipmentStatus is 'RTO' AND status IS 'RTO' (or 'Returned')
+      const rtoDelivered = rtoOrders.filter(o => 
+        o.status?.toUpperCase() === 'RTO' || o.status?.toLowerCase() === 'returned'
+      );
+
+      // KPI Calculations
+      const totalShipped = shippedOrders.length;
+      const totalRtoCount = rtoOrders.length;
+      const overallRtoRate = totalShipped > 0 
+        ? Math.round((totalRtoCount / totalShipped) * 10000) / 100 
+        : 0;
+
+      // Revenue calculations
+      const rtoRevenueLoss = rtoDelivered.reduce((sum, o) => {
+        const price = parseFloat(o.totalPrice?.toString() || '0');
+        return sum + price;
+      }, 0);
+
+      const recoveryPotential = rtoInTransit.reduce((sum, o) => {
+        const price = parseFloat(o.totalPrice?.toString() || '0');
+        return sum + price;
+      }, 0);
+
+      // Weekly Cohorts - Group by creation week (Year-Week format for clarity)
+      const weekCohorts: Record<string, { in_transit_count: number; delivered_count: number; sortKey: number }> = {};
+      
+      rtoOrders.forEach(o => {
+        if (!o.createdAt) return;
+        
+        const date = new Date(o.createdAt);
+        const year = date.getFullYear();
+        const startOfYear = new Date(year, 0, 1);
+        const weekNumber = Math.ceil(
+          ((date.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7
+        );
+        const weekKey = `${year} W${weekNumber}`;
+        const sortKey = year * 100 + weekNumber; // For proper sorting
+        
+        if (!weekCohorts[weekKey]) {
+          weekCohorts[weekKey] = { in_transit_count: 0, delivered_count: 0, sortKey };
+        }
+        
+        // Stage 2 (Delivered): status = 'RTO' or 'Returned'
+        const isDelivered = o.status?.toUpperCase() === 'RTO' || o.status?.toLowerCase() === 'returned';
+        if (isDelivered) {
+          weekCohorts[weekKey].delivered_count++;
+        } else {
+          // Stage 1 (In-Transit): status is NOT 'RTO'
+          weekCohorts[weekKey].in_transit_count++;
+        }
+      });
+
+      const weeklyCohorts = Object.entries(weekCohorts)
+        .map(([week, { in_transit_count, delivered_count, sortKey }]) => ({ 
+          week, 
+          in_transit_count, 
+          delivered_count 
+        }))
+        .sort((a, b) => {
+          // Extract sortKey from week format "YYYY WX"
+          const [yearA, weekA] = a.week.split(' W').map(Number);
+          const [yearB, weekB] = b.week.split(' W').map(Number);
+          return (yearA * 100 + weekA) - (yearB * 100 + weekB);
+        });
+
+      // Top Offenders - Cities
+      const cityCounts: Record<string, number> = {};
+      rtoOrders.forEach(o => {
+        const city = o.shippingCity || 'Unknown';
+        cityCounts[city] = (cityCounts[city] || 0) + 1;
+      });
+      const topCities = Object.entries(cityCounts)
+        .map(([city, count]) => ({ city, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      // Top Offenders - Couriers
+      const courierCounts: Record<string, number> = {};
+      rtoOrders.forEach(o => {
+        const courier = o.courierName || 'Unknown';
+        courierCounts[courier] = (courierCounts[courier] || 0) + 1;
+      });
+      const topCouriers = Object.entries(courierCounts)
+        .map(([courier, count]) => ({ courier, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      // Top Offenders - Agents (need to join with users for names)
+      const agentCounts: Record<string, number> = {};
+      rtoOrders.forEach(o => {
+        if (o.assignedTo) {
+          agentCounts[o.assignedTo] = (agentCounts[o.assignedTo] || 0) + 1;
+        }
+      });
+      
+      // Get agent names
+      const agentIds = Object.keys(agentCounts);
+      const agentUsers = agentIds.length > 0 
+        ? await db.select({ id: users.id, name: users.fullName })
+            .from(users)
+            .where(sql`${users.id} = ANY(${agentIds})`)
+        : [];
+      
+      const agentNameMap = new Map(agentUsers.map(u => [u.id, u.name]));
+      
+      const topAgents = Object.entries(agentCounts)
+        .map(([agentId, count]) => ({ 
+          agent_id: agentId,
+          agent_name: agentNameMap.get(agentId) || 'Unknown Agent',
+          count 
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      res.json({
+        kpis: {
+          overall_rto_rate: overallRtoRate,
+          total_rto_count: totalRtoCount,
+          rto_in_transit_count: rtoInTransit.length,
+          rto_delivered_count: rtoDelivered.length,
+          rto_revenue_loss: Math.round(rtoRevenueLoss * 100) / 100,
+          recovery_potential: Math.round(recoveryPotential * 100) / 100,
+          total_shipped: totalShipped,
+        },
+        weekly_cohorts: weeklyCohorts,
+        top_offenders: {
+          top_cities: topCities,
+          top_couriers: topCouriers,
+          top_agents: topAgents,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching RTO insights:", error);
+      res.status(500).json({ error: "Failed to fetch RTO insights" });
+    }
+  });
+
+  // ============================================================================
   // BACKGROUND TASKS
   // ============================================================================
 
