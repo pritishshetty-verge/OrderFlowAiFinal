@@ -28,8 +28,8 @@ interface HourlyActivityResponse {
 
 interface HourlyActivityChartProps {
   dateRange: {
-    startDate: Date;
-    endDate: Date;
+    startDate: Date | null;
+    endDate: Date | null;
   };
 }
 
@@ -41,13 +41,17 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   // Detect user's browser timezone for accurate hourly grouping
   const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+  // Default to today if dates are null (All Time selected)
+  const effectiveStartDate = dateRange.startDate ?? startOfDay(new Date());
+  const effectiveEndDate = dateRange.endDate ?? endOfDay(new Date());
+
   const { data: hourlyData, isLoading } = useQuery<HourlyActivityResponse>({
-    queryKey: ["/api/dashboard/hourly-activity", metricsUserId, dateRange.startDate.toISOString(), dateRange.endDate.toISOString(), userTimezone],
+    queryKey: ["/api/dashboard/hourly-activity", metricsUserId, effectiveStartDate.toISOString(), effectiveEndDate.toISOString(), userTimezone],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricsUserId) params.append("userId", metricsUserId);
-      params.append("startDate", dateRange.startDate.toISOString());
-      params.append("endDate", dateRange.endDate.toISOString());
+      params.append("startDate", effectiveStartDate.toISOString());
+      params.append("endDate", effectiveEndDate.toISOString());
       params.append("timezone", userTimezone);
       
       const res = await fetch(`/api/dashboard/hourly-activity?${params.toString()}`, { credentials: "include" });

@@ -6,11 +6,11 @@ import { CalendarIcon } from "lucide-react";
 import { format, startOfDay, endOfDay, subDays, startOfMonth, isSameDay } from "date-fns";
 import type { DateRange as CalendarDateRange } from "react-day-picker";
 
-type DatePreset = "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "custom";
+type DatePreset = "allTime" | "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "custom";
 
 export interface DateRangeOutput {
-  startDate: Date;
-  endDate: Date;
+  startDate: Date | null;
+  endDate: Date | null;
 }
 
 interface DateRangeSelectorProps {
@@ -19,6 +19,7 @@ interface DateRangeSelectorProps {
 }
 
 const presets: { key: DatePreset; label: string }[] = [
+  { key: "allTime", label: "All Time" },
   { key: "today", label: "Today" },
   { key: "yesterday", label: "Yesterday" },
   { key: "last7days", label: "Last 7 Days" },
@@ -32,6 +33,8 @@ const getPresetRange = (preset: DatePreset): DateRangeOutput => {
   const endOfToday = endOfDay(now);
 
   switch (preset) {
+    case "allTime":
+      return { startDate: null, endDate: null };
     case "today":
       return { startDate: today, endDate: endOfToday };
     case "yesterday":
@@ -50,13 +53,15 @@ const getPresetRange = (preset: DatePreset): DateRangeOutput => {
 
 const detectPresetFromRange = (range: DateRangeOutput | undefined): DatePreset => {
   if (!range?.startDate || !range?.endDate) {
-    return "today";
+    return "allTime";
   }
   const rangeStart = startOfDay(range.startDate);
   const rangeEnd = startOfDay(range.endDate);
 
   for (const preset of presets) {
+    if (preset.key === "allTime") continue; // Already handled above
     const presetRange = getPresetRange(preset.key);
+    if (!presetRange.startDate || !presetRange.endDate) continue;
     const presetStart = startOfDay(presetRange.startDate);
     const presetEnd = startOfDay(presetRange.endDate);
 
@@ -81,10 +86,11 @@ export function DateRangeSelector({ dateRange, onDateChange }: DateRangeSelector
   // Pending state for draft selection before Apply
   const [pendingRange, setPendingRange] = useState<DateRangeOutput>(() => initialRange);
   const [pendingPreset, setPendingPreset] = useState<DatePreset>(() => detectPresetFromRange(initialRange));
-  const [pendingCalendarRange, setPendingCalendarRange] = useState<CalendarDateRange | undefined>(() => ({
-    from: initialRange.startDate,
-    to: initialRange.endDate,
-  }));
+  const [pendingCalendarRange, setPendingCalendarRange] = useState<CalendarDateRange | undefined>(() => 
+    initialRange.startDate && initialRange.endDate 
+      ? { from: initialRange.startDate, to: initialRange.endDate }
+      : undefined
+  );
 
   // Derive display label from dateRange prop using useMemo
   const displayLabel = useMemo(() => {
@@ -97,6 +103,9 @@ export function DateRangeSelector({ dateRange, onDateChange }: DateRangeSelector
     }
     
     const { startDate, endDate } = range;
+    if (!startDate || !endDate) {
+      return "All Time";
+    }
     const startYear = startDate.getFullYear();
     const endYear = endDate.getFullYear();
     
@@ -112,7 +121,11 @@ export function DateRangeSelector({ dateRange, onDateChange }: DateRangeSelector
       const range = dateRange ?? getPresetRange("today");
       setPendingRange(range);
       setPendingPreset(detectPresetFromRange(range));
-      setPendingCalendarRange({ from: range.startDate, to: range.endDate });
+      setPendingCalendarRange(
+        range.startDate && range.endDate 
+          ? { from: range.startDate, to: range.endDate }
+          : undefined
+      );
     }
     setIsOpen(open);
   };
@@ -121,7 +134,11 @@ export function DateRangeSelector({ dateRange, onDateChange }: DateRangeSelector
     const range = getPresetRange(preset);
     setPendingPreset(preset);
     setPendingRange(range);
-    setPendingCalendarRange({ from: range.startDate, to: range.endDate });
+    setPendingCalendarRange(
+      range.startDate && range.endDate 
+        ? { from: range.startDate, to: range.endDate }
+        : undefined
+    );
   };
 
   const handleCalendarSelect = (range: CalendarDateRange | undefined) => {

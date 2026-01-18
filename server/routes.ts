@@ -7,7 +7,7 @@ import {
   attendance, orderAssignments, calls, notifications, ndrEvents, 
   courses, resources, userLessonProgress, userOnboardingProgress, users 
 } from "@shared/schema";
-import { eq, or, sql, desc } from "drizzle-orm";
+import { eq, or, sql, desc, gte, lte, and } from "drizzle-orm";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
@@ -4148,20 +4148,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // RTO Insights Dashboard
   // GET /api/analytics/rto-insights
   // Returns KPIs, weekly cohorts, and top offenders for RTO analysis
+  // Accepts optional startDate and endDate query params (ISO strings)
+  // If dates are missing/empty, returns ALL orders (All Time)
   app.get("/api/analytics/rto-insights", async (req, res) => {
     try {
-      // Query all orders to calculate metrics
-      const allOrders = await db.select({
-        id: orders.id,
-        status: orders.status,
-        shipmentStatus: orders.shipmentStatus,
-        totalPrice: orders.totalPrice,
-        shippingCity: orders.shippingCity,
-        courierName: orders.courierName,
-        assignedTo: orders.assignedTo,
-        createdAt: orders.createdAt,
-        fulfillmentStatus: orders.fulfillmentStatus,
-      }).from(orders);
+      const { startDate, endDate } = req.query;
+      
+      // Parse dates if provided (null/empty = All Time)
+      const startDateParsed = startDate && typeof startDate === 'string' && startDate.trim() 
+        ? new Date(startDate) 
+        : null;
+      const endDateParsed = endDate && typeof endDate === 'string' && endDate.trim() 
+        ? new Date(endDate) 
+        : null;
+      
+      // Build query conditions
+      const conditions = [];
+      if (startDateParsed && !isNaN(startDateParsed.getTime())) {
+        conditions.push(gte(orders.createdAt, startDateParsed));
+      }
+      if (endDateParsed && !isNaN(endDateParsed.getTime())) {
+        conditions.push(lte(orders.createdAt, endDateParsed));
+      }
+      
+      // Query orders (with optional date filter)
+      const allOrders = conditions.length > 0
+        ? await db.select({
+            id: orders.id,
+            status: orders.status,
+            shipmentStatus: orders.shipmentStatus,
+            totalPrice: orders.totalPrice,
+            shippingCity: orders.shippingCity,
+            courierName: orders.courierName,
+            assignedTo: orders.assignedTo,
+            createdAt: orders.createdAt,
+            fulfillmentStatus: orders.fulfillmentStatus,
+          }).from(orders).where(and(...conditions))
+        : await db.select({
+            id: orders.id,
+            status: orders.status,
+            shipmentStatus: orders.shipmentStatus,
+            totalPrice: orders.totalPrice,
+            shippingCity: orders.shippingCity,
+            courierName: orders.courierName,
+            assignedTo: orders.assignedTo,
+            createdAt: orders.createdAt,
+            fulfillmentStatus: orders.fulfillmentStatus,
+          }).from(orders);
 
       // Filter for shipped orders (has tracking info or fulfillment status indicates shipped)
       const shippedOrders = allOrders.filter(o => 

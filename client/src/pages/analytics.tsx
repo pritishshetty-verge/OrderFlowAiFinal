@@ -64,13 +64,10 @@ export default function AnalyticsPage() {
   const userId = localStorage.getItem("userId");
   const userRole = localStorage.getItem("userRole");
   
-  const [dateRange, setDateRange] = useState(() => {
-    const now = new Date();
-    return {
-      startDate: startOfDay(now),
-      endDate: endOfDay(now),
-    };
-  });
+  const [dateRange, setDateRange] = useState<{ startDate: Date | null; endDate: Date | null }>(() => ({
+    startDate: null,
+    endDate: null,
+  }));
   
   const { data: currentUser } = useQuery<User>({
     queryKey: [`/api/users/by-email/${userEmail}`],
@@ -80,12 +77,12 @@ export default function AnalyticsPage() {
   const metricsUserId = userRole === "agent" ? userId : undefined;
   
   const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
-    queryKey: ["/api/dashboard/metrics", metricsUserId, dateRange.startDate.toISOString(), dateRange.endDate.toISOString()],
+    queryKey: ["/api/dashboard/metrics", metricsUserId, dateRange.startDate?.toISOString() || "all", dateRange.endDate?.toISOString() || "all"],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricsUserId) params.append("userId", metricsUserId);
-      params.append("startDate", dateRange.startDate.toISOString());
-      params.append("endDate", dateRange.endDate.toISOString());
+      if (dateRange.startDate) params.append("startDate", dateRange.startDate.toISOString());
+      if (dateRange.endDate) params.append("endDate", dateRange.endDate.toISOString());
       
       const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch metrics");
@@ -95,7 +92,16 @@ export default function AnalyticsPage() {
   });
 
   const { data: rtoInsights, isLoading: rtoLoading } = useQuery<RTOInsights>({
-    queryKey: ["/api/analytics/rto-insights"],
+    queryKey: ["/api/analytics/rto-insights", dateRange.startDate?.toISOString() || "all", dateRange.endDate?.toISOString() || "all"],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (dateRange.startDate) params.append("startDate", dateRange.startDate.toISOString());
+      if (dateRange.endDate) params.append("endDate", dateRange.endDate.toISOString());
+      
+      const res = await fetch(`/api/analytics/rto-insights?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch RTO insights");
+      return res.json();
+    },
     refetchInterval: 60000,
   });
 
