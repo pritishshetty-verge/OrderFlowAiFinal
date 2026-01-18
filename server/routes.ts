@@ -4192,13 +4192,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? Math.round((totalRtoCount / totalShipped) * 10000) / 100 
         : 0;
 
-      // Revenue calculations
-      const rtoRevenueLoss = rtoDelivered.reduce((sum, o) => {
-        const price = parseFloat(o.totalPrice?.toString() || '0');
-        return sum + price;
-      }, 0);
-
-      const recoveryPotential = rtoInTransit.reduce((sum, o) => {
+      // Revenue loss calculation - sum of ALL RTO orders (not just delivered)
+      const rtoRevenueLoss = rtoOrders.reduce((sum, o) => {
         const price = parseFloat(o.totalPrice?.toString() || '0');
         return sum + price;
       }, 0);
@@ -4301,7 +4296,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rto_in_transit_count: rtoInTransit.length,
           rto_delivered_count: rtoDelivered.length,
           rto_revenue_loss: Math.round(rtoRevenueLoss * 100) / 100,
-          recovery_potential: Math.round(recoveryPotential * 100) / 100,
           total_shipped: totalShipped,
         },
         weekly_cohorts: weeklyCohorts,

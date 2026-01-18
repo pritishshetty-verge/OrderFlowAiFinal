@@ -25,7 +25,7 @@ import {
   Legend,
 } from "recharts";
 import { startOfDay, endOfDay } from "date-fns";
-import { TrendingDown, Package, AlertTriangle, IndianRupee, Truck, MapPin, Users } from "lucide-react";
+import { TrendingDown, Package, IndianRupee, Truck, MapPin, Users } from "lucide-react";
 import type { User } from "@shared/schema";
 
 interface DashboardMetrics {
@@ -45,7 +45,6 @@ interface RTOInsights {
     rto_in_transit_count: number;
     rto_delivered_count: number;
     rto_revenue_loss: number;
-    recovery_potential: number;
     total_shipped: number;
   };
   weekly_cohorts: Array<{
@@ -151,7 +150,7 @@ export default function AnalyticsPage() {
 
           <TabsContent value="rto-insights" className="space-y-6">
             {/* KPI Cards Row */}
-            <div className="grid gap-4 md:grid-cols-4" data-testid="rto-kpi-cards">
+            <div className="grid gap-4 md:grid-cols-3" data-testid="rto-kpi-cards">
               <Card data-testid="card-rto-rate">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
                   <CardTitle className="text-sm font-medium">RTO Rate</CardTitle>
@@ -204,26 +203,7 @@ export default function AnalyticsPage() {
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    From delivered RTOs (lost)
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="border-warning/50 bg-warning/5" data-testid="card-recovery-potential">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-                  <CardTitle className="text-sm font-medium text-orange-600 dark:text-orange-400">Recovery Potential</CardTitle>
-                  <AlertTriangle className="h-4 w-4 text-orange-500" />
-                </CardHeader>
-                <CardContent>
-                  {rtoLoading ? (
-                    <Skeleton className="h-8 w-24" />
-                  ) : (
-                    <div className="text-2xl font-bold text-orange-600 dark:text-orange-400" data-testid="stat-recovery-potential">
-                      ₹{(rtoInsights?.kpis.recovery_potential || 0).toLocaleString()}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    In-transit RTOs (may recover)
+                    Total value of all RTO orders
                   </p>
                 </CardContent>
               </Card>
