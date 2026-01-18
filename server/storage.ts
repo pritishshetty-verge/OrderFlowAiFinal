@@ -2415,9 +2415,11 @@ export class DbStorage implements IStorage {
     // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
     // =========================================================================
 
-    // Query 6: RTO Orders (shipment_status = 'RTO', live state - orders returned to origin)
+    // Query 6: RTO Orders (shipment_status = 'RTO', date-filtered by updated_at)
     const rtoConditions = [sql`LOWER(${orders.shipmentStatus}) = 'rto'`];
     if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
+    if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
+    if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
 
     const [rtoResult] = await db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
