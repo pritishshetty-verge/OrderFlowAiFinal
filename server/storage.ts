@@ -2415,8 +2415,8 @@ export class DbStorage implements IStorage {
     // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
     // =========================================================================
 
-    // Query 6: RTO Orders (current status = 'RTO', live state - orders returned to origin)
-    const rtoConditions = [sql`LOWER(${orders.status}) = 'rto'`];
+    // Query 6: RTO Orders (shipment_status = 'RTO', live state - orders returned to origin)
+    const rtoConditions = [sql`LOWER(${orders.shipmentStatus}) = 'rto'`];
     if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
 
     const [rtoResult] = await db
