@@ -53,6 +53,7 @@ function extractPayloadFields(body: any): {
   remarks: string | undefined;
   statusDateTime: string | undefined;
   nslCode: string | undefined;
+  statusType: string | undefined;
 } {
   // Priority order for NDR reasons (most specific first):
   // 1. payload.Status.Instructions (contains "Consignee refused..." etc.)
@@ -108,6 +109,7 @@ function extractPayloadFields(body: any): {
       remarks: finalRemarks,
       statusDateTime: body.Shipment.Status?.StatusDateTime,
       nslCode: body.Shipment.Status?.NSLCode,
+      statusType: body.Shipment.Status?.StatusType,
     };
   }
 
@@ -137,6 +139,7 @@ function extractPayloadFields(body: any): {
     remarks: legacyRemarks,
     statusDateTime: body.ScanDateTime || body.StatusDateTime || body.scan_datetime,
     nslCode: body.NSLCode || body.nslCode || body.nsl_code,
+    statusType: body.StatusType || body.status_type,
   };
 }
 
@@ -168,7 +171,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
     console.log('[Delhivery Webhook] Token verified successfully');
 
-    const { awb, status, statusCode, remarks, statusDateTime, nslCode } = extractPayloadFields(req.body);
+    const { awb, status, statusCode, remarks, statusDateTime, nslCode, statusType } = extractPayloadFields(req.body);
 
     if (!awb) {
       console.error('[Delhivery Webhook] No AWB found in payload');
@@ -242,9 +245,11 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     const isNDR = isNDRByCode || isNDRByStatus;
 
     const rtoPatterns = ['rto', 'return to origin', 'returned', 'rto in-transit', 'rto delivered'];
-    const isRTO = rtoPatterns.some(pattern =>
+    const isRTOByStatusType = statusType?.toUpperCase() === 'RT';
+    const isRTOByPattern = rtoPatterns.some(pattern =>
       effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
     );
+    const isRTO = isRTOByStatusType || isRTOByPattern;
 
     const deliveredPatterns = ['delivered', 'delivery completed', 'shipment delivered'];
     const isDelivered = deliveredPatterns.some(pattern =>
@@ -310,12 +315,16 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     }
     
     // Update order's shipment status AND main status for OFD tab visibility
+    // For RTO orders, always set shipmentStatus to 'RTO' regardless of status text
     const orderUpdate: Record<string, any> = {
-      shipmentStatus: effectiveStatus,
+      shipmentStatus: isRTO ? 'RTO' : effectiveStatus,
     };
     
     // Also update main order status for delivery state changes
-    if (isOutForDelivery) {
+    if (isRTO) {
+      orderUpdate.status = 'rto';
+      console.log(`[Delhivery Webhook] Updating order ${order.id} status to rto (StatusType: ${statusType})`);
+    } else if (isOutForDelivery) {
       orderUpdate.status = 'out_for_delivery';
       console.log(`[Delhivery Webhook] Updating order ${order.id} status to out_for_delivery`);
     } else if (isInTransit) {
@@ -332,8 +341,10 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       console.log('[Delhivery Webhook] NDR/RTO event detected:', {
         awb,
         status: effectiveStatus,
+        statusType,
         isNDR,
         isRTO,
+        isRTOByStatusType,
         isNDRByCode,
       });
 
