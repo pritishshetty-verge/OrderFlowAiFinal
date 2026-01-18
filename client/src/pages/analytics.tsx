@@ -16,7 +16,7 @@ interface DashboardMetrics {
   followUpOrders: number;
   fulfilledOrders: number;
   deliveredOrders: number;
-  pendingOrders: number;
+  rtoOrders: number;
 }
 
 export default function AnalyticsPage() {
@@ -67,7 +67,7 @@ export default function AnalyticsPage() {
     followUpOrders: metrics?.followUpOrders || 0,
     fulfilledOrders: metrics?.fulfilledOrders || 0,
     deliveredOrders: metrics?.deliveredOrders || 0,
-    pendingOrders: metrics?.pendingOrders || 0,
+    rtoOrders: metrics?.rtoOrders || 0,
   };
 
   // Build personalized greeting

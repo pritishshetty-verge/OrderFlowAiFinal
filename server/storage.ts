@@ -384,7 +384,7 @@ export interface IStorage {
     followUpOrders: number;
     fulfilledOrders: number;
     deliveredOrders: number;
-    pendingOrders: number;
+    rtoOrders: number;
   }>;
 
   // Hourly Activity for Dashboard Chart
@@ -2306,7 +2306,7 @@ export class DbStorage implements IStorage {
     followUpOrders: number;
     fulfilledOrders: number;
     deliveredOrders: number;
-    pendingOrders: number;
+    rtoOrders: number;
   }> {
     // Helper function to build attribution condition for history-based queries
     // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
@@ -2415,15 +2415,15 @@ export class DbStorage implements IStorage {
     // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
     // =========================================================================
 
-    // Query 6: Pending Orders (current call_status = 'Pending', live state)
-    const pendingConditions = [eq(orders.callStatus, 'Pending')];
-    if (userId) pendingConditions.push(eq(orderAssignments.userId, userId));
+    // Query 6: RTO Orders (current status = 'RTO', live state - orders returned to origin)
+    const rtoConditions = [sql`LOWER(${orders.status}) = 'rto'`];
+    if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
 
-    const [pendingResult] = await db
+    const [rtoResult] = await db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
-      .where(and(...pendingConditions));
+      .where(and(...rtoConditions));
 
     // Query 7: Follow-up Queue (current call_status = 'Follow Up', live state)
     const followUpConditions = [eq(orders.callStatus, 'Follow Up')];
@@ -2442,7 +2442,7 @@ export class DbStorage implements IStorage {
       followUpOrders: Number(followUpResult?.count) || 0,
       fulfilledOrders: Number(shippedResult?.count) || 0,
       deliveredOrders: Number(deliveredResult?.count) || 0,
-      pendingOrders: Number(pendingResult?.count) || 0,
+      rtoOrders: Number(rtoResult?.count) || 0,
     };
   }
 

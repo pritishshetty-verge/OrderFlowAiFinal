@@ -8,7 +8,7 @@ import {
   Truck, 
   TrendingUp, 
   Target,
-  AlertCircle 
+  AlertTriangle 
 } from "lucide-react";
 
 interface StatCardProps {
@@ -49,7 +49,7 @@ interface DashboardStatsProps {
   followUpOrders: number;
   fulfilledOrders: number;
   deliveredOrders: number;
-  pendingOrders: number;
+  rtoOrders: number;
   isLoading?: boolean;
 }
 
@@ -60,7 +60,7 @@ export function DashboardStats({
   followUpOrders,
   fulfilledOrders,
   deliveredOrders,
-  pendingOrders,
+  rtoOrders,
   isLoading = false,
 }: DashboardStatsProps) {
   const confirmationRate = assignedOrders > 0 
@@ -126,10 +126,10 @@ export function DashboardStats({
           isLoading={isLoading}
         />
         <StatCard
-          title="Pending Orders"
-          value={pendingOrders}
-          icon={<AlertCircle className="h-4 w-4 text-orange-600" />}
-          description="Pipeline: Awaiting verification"
+          title="RTO Orders"
+          value={rtoOrders}
+          icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+          description="Returned to origin"
           isLoading={isLoading}
         />
       </div>
