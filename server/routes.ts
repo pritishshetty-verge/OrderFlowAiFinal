@@ -4203,19 +4203,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         o.shipmentStatus
       );
 
-      // Master flag: Order is RTO if shipmentStatus = 'RTO'
+      // Master flag: Order is RTO using the normalized status values
+      // status = 'rto_initiated' or 'rto_delivered' (from normalizeDelhivery)
+      // OR shipmentStatus = 'RTO' (legacy / display value)
       const rtoOrders = allOrders.filter(o => 
+        o.status === 'rto_initiated' || 
+        o.status === 'rto_delivered' ||
         o.shipmentStatus?.toUpperCase() === 'RTO'
       );
 
-      // Stage 1: RTO In-Transit (Returning) - shipmentStatus is 'RTO' AND status is NOT 'RTO'
+      // Stage 1: RTO In-Transit (Returning) - status = 'rto_initiated'
       const rtoInTransit = rtoOrders.filter(o => 
-        o.status?.toUpperCase() !== 'RTO'
+        o.status === 'rto_initiated'
       );
 
-      // Stage 2: RTO Delivered (Returned) - shipmentStatus is 'RTO' AND status IS 'RTO' (or 'Returned')
+      // Stage 2: RTO Delivered (Returned) - status = 'rto_delivered'
       const rtoDelivered = rtoOrders.filter(o => 
-        o.status?.toUpperCase() === 'RTO' || o.status?.toLowerCase() === 'returned'
+        o.status === 'rto_delivered'
       );
 
       // KPI Calculations

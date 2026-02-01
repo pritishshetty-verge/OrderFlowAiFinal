@@ -27,7 +27,8 @@ const ACTIONABLE_CODES = [
 ];
 
 export function normalizeDelhivery(payload: DelhiveryPayload): NormalizedStatus {
-  const type = payload.Shipment?.Status?.StatusType || '';
+  // Normalize StatusType to uppercase for consistent matching
+  const type = (payload.Shipment?.Status?.StatusType || '').toUpperCase();
   const statusText = payload.Shipment?.Status?.Status || '';
   const instr = (payload.Shipment?.Status?.Instructions || '').toLowerCase();
   const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || '';

@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { storage } from './storage';
+import { normalizeDelhivery, type DelhiveryPayload } from './logic/rules/delhivery';
 
 interface DelhiveryDefaultPayload {
   Shipment: {
@@ -223,60 +224,53 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
     const { delhiveryService } = await import('./services/delhivery');
 
-    // Detect event type BEFORE creating shipment to set correct initial status
+    // Build payload for normalizeDelhivery function
+    // Include all possible Instructions sources for accurate OFD detection
+    const allInstructions = rawInstructions || 
+      req.body.Shipment?.Status?.Instructions || 
+      req.body.Instructions || 
+      req.body.instructions || 
+      '';
+    
+    const delhiveryPayload: DelhiveryPayload = {
+      Shipment: {
+        Status: {
+          StatusType: statusType || '',
+          Status: effectiveStatus,
+          Instructions: allInstructions,
+          NSLCode: nslCode || statusCode || '',
+        },
+        NSLCode: nslCode || statusCode || '',
+      },
+    };
+
+    // Use the strict normalization logic from delhivery.ts
+    const normalized = normalizeDelhivery(delhiveryPayload);
+    
+    console.log(`[Delhivery Webhook] Normalized status:`, {
+      awb,
+      statusType,
+      effectiveStatus,
+      nslCode,
+      normalizedStatus: normalized.status,
+      isActionable: normalized.isActionable,
+    });
+
+    // Map normalized status to flags for compatibility with existing code
+    const isRTO = normalized.status === 'rto_initiated' || normalized.status === 'rto_delivered';
+    const isNDR = normalized.status === 'ndr';
+    const isDelivered = normalized.status === 'delivered';
+    const isOutForDelivery = normalized.status === 'out_for_delivery';
+    const isInTransit = normalized.status === 'in_transit';
+    const isActionable = normalized.isActionable;
+    
+    // Legacy compatibility flags
     const isNDRByCode = statusCode && delhiveryService.isNDRStatus(statusCode);
-    
-    const ndrStatusPatterns = [
-      'undelivered',
-      'ndr',
-      'non delivery',
-      'customer unavailable',
-      'address issue',
-      'refused',
-      'incomplete address',
-      'contact customer',
-      'ofd - undelivered',
-    ];
-
-    const isNDRByStatus = ndrStatusPatterns.some(pattern => 
-      effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
-    );
-
-    const isNDR = isNDRByCode || isNDRByStatus;
-
-    const rtoPatterns = ['rto', 'return to origin', 'returned', 'rto in-transit', 'rto delivered'];
     const isRTOByStatusType = statusType?.toUpperCase() === 'RT';
-    const isRTOByPattern = rtoPatterns.some(pattern =>
-      effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
-    );
-    const isRTO = isRTOByStatusType || isRTOByPattern;
 
-    const deliveredPatterns = ['delivered', 'delivery completed', 'shipment delivered'];
-    const isDelivered = deliveredPatterns.some(pattern =>
-      effectiveStatus.toLowerCase().includes(pattern.toLowerCase())
-    ) && !isRTO;
-
-    // Detect Out for Delivery and In Transit statuses for OFD tab
-    const isOutForDelivery = isOFDByInstructions || 
-      effectiveStatus.toLowerCase().includes('out for delivery') ||
-      effectiveStatus.toLowerCase() === 'ot' ||
-      effectiveStatus.toLowerCase() === 'ofd';
-    
-    const isInTransit = !isOutForDelivery && !isNDR && !isRTO && !isDelivered && (
-      effectiveStatus.toLowerCase().includes('in transit') ||
-      effectiveStatus.toLowerCase().includes('in-transit') ||
-      effectiveStatus.toLowerCase() === 'it' ||
-      effectiveStatus.toLowerCase() === 'dispatched'
-    );
-
-    // Determine initial shipment status based on event type
+    // Determine initial shipment status based on normalized status
     const determineShipmentStatus = (): string => {
-      if (isRTO) return 'rto';
-      if (isNDR) return 'ndr';
-      if (isDelivered) return 'delivered';
-      if (isOutForDelivery) return 'out_for_delivery';
-      if (isInTransit) return 'in_transit';
-      return 'in_transit';
+      return normalized.status;
     };
 
     // Check if shipment exists for this order, if not - create one on the fly
@@ -314,26 +308,24 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
     }
     
-    // Update order's shipment status AND main status for OFD tab visibility
-    // For RTO orders, always set shipmentStatus to 'RTO' regardless of status text
-    const orderUpdate: Record<string, any> = {
-      shipmentStatus: isRTO ? 'RTO' : effectiveStatus,
+    // Update order's shipment status AND main status using normalized values
+    // Map normalized status to shipmentStatus display values
+    const shipmentStatusMap: Record<string, string> = {
+      'rto_initiated': 'RTO',
+      'rto_delivered': 'RTO',
+      'delivered': 'Delivered',
+      'ndr': 'NDR',
+      'out_for_delivery': 'Out for Delivery',
+      'in_transit': 'In Transit',
     };
     
-    // Also update main order status for delivery state changes
-    if (isRTO) {
-      orderUpdate.status = 'rto';
-      console.log(`[Delhivery Webhook] Updating order ${order.id} status to rto (StatusType: ${statusType})`);
-    } else if (isOutForDelivery) {
-      orderUpdate.status = 'out_for_delivery';
-      console.log(`[Delhivery Webhook] Updating order ${order.id} status to out_for_delivery`);
-    } else if (isInTransit) {
-      orderUpdate.status = 'in_transit';
-      console.log(`[Delhivery Webhook] Updating order ${order.id} status to in_transit`);
-    } else if (isDelivered) {
-      orderUpdate.status = 'Delivered';
-      console.log(`[Delhivery Webhook] Updating order ${order.id} status to Delivered`);
-    }
+    const orderUpdate: Record<string, any> = {
+      shipmentStatus: shipmentStatusMap[normalized.status] || effectiveStatus,
+      status: normalized.status,
+      isActionable: isActionable,
+    };
+    
+    console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${normalized.status} (isActionable: ${isActionable})`);
     
     await storage.updateOrder(order.id, orderUpdate);
 
@@ -380,13 +372,14 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
       const shipmentStatusLabel = isRTO ? 'RTO' : 'NDR';
 
-      // Update order with NDR details including nslCode, failureReason, lastFailedAt
+      // Update order with NDR details including nslCode, failureReason, lastFailedAt, isActionable
       await storage.updateOrder(order.id, {
-        status: 'ndr',
+        status: normalized.status,
         shipmentStatus: shipmentStatusLabel,
-        nslCode: nslCode || statusCode || null, // Use NSLCode or fallback to statusCode
+        nslCode: nslCode || statusCode || null,
         failureReason: remarks || effectiveStatus,
         lastFailedAt: statusDateTime ? new Date(statusDateTime) : new Date(),
+        isActionable: isActionable,
       });
 
       await storage.updateShipment(shipment.id, {
@@ -408,23 +401,24 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     }
 
     // Handle delivered status (skip if shipment was just created with correct status)
-    if (isDelivered && !shipmentJustCreated) {
-      console.log('[Delhivery Webhook] Delivery completed:', awb);
+    // Also handle rto_delivered as a delivery event
+    const isDeliveryComplete = isDelivered || normalized.status === 'rto_delivered';
+    if (isDeliveryComplete && !shipmentJustCreated) {
+      console.log('[Delhivery Webhook] Delivery completed:', awb, 'status:', normalized.status);
       
       await storage.updateShipment(shipment.id, {
-        status: 'delivered',
+        status: normalized.status,
         deliveredAt: statusDateTime ? new Date(statusDateTime) : new Date(),
       });
 
       await storage.updateOrder(order.id, {
-        status: 'delivered',
-        shipmentStatus: 'Delivered',
+        status: normalized.status,
+        shipmentStatus: isRTO ? 'RTO' : 'Delivered',
       });
-    } else if (isDelivered && shipmentJustCreated) {
-      // Shipment was created with delivered status, just update order
+    } else if (isDeliveryComplete && shipmentJustCreated) {
       await storage.updateOrder(order.id, {
-        status: 'delivered',
-        shipmentStatus: 'Delivered',
+        status: normalized.status,
+        shipmentStatus: isRTO ? 'RTO' : 'Delivered',
       });
     }
 
