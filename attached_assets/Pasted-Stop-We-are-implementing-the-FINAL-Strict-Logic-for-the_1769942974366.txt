@@ -1,0 +1,56 @@
+Stop. We are implementing the FINAL "Strict Logic" for the Store Health Engine.
+We have confirmed from logs that Delhivery uses "UD" for almost everything (Transit, Out for Delivery, AND Failure).
+We must NOT default "UD" to 'ndr'. We will only tag 'ndr' if it is explicitly ACTIONABLE.
+
+**ACTION 1: Database & Logic Setup**
+
+**1. Database Schema (`server/db/schema.ts`)**
+Ensure `orders` table has these columns:
+- `status`: text (Golden List: 'unfulfilled', 'cancelled', 'ready_to_ship', 'in_transit', 'out_for_delivery', 'ndr', 'delivered', 'rto_initiated', 'rto_delivered').
+- `nsl_code`: text (To track specific courier codes).
+- `failure_reason`: text.
+- `is_actionable`: boolean (default: false).
+
+**2. Create the Delhivery Rule Book (`server/logic/rules/delhivery.ts`)**
+Create this file to handle ONLY Delhivery specific mapping. It must strictly separate "Out for Delivery" from "NDR".
+
+```javascript
+// The Strict Whitelist (From your specific requirement)
+const ACTIONABLE_CODES = ["EOD-74", "EOD-15", "EOD-104", "EOD-43", "EOD-86", "EOD-11", "EOD-69", "EOD-6"];
+
+export function normalizeDelhivery(payload) {
+  const type = payload.Shipment.Status.StatusType;
+  const statusText = payload.Shipment.Status.Status || "";
+  const instr = (payload.Shipment.Status.Instructions || "").toLowerCase();
+  const nsl = payload.Shipment.NSLCode || "";
+
+  // 1. Handle RTO Delivered (The "DL" Trap)
+  if (type === 'DL') {
+    if (statusText.includes('RTO') || instr.includes('return')) return { status: 'rto_delivered', isActionable: false };
+    return { status: 'delivered', isActionable: false };
+  }
+
+  // 2. Handle RTO Initiated
+  if (type === 'RT') return { status: 'rto_initiated', isActionable: false };
+
+  // 3. Handle UD (The "Catch-All" Status)
+  if (type === 'UD') {
+    // A. Check for Out for Delivery (Priority)
+    if (instr.includes('out for delivery')) {
+      return { status: 'out_for_delivery', isActionable: false };
+    }
+    
+    // B. Check for Actionable NDR (Strict Whitelist)
+    if (ACTIONABLE_CODES.includes(nsl)) {
+      return { status: 'ndr', isActionable: true };
+    }
+
+    // C. Non-Actionable Failure / Transit Scan
+    // (e.g., "Re-routed", "Bag Added", "Consignee Refused" but not whitelisted)
+    // We treat these as 'in_transit' to prevent false alarms.
+    return { status: 'in_transit', isActionable: false };
+  }
+
+  // 4. Default Fallback
+  return { status: 'in_transit', isActionable: false };
+}
