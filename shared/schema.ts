@@ -250,6 +250,7 @@ export const orders = pgTable("orders", {
   nslCode: text("nsl_code"), // Delhivery NDR code (e.g., "EOD-6", "EOD-74")
   failureReason: text("failure_reason"), // Human-readable failure reason
   lastFailedAt: timestamp("last_failed_at"), // Timestamp of last delivery failure
+  isActionable: boolean("is_actionable").default(false), // Whether NDR requires customer action
   
   // Metadata
   tags: text("tags").array(),
