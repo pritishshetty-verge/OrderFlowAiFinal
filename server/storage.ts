@@ -1,11 +1,4 @@
-1. FIX THE "RTO ORDERS" WIDGET (Critical)
- The current query only looks for `shipment_status = 'RTO'`, which misses my new data.
- Update the SQL query for this widget to be backward compatible. It should count an order as RTO if:
- - `shipment_status` (legacy column) is 'RTO' (case-insensitive)
- - OR
- - `status` (new column) is 'rto_initiated' OR 'rto_delivered'
-
- *Note: Use `COUNT(DISTINCT order_id)` to ensure we don't double-count if an order flags both.*import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull } from "drizzle-orm";
+import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull } from "drizzle-orm";
 import { db } from "./db";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
@@ -2422,8 +2415,11 @@ export class DbStorage implements IStorage {
     // PIPELINE METRICS (Live State - NO date filter, shows current to-do list)
     // =========================================================================
 
-    // Query 6: RTO Orders (shipment_status = 'RTO', date-filtered by updated_at)
-    const rtoConditions = [sql`LOWER(${orders.shipmentStatus}) = 'rto'`];
+    // Query 6: RTO Orders (backward compatible - checks both legacy and new normalized status)
+    // Legacy: shipment_status = 'RTO' (case-insensitive)
+    // New: status IN ('rto_initiated', 'rto_delivered')
+    const rtoStatusCondition = sql`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
+    const rtoConditions = [rtoStatusCondition];
     if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
     if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
     if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
