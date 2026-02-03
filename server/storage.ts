@@ -205,6 +205,35 @@ export interface IStorage {
       cancelled: number;
     };
   }>;
+  exportOrders(filters?: {
+    status?: string;
+    callStatus?: string;
+    paymentMethod?: string;
+    assignedTo?: string;
+    agentId?: string;
+    search?: string;
+    startDate?: Date;
+    endDate?: Date;
+    tag?: string;
+  }): Promise<Array<{
+    shopifyOrderNumber: string | null;
+    shopifyCreatedAt: Date | null;
+    status: string | null;
+    paymentMethod: string | null;
+    totalPrice: number | null;
+    customerName: string | null;
+    customerPhone: string | null;
+    shippingCity: string | null;
+    shippingState: string | null;
+    shippingPincode: string | null;
+    agentName: string | null;
+    assignedAt: Date | null;
+    confirmedAt: Date | null;
+    callStatus: string | null;
+    followUpAttempts: number | null;
+    tags: string[] | null;
+    lineItems: string | null;
+  }>>;
   assignOrder(orderId: string, userId: string): Promise<Order | undefined>;
   
   // Call Status Actions
@@ -792,6 +821,162 @@ export class DbStorage implements IStorage {
         cancelled: cancelledCount,
       }
     };
+  }
+
+  async exportOrders(filters?: {
+    status?: string;
+    callStatus?: string;
+    paymentMethod?: string;
+    assignedTo?: string;
+    agentId?: string;
+    search?: string;
+    startDate?: Date;
+    endDate?: Date;
+    tag?: string;
+  }): Promise<Array<{
+    shopifyOrderNumber: string | null;
+    shopifyCreatedAt: Date | null;
+    status: string | null;
+    paymentMethod: string | null;
+    totalPrice: number | null;
+    customerName: string | null;
+    customerPhone: string | null;
+    shippingCity: string | null;
+    shippingState: string | null;
+    shippingPincode: string | null;
+    agentName: string | null;
+    assignedAt: Date | null;
+    confirmedAt: Date | null;
+    callStatus: string | null;
+    followUpAttempts: number | null;
+    tags: string[] | null;
+    lineItems: string | null;
+  }>> {
+    // Build filter conditions (same as listOrders)
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(orders.status, filters.status));
+    if (filters?.callStatus) {
+      if (filters.callStatus === 'Pending') {
+        conditions.push(sql`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
+      } else {
+        conditions.push(eq(orders.callStatus, filters.callStatus));
+      }
+    }
+    if (filters?.paymentMethod) conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
+    if (filters?.assignedTo) conditions.push(eq(orders.assignedTo, filters.assignedTo));
+    
+    if (filters?.agentId) {
+      if (filters.agentId === 'unassigned') {
+        conditions.push(sql`${orders.assignedTo} IS NULL`);
+      } else {
+        conditions.push(eq(orders.assignedTo, filters.agentId));
+      }
+    }
+    
+    if (filters?.search && filters.search.trim()) {
+      const searchPattern = `%${filters.search.trim()}%`;
+      conditions.push(sql`(
+        ${orders.shopifyOrderNumber} ILIKE ${searchPattern} OR
+        ${orders.customerName} ILIKE ${searchPattern} OR
+        ${orders.customerPhone} ILIKE ${searchPattern} OR
+        ${orders.customerEmail} ILIKE ${searchPattern} OR
+        ${orders.shippingCity} ILIKE ${searchPattern}
+      )`);
+    }
+    
+    if (filters?.startDate) {
+      conditions.push(gte(orders.shopifyCreatedAt, filters.startDate));
+    }
+    if (filters?.endDate) {
+      const endOfDay = new Date(filters.endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      conditions.push(lte(orders.shopifyCreatedAt, endOfDay));
+    }
+    
+    if (filters?.tag && filters.tag.trim()) {
+      conditions.push(sql`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Fetch orders with agent names (LEFT JOIN to users table)
+    let query = db.select({
+      id: orders.id,
+      shopifyOrderNumber: orders.shopifyOrderNumber,
+      shopifyCreatedAt: orders.shopifyCreatedAt,
+      status: orders.status,
+      paymentMethod: orders.paymentMethod,
+      totalPrice: orders.totalPrice,
+      customerName: orders.customerName,
+      customerPhone: orders.customerPhone,
+      shippingCity: orders.shippingCity,
+      shippingState: orders.shippingState,
+      shippingPincode: orders.shippingPincode,
+      assignedTo: orders.assignedTo,
+      assignedAt: orders.assignedAt,
+      confirmedAt: orders.confirmedAt,
+      callStatus: orders.callStatus,
+      followUpAttempts: orders.followUpAttempts,
+      tags: orders.tags,
+      agentName: users.fullName,
+    })
+    .from(orders)
+    .leftJoin(users, eq(orders.assignedTo, users.id))
+    .orderBy(desc(orders.shopifyCreatedAt));
+
+    if (whereClause) {
+      query = query.where(whereClause) as any;
+    }
+
+    const ordersData = await query;
+
+    // Fetch all order items for these orders to build line items strings
+    const orderIds = ordersData.map(o => o.id);
+    
+    let itemsMap: Record<string, string> = {};
+    if (orderIds.length > 0) {
+      const allItems = await db.select({
+        orderId: orderItems.orderId,
+        productName: orderItems.productName,
+        quantity: orderItems.quantity,
+      })
+      .from(orderItems)
+      .where(sql`${orderItems.orderId} IN (${sql.join(orderIds.map(id => sql`${id}`), sql`, `)})`);
+
+      // Group items by orderId and format as "Product x Qty, ..."
+      const itemsByOrder: Record<string, string[]> = {};
+      for (const item of allItems) {
+        if (!itemsByOrder[item.orderId]) {
+          itemsByOrder[item.orderId] = [];
+        }
+        itemsByOrder[item.orderId].push(`${item.productName || 'Unknown'} x${item.quantity || 1}`);
+      }
+      
+      for (const orderId of Object.keys(itemsByOrder)) {
+        itemsMap[orderId] = itemsByOrder[orderId].join(', ');
+      }
+    }
+
+    // Transform and return export data
+    return ordersData.map(order => ({
+      shopifyOrderNumber: order.shopifyOrderNumber,
+      shopifyCreatedAt: order.shopifyCreatedAt,
+      status: order.status,
+      paymentMethod: order.paymentMethod,
+      totalPrice: order.totalPrice ? Number(order.totalPrice) : null,
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      shippingCity: order.shippingCity,
+      shippingState: order.shippingState,
+      shippingPincode: order.shippingPincode,
+      agentName: order.agentName,
+      assignedAt: order.assignedAt,
+      confirmedAt: order.confirmedAt,
+      callStatus: order.callStatus,
+      followUpAttempts: order.followUpAttempts,
+      tags: parsePostgresArray(order.tags),
+      lineItems: itemsMap[order.id] || null,
+    }));
   }
 
   async assignOrder(orderId: string, userId: string): Promise<Order | undefined> {

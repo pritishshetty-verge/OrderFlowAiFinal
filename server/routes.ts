@@ -103,6 +103,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Export orders to CSV with all matching filters (no pagination)
+  // Returns downloadable CSV file with agent names and line items
+  app.get("/api/orders/export", async (req, res) => {
+    try {
+      const { status, paymentMethod, assignedTo, callStatus, agentId, search, startDate, endDate, tag } = req.query;
+
+      // Parse date filters
+      let parsedStartDate: Date | undefined;
+      let parsedEndDate: Date | undefined;
+      
+      if (startDate) {
+        const d = new Date(startDate as string);
+        if (!Number.isNaN(d.getTime())) parsedStartDate = d;
+      }
+      if (endDate) {
+        const d = new Date(endDate as string);
+        if (!Number.isNaN(d.getTime())) parsedEndDate = d;
+      }
+
+      const filters = {
+        status: status as string | undefined,
+        paymentMethod: paymentMethod as string | undefined,
+        assignedTo: assignedTo as string | undefined,
+        callStatus: callStatus as string | undefined,
+        agentId: agentId as string | undefined,
+        search: search as string | undefined,
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+        tag: tag as string | undefined,
+      };
+
+      // Fetch all matching orders (no limit/offset for export)
+      const exportData = await storage.exportOrders(filters);
+      
+      // Generate CSV content
+      const headers = [
+        'Order ID',
+        'Order Date',
+        'Order Status',
+        'Payment Method',
+        'Total Amount',
+        'Customer Name',
+        'Customer Phone',
+        'City',
+        'State',
+        'Zip Code',
+        'Assigned Agent',
+        'Assigned Date',
+        'Confirmed Date',
+        'Call Status',
+        'Attempts Count',
+        'Tags',
+        'Line Items'
+      ];
+
+      const formatDate = (date: Date | null | undefined): string => {
+        if (!date) return '';
+        const d = new Date(date);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}`;
+      };
+
+      const escapeCSV = (value: string | null | undefined): string => {
+        if (value === null || value === undefined) return '';
+        const str = String(value);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
+      const rows = exportData.map(order => [
+        escapeCSV(order.shopifyOrderNumber),
+        formatDate(order.shopifyCreatedAt),
+        escapeCSV(order.status),
+        escapeCSV(order.paymentMethod),
+        order.totalPrice?.toString() || '0',
+        escapeCSV(order.customerName),
+        escapeCSV(order.customerPhone),
+        escapeCSV(order.shippingCity),
+        escapeCSV(order.shippingState),
+        escapeCSV(order.shippingPincode),
+        escapeCSV(order.agentName),
+        formatDate(order.assignedAt),
+        formatDate(order.confirmedAt),
+        escapeCSV(order.callStatus),
+        order.followUpAttempts?.toString() || '0',
+        escapeCSV(order.tags?.join(', ')),
+        escapeCSV(order.lineItems)
+      ].join(','));
+
+      const csvContent = [headers.join(','), ...rows].join('\n');
+
+      // Generate filename with current date
+      const now = new Date();
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const filename = `orders_export_${dateStr}.csv`;
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csvContent);
+    } catch (error) {
+      console.error("Error exporting orders:", error);
+      res.status(500).json({ error: "Failed to export orders" });
+    }
+  });
+
   // Get orders that are Out for Delivery (OFD) - STRICT MODE
   // This is a CALL LIST for agents to confirm "delivery TODAY" with customers
   // ONLY show orders where the package is physically with the rider

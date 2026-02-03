@@ -438,6 +438,90 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setCurrentPage(1); // Reset to first page when clearing filters
   };
 
+  // Export state
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Export CSV handler - builds URL with current filters and triggers download
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams();
+
+      // Apply same filters as the current view
+      // For agents: filter by their assigned orders if in Personal view
+      if (!isAdmin && localStorageUserId && !isGlobalView) {
+        params.append("assignedTo", localStorageUserId);
+      }
+
+      // Tab-based or dropdown callStatus filter
+      let effectiveCallStatus: string | undefined;
+      if (isAdmin && callStatusFilter !== "all") {
+        effectiveCallStatus = callStatusFilter;
+      } else {
+        effectiveCallStatus = tabToCallStatus[activeTab];
+      }
+      if (effectiveCallStatus) {
+        params.append("callStatus", effectiveCallStatus);
+      }
+
+      // Admin agent filter
+      if (isAdmin && agentFilter !== "all") {
+        params.append("agentId", agentFilter);
+      }
+
+      // Search filter
+      if (debouncedSearch.trim()) {
+        params.append("search", debouncedSearch.trim());
+      }
+
+      // Tag filter
+      if (tagFilter !== "all") {
+        params.append("tag", tagFilter);
+      }
+
+      // Trigger download
+      const response = await fetch(`/api/orders/export?${params.toString()}`, {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Export failed");
+      }
+
+      // Get filename from Content-Disposition header or generate one
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = "orders_export.csv";
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (match) filename = match[1];
+      }
+
+      // Download the file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Export Complete",
+        description: `Orders exported to ${filename}`,
+      });
+    } catch (error) {
+      toast({
+        title: "Export Failed",
+        description: "Failed to export orders. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Admin filter handlers
   const handleCallStatusFilterChange = (value: string) => {
     setCallStatusFilter(value);
@@ -543,6 +627,8 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             tags={tagsData?.tags || []}
             onTagChange={setTagFilter}
             tagValue={tagFilter}
+            onExport={handleExport}
+            isExporting={isExporting}
           />
 
           {/* Loading state - only affects table content, not filter bar */}

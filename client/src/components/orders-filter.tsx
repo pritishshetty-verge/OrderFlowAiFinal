@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { Search, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -34,6 +34,9 @@ interface OrdersFilterProps {
   tags?: string[];
   onTagChange?: (value: string) => void;
   tagValue?: string;
+  // Export
+  onExport?: () => void;
+  isExporting?: boolean;
 }
 
 export function OrdersFilter({
@@ -52,6 +55,8 @@ export function OrdersFilter({
   tags = [],
   onTagChange,
   tagValue = "all",
+  onExport,
+  isExporting = false,
 }: OrdersFilterProps) {
   return (
     <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -147,6 +152,16 @@ export function OrdersFilter({
           data-testid="button-clear-filters"
         >
           Clear Filters
+        </Button>
+
+        <Button
+          variant="outline"
+          onClick={onExport}
+          disabled={isExporting}
+          data-testid="button-export-csv"
+        >
+          <Download className="h-4 w-4 mr-2" />
+          {isExporting ? "Exporting..." : "Export CSV"}
         </Button>
       </div>
     </div>
