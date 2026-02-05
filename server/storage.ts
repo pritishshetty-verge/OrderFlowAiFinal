@@ -342,7 +342,7 @@ export interface IStorage {
   getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]>;
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
-  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number }): Promise<{ events: NdrEvent[]; total: number }>;
+  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string }): Promise<{ events: NdrEvent[]; total: number }>;
 
   // Learning Center - Courses
   getCourse(id: string): Promise<Course | undefined>;
@@ -1984,7 +1984,53 @@ export class DbStorage implements IStorage {
     return updated;
   }
 
-  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number }): Promise<{ events: NdrEvent[]; total: number }> {
+  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string }): Promise<{ events: NdrEvent[]; total: number }> {
+    // Build conditions array
+    const conditions = [eq(ndrEvents.resolved, false)];
+    
+    // If assignedTo is specified (agent filter), join with orders to filter by assignment
+    if (filters?.assignedTo) {
+      // Get NDR events joined with orders to filter by agent assignment
+      let query = db.select({ ndrEvent: ndrEvents })
+        .from(ndrEvents)
+        .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
+        .where(
+          and(
+            eq(ndrEvents.resolved, false),
+            eq(orders.assignedTo, filters.assignedTo)
+          )
+        )
+        .orderBy(desc(ndrEvents.createdAt));
+      
+      if (filters?.limit) {
+        query = query.limit(filters.limit) as any;
+      }
+      if (filters?.offset) {
+        query = query.offset(filters.offset) as any;
+      }
+      
+      const results = await query;
+      const events = results.map(r => r.ndrEvent);
+      
+      // Count for pagination
+      const countResult = await db
+        .select({ count: count() })
+        .from(ndrEvents)
+        .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
+        .where(
+          and(
+            eq(ndrEvents.resolved, false),
+            eq(orders.assignedTo, filters.assignedTo)
+          )
+        );
+      
+      return {
+        events,
+        total: countResult[0]?.count || 0,
+      };
+    }
+    
+    // Admin path: no assignedTo filter, return all unresolved NDR events
     const baseQuery = db.select().from(ndrEvents).where(eq(ndrEvents.resolved, false));
 
     let query = baseQuery.orderBy(desc(ndrEvents.createdAt));

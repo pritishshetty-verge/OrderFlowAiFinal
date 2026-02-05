@@ -33,6 +33,90 @@ import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatu
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
+  // AUTHORIZATION HELPERS
+  // ============================================================================
+  
+  /**
+   * Enforces agent-level read protection for order queries.
+   * If user is an Agent (not Admin), they can ONLY see their assigned orders.
+   * SECURITY: ALWAYS requires currentUserId for any order access. 
+   * Never trust client-provided assignedTo without verifying user identity first.
+   */
+  async function enforceAgentReadFilter(
+    requestingUserId: string | undefined,
+    requestedAssignedTo: string | undefined
+  ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
+    // SECURITY: currentUserId is REQUIRED - never allow access without verified user identity
+    if (!requestingUserId) {
+      return { 
+        assignedTo: "__UNAUTHORIZED__", 
+        isAdmin: false, 
+        unauthorized: true, 
+        reason: "currentUserId is required for authorization" 
+      };
+    }
+    
+    const user = await storage.getUser(requestingUserId);
+    if (!user) {
+      // Unknown user - reject access
+      return { 
+        assignedTo: "__UNAUTHORIZED__", 
+        isAdmin: false, 
+        unauthorized: true, 
+        reason: "User not found" 
+      };
+    }
+    
+    // Admins can see all orders or filter as requested
+    if (user.role === "admin") {
+      return { assignedTo: requestedAssignedTo, isAdmin: true, unauthorized: false };
+    }
+    
+    // Agents can ONLY see their own assigned orders - enforce this regardless of request
+    // Ignore any client-provided assignedTo - always use the verified user's ID
+    return { assignedTo: requestingUserId, isAdmin: false, unauthorized: false };
+  }
+  
+  /**
+   * Checks if a user can access/modify an order.
+   * Returns true if user is Admin OR user is assigned to the order.
+   * Used for both read and write protection on single-order endpoints.
+   */
+  async function canUserAccessOrder(
+    userId: string | undefined,
+    orderId: string
+  ): Promise<{ authorized: boolean; reason?: string; isAdmin: boolean }> {
+    if (!userId) {
+      return { authorized: false, reason: "User ID is required for authorization", isAdmin: false };
+    }
+    
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return { authorized: false, reason: "User not found", isAdmin: false };
+    }
+    
+    // Admins can access any order
+    if (user.role === "admin") {
+      return { authorized: true, isAdmin: true };
+    }
+    
+    // For agents, verify they own the order
+    const order = await storage.getOrder(orderId);
+    if (!order) {
+      return { authorized: false, reason: "Order not found", isAdmin: false };
+    }
+    
+    if (order.assignedTo !== userId) {
+      return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
+    }
+    
+    return { authorized: true, isAdmin: false };
+  }
+  
+  // Alias for backward compatibility - same function, different name for clarity
+  const canUserModifyOrder = canUserAccessOrder;
+  
+  // ============================================================================
   // WEBHOOK ENDPOINTS
   // ============================================================================
 
@@ -57,9 +141,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
 
   // Get all orders with optional filters
+  // SECURITY: Enforces agent-level read protection - agents can ONLY see their assigned orders
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder, tag } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder, tag, currentUserId } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -80,10 +165,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
 
+      // SECURITY: Enforce agent-level read filter
+      // If user is an Agent (not Admin), they can ONLY see their assigned orders
+      const authResult = await enforceAgentReadFilter(
+        currentUserId as string | undefined,
+        assignedTo as string | undefined
+      );
+      
+      // SECURITY: Reject requests without valid user context
+      if (authResult.unauthorized) {
+        return res.status(401).json({ error: authResult.reason || "Authorization required" });
+      }
+
       const filters = {
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
-        assignedTo: assignedTo as string | undefined,
+        assignedTo: authResult.assignedTo, // Use enforced value instead of raw request value
         callStatus: callStatus as string | undefined,
         agentId: agentId as string | undefined, // 'unassigned' for NULL, or agent UUID
         search: search as string | undefined, // Server-side search across orderId, customerName, phone, email, city
@@ -105,9 +202,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Export orders to CSV with all matching filters (no pagination)
   // Returns downloadable CSV file with agent names and line items
+  // SECURITY: Enforces agent-level read protection for CSV exports
   app.get("/api/orders/export", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, search, startDate, endDate, tag } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, search, startDate, endDate, tag, currentUserId } = req.query;
 
       // Parse date filters
       let parsedStartDate: Date | undefined;
@@ -122,10 +220,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
 
+      // SECURITY: Enforce agent-level read filter for exports
+      const authResult = await enforceAgentReadFilter(
+        currentUserId as string | undefined,
+        assignedTo as string | undefined
+      );
+      
+      // SECURITY: Reject requests without valid user context
+      if (authResult.unauthorized) {
+        return res.status(401).json({ error: authResult.reason || "Authorization required" });
+      }
+
       const filters = {
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
-        assignedTo: assignedTo as string | undefined,
+        assignedTo: authResult.assignedTo, // Use enforced value
         callStatus: callStatus as string | undefined,
         agentId: agentId as string | undefined,
         search: search as string | undefined,
@@ -218,8 +327,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // This is a CALL LIST for agents to confirm "delivery TODAY" with customers
   // ONLY show orders where the package is physically with the rider
   // IMPORTANT: Must be defined BEFORE /api/orders/:id to avoid route conflict
+  // SECURITY: Enforces agent-level read protection
   app.get("/api/orders/ofd", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Enforce agent-level read filter
+      const authResult = await enforceAgentReadFilter(
+        currentUserId as string | undefined,
+        undefined
+      );
+      
+      if (authResult.unauthorized) {
+        return res.status(401).json({ error: authResult.reason || "Authorization required" });
+      }
+      
+      // Build agent filter condition for OFD query
+      const agentFilter = authResult.assignedTo 
+        ? sql`AND ${orders.assignedTo} = ${authResult.assignedTo}`
+        : sql``;
+      
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -253,7 +380,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%rto%'
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in transit%'
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in-transit%'
-        AND ${orders.shipmentStatus} != 'IT'`
+        AND ${orders.shipmentStatus} != 'IT'
+        ${agentFilter}`
       )
       .orderBy(desc(orders.createdAt))
       .limit(100);
@@ -321,8 +449,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get single order by ID
+  // SECURITY: Read protection - agents can only view their assigned orders
   app.get("/api/orders/:id", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const order = await storage.getOrder(req.params.id);
       if (!order) {
         return res.status(404).json({ error: "Order not found" });
@@ -335,8 +472,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order items for a specific order
+  // SECURITY: Read protection - agents can only view items for their assigned orders
   app.get("/api/orders/:id/items", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const items = await storage.getOrderItems(req.params.id);
       res.json(items);
     } catch (error) {
@@ -346,8 +492,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order status history
+  // SECURITY: Read protection - agents can only view history for their assigned orders
   app.get("/api/orders/:id/history", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const history = await storage.getOrderHistory(req.params.id);
       res.json(history);
     } catch (error) {
@@ -357,8 +512,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order assignment history
+  // SECURITY: Read protection - agents can only view assignments for their assigned orders
   app.get("/api/orders/:id/assignments", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const assignments = await storage.getOrderAssignments(req.params.id);
       res.json(assignments);
     } catch (error) {
@@ -368,8 +532,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get shipment and NDR data for an order
+  // SECURITY: Read protection - agents can only view shipment data for their assigned orders
   app.get("/api/orders/:id/shipment", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const order = await storage.getOrder(req.params.id);
       if (!order) {
         return res.status(404).json({ error: "Order not found" });
@@ -390,8 +563,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get call history for an order with agent details
+  // SECURITY: Read protection - agents can only view calls for their assigned orders
   app.get("/api/orders/:id/calls", async (req, res) => {
     try {
+      const { currentUserId } = req.query;
+      
+      // SECURITY: Verify user can access this order
+      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
+      }
+      
       const calls = await storage.getCallsWithAgentByOrderId(req.params.id);
       res.json(calls);
     } catch (error) {
@@ -400,14 +582,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update shipping address (syncs to Shopify first, then updates local DB)
+  // Update order shipping address (syncs to Shopify first, then updates local DB)
+  // SECURITY: Write protection - agents can only update addresses on their assigned orders
   app.put("/api/orders/:id/address", async (req, res) => {
     try {
       const orderId = req.params.id;
       const { 
         firstName, lastName, address1, address2, 
-        city, province, zip, country, phone, email 
+        city, province, zip, country, phone, email,
+        userId
       } = req.body;
+
+      // SECURITY: userId is REQUIRED for authorization
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required for authorization" });
+      }
+      
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, orderId);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
+      }
 
       // Get the order to find its Shopify ID
       const order = await storage.getOrder(orderId);
@@ -540,12 +735,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update order status
+  // SECURITY: Write protection - agents can only update status on their assigned orders
   app.patch("/api/orders/:id/status", async (req, res) => {
     try {
       const { status, changedBy, note } = req.body;
 
       if (!status) {
         return res.status(400).json({ error: "status is required" });
+      }
+
+      // SECURITY: changedBy is REQUIRED for authorization
+      if (!changedBy) {
+        return res.status(400).json({ error: "changedBy is required for authorization" });
+      }
+      
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(changedBy, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       const existingOrder = await storage.getOrder(req.params.id);
@@ -572,10 +779,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update order (e.g., tags, callStatus)
+  // Update order tags/callStatus
+  // SECURITY: Write protection - agents can only update their assigned orders
   app.patch("/api/orders/:id", async (req, res) => {
     try {
-      const { tags, callStatus } = req.body;
+      const { tags, callStatus, userId } = req.body;
+
+      // SECURITY: userId is REQUIRED for authorization
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required for authorization" });
+      }
+      
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
+      }
 
       const existingOrder = await storage.getOrder(req.params.id);
       if (!existingOrder) {
@@ -732,12 +951,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
 
   // Confirm order (moves to Fulfil section)
+  // SECURITY: Write protection - agents can only confirm their assigned orders
   app.post("/api/orders/:id/confirm", async (req, res) => {
     try {
       const { userId, notes } = req.body;
 
       if (!userId) {
         return res.status(400).json({ error: "userId is required" });
+      }
+
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       const order = await storage.confirmOrder(req.params.id, userId, notes);
@@ -766,12 +992,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Cancel order with reason
+  // SECURITY: Write protection - agents can only cancel their assigned orders
   app.post("/api/orders/:id/cancel", async (req, res) => {
     try {
       const { userId, reason, notes } = req.body;
 
       if (!userId || !reason) {
         return res.status(400).json({ error: "userId and reason are required" });
+      }
+
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       // STEP 1: Get order from DB to retrieve shopifyOrderId
@@ -845,12 +1078,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Schedule follow-up for order
+  // SECURITY: Write protection - agents can only set follow-up on their assigned orders
   app.post("/api/orders/:id/followup", async (req, res) => {
     try {
       const { userId, followupAt, notes } = req.body;
 
       if (!userId || !followupAt) {
         return res.status(400).json({ error: "userId and followupAt are required" });
+      }
+
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, req.params.id);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       const followupDate = new Date(followupAt);
@@ -2957,14 +3197,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Get all NDR events (generic endpoint - supports both Shiprocket and Delhivery)
   // Enriches NDR events with order-level fields (nslCode, failureReason, lastFailedAt)
+  // Get NDR events
+  // SECURITY: Enforces agent-level read protection
   app.get("/api/ndr", async (req, res) => {
     try {
-      const { limit, offset } = req.query;
+      const { limit, offset, currentUserId } = req.query;
+      
+      // SECURITY: Enforce agent-level read filter
+      const authResult = await enforceAgentReadFilter(
+        currentUserId as string | undefined,
+        undefined
+      );
+      
+      if (authResult.unauthorized) {
+        return res.status(401).json({ error: authResult.reason || "Authorization required" });
+      }
 
-      // Get NDR events from database (all couriers)
+      // Get NDR events from database (all couriers) - filtered by agent if needed
       const result = await storage.listUnresolvedNDREvents({
         limit: limit ? parseInt(limit as string) : 50,
         offset: offset ? parseInt(offset as string) : 0,
+        assignedTo: authResult.assignedTo, // Filter by agent if not admin
       });
 
       // Enrich each NDR event with order-level NDR fields
@@ -3240,14 +3493,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Assign courier and ship order
+  // Ship order via Shiprocket
+  // SECURITY: Write protection - agents can only ship their assigned orders
   app.post("/api/orders/:id/ship", async (req, res) => {
     try {
       const orderId = req.params.id;
-      const { courierId } = req.body;
+      const { courierId, userId } = req.body;
 
       if (!courierId) {
         return res.status(400).json({ error: "Courier ID is required" });
+      }
+      
+      // SECURITY: userId is REQUIRED for authorization
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required for authorization" });
+      }
+      
+      // SECURITY: Verify user can modify this order (admin or assigned agent)
+      const authCheck = await canUserModifyOrder(userId, orderId);
+      if (!authCheck.authorized) {
+        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       // Get order

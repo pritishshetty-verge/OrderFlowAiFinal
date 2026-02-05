@@ -315,13 +315,15 @@ export function CourierSelectionModal({
   });
 
   // Assign courier mutation
+  // SECURITY: Include userId for server-side authorization
   const assignCourierMutation = useMutation({
     mutationFn: async (courierId: number) => {
       setShippingCourierId(courierId);
+      const userId = localStorage.getItem("userId");
       const response = await fetch(`/api/orders/${orderId}/ship`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ courierId }),
+        body: JSON.stringify({ courierId, userId }),
       });
 
       if (!response.ok) {

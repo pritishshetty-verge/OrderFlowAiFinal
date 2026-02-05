@@ -347,15 +347,34 @@ export default function NDRPage() {
   const [pageSize, setPageSize] = useState(50);
   const [activeTab, setActiveTab] = useState<string>("ndr");
   const { toast } = useToast();
+  
+  // SECURITY: Get current user ID from localStorage for authorization
+  const localStorageUserId = localStorage.getItem("userId");
 
-  // Fetch NDR events
+  // Fetch NDR events - pass currentUserId for authorization
   const { data: ndrData, isLoading: ndrLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
-    queryKey: ["/api/ndr"],
+    queryKey: ["/api/ndr", { currentUserId: localStorageUserId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (localStorageUserId) params.set("currentUserId", localStorageUserId);
+      const response = await fetch(`/api/ndr?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch NDR events");
+      return response.json();
+    },
+    enabled: !!localStorageUserId,
   });
 
-  // Fetch OFD orders
+  // Fetch OFD orders - pass currentUserId for authorization
   const { data: ofdData, isLoading: ofdLoading } = useQuery<{ orders: OfdOrder[]; total: number }>({
-    queryKey: ["/api/orders/ofd"],
+    queryKey: ["/api/orders/ofd", { currentUserId: localStorageUserId }],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (localStorageUserId) params.set("currentUserId", localStorageUserId);
+      const response = await fetch(`/api/orders/ofd?${params}`);
+      if (!response.ok) throw new Error("Failed to fetch OFD orders");
+      return response.json();
+    },
+    enabled: !!localStorageUserId,
   });
 
   const ndrEvents = ndrData?.events || [];

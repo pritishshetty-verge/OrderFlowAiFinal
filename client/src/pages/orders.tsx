@@ -187,6 +187,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   
   // Fetch orders from backend with server-side pagination and role-based filters
   // For agents: Personal view filters by assignedTo, Global view shows all orders
+  // SECURITY: Always pass currentUserId so backend can enforce agent-level read protection
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
     queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
@@ -194,6 +195,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         page: currentPage.toString(),
         limit: pageSize.toString(),
       });
+      
+      // SECURITY: Always pass currentUserId for backend role-based enforcement
+      if (localStorageUserId) {
+        params.append("currentUserId", localStorageUserId);
+      }
       
       // For agents: filter by their assigned orders ONLY if in Personal view (not Global view)
       if (!isAdmin && localStorageUserId && !isGlobalView) {
@@ -239,6 +245,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       if (!res.ok) throw new Error("Failed to fetch orders");
       return res.json();
     },
+    // SECURITY: Don't run query until we have user context loaded
+    // This prevents race condition where query runs before localStorageUserId is available
+    enabled: !!localStorageUserId,
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
   });
   
@@ -256,10 +265,12 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     queryKey: ["/api/orders/agent-stats", localStorageUserId],
     queryFn: async () => {
       // Fetch orders with agent's userId to get their personal stats
+      // SECURITY: Include currentUserId for server-side authorization
       const params = new URLSearchParams({
         page: "1",
         limit: "1", // We only need stats, not actual orders
         assignedTo: localStorageUserId || "",
+        currentUserId: localStorageUserId || "",
       });
       
       const res = await fetch(`/api/orders?${params.toString()}`, {
@@ -276,7 +287,8 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Mutation for updating call status
   const updateCallStatusMutation = useMutation({
     mutationFn: async ({ orderId, callStatus }: { orderId: string; callStatus: string }) => {
-      const res = await apiRequest("PATCH", `/api/orders/${orderId}`, { callStatus });
+      // SECURITY: Include userId for server-side authorization
+      const res = await apiRequest("PATCH", `/api/orders/${orderId}`, { callStatus, userId: localStorageUserId });
       return res.json();
     },
     onSuccess: () => {
@@ -344,14 +356,17 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   }, [searchString]);
 
   // Fetch the specific order when needed (handles pagination case)
+  // SECURITY: Pass currentUserId for server-side authorization
   const { data: fetchedOrder } = useQuery<BackendOrderWithUser>({
-    queryKey: ["/api/orders", urlOrderId],
+    queryKey: ["/api/orders", urlOrderId, localStorageUserId],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/${urlOrderId}`, { credentials: "include" });
+      const params = new URLSearchParams();
+      if (localStorageUserId) params.append("currentUserId", localStorageUserId);
+      const res = await fetch(`/api/orders/${urlOrderId}?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch order");
       return res.json();
     },
-    enabled: !!urlOrderId && !baseFilteredOrders.find((o: Order) => o.id === urlOrderId),
+    enabled: !!urlOrderId && !!localStorageUserId && !baseFilteredOrders.find((o: Order) => o.id === urlOrderId),
   });
 
   // Open sidebar when we have the order (either from current page or fetched)
@@ -446,6 +461,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     setIsExporting(true);
     try {
       const params = new URLSearchParams();
+
+      // SECURITY: Always pass currentUserId for backend role-based enforcement
+      if (localStorageUserId) {
+        params.append("currentUserId", localStorageUserId);
+      }
 
       // Apply same filters as the current view
       // For agents: filter by their assigned orders if in Personal view

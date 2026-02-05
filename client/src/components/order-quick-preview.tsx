@@ -110,27 +110,58 @@ export function OrderQuickPreview({
   const [editAddressOpen, setEditAddressOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
 
+  // SECURITY: Get userId for server-side authorization on all order queries
+  const authUserId = localStorage.getItem("userId");
+  
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
-    queryKey: ["/api/orders", order?.id],
-    enabled: open && !!order?.id,
+    queryKey: ["/api/orders", order?.id, authUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (authUserId) params.append("currentUserId", authUserId);
+      const res = await fetch(`/api/orders/${order?.id}?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch order");
+      return res.json();
+    },
+    enabled: open && !!order?.id && !!authUserId,
   });
 
   const { data: orderItems = [], isLoading: itemsLoading } = useQuery<BackendOrderItem[]>({
-    queryKey: ["/api/orders", order?.id, "items"],
-    enabled: open && !!order?.id,
+    queryKey: ["/api/orders", order?.id, "items", authUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (authUserId) params.append("currentUserId", authUserId);
+      const res = await fetch(`/api/orders/${order?.id}/items?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch items");
+      return res.json();
+    },
+    enabled: open && !!order?.id && !!authUserId,
   });
 
   const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
-    queryKey: ["/api/orders", order?.id, "history"],
-    enabled: open && !!order?.id,
+    queryKey: ["/api/orders", order?.id, "history", authUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (authUserId) params.append("currentUserId", authUserId);
+      const res = await fetch(`/api/orders/${order?.id}/history?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch history");
+      return res.json();
+    },
+    enabled: open && !!order?.id && !!authUserId,
   });
 
   const { data: shipmentData, isLoading: shipmentLoading } = useQuery<{
     shipment?: any;
     ndrEvents?: any[];
   }>({
-    queryKey: ["/api/orders", order?.id, "shipment"],
-    enabled: open && !!order?.id,
+    queryKey: ["/api/orders", order?.id, "shipment", authUserId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (authUserId) params.append("currentUserId", authUserId);
+      const res = await fetch(`/api/orders/${order?.id}/shipment?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch shipment");
+      return res.json();
+    },
+    enabled: open && !!order?.id && !!authUserId,
   });
 
   // Unified tracking abstraction: prioritize Shiprocket data, fallback to order tracking fields
@@ -143,7 +174,9 @@ export function OrderQuickPreview({
   const updateTagsMutation = useMutation({
     mutationFn: async (tags: string[]) => {
       if (!order?.id) return;
-      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { tags });
+      // SECURITY: Include userId for server-side authorization
+      const userId = localStorage.getItem("userId");
+      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { tags, userId });
       return res.json();
     },
     onSuccess: () => {
