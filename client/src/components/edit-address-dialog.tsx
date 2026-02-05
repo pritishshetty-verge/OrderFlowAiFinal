@@ -97,7 +97,14 @@ export function EditAddressDialog({
 
   const updateAddressMutation = useMutation({
     mutationFn: async (data: ShippingAddressData) => {
-      const res = await apiRequest("PUT", `/api/orders/${orderId}/address`, data);
+      const currentUserId = localStorage.getItem("userId");
+      if (!currentUserId) {
+        throw new Error("You must be logged in to update the address");
+      }
+      const res = await apiRequest("PUT", `/api/orders/${orderId}/address`, {
+        ...data,
+        userId: currentUserId,
+      });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.details || errorData.error || "Failed to update address");
