@@ -37,13 +37,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   
   /**
-   * Enforces agent-level read protection for order queries.
-   * If user is an Agent (not Admin), they can ONLY see their assigned orders.
-   * SECURITY: ALWAYS requires currentUserId for any order access. 
-   * Never trust client-provided assignedTo without verifying user identity first.
+   * Read Scope Types for Order Queries
+   * - 'assigned': Agent sees only their assigned orders (DEFAULT for agents)
+   * - 'global': Agent can see ALL orders (for Global View toggle)
+   * - undefined: Let the function decide based on context
    */
-  async function enforceAgentReadFilter(
+  type OrderReadScope = 'assigned' | 'global' | undefined;
+  
+  /**
+   * Builds the correct assignedTo filter for order READ queries.
+   * 
+   * SAFE GLOBAL VIEW PATTERN:
+   * -------------------------
+   * - Agents CAN view all orders when scope='global' (Global View toggle)
+   * - Agents DEFAULT to seeing only assigned orders when scope is not specified
+   * - This allows the "All Orders" toggle to work while fixing the Resume bug
+   * 
+   * IMPORTANT: This is READ-ONLY permission. Write protection is handled separately
+   * by canUserAccessOrder() which ALWAYS requires order ownership for agents.
+   * 
+   * Even if an agent CAN SEE another agent's order (via Global View), they CANNOT
+   * modify it (confirm, cancel, follow-up, etc.) - those actions return 403 Forbidden.
+   * 
+   * @param requestingUserId - The ID of the user making the request (REQUIRED)
+   * @param requestedScope - 'global' for all orders, 'assigned' or undefined for agent's orders
+   * @param requestedAssignedTo - Optional filter by specific agent (admin only)
+   */
+  async function buildOrderReadScope(
     requestingUserId: string | undefined,
+    requestedScope: OrderReadScope,
     requestedAssignedTo: string | undefined
   ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
     // SECURITY: currentUserId is REQUIRED - never allow access without verified user identity
@@ -72,9 +94,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return { assignedTo: requestedAssignedTo, isAdmin: true, unauthorized: false };
     }
     
-    // Agents can ONLY see their own assigned orders - enforce this regardless of request
-    // Ignore any client-provided assignedTo - always use the verified user's ID
+    // =========================================================================
+    // AGENT READ SCOPE LOGIC
+    // =========================================================================
+    // 
+    // GLOBAL VIEW (scope='global'):
+    //   - Agent explicitly requested to see all orders via "All Orders" toggle
+    //   - Allow read access to ALL orders (no assignedTo filter)
+    //   - Write protection still blocks modifications to unassigned orders
+    //
+    // PERSONAL VIEW (scope='assigned' or undefined):
+    //   - Default behavior, or explicit personal view request
+    //   - Only show orders assigned to this agent
+    //   - This is the safe default for Resume action (no scope sent)
+    // =========================================================================
+    
+    if (requestedScope === 'global') {
+      // Agent requested Global View - allow seeing all orders
+      // Note: They still cannot MODIFY orders they don't own (canUserAccessOrder blocks that)
+      return { assignedTo: undefined, isAdmin: false, unauthorized: false };
+    }
+    
+    // Default: Personal view - only show agent's assigned orders
+    // This is the safe default that fixes the Resume bug
     return { assignedTo: requestingUserId, isAdmin: false, unauthorized: false };
+  }
+  
+  /**
+   * Legacy wrapper for enforceAgentReadFilter - calls buildOrderReadScope with default scope.
+   * Used by endpoints that don't support Global View (like NDR, OFD).
+   */
+  async function enforceAgentReadFilter(
+    requestingUserId: string | undefined,
+    requestedAssignedTo: string | undefined
+  ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
+    // For legacy callers, always use 'assigned' scope (no global view)
+    return buildOrderReadScope(requestingUserId, 'assigned', requestedAssignedTo);
   }
   
   /**
@@ -141,10 +196,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
 
   // Get all orders with optional filters
-  // SECURITY: Enforces agent-level read protection - agents can ONLY see their assigned orders
+  // SECURITY: Uses buildOrderReadScope for Safe Global View pattern
+  // - Agents can view all orders when scope='global' (for "All Orders" toggle)
+  // - Agents default to seeing only assigned orders when scope is not specified
+  // - Write protection (canUserAccessOrder) still blocks modifications to unassigned orders
   app.get("/api/orders", async (req, res) => {
     try {
-      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder, tag, currentUserId } = req.query;
+      const { status, paymentMethod, assignedTo, callStatus, agentId, limit, page, search, startDate, endDate, sortOrder, tag, currentUserId, scope } = req.query;
 
       // Parse pagination parameters
       const parsedLimit = limit ? parseInt(limit as string) : 50;
@@ -165,10 +223,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
 
-      // SECURITY: Enforce agent-level read filter
-      // If user is an Agent (not Admin), they can ONLY see their assigned orders
-      const authResult = await enforceAgentReadFilter(
+      // SECURITY: Build order read scope using Safe Global View pattern
+      // - scope='global': Agent can see all orders (for "All Orders" toggle)
+      // - scope=undefined: Agent sees only assigned orders (default, fixes Resume bug)
+      // - Admins always see all orders (with optional assignedTo filter)
+      const parsedScope = scope === 'global' ? 'global' : undefined;
+      const authResult = await buildOrderReadScope(
         currentUserId as string | undefined,
+        parsedScope,
         assignedTo as string | undefined
       );
       
@@ -948,6 +1010,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ============================================================================
   // CALL STATUS ACTIONS API
+  // ============================================================================
+  // 
+  // SAFE GLOBAL VIEW PATTERN - WRITE PROTECTION:
+  // ============================================
+  // These endpoints allow agents to modify order status (confirm, cancel, follow-up).
+  // 
+  // CRITICAL: Even though agents CAN VIEW all orders when scope='global' is set
+  // (via the "All Orders" toggle), they CANNOT MODIFY orders they are not assigned to.
+  // 
+  // canUserModifyOrder() enforces this protection:
+  // - Admins: Can modify any order
+  // - Agents: Can ONLY modify orders where assignedTo = their userId
+  // 
+  // If an agent tries to confirm/cancel/followup an order they don't own,
+  // they receive 403 Forbidden - even if they can see it in Global View.
   // ============================================================================
 
   // Confirm order (moves to Fulfil section)

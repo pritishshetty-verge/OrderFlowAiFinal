@@ -186,8 +186,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   }, [activeTab]);
   
   // Fetch orders from backend with server-side pagination and role-based filters
-  // For agents: Personal view filters by assignedTo, Global view shows all orders
-  // SECURITY: Always pass currentUserId so backend can enforce agent-level read protection
+  // SAFE GLOBAL VIEW PATTERN:
+  // - Personal View (default): No scope param → Backend defaults to assigned orders only
+  // - Global View (toggle on): scope=global → Backend allows viewing all orders
+  // - Write protection still blocks agents from modifying unassigned orders (403 Forbidden)
+  // - Resume action does NOT send scope=global, so it correctly shows only assigned orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
     queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
@@ -201,9 +204,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         params.append("currentUserId", localStorageUserId);
       }
       
-      // For agents: filter by their assigned orders ONLY if in Personal view (not Global view)
-      if (!isAdmin && localStorageUserId && !isGlobalView) {
-        params.append("assignedTo", localStorageUserId);
+      // SAFE GLOBAL VIEW: Only send scope=global when agent explicitly toggles "All Orders"
+      // When scope is not sent (default), backend restricts agent to assigned orders only
+      // This fixes the Resume bug while preserving the Global View feature
+      if (!isAdmin && isGlobalView) {
+        params.append("scope", "global");
       }
       
       // Server-side tab filtering - pass callStatus based on active tab
