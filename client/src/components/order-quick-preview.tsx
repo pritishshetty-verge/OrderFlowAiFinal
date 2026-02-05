@@ -82,6 +82,8 @@ interface OrderQuickPreviewProps {
   onInvoice?: () => void;
   onRefund?: () => void;
   onEditOrder?: () => void;
+  /** Safe Global View: Pass 'global' to allow agents to read any order's details */
+  scope?: 'global' | undefined;
 }
 
 export function OrderQuickPreview({
@@ -96,6 +98,7 @@ export function OrderQuickPreview({
   onInvoice,
   onRefund,
   onEditOrder,
+  scope,
 }: OrderQuickPreviewProps) {
   const { toast } = useToast();
   const [showAddTagDialog, setShowAddTagDialog] = useState(false);
@@ -113,12 +116,19 @@ export function OrderQuickPreview({
   // SECURITY: Get userId for server-side authorization on all order queries
   const authUserId = localStorage.getItem("userId");
   
+  // SAFE GLOBAL VIEW: Build query params with scope for read permissions
+  // When scope='global', agents can read any order's details (but not modify)
+  const buildParams = () => {
+    const params = new URLSearchParams();
+    if (authUserId) params.append("currentUserId", authUserId);
+    if (scope) params.append("scope", scope);
+    return params;
+  };
+  
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
-    queryKey: ["/api/orders", order?.id, authUserId],
+    queryKey: ["/api/orders", order?.id, authUserId, scope],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (authUserId) params.append("currentUserId", authUserId);
-      const res = await fetch(`/api/orders/${order?.id}?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/orders/${order?.id}?${buildParams().toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch order");
       return res.json();
     },
@@ -126,11 +136,9 @@ export function OrderQuickPreview({
   });
 
   const { data: orderItems = [], isLoading: itemsLoading } = useQuery<BackendOrderItem[]>({
-    queryKey: ["/api/orders", order?.id, "items", authUserId],
+    queryKey: ["/api/orders", order?.id, "items", authUserId, scope],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (authUserId) params.append("currentUserId", authUserId);
-      const res = await fetch(`/api/orders/${order?.id}/items?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/orders/${order?.id}/items?${buildParams().toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch items");
       return res.json();
     },
@@ -138,11 +146,9 @@ export function OrderQuickPreview({
   });
 
   const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
-    queryKey: ["/api/orders", order?.id, "history", authUserId],
+    queryKey: ["/api/orders", order?.id, "history", authUserId, scope],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (authUserId) params.append("currentUserId", authUserId);
-      const res = await fetch(`/api/orders/${order?.id}/history?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/orders/${order?.id}/history?${buildParams().toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch history");
       return res.json();
     },
@@ -153,11 +159,9 @@ export function OrderQuickPreview({
     shipment?: any;
     ndrEvents?: any[];
   }>({
-    queryKey: ["/api/orders", order?.id, "shipment", authUserId],
+    queryKey: ["/api/orders", order?.id, "shipment", authUserId, scope],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (authUserId) params.append("currentUserId", authUserId);
-      const res = await fetch(`/api/orders/${order?.id}/shipment?${params.toString()}`, { credentials: "include" });
+      const res = await fetch(`/api/orders/${order?.id}/shipment?${buildParams().toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch shipment");
       return res.json();
     },

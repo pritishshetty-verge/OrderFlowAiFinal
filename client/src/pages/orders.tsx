@@ -716,6 +716,8 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         onEditOrder={() => {
           // TODO: Implement edit order dialog
         }}
+        // SAFE GLOBAL VIEW: Pass scope to allow agents to read any order's details when in global view
+        scope={!isAdmin && isGlobalView ? 'global' : undefined}
       />
 
       <AssignOrderDialog

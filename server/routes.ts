@@ -171,6 +171,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Alias for backward compatibility - same function, different name for clarity
   const canUserModifyOrder = canUserAccessOrder;
   
+  /**
+   * canUserReadOrder - READ permission check for individual order detail endpoints.
+   * 
+   * SAFE GLOBAL VIEW PATTERN:
+   * -------------------------
+   * This function mirrors the buildOrderReadScope() logic for individual orders.
+   * When an agent has scope='global' (Global View toggle active), they can READ
+   * any order's details - but canUserModifyOrder() still blocks WRITE operations.
+   * 
+   * @param userId - The ID of the user making the request
+   * @param orderId - The order ID being accessed
+   * @param scope - 'global' allows reading any order, undefined/other requires ownership
+   */
+  async function canUserReadOrder(
+    userId: string | undefined,
+    orderId: string,
+    scope: string | undefined
+  ): Promise<{ authorized: boolean; reason?: string; isAdmin: boolean }> {
+    if (!userId) {
+      return { authorized: false, reason: "User ID is required for authorization", isAdmin: false };
+    }
+    
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return { authorized: false, reason: "User not found", isAdmin: false };
+    }
+    
+    // Admins can read any order
+    if (user.role === "admin") {
+      return { authorized: true, isAdmin: true };
+    }
+    
+    // GLOBAL VIEW: Agent explicitly requested global scope - allow reading any order
+    // Note: Write protection (canUserModifyOrder) still blocks modifications
+    if (scope === 'global') {
+      return { authorized: true, isAdmin: false };
+    }
+    
+    // DEFAULT: Personal view - verify agent owns this order
+    const order = await storage.getOrder(orderId);
+    if (!order) {
+      return { authorized: false, reason: "Order not found", isAdmin: false };
+    }
+    
+    if (order.assignedTo !== userId) {
+      return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
+    }
+    
+    return { authorized: true, isAdmin: false };
+  }
+  
   // ============================================================================
   // WEBHOOK ENDPOINTS
   // ============================================================================
@@ -511,13 +562,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get single order by ID
-  // SECURITY: Read protection - agents can only view their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read any order details
+  // - Agents without scope can only read their assigned orders
+  // - Write protection (canUserModifyOrder) still enforces ownership for modifications
   app.get("/api/orders/:id", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
@@ -534,13 +592,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order items for a specific order
-  // SECURITY: Read protection - agents can only view items for their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read items for any order
+  // - Agents without scope can only read items for their assigned orders
   app.get("/api/orders/:id/items", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
@@ -554,13 +618,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order status history
-  // SECURITY: Read protection - agents can only view history for their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read history for any order
+  // - Agents without scope can only read history for their assigned orders
   app.get("/api/orders/:id/history", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
@@ -574,13 +644,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get order assignment history
-  // SECURITY: Read protection - agents can only view assignments for their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read assignments for any order
+  // - Agents without scope can only read assignments for their assigned orders
   app.get("/api/orders/:id/assignments", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
@@ -594,13 +670,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get shipment and NDR data for an order
-  // SECURITY: Read protection - agents can only view shipment data for their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read shipment data for any order
+  // - Agents without scope can only read shipment for their assigned orders
   app.get("/api/orders/:id/shipment", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
@@ -625,13 +707,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get call history for an order with agent details
-  // SECURITY: Read protection - agents can only view calls for their assigned orders
+  // SECURITY: Read protection with Safe Global View pattern
+  // - Agents with scope='global' can read calls for any order
+  // - Agents without scope can only read calls for their assigned orders
   app.get("/api/orders/:id/calls", async (req, res) => {
     try {
-      const { currentUserId } = req.query;
+      const { currentUserId, scope } = req.query;
       
-      // SECURITY: Verify user can access this order
-      const authCheck = await canUserAccessOrder(currentUserId as string | undefined, req.params.id);
+      // SECURITY: Use canUserReadOrder which respects Global View scope
+      const authCheck = await canUserReadOrder(
+        currentUserId as string | undefined, 
+        req.params.id,
+        scope as string | undefined
+      );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
       }
