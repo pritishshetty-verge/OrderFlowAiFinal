@@ -48,9 +48,19 @@ const parseDatabaseUrl = (url: string) => {
 
 const connectionConfig = parseDatabaseUrl(process.env.DATABASE_URL);
 
-// Create pool with EXPLICIT connection config
-// By passing an object with explicit host/port/user/password/database,
-// we completely bypass any PG* environment variables
-export const pool = new Pool(connectionConfig);
+export const pool = new Pool({
+  ...connectionConfig,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
+
+pool.on('error', (err) => {
+  console.error('Unexpected database pool error:', err.message);
+  console.error('Error code:', (err as any).code);
+  if ((err as any).code === '57P01') {
+    console.log('Database admin shutdown detected (57P01). Pool will reconnect on next query.');
+  }
+});
 
 export const db = drizzle({ client: pool, schema });
