@@ -3,6 +3,15 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (server staying alive):', err.message);
+  console.error('Stack:', err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection (server staying alive):', reason);
+});
+
 const app = express();
 
 declare module 'http' {
@@ -58,7 +67,7 @@ app.use((req, res, next) => {
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });
-    throw err;
+    console.error('Express error:', err.message || err);
   });
 
   // importantly only setup vite in development and after
