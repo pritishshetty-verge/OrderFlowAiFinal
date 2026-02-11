@@ -246,7 +246,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/fastrr-abandoned", async (req, res) => {
     try {
       const secret = req.headers["x-api-secret"];
-      const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET || "my_secure_secret_123";
+      const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET;
+      if (!expectedSecret) {
+        console.error("FASTRR_WEBHOOK_SECRET is not configured");
+        return res.status(500).json({ error: "Webhook not configured" });
+      }
 
       if (secret !== expectedSecret) {
         console.log("Fastrr webhook authentication failed");
