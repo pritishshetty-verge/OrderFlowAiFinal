@@ -242,6 +242,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { handleDelhiveryWebhook } = await import("./delhiveryWebhook");
   app.post("/api/webhooks/delhivery", handleDelhiveryWebhook);
 
+  // Fastrr Abandoned Cart webhook
+  app.post("/api/webhooks/fastrr-abandoned", async (req, res) => {
+    try {
+      const secret = req.headers["x-api-secret"];
+      const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET || "my_secure_secret_123";
+
+      if (secret !== expectedSecret) {
+        console.log("Fastrr webhook authentication failed");
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      console.log("========================================");
+      console.log("FASTRR ABANDONED CART WEBHOOK RECEIVED AT:", new Date().toISOString());
+      console.log("Raw payload:", JSON.stringify(req.body, null, 2));
+      console.log("========================================");
+
+      const body = req.body;
+
+      const checkout = await storage.createAbandonedCheckout({
+        externalId: body.id?.toString() || body.external_id?.toString() || null,
+        customerName: body.customer_name || body.customer?.name || body.billing_address?.name || null,
+        customerPhone: body.customer_phone || body.customer?.phone || body.billing_address?.phone || null,
+        customerEmail: body.customer_email || body.customer?.email || body.email || null,
+        items: body.items || body.line_items || body.products || null,
+        cartValue: body.cart_value?.toString() || body.total_price?.toString() || body.subtotal_price?.toString() || null,
+        checkoutUrl: body.checkout_url || body.abandoned_checkout_url || body.recovery_url || null,
+        isRecovered: false,
+      });
+
+      console.log("Abandoned checkout saved with ID:", checkout.id);
+      res.status(200).json({ success: true, id: checkout.id });
+    } catch (error) {
+      console.error("Error processing Fastrr abandoned cart webhook:", error);
+      res.status(500).json({ error: "Failed to process webhook" });
+    }
+  });
+
   // ============================================================================
   // ORDERS API
   // ============================================================================

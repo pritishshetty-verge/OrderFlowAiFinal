@@ -61,6 +61,8 @@ import {
   type InsertUserOnboardingProgress,
   type Product,
   type InsertProduct,
+  type AbandonedCheckout,
+  type InsertAbandonedCheckout,
   users,
   invites,
   customers,
@@ -88,6 +90,7 @@ import {
   userOnboardingProgress,
   products,
   appSettings,
+  abandonedCheckouts,
   type AppSetting,
 } from "@shared/schema";
 
@@ -423,6 +426,10 @@ export interface IStorage {
     cancelled: number;
     followUp: number;
   }>>;
+
+  // Abandoned Checkouts
+  createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
+  getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -2840,6 +2847,15 @@ export class DbStorage implements IStorage {
       await this.setAppSetting('prepaid_payment_methods', ['PayU', 'Cards, UPI, NB by PayU India']);
       console.log('Default prepaid_payment_methods seeded successfully');
     }
+  }
+
+  async createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout> {
+    const [checkout] = await db.insert(abandonedCheckouts).values(data).returning();
+    return checkout;
+  }
+
+  async getAbandonedCheckouts(): Promise<AbandonedCheckout[]> {
+    return await db.select().from(abandonedCheckouts).orderBy(desc(abandonedCheckouts.createdAt));
   }
 }
 

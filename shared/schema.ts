@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -946,3 +946,28 @@ export const insertAppSettingSchema = createInsertSchema(appSettings);
 
 export type InsertAppSetting = z.infer<typeof insertAppSettingSchema>;
 export type AppSetting = typeof appSettings.$inferSelect;
+
+// ============================================================================
+// ABANDONED CHECKOUTS (Fastrr / Shiprocket Abandoned Cart)
+// ============================================================================
+
+export const abandonedCheckouts = pgTable("abandoned_checkouts", {
+  id: serial("id").primaryKey(),
+  externalId: text("external_id"),
+  customerName: text("customer_name"),
+  customerPhone: text("customer_phone"),
+  customerEmail: text("customer_email"),
+  items: jsonb("items"),
+  cartValue: decimal("cart_value", { precision: 10, scale: 2 }),
+  checkoutUrl: text("checkout_url"),
+  isRecovered: boolean("is_recovered").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAbandonedCheckoutSchema = createInsertSchema(abandonedCheckouts).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertAbandonedCheckout = z.infer<typeof insertAbandonedCheckoutSchema>;
+export type AbandonedCheckout = typeof abandonedCheckouts.$inferSelect;
