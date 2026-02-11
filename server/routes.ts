@@ -268,6 +268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer_email = body.custEmail || body.email;
       const checkout_url = body.abandonLink || body.url || body.checkout_url;
       const cart_value = body.cartTotal || body.total_price || 0;
+      const checkout_stage = body.latest_stage || body.checkoutStage || body.stage || null;
 
       let items = body.items || [];
       if (items.length === 0 && body.productName) {
@@ -294,6 +295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items: items.length > 0 ? items : null,
         cartValue: cart_value?.toString() || null,
         checkoutUrl: checkout_url || null,
+        checkoutStage: checkout_stage || null,
         isRecovered: false,
       });
 
