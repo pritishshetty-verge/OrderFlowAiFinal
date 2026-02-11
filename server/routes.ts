@@ -257,21 +257,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Forbidden" });
       }
 
-      console.log("========================================");
-      console.log("FASTRR ABANDONED CART WEBHOOK RECEIVED AT:", new Date().toISOString());
-      console.log("Raw payload:", JSON.stringify(req.body, null, 2));
-      console.log("========================================");
+      console.log('--- FASTRR WEBHOOK HIT ---');
+      console.log('Body:', JSON.stringify(req.body, null, 2));
 
       const body = req.body;
 
+      const external_id = body.cartId || body.id;
+      const customer_phone = body.custPhone || body.phone || body.mobile;
+      const customer_name = body.custName || body.name;
+      const customer_email = body.custEmail || body.email;
+      const checkout_url = body.abandonLink || body.url || body.checkout_url;
+      const cart_value = body.cartTotal || body.total_price || 0;
+
+      let items = body.items || [];
+      if (items.length === 0 && body.productName) {
+        items.push({
+          name: body.productName,
+          price: body.productPrice,
+          quantity: body.productQuantity,
+          variant: body.productVariant,
+        });
+      }
+
+      if (!customer_phone) {
+        console.warn("FASTRR WEBHOOK WARNING: Missing customer_phone in payload");
+      }
+      if (!checkout_url) {
+        console.warn("FASTRR WEBHOOK WARNING: Missing checkout_url in payload");
+      }
+
       const checkout = await storage.createAbandonedCheckout({
-        externalId: body.id?.toString() || body.external_id?.toString() || null,
-        customerName: body.customer_name || body.customer?.name || body.billing_address?.name || null,
-        customerPhone: body.customer_phone || body.customer?.phone || body.billing_address?.phone || null,
-        customerEmail: body.customer_email || body.customer?.email || body.email || null,
-        items: body.items || body.line_items || body.products || null,
-        cartValue: body.cart_value?.toString() || body.total_price?.toString() || body.subtotal_price?.toString() || null,
-        checkoutUrl: body.checkout_url || body.abandoned_checkout_url || body.recovery_url || null,
+        externalId: external_id?.toString() || null,
+        customerName: customer_name || null,
+        customerPhone: customer_phone || null,
+        customerEmail: customer_email || null,
+        items: items.length > 0 ? items : null,
+        cartValue: cart_value?.toString() || null,
+        checkoutUrl: checkout_url || null,
         isRecovered: false,
       });
 
