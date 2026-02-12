@@ -262,7 +262,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const body = req.body;
 
-      const external_id = body.cartId || body.id;
+      const external_id = body.cart_id || body.cartId || body.id || body.cart_token || null;
+      console.log("[DEBUG] Extracted External ID:", external_id);
       const customer_phone = body.custPhone || body.phone || body.mobile;
       const customer_name = body.custName || body.name;
       const customer_email = body.custEmail || body.email;
