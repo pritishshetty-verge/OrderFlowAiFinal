@@ -308,6 +308,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET abandoned checkouts with assigned agent name
+  app.get("/api/abandoned-checkouts", async (req, res) => {
+    try {
+      const checkouts = await storage.getAbandonedCheckouts();
+      res.json(checkouts);
+    } catch (error) {
+      console.error("Error fetching abandoned checkouts:", error);
+      res.status(500).json({ error: "Failed to fetch abandoned checkouts" });
+    }
+  });
+
   // ============================================================================
   // ORDERS API
   // ============================================================================

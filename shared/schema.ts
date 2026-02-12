@@ -961,6 +961,7 @@ export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   cartValue: decimal("cart_value", { precision: 10, scale: 2 }),
   checkoutUrl: text("checkout_url"),
   checkoutStage: text("checkout_stage"),
+  assignedTo: text("assigned_to"),
   isRecovered: boolean("is_recovered").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

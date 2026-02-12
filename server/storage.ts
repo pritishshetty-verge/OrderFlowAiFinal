@@ -2854,8 +2854,27 @@ export class DbStorage implements IStorage {
     return checkout;
   }
 
-  async getAbandonedCheckouts(): Promise<AbandonedCheckout[]> {
-    return await db.select().from(abandonedCheckouts).orderBy(desc(abandonedCheckouts.createdAt));
+  async getAbandonedCheckouts(): Promise<(AbandonedCheckout & { assignedAgentName: string | null })[]> {
+    const results = await db
+      .select({
+        id: abandonedCheckouts.id,
+        externalId: abandonedCheckouts.externalId,
+        customerName: abandonedCheckouts.customerName,
+        customerPhone: abandonedCheckouts.customerPhone,
+        customerEmail: abandonedCheckouts.customerEmail,
+        items: abandonedCheckouts.items,
+        cartValue: abandonedCheckouts.cartValue,
+        checkoutUrl: abandonedCheckouts.checkoutUrl,
+        checkoutStage: abandonedCheckouts.checkoutStage,
+        assignedTo: abandonedCheckouts.assignedTo,
+        isRecovered: abandonedCheckouts.isRecovered,
+        createdAt: abandonedCheckouts.createdAt,
+        assignedAgentName: users.fullName,
+      })
+      .from(abandonedCheckouts)
+      .leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id))
+      .orderBy(desc(abandonedCheckouts.createdAt));
+    return results;
   }
 }
 
