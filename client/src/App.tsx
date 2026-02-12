@@ -25,6 +25,7 @@ import AdminLearningDashboard from "@/pages/admin-learning-dashboard";
 import AdminCourseForm from "@/pages/admin-course-form";
 import AdminLessonForm from "@/pages/admin-lesson-form";
 import CallLogsPage from "@/pages/call-logs";
+import AbandonedCartsPage from "@/pages/AbandonedCarts";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -99,6 +100,9 @@ function Router() {
       </Route>
       <Route path="/call-logs">
         {() => <ProtectedRoute component={CallLogsPage} />}
+      </Route>
+      <Route path="/abandoned-carts">
+        {() => <ProtectedRoute component={AbandonedCartsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>

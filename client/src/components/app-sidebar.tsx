@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -54,6 +54,12 @@ const menuItems = [
         title: "Call Logs",
         url: "/call-logs",
         icon: Phone,
+      },
+      {
+        title: "Abandoned Carts",
+        url: "/abandoned-carts",
+        icon: ShoppingCart,
+        adminOnly: true,
       },
     ],
   },
@@ -130,7 +136,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                         </CollapsibleTrigger>
                         <CollapsibleContent>
                           <SidebarMenuSub>
-                            {item.items.map((subItem) => {
+                            {item.items.filter((subItem) => !subItem.adminOnly || userRole === "admin").map((subItem) => {
                               const isActive = isPathActive(subItem.url);
                               return (
                                 <SidebarMenuSubItem key={subItem.title}>
