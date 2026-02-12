@@ -25,7 +25,20 @@ import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
 import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
-const menuItems = [
+type MenuItem = {
+  title: string;
+  url?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  items?: SubMenuItem[];
+};
+
+type SubMenuItem = {
+  title: string;
+  url: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
+
+const adminMenuItems: MenuItem[] = [
   {
     title: "Overview",
     url: "/",
@@ -59,7 +72,6 @@ const menuItems = [
         title: "Abandoned Carts",
         url: "/abandoned-carts",
         icon: ShoppingCart,
-        adminOnly: true,
       },
     ],
   },
@@ -75,8 +87,31 @@ const menuItems = [
   },
 ];
 
+const recoveryAgentMenuItems: MenuItem[] = [
+  {
+    title: "Orders",
+    url: "/orders",
+    icon: Package,
+  },
+  {
+    title: "Abandoned Carts",
+    url: "/abandoned-carts",
+    icon: ShoppingCart,
+  },
+  {
+    title: "Learning Center",
+    url: "/learning-center",
+    icon: GraduationCap,
+  },
+  {
+    title: "Teams",
+    url: "/teams",
+    icon: Users,
+  },
+];
+
 interface AppSidebarProps {
-  userRole?: "admin" | "manager" | "agent";
+  userRole?: string;
 }
 
 export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
@@ -88,12 +123,15 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
     enabled: !!userEmail,
   });
 
+  const isRecoveryAgent = userRole === "recovery_agent";
+  const menuItems = isRecoveryAgent ? recoveryAgentMenuItems : adminMenuItems;
+
   const isPathActive = (url: string) => {
     if (url === "/") return location === "/";
     return location === url || location.startsWith(url + "/");
   };
 
-  const isParentActive = (items?: { url: string }[]) => {
+  const isParentActive = (items?: SubMenuItem[]) => {
     if (!items) return false;
     return items.some(item => isPathActive(item.url));
   };
@@ -136,7 +174,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                         </CollapsibleTrigger>
                         <CollapsibleContent>
                           <SidebarMenuSub>
-                            {item.items.filter((subItem) => !subItem.adminOnly || userRole === "admin").map((subItem) => {
+                            {item.items.map((subItem) => {
                               const isActive = isPathActive(subItem.url);
                               return (
                                 <SidebarMenuSubItem key={subItem.title}>

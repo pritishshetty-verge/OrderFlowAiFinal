@@ -12,7 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import { useTheme } from "@/components/theme-provider";
 
 interface ProfileDropdownProps {
-  userRole: "admin" | "manager" | "agent";
+  userRole: string;
   userName?: string;
   userEmail?: string;
   avatarImage?: string;

@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -26,6 +26,8 @@ import AdminCourseForm from "@/pages/admin-course-form";
 import AdminLessonForm from "@/pages/admin-lesson-form";
 import CallLogsPage from "@/pages/call-logs";
 import AbandonedCartsPage from "@/pages/AbandonedCarts";
+import LearningCenterPlaceholder from "@/pages/LearningCenter";
+import TeamsPlaceholder from "@/pages/Teams";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -46,63 +48,95 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   return <Component />;
 }
 
+const RECOVERY_AGENT_ALLOWED_PATHS = [
+  "/orders",
+  "/abandoned-carts",
+  "/learning-center",
+  "/teams",
+  "/profile",
+  "/login",
+  "/signup",
+];
+
+function RecoveryAgentGuard({ component: Component }: { component: React.ComponentType }) {
+  const [location] = useLocation();
+  const userRole = localStorage.getItem("userRole");
+
+  if (userRole === "recovery_agent") {
+    const isAllowed = RECOVERY_AGENT_ALLOWED_PATHS.some(
+      (path) => location === path || location.startsWith(path + "/")
+    );
+    if (!isAllowed) {
+      return <Redirect to="/abandoned-carts" />;
+    }
+  }
+
+  return <ProtectedRoute component={Component} />;
+}
+
 function Router() {
-  const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  const userRole = localStorage.getItem("userRole") || "admin";
   
   return (
     <Switch>
       <Route path="/login" component={LoginPage} />
       <Route path="/signup" component={SignupPage} />
       <Route path="/">
-        {() => <ProtectedRoute component={OverviewPage} />}
+        {() => <RecoveryAgentGuard component={OverviewPage} />}
       </Route>
       <Route path="/orders">
-        {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole} />} />}
+        {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole as any} />} />}
       </Route>
       <Route path="/fulfil">
-        {() => <ProtectedRoute component={FulfilPage} />}
+        {() => <RecoveryAgentGuard component={FulfilPage} />}
       </Route>
       <Route path="/ndr">
-        {() => <ProtectedRoute component={NDRPage} />}
+        {() => <RecoveryAgentGuard component={NDRPage} />}
       </Route>
       <Route path="/team">
-        {() => <ProtectedRoute component={TeamPage} />}
+        {() => <RecoveryAgentGuard component={TeamPage} />}
       </Route>
       <Route path="/profile">
         {() => <ProtectedRoute component={ProfilePage} />}
       </Route>
       <Route path="/settings">
-        {() => <ProtectedRoute component={SettingsPage} />}
+        {() => <RecoveryAgentGuard component={SettingsPage} />}
       </Route>
       <Route path="/settings/shopify/setup">
-        {() => <ProtectedRoute component={ShopifySetupPage} />}
+        {() => <RecoveryAgentGuard component={ShopifySetupPage} />}
       </Route>
       <Route path="/settings/shopify/webhooks">
-        {() => <ProtectedRoute component={ShopifyWebhooksPage} />}
+        {() => <RecoveryAgentGuard component={ShopifyWebhooksPage} />}
       </Route>
       <Route path="/learning">
-        {() => <ProtectedRoute component={LearningCenterPage} />}
+        {() => <RecoveryAgentGuard component={LearningCenterPage} />}
       </Route>
       <Route path="/learning/courses/:slug">
-        {() => <ProtectedRoute component={CourseDetailPage} />}
+        {() => <RecoveryAgentGuard component={CourseDetailPage} />}
       </Route>
       <Route path="/learning/lessons/:slug">
-        {() => <ProtectedRoute component={LessonPage} />}
+        {() => <RecoveryAgentGuard component={LessonPage} />}
       </Route>
       <Route path="/learning/admin">
-        {() => <ProtectedRoute component={AdminLearningDashboard} />}
+        {() => <RecoveryAgentGuard component={AdminLearningDashboard} />}
       </Route>
       <Route path="/learning/admin/courses/:id">
-        {() => <ProtectedRoute component={AdminCourseForm} />}
+        {() => <RecoveryAgentGuard component={AdminCourseForm} />}
       </Route>
       <Route path="/learning/admin/lessons/:id">
-        {() => <ProtectedRoute component={AdminLessonForm} />}
+        {() => <RecoveryAgentGuard component={AdminLessonForm} />}
       </Route>
       <Route path="/call-logs">
-        {() => <ProtectedRoute component={CallLogsPage} />}
+        {() => <RecoveryAgentGuard component={CallLogsPage} />}
       </Route>
       <Route path="/abandoned-carts">
         {() => <ProtectedRoute component={AbandonedCartsPage} />}
+      </Route>
+      <Route path="/learning-center">
+        {() => <RecoveryAgentGuard component={LearningCenterPlaceholder} />}
+      </Route>
+      <Route path="/teams">
+        {() => <RecoveryAgentGuard component={TeamsPlaceholder} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
@@ -111,7 +145,7 @@ function Router() {
 
 export default function App() {
   const [location] = useLocation();
-  const userRole = (localStorage.getItem("userRole") as "admin" | "manager" | "agent") || "admin";
+  const userRole = localStorage.getItem("userRole") || "admin";
   const isLoggedIn = localStorage.getItem("userRole");
   const isLoginPage = location === "/login";
   const isSignupPage = location.startsWith("/signup");
