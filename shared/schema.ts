@@ -145,7 +145,7 @@ export const insertInviteSchema = createInsertSchema(invites).pick({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
-  role: z.enum(["admin", "agent"]).default("agent"),
+  role: z.enum(["admin", "agent", "recovery_agent"]).default("agent"),
   adminType: z.enum(["full_control", "partial_control"]).optional(),
   permissions: z.record(z.any()).optional(),
 });

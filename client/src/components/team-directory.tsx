@@ -32,7 +32,7 @@ import { ConfigurePermissionsModal } from "@/components/configure-permissions-mo
 interface TeamMember {
   id: string;
   name: string;
-  role: "admin" | "agent";
+  role: "admin" | "agent" | "recovery_agent";
   adminType?: "full_control" | "partial_control";
   email: string;
   phone: string;
@@ -45,7 +45,7 @@ interface TeamMember {
 }
 
 interface TeamDirectoryProps {
-  userRole: "admin" | "agent";
+  userRole: string;
 }
 
 // Invite user form schema - simplified (permissions configured in separate modal)
@@ -53,7 +53,7 @@ const inviteUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
-  role: z.enum(["admin", "agent"]).default("agent"),
+  role: z.enum(["admin", "agent", "recovery_agent"]).default("agent"),
 });
 
 type InviteUserFormData = z.infer<typeof inviteUserSchema>;
@@ -280,7 +280,10 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     switch (role) {
       case "admin":
         return "default";
+      case "recovery_agent":
+        return "secondary";
       case "agent":
+      default:
         return "outline";
     }
   };
@@ -355,7 +358,9 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     ? member.adminType === "full_control"
                       ? "Full Control Admin"
                       : "Partial Control Admin"
-                    : member.role}
+                    : member.role === "recovery_agent"
+                      ? "Recovery Agent"
+                      : member.role}
                 </Badge>
               </div>
             </CardHeader>
@@ -511,6 +516,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                       <SelectContent>
                         <SelectItem value="agent">Agent</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="recovery_agent">Recovery Agent</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
