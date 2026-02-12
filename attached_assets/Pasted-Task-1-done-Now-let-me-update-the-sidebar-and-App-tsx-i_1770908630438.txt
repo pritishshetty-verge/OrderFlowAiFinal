@@ -1,0 +1,30 @@
+Task 1 done. Now let me update the sidebar and App.tsx in parallel:
+
+Now let me read the current sidebar to plan the role-based navigation:
+
+Now I have the full picture. The approach: instead of the adminOnly per-subitem approach, I'll restructure the sidebar to have a separate menu definition for recovery_agent and filter the top-level items. The recovery agent sidebar should show flat links (Orders, Abandoned Carts, Learning Center, Teams) with no collapsible groups. Let me also read App.tsx to plan the redirect logic:
+
+Now I have all the context. Let me implement all three changes together. The key changes:
+
+Sidebar: Define a separate recoveryAgentMenuItems list and conditionally render based on role. Remove the old adminOnly approach since recovery_agent gets a completely different menu.
+App.tsx: Add routes for /learning-center and /teams, update the role type to include recovery_agent, and add a RecoveryAgentGuard that redirects restricted pages to /abandoned-carts.
+The ProfileDropdown expects "admin" | "agent" | "manager" but we're passing a generic string. Let me check and fix:
+
+I need to update the ProfileDropdown type to accept recovery_agent too:
+
+Now let me update App.tsx with the new routes and the recovery_agent redirect logic:
+
+Let me check if wouter exports Redirect:
+
+Checked code issues
+No LSP errors. Let me restart the workflow to verify:
+
+Everything is running. Let me mark all tasks complete and run the architect review:
+
+Let me fix the issues raised:
+
+Now let me also wrap /learning-center and /teams routes with RecoveryAgentGuard for consistent access control:
+
+Now let me mark everything complete:
+
+The recovery agent navigation is all set up. Here's what's in place: recovery agents see only Orders, Abandoned Carts, Learning Center, and Teams in the sidebar. If they try to access any restricted page (like Settings, Dashboard, etc.), they get redirected to the Abandoned Carts page. The two placeholder pages are ready at /learning-center and /teams. Would you like to test it with a recovery_agent account?
