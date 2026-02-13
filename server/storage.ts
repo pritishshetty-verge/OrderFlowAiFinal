@@ -2866,6 +2866,7 @@ export class DbStorage implements IStorage {
         cartValue: abandonedCheckouts.cartValue,
         checkoutUrl: abandonedCheckouts.checkoutUrl,
         checkoutStage: abandonedCheckouts.checkoutStage,
+        address: abandonedCheckouts.address,
         assignedTo: abandonedCheckouts.assignedTo,
         isRecovered: abandonedCheckouts.isRecovered,
         createdAt: abandonedCheckouts.createdAt,

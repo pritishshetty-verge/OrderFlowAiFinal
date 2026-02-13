@@ -258,26 +258,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       console.log('--- FASTRR WEBHOOK HIT ---');
-      console.log('Body:', JSON.stringify(req.body, null, 2));
+      console.log('Raw Body:', JSON.stringify(req.body, null, 2));
 
-      const body = req.body;
+      const payload = req.body.data || req.body.checkout || req.body;
+      console.log("[DEBUG] Processed Payload Keys:", Object.keys(payload));
 
-      const external_id = body.cart_id || body.cartId || body.id || body.cart_token || null;
-      console.log("[DEBUG] Extracted External ID:", external_id);
-      const customer_phone = body.custPhone || body.phone || body.mobile;
-      const customer_name = body.custName || body.name;
-      const customer_email = body.custEmail || body.email;
-      const checkout_url = body.abandonLink || body.url || body.checkout_url;
-      const cart_value = body.cartTotal || body.total_price || 0;
-      const checkout_stage = body.latest_stage || body.checkoutStage || body.stage || null;
+      const external_id = payload.cartId || payload.cart_id || payload.id || payload.cart_token || null;
+      const customer_name = payload.custName || payload.customer_name || payload.name || null;
+      const customer_phone = payload.custPhone || payload.customer_phone || payload.phone || payload.mobile || null;
+      const customer_email = payload.custEmail || payload.customer_email || payload.email || null;
+      const checkout_url = payload.abandonLink || payload.url || payload.checkout_url || null;
+      const cart_value = payload.cartTotal || payload.total_price || 0;
+      const checkout_stage = payload.latest_stage || payload.checkoutStage || payload.stage || null;
 
-      let items = body.items || [];
-      if (items.length === 0 && body.productName) {
+      let address: string | null = null;
+      if (typeof payload.address === "string") {
+        address = payload.address;
+      } else if (payload.shipping_address && typeof payload.shipping_address === "object") {
+        address = payload.shipping_address.address1 || null;
+      }
+
+      console.log("[DEBUG] Extracted — ID:", external_id, "| Name:", customer_name, "| Phone:", customer_phone, "| Address:", address);
+
+      let items = payload.items || [];
+      if (items.length === 0 && payload.productName) {
         items.push({
-          name: body.productName,
-          price: body.productPrice,
-          quantity: body.productQuantity,
-          variant: body.productVariant,
+          name: payload.productName,
+          price: payload.productPrice,
+          quantity: payload.productQuantity,
+          variant: payload.productVariant,
         });
       }
 
@@ -297,6 +306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cartValue: cart_value?.toString() || null,
         checkoutUrl: checkout_url || null,
         checkoutStage: checkout_stage || null,
+        address: address,
         isRecovered: false,
       });
 
