@@ -70,6 +70,7 @@ export default function AbandonedCartsPage() {
                   <TableRow>
                     <TableHead data-testid="header-date">Date</TableHead>
                     <TableHead data-testid="header-customer">Customer</TableHead>
+                    <TableHead data-testid="header-address">Address</TableHead>
                     <TableHead data-testid="header-stage">Stage</TableHead>
                     <TableHead data-testid="header-value">Value</TableHead>
                     <TableHead data-testid="header-agent">Agent</TableHead>
@@ -85,11 +86,27 @@ export default function AbandonedCartsPage() {
                       </TableCell>
                       <TableCell data-testid={`text-customer-${checkout.id}`}>
                         <div>
-                          <span className="font-medium text-sm">{checkout.customerName || "Unknown"}</span>
+                          {checkout.customerName ? (
+                            <span className="font-medium text-sm">{checkout.customerName}</span>
+                          ) : (
+                            <span className="text-sm italic text-muted-foreground">Guest</span>
+                          )}
                           {checkout.customerPhone && (
                             <p className="text-xs text-muted-foreground">{checkout.customerPhone}</p>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell data-testid={`text-address-${checkout.id}`}>
+                        {checkout.address ? (
+                          <span
+                            className="text-xs text-muted-foreground max-w-[200px] truncate block"
+                            title={checkout.address}
+                          >
+                            {checkout.address}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell data-testid={`text-stage-${checkout.id}`}>
                         {getStageBadge(checkout.checkoutStage)}
