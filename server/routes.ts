@@ -31,6 +31,109 @@ import {
 } from "./permissions";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 
+interface NormalizedFastrrPayload {
+  externalId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerEmail: string | null;
+  checkoutUrl: string | null;
+  cartValue: string | null;
+  checkoutStage: string | null;
+  address: string | null;
+  items: any[] | null;
+}
+
+function normalizeFastrrPayload(raw: any): NormalizedFastrrPayload {
+  const payload = raw?.data || raw?.checkout || raw || {};
+
+  const pick = (...keys: string[]) => {
+    for (const k of keys) {
+      const val = payload[k];
+      if (val !== undefined && val !== null && val !== "") return val;
+    }
+    return null;
+  };
+
+  const nested = (obj: any, ...keys: string[]) => {
+    if (!obj || typeof obj !== "object") return null;
+    for (const k of keys) {
+      if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+    }
+    return null;
+  };
+
+  const externalId = pick("cartId", "cart_id", "id", "cart_token")?.toString() || null;
+
+  let customerName = pick("custName", "customer_name", "name");
+  if (!customerName) {
+    const firstName = pick("first_name", "firstName")
+      || nested(payload.shipping_address, "first_name", "firstName")
+      || nested(payload.customer, "first_name", "firstName");
+    const lastName = pick("last_name", "lastName")
+      || nested(payload.shipping_address, "last_name", "lastName")
+      || nested(payload.customer, "last_name", "lastName");
+    if (firstName || lastName) {
+      customerName = [firstName, lastName].filter(Boolean).join(" ");
+    }
+  }
+
+  let customerPhone = pick("custPhone", "customer_phone", "phone", "phone_number", "mobile")
+    || nested(payload.shipping_address, "phone", "phone_number")
+    || nested(payload.customer, "phone", "phone_number");
+  if (typeof customerPhone === "string") {
+    customerPhone = customerPhone.replace(/\s+/g, "");
+  }
+
+  const customerEmail = pick("custEmail", "customer_email", "email")
+    || nested(payload.customer, "email");
+
+  const checkoutUrl = pick("abandonLink", "url", "checkout_url", "abandon_link");
+  const cartValue = pick("cartTotal", "cart_total", "total_price")?.toString() || null;
+  const checkoutStage = pick("latest_stage", "checkoutStage", "checkout_stage", "stage");
+
+  let address: string | null = null;
+  if (typeof payload.address === "string" && payload.address.trim()) {
+    address = payload.address.trim();
+  } else {
+    const source = (payload.shipping_address && typeof payload.shipping_address === "object")
+      ? payload.shipping_address
+      : payload;
+    const parts = [
+      source.address1 || source.address_1,
+      source.address2 || source.address_2,
+      source.city,
+      source.province || source.state,
+      source.zip || source.postal_code || source.pincode,
+      source.country,
+    ].filter((p) => p && typeof p === "string" && p.trim());
+    address = parts.length > 0 ? parts.join(", ") : null;
+  }
+
+  let items: any[] | null = null;
+  if (Array.isArray(payload.items) && payload.items.length > 0) {
+    items = payload.items;
+  } else if (payload.productName || payload.product_name) {
+    items = [{
+      name: payload.productName || payload.product_name,
+      price: payload.productPrice || payload.product_price,
+      quantity: payload.productQuantity || payload.product_quantity,
+      variant: payload.productVariant || payload.product_variant,
+    }];
+  }
+
+  return {
+    externalId,
+    customerName: customerName || null,
+    customerPhone: customerPhone || null,
+    customerEmail: customerEmail || null,
+    checkoutUrl: checkoutUrl || null,
+    cartValue,
+    checkoutStage: checkoutStage || null,
+    address,
+    items,
+  };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   // AUTHORIZATION HELPERS
@@ -248,72 +351,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const secret = req.headers["x-api-secret"];
       const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET;
       if (!expectedSecret) {
-        console.error("FASTRR_WEBHOOK_SECRET is not configured");
+        console.error("[Fastrr Webhook] FASTRR_WEBHOOK_SECRET is not configured");
         return res.status(500).json({ error: "Webhook not configured" });
       }
-
       if (secret !== expectedSecret) {
-        console.log("Fastrr webhook authentication failed");
+        console.warn("[Fastrr Webhook] Authentication failed");
         return res.status(403).json({ error: "Forbidden" });
       }
 
-      console.log('--- FASTRR WEBHOOK HIT ---');
-      console.log('Raw Body:', JSON.stringify(req.body, null, 2));
+      const normalized = normalizeFastrrPayload(req.body);
 
-      const payload = req.body.data || req.body.checkout || req.body;
-      console.log("[DEBUG] Processed Payload Keys:", Object.keys(payload));
-
-      const external_id = payload.cartId || payload.cart_id || payload.id || payload.cart_token || null;
-      const customer_name = payload.custName || payload.customer_name || payload.name || null;
-      const customer_phone = payload.custPhone || payload.customer_phone || payload.phone || payload.mobile || null;
-      const customer_email = payload.custEmail || payload.customer_email || payload.email || null;
-      const checkout_url = payload.abandonLink || payload.url || payload.checkout_url || null;
-      const cart_value = payload.cartTotal || payload.total_price || 0;
-      const checkout_stage = payload.latest_stage || payload.checkoutStage || payload.stage || null;
-
-      let address: string | null = null;
-      if (typeof payload.address === "string") {
-        address = payload.address;
-      } else if (payload.shipping_address && typeof payload.shipping_address === "object") {
-        address = payload.shipping_address.address1 || null;
-      }
-
-      console.log("[DEBUG] Extracted — ID:", external_id, "| Name:", customer_name, "| Phone:", customer_phone, "| Address:", address);
-
-      let items = payload.items || [];
-      if (items.length === 0 && payload.productName) {
-        items.push({
-          name: payload.productName,
-          price: payload.productPrice,
-          quantity: payload.productQuantity,
-          variant: payload.productVariant,
-        });
-      }
-
-      if (!customer_phone) {
-        console.warn("FASTRR WEBHOOK WARNING: Missing customer_phone in payload");
-      }
-      if (!checkout_url) {
-        console.warn("FASTRR WEBHOOK WARNING: Missing checkout_url in payload");
+      if (!normalized.externalId) {
+        console.warn("[Fastrr Webhook] Skipped — no external ID found in payload");
+        return res.status(422).json({ error: "Missing cart identifier" });
       }
 
       const checkout = await storage.createAbandonedCheckout({
-        externalId: external_id?.toString() || null,
-        customerName: customer_name || null,
-        customerPhone: customer_phone || null,
-        customerEmail: customer_email || null,
-        items: items.length > 0 ? items : null,
-        cartValue: cart_value?.toString() || null,
-        checkoutUrl: checkout_url || null,
-        checkoutStage: checkout_stage || null,
-        address: address,
+        externalId: normalized.externalId,
+        customerName: normalized.customerName,
+        customerPhone: normalized.customerPhone,
+        customerEmail: normalized.customerEmail,
+        items: normalized.items,
+        cartValue: normalized.cartValue,
+        checkoutUrl: normalized.checkoutUrl,
+        checkoutStage: normalized.checkoutStage,
+        address: normalized.address,
         isRecovered: false,
       });
 
-      console.log("Abandoned checkout saved with ID:", checkout.id);
+      console.log(`[Fastrr Webhook] Saved cart ${checkout.id} for: ${normalized.customerName || normalized.customerPhone || "Unknown"}`);
       res.status(200).json({ success: true, id: checkout.id });
     } catch (error) {
-      console.error("Error processing Fastrr abandoned cart webhook:", error);
+      console.error("[Fastrr Webhook] Processing error:", error);
       res.status(500).json({ error: "Failed to process webhook" });
     }
   });
