@@ -50,7 +50,9 @@ export async function sendInvitationEmail(params: {
 }) {
   const { client, fromEmail } = await getUncachableResendClient();
   
-  const inviteUrl = `${process.env.REPLIT_DOMAINS?.split(',')[0] || 'http://localhost:5000'}/signup?token=${params.inviteToken}`;
+  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
+  const baseUrl = domain ? `https://${domain}` : 'http://localhost:5000';
+  const inviteUrl = `${baseUrl}/signup?token=${params.inviteToken}`;
   
   const expiryDate = new Date(params.expiresAt).toLocaleDateString('en-US', {
     month: 'long',
