@@ -28,6 +28,7 @@ import CallLogsPage from "@/pages/call-logs";
 import AbandonedCartsPage from "@/pages/AbandonedCarts";
 import LearningCenterPlaceholder from "@/pages/LearningCenter";
 import TeamsPlaceholder from "@/pages/Teams";
+import WebhooksSettingsPage from "@/pages/webhooks-settings";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -137,6 +138,9 @@ function Router() {
       </Route>
       <Route path="/teams">
         {() => <RecoveryAgentGuard component={TeamsPlaceholder} />}
+      </Route>
+      <Route path="/webhooks">
+        {() => <RecoveryAgentGuard component={WebhooksSettingsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>

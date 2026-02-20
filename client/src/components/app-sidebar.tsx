@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, Webhook } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -84,6 +84,11 @@ const adminMenuItems: MenuItem[] = [
     title: "Team",
     url: "/team",
     icon: Users,
+  },
+  {
+    title: "Webhooks",
+    url: "/webhooks",
+    icon: Webhook,
   },
 ];
 
