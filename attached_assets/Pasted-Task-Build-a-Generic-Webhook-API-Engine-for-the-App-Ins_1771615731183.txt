@@ -1,0 +1,66 @@
+Task: Build a Generic Webhook/API Engine for the App
+
+Instead of hardcoding third-party integrations, I want to build a generic Webhook Engine. This will allow admins to register external URLs that will automatically receive JSON payloads when specific events happen in the system (like an order being created or assigned).
+
+1. Update Database Schema (shared/schema.ts):
+Create a new table called webhooks.
+
+id: Serial Primary Key
+
+event_type: String (e.g., 'order.created', 'order.updated')
+
+url: String (The destination URL)
+
+is_active: Boolean (Default: true)
+
+created_at: Timestamp
+
+Run the database migration to apply this.
+
+2. Create Webhook Trigger Service (server/services/webhooks.ts):
+Create a reusable function that fires webhooks based on the event.
+
+JavaScript
+export async function triggerWebhooks(eventType: string, payload: any) {
+  try {
+    // 1. Find all active webhooks for this event type from the database
+    const activeWebhooks = await db.select().from(webhooks).where(
+      and(eq(webhooks.event_type, eventType), eq(webhooks.is_active, true))
+    );
+if (activeWebhooks.length === 0) return;
+console.log(`[Webhooks] Firing ${activeWebhooks.length} webhooks for event: ${eventType}`);
+// 2. Send POST requests to all registered URLs asynchronously
+activeWebhooks.forEach(async (webhook) => {
+  try {
+    await fetch(webhook.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: eventType,
+        timestamp: new Date().toISOString(),
+        data: payload
+      })
+    });
+  } catch (error) {
+    console.error(`[Webhooks] Failed to send to ${webhook.url}`, error.message);
+  }
+});
+} catch (error) {
+console.error("[Webhooks] Engine Error:", error);
+}
+}
+
+
+**3. Add API Routes for the Frontend (`server/routes.ts`):**
+Add basic CRUD routes so the admin can manage these in the UI later.
+GET /api/webhooks (List all webhooks)
+
+POST /api/webhooks (Create a new webhook with event_type and url)
+
+DELETE /api/webhooks/:id (Delete a webhook)
+
+4. Hook it into the Core Logic:
+Find the exact place in the code where a New Order is successfully saved to the database. Right after it saves, import and call the new service:
+triggerWebhooks('order.created', newOrderData);
+
+Implement this entire Webhook Engine architecture now.
