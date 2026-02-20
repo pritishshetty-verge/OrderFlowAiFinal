@@ -974,3 +974,23 @@ export const insertAbandonedCheckoutSchema = createInsertSchema(abandonedCheckou
 
 export type InsertAbandonedCheckout = z.infer<typeof insertAbandonedCheckoutSchema>;
 export type AbandonedCheckout = typeof abandonedCheckouts.$inferSelect;
+
+// ============================================================================
+// WEBHOOKS ENGINE
+// ============================================================================
+
+export const webhooks = pgTable("webhooks", {
+  id: serial("id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  url: text("url").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertWebhookSchema = createInsertSchema(webhooks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertWebhook = z.infer<typeof insertWebhookSchema>;
+export type Webhook = typeof webhooks.$inferSelect;

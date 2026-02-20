@@ -5,9 +5,11 @@ import { db } from "./db";
 import { 
   orders, leaveRequests, orderStatusHistory, teamMessages, invites, 
   attendance, orderAssignments, calls, notifications, ndrEvents, 
-  courses, resources, userLessonProgress, userOnboardingProgress, users 
+  courses, resources, userLessonProgress, userOnboardingProgress, users,
+  webhooks, insertWebhookSchema
 } from "@shared/schema";
 import { eq, or, sql, desc, gte, lte, and } from "drizzle-orm";
+import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient } from "./shopify";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
@@ -1577,6 +1579,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
 
         const order = await storage.createOrder(orderData);
+
+        triggerWebhooks('order.created', { order, shopifyOrderId: shopifyOrder.id });
 
         // Create order items with product image lookup from local products table
         if (shopifyOrder.line_items?.length > 0) {
@@ -5088,6 +5092,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Run immediately on startup
   checkDueFollowups();
+
+  // ============================================================================
+  // WEBHOOK ENGINE CRUD
+  // ============================================================================
+
+  app.get("/api/webhooks-config", async (_req, res) => {
+    try {
+      const allWebhooks = await db.select().from(webhooks).orderBy(desc(webhooks.createdAt));
+      res.json(allWebhooks);
+    } catch (error) {
+      console.error("Error fetching webhooks:", error);
+      res.status(500).json({ error: "Failed to fetch webhooks" });
+    }
+  });
+
+  app.post("/api/webhooks-config", async (req, res) => {
+    try {
+      const data = insertWebhookSchema.parse(req.body);
+      const [webhook] = await db.insert(webhooks).values(data).returning();
+      res.status(201).json(webhook);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      console.error("Error creating webhook:", error);
+      res.status(500).json({ error: "Failed to create webhook" });
+    }
+  });
+
+  app.delete("/api/webhooks-config/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
+      await db.delete(webhooks).where(eq(webhooks.id, id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting webhook:", error);
+      res.status(500).json({ error: "Failed to delete webhook" });
+    }
+  });
 
   const httpServer = createServer(app);
 

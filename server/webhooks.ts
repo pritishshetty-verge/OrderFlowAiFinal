@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
+import { triggerWebhooks } from "./services/webhooks";
 
 // Helper function to verify webhook authenticity
 // Supports both direct Shopify webhooks and n8n relay
@@ -165,6 +166,8 @@ export async function handleOrderCreated(req: Request, res: Response) {
     };
 
     const order = await storage.createOrder(orderData);
+
+    triggerWebhooks('order.created', { order, shopifyOrderId: shopifyOrder.id });
 
     // Create order items with product image lookup from local database
     if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
