@@ -232,7 +232,12 @@ export async function handleOrderCreated(req: Request, res: Response) {
     }
 
     const finalOrder = await storage.getOrder(order.id);
-    triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id });
+    let assignedAgentEmail: string | null = null;
+    if (finalOrder?.assignedTo) {
+      const agent = await storage.getUser(finalOrder.assignedTo);
+      if (agent) assignedAgentEmail = agent.email;
+    }
+    triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id, assignedAgentEmail });
 
     console.log(`Successfully created order ${order.shopifyOrderNumber}`);
     res.status(200).json({ message: "Order created successfully" });

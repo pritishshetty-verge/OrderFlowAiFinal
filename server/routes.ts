@@ -1632,7 +1632,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         const finalOrder = await storage.getOrder(order.id);
-        triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id });
+        let assignedAgentEmail: string | null = null;
+        if (finalOrder?.assignedTo) {
+          const agent = await storage.getUser(finalOrder.assignedTo);
+          if (agent) assignedAgentEmail = agent.email;
+        }
+        triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id, assignedAgentEmail });
 
         syncedCount++;
       }
