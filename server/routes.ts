@@ -5139,6 +5139,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // TELECRM WEBHOOK LISTENER
+  // ============================================================================
+
+  app.post("/api/webhooks/telecrm", (req, res) => {
+    console.log("========== INCOMING TELECRM WEBHOOK ==========");
+    console.log(JSON.stringify(req.body, null, 2));
+    console.log("==============================================");
+    res.status(200).json({ success: true });
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
