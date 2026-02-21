@@ -1580,8 +1580,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const order = await storage.createOrder(orderData);
 
-        triggerWebhooks('order.created', { order, shopifyOrderId: shopifyOrder.id });
-
         // Create order items with product image lookup from local products table
         if (shopifyOrder.line_items?.length > 0) {
           const items = await Promise.all(
@@ -1632,6 +1630,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           changedBy: null,
           note: "Imported from Shopify",
         });
+
+        const finalOrder = await storage.getOrder(order.id);
+        triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id });
 
         syncedCount++;
       }

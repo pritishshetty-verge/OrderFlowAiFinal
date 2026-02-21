@@ -167,8 +167,6 @@ export async function handleOrderCreated(req: Request, res: Response) {
 
     const order = await storage.createOrder(orderData);
 
-    triggerWebhooks('order.created', { order, shopifyOrderId: shopifyOrder.id });
-
     // Create order items with product image lookup from local database
     if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
       const items: InsertOrderItem[] = [];
@@ -232,6 +230,9 @@ export async function handleOrderCreated(req: Request, res: Response) {
         console.error(`Error during auto-assignment for order ${order.shopifyOrderNumber}:`, assignError);
       }
     }
+
+    const finalOrder = await storage.getOrder(order.id);
+    triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id });
 
     console.log(`Successfully created order ${order.shopifyOrderNumber}`);
     res.status(200).json({ message: "Order created successfully" });
