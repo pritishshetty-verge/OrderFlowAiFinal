@@ -5143,11 +5143,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // TELECRM WEBHOOK LISTENER
   // ============================================================================
 
-  app.post("/api/webhooks/telecrm", (req, res) => {
-    console.log("========== INCOMING TELECRM WEBHOOK ==========");
-    console.log(JSON.stringify(req.body, null, 2));
-    console.log("==============================================");
+  app.post("/api/webhooks/telecrm", async (req, res) => {
+    try {
+      const payload = req.body;
+      const eventType = payload?.event || payload?.type || payload?.event_type || null;
+      await storage.createInboundWebhookLog({
+        source: "telecrm",
+        eventType: typeof eventType === "string" ? eventType : null,
+        payload,
+      });
+      console.log("TeleCRM webhook received and logged:", eventType || "unknown event");
+    } catch (err) {
+      console.error("Error saving TeleCRM webhook log:", err);
+    }
     res.status(200).json({ success: true });
+  });
+
+  app.get("/api/webhook-logs", async (_req, res) => {
+    try {
+      const logs = await storage.getInboundWebhookLogs(50);
+      res.json(logs);
+    } catch (err) {
+      console.error("Error fetching webhook logs:", err);
+      res.status(500).json({ error: "Failed to fetch webhook logs" });
+    }
   });
 
   const httpServer = createServer(app);

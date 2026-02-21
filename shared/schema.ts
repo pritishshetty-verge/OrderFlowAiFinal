@@ -994,3 +994,23 @@ export const insertWebhookSchema = createInsertSchema(webhooks).omit({
 
 export type InsertWebhook = z.infer<typeof insertWebhookSchema>;
 export type Webhook = typeof webhooks.$inferSelect;
+
+// ============================================================================
+// INBOUND WEBHOOK LOGS (External CRM/API payload storage)
+// ============================================================================
+
+export const inboundWebhookLogs = pgTable("inbound_webhook_logs", {
+  id: serial("id").primaryKey(),
+  source: text("source").notNull().default("telecrm"),
+  eventType: text("event_type"),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertInboundWebhookLogSchema = createInsertSchema(inboundWebhookLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertInboundWebhookLog = z.infer<typeof insertInboundWebhookLogSchema>;
+export type InboundWebhookLog = typeof inboundWebhookLogs.$inferSelect;

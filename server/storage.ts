@@ -92,6 +92,9 @@ import {
   appSettings,
   abandonedCheckouts,
   type AppSetting,
+  inboundWebhookLogs,
+  type InboundWebhookLog,
+  type InsertInboundWebhookLog,
 } from "@shared/schema";
 
 /**
@@ -430,6 +433,10 @@ export interface IStorage {
   // Abandoned Checkouts
   createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
+
+  // Inbound Webhook Logs
+  createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
+  getInboundWebhookLogs(limit?: number): Promise<InboundWebhookLog[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -2876,6 +2883,19 @@ export class DbStorage implements IStorage {
       .leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id))
       .orderBy(desc(abandonedCheckouts.createdAt));
     return results;
+  }
+
+  async createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog> {
+    const [log] = await db.insert(inboundWebhookLogs).values(data).returning();
+    return log;
+  }
+
+  async getInboundWebhookLogs(limit: number = 50): Promise<InboundWebhookLog[]> {
+    return await db
+      .select()
+      .from(inboundWebhookLogs)
+      .orderBy(desc(inboundWebhookLogs.createdAt))
+      .limit(limit);
   }
 }
 

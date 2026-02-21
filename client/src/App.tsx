@@ -29,6 +29,7 @@ import AbandonedCartsPage from "@/pages/AbandonedCarts";
 import LearningCenterPlaceholder from "@/pages/LearningCenter";
 import TeamsPlaceholder from "@/pages/Teams";
 import WebhooksSettingsPage from "@/pages/webhooks-settings";
+import WebhookLogsPage from "@/pages/webhook-logs";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -141,6 +142,9 @@ function Router() {
       </Route>
       <Route path="/webhooks">
         {() => <RecoveryAgentGuard component={WebhooksSettingsPage} />}
+      </Route>
+      <Route path="/api-logs">
+        {() => <RecoveryAgentGuard component={WebhookLogsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
