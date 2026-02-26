@@ -5186,6 +5186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (typeof incomingAddress === "string" && incomingAddress.trim() !== "") {
         if (incomingAddress.trim() !== order.shippingAddressLine1) {
           updateData.shippingAddressLine1 = incomingAddress.trim();
+          updateData.shippingAddressLine2 = null;
         }
       }
 
