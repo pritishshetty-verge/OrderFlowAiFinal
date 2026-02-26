@@ -5153,8 +5153,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payload,
       });
       console.log("TeleCRM webhook received and logged:", eventType || "unknown event");
+
+      const rawOrderId = payload["lead.order_id"];
+      if (!rawOrderId) {
+        return res.status(200).json({ success: true, updated: false });
+      }
+
+      const order = await storage.getOrderByShopifyOrderNumber(String(rawOrderId));
+      if (!order) {
+        return res.status(200).json({ success: true, updated: false });
+      }
+
+      const updateData: Record<string, unknown> = {};
+
+      const incomingStatus = payload["lead.call_status"];
+      if (incomingStatus) {
+        const mappedStatus = incomingStatus === "Followup" ? "Follow Up" : incomingStatus;
+        if (mappedStatus !== order.callStatus) {
+          updateData.callStatus = mappedStatus;
+        }
+      }
+
+      const incomingNotes = payload["notes"];
+      if (typeof incomingNotes === "string" && incomingNotes.trim() !== "") {
+        const existingNotes = order.notes ?? "";
+        if (!existingNotes.includes(incomingNotes.trim())) {
+          updateData.notes = existingNotes + `\nTeleCRM: ${incomingNotes.trim()}`;
+        }
+      }
+
+      const incomingAddress = payload["address"];
+      if (typeof incomingAddress === "string" && incomingAddress.trim() !== "") {
+        if (incomingAddress.trim() !== order.shippingAddressLine1) {
+          updateData.shippingAddressLine1 = incomingAddress.trim();
+        }
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(200).json({ success: true, updated: false });
+      }
+
+      await storage.updateOrder(order.id, updateData as any);
+      return res.status(200).json({ success: true, updated: true });
     } catch (err) {
-      console.error("Error saving TeleCRM webhook log:", err);
+      console.error("Error processing TeleCRM webhook:", err);
     }
     res.status(200).json({ success: true });
   });
