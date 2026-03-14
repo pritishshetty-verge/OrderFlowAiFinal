@@ -923,13 +923,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const credentials = await storage.getShopifyCredentials();
         if (credentials) {
           const { decrypt } = await import("./encryption");
-          const decryptedToken = decrypt(credentials.accessToken);
+          const decryptedClientId = decrypt(credentials.apiKey);
+          const decryptedClientSecret = decrypt(credentials.apiSecret);
           
           const { ShopifyClient } = await import("./shopify");
           const client = new ShopifyClient({
             storeUrl: credentials.storeUrl,
-            apiKey: decryptedToken,
-            apiSecret: credentials.apiSecret || "",
+            apiKey: decryptedClientId,
+            apiSecret: decryptedClientSecret,
+            useClientCredentials: true,
           });
 
           await client.updateOrderShippingAddress(order.shopifyOrderId, {
@@ -1676,13 +1678,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Extract store name from URL (e.g., "gripherstore" from "gripherstore.myshopify.com")
-      const storeName = credentials.storeUrl.split('.')[0] || null;
+      // Use saved store name if available, fall back to extracting from domain
+      const storeName = credentials.storeName || credentials.storeUrl.split('.')[0] || null;
 
       res.json({
         configured: true,
         storeUrl: credentials.storeUrl,
-        storeName: storeName,
+        storeName,
         lastTested: credentials.lastTestedAt,
         testStatus: credentials.testStatus,
         testMessage: credentials.testMessage,
@@ -1716,10 +1718,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Log incoming data (without sensitive values)
       console.log("Step 1: Received request body fields:", Object.keys(req.body));
-      console.log("Store URL:", req.body.storeUrl);
-      console.log("Access Token length:", req.body.accessToken?.length || 0);
-      console.log("API Key length:", req.body.apiKey?.length || 0);
-      console.log("API Secret length:", req.body.apiSecret?.length || 0);
+      console.log("Shop Domain:", req.body.storeUrl);
+      console.log("Client ID length:", req.body.apiKey?.length || 0);
+      console.log("Client Secret length:", req.body.apiSecret?.length || 0);
       console.log("Webhook Secret provided:", !!req.body.webhookSecret);
 
       // Validate with Zod
@@ -1727,87 +1728,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = insertShopifyCredentialsSchema.parse(req.body);
       console.log("✓ Validation successful");
 
+      // Test connection FIRST via Client Credentials Grant before saving
+      console.log("\nStep 3: Testing connection via Client Credentials Grant...");
+      const { ShopifyClient: TempClient } = await import("./shopify");
+      const tempClient = new TempClient({
+        storeUrl: validatedData.storeUrl,
+        apiKey: validatedData.apiKey,
+        apiSecret: validatedData.apiSecret,
+        useClientCredentials: true,
+      });
+
+      let shopInfo: any = null;
+      let testPassed = false;
+      let testErrorMessage = "";
+
+      try {
+        shopInfo = await tempClient.getShopInfo();
+        testPassed = true;
+        console.log("✓ Connection test passed. Shop:", shopInfo?.name);
+      } catch (testErr: any) {
+        testErrorMessage = testErr.message || "Connection test failed";
+        console.log("⚠ Connection test failed:", testErrorMessage);
+      }
+
       // Encrypt sensitive fields
-      console.log("\nStep 3: Starting encryption...");
-      console.log("Encrypting API Key...");
+      console.log("\nStep 4: Starting encryption...");
       const encryptedApiKey = encrypt(validatedData.apiKey);
-      console.log("✓ API Key encrypted, length:", encryptedApiKey.length);
-
-      console.log("Encrypting API Secret...");
       const encryptedApiSecret = encrypt(validatedData.apiSecret);
-      console.log("✓ API Secret encrypted, length:", encryptedApiSecret.length);
-
-      console.log("Encrypting Access Token...");
-      const encryptedAccessToken = encrypt(validatedData.accessToken);
-      console.log("✓ Access Token encrypted, length:", encryptedAccessToken.length);
+      console.log("✓ Encryption complete");
 
       const encryptedCredentials = {
+        storeName: testPassed && shopInfo?.name ? shopInfo.name : undefined,
         storeUrl: validatedData.storeUrl,
         apiKey: encryptedApiKey,
         apiSecret: encryptedApiSecret,
-        accessToken: encryptedAccessToken,
         webhookSecret: validatedData.webhookSecret ? encrypt(validatedData.webhookSecret) : undefined,
         isActive: true,
       };
-      console.log("✓ All encryption complete");
 
       // Save to database
-      console.log("\nStep 4: Saving to database...");
+      console.log("\nStep 5: Saving to database...");
       const savedCredentials = await storage.saveShopifyCredentials(encryptedCredentials);
       console.log("✓ Database save successful, ID:", savedCredentials.id);
 
-      // Test the connection immediately
-      console.log("\nStep 5: Testing Shopify connection...");
-      try {
-        console.log("Decrypting credentials for test...");
-        const decryptedKey = decrypt(savedCredentials.apiKey);
-        const decryptedSecret = decrypt(savedCredentials.apiSecret);
-        const decryptedToken = decrypt(savedCredentials.accessToken);
-        console.log("✓ Decryption successful");
+      // Update test status
+      await storage.updateCredentialTestStatus(
+        savedCredentials.id,
+        testPassed ? 'success' : 'failed',
+        testPassed
+          ? `Connected to ${shopInfo?.name || savedCredentials.storeUrl}`
+          : testErrorMessage,
+      );
 
-        console.log("Calling shopifyClient.getShopInfo...");
-        const shopInfo = await shopifyClient.getShopInfo({
-          storeUrl: savedCredentials.storeUrl,
-          apiKey: decryptedKey,
-          apiSecret: decryptedSecret,
-          accessToken: decryptedToken,
-        });
-        console.log("✓ Shopify connection successful!");
-        console.log("Shop name:", shopInfo.name);
+      // Also clear the in-memory token cache on the singleton so it re-fetches with new creds
+      const { updateShopifyClient } = await import("./shopify");
+      await updateShopifyClient();
 
-        console.log("Updating test status to 'success'...");
-        await storage.updateCredentialTestStatus(
-          savedCredentials.id,
-          'success',
-          `Connected to ${shopInfo.name || savedCredentials.storeUrl}`,
-        );
-        console.log("✓ Test status updated");
-
+      if (testPassed) {
         console.log("\n=== SUCCESS: Sending 200 response ===\n");
         res.json({
           success: true,
           message: "Credentials saved and tested successfully",
           storeUrl: savedCredentials.storeUrl,
-          shopName: shopInfo.name,
+          shopName: shopInfo?.name,
         });
-      } catch (testError: any) {
-        console.log("⚠ Shopify connection test failed");
-        console.log("Test Error:", testError.message);
-        
-        console.log("Updating test status to 'failed'...");
-        await storage.updateCredentialTestStatus(
-          savedCredentials.id,
-          'failed',
-          testError.message || "Connection test failed",
-        );
-        console.log("✓ Test status updated");
-
-        console.log("\n=== PARTIAL SUCCESS: Sending 200 response with test failure ===\n");
+      } else {
+        console.log("\n=== PARTIAL SUCCESS: Saved but test failed ===\n");
         res.json({
           success: true,
           message: "Credentials saved but connection test failed",
           storeUrl: savedCredentials.storeUrl,
-          testError: testError.message,
+          testError: testErrorMessage,
         });
       }
     } catch (error: any) {
@@ -1842,14 +1833,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const decryptedKey = decrypt(credentials.apiKey);
       const decryptedSecret = decrypt(credentials.apiSecret);
-      const decryptedToken = decrypt(credentials.accessToken);
 
-      const shopInfo = await shopifyClient.getShopInfo({
+      const { ShopifyClient: TestClient } = await import("./shopify");
+      const testClient = new TestClient({
         storeUrl: credentials.storeUrl,
         apiKey: decryptedKey,
         apiSecret: decryptedSecret,
-        accessToken: decryptedToken,
+        useClientCredentials: true,
       });
+
+      const shopInfo = await testClient.getShopInfo();
 
       await storage.updateCredentialTestStatus(
         credentials.id,
@@ -1977,19 +1970,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Shopify credentials not configured" });
       }
 
-      // Use accessToken (same as syncOrders pattern)
-      const decryptedToken = decrypt(credentials.accessToken);
-      const decryptedSecret = decrypt(credentials.apiSecret);
-      
-      // Debug log: show token prefix to verify we're using the right credential
-      console.log("Sync Products using Token:", decryptedToken ? decryptedToken.slice(0, 5) + "..." : "UNDEFINED");
-      
-      // Create a new ShopifyClient instance with decrypted credentials
+      // Use Client Credentials Grant flow
+      const decryptedClientId = decrypt(credentials.apiKey);
+      const decryptedClientSecret = decrypt(credentials.apiSecret);
+
+      // Create a new ShopifyClient instance using Client Credentials
       const { ShopifyClient } = await import("./shopify");
       const client = new ShopifyClient({
         storeUrl: credentials.storeUrl,
-        apiKey: decryptedToken,  // accessToken is used as apiKey for Shopify API requests
-        apiSecret: decryptedSecret,
+        apiKey: decryptedClientId,
+        apiSecret: decryptedClientSecret,
+        useClientCredentials: true,
       });
 
       console.log("Starting Shopify product sync...");

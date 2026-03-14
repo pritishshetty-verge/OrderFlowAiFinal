@@ -662,12 +662,12 @@ async function loadShopifyCredentials(): Promise<ShopifyConfig> {
     if (credentials && credentials.isActive) {
       return {
         storeUrl: credentials.storeUrl,
-        apiKey: decrypt(credentials.accessToken),
-        apiSecret: decrypt(credentials.apiSecret),
+        apiKey: decrypt(credentials.apiKey),       // clientId
+        apiSecret: decrypt(credentials.apiSecret), // clientSecret
         webhookSecret: credentials.webhookSecret
           ? decrypt(credentials.webhookSecret)
           : undefined,
-        useClientCredentials: false,
+        useClientCredentials: true,
       };
     }
   } catch {

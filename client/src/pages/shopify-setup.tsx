@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { SettingsCard } from "@/components/ui/settings-card";
 import { Button } from "@/components/ui/button";
@@ -13,13 +13,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Key, Eye, EyeOff, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, ExternalLink, Key, Eye, EyeOff, Loader2, Shield } from "lucide-react";
 
 const credentialsSchema = z.object({
-  storeUrl: z.string().min(1, "Store URL is required").regex(/\.myshopify\.com$/, "Store URL must end with .myshopify.com"),
-  apiKey: z.string().min(1, "Admin API access token is required"),
-  apiSecret: z.string().min(1, "API secret key is required"),
-  accessToken: z.string().min(1, "Access token is required"),
+  storeUrl: z.string().min(1, "Shop domain is required").regex(/\.myshopify\.com$/, "Must end with .myshopify.com"),
+  apiKey: z.string().min(1, "Client ID is required"),
+  apiSecret: z.string().min(1, "Client Secret is required"),
   webhookSecret: z.string().optional(),
 });
 
@@ -30,7 +29,6 @@ export default function ShopifySetupPage() {
   const [showSecrets, setShowSecrets] = useState({
     apiKey: false,
     apiSecret: false,
-    accessToken: false,
     webhookSecret: false,
   });
   const [connectionTestResult, setConnectionTestResult] = useState<{
@@ -47,7 +45,6 @@ export default function ShopifySetupPage() {
       storeUrl: "",
       apiKey: "",
       apiSecret: "",
-      accessToken: "",
       webhookSecret: "",
     },
   });
@@ -59,58 +56,40 @@ export default function ShopifySetupPage() {
     setShowSecrets((prev) => ({ ...prev, [field]: !prev[field] }));
   };
 
-  // Save credentials mutation
   const saveCredentialsMutation = useMutation({
     mutationFn: async (data: CredentialsFormData) => {
-      console.log("🚀 Submitting credentials to server...");
       const currentUserId = localStorage.getItem("userId");
       const res = await apiRequest("POST", "/api/shopify/credentials", {
         ...data,
         currentUserId,
       });
-      console.log("✅ Server responded with status:", res.status);
-      const jsonData = await res.json();
-      console.log("📦 Response data:", jsonData);
-      return jsonData;
+      return res.json();
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
-      
+
       if (data.success) {
         setConnectionTestResult({
           success: true,
           shopName: data.shopName,
           message: data.message,
         });
-        
-        toast({
-          title: "Success",
-          description: data.message || "Credentials saved successfully",
-        });
-        
-        // Auto-advance to step 3
-        setTimeout(() => {
-          nextStep();
-        }, 1000);
+        toast({ title: "Connected", description: data.message || "Shopify store connected successfully" });
+        setTimeout(() => nextStep(), 1000);
       } else {
         setConnectionTestResult({
           success: false,
           message: data.testError || "Connection test failed",
         });
-        
         toast({
-          title: "Credentials Saved",
-          description: "Credentials saved but connection test failed. Please check your credentials.",
+          title: "Saved — Connection Failed",
+          description: "Credentials saved but the connection test failed. Please verify your Client ID and Secret.",
           variant: "destructive",
         });
       }
     },
     onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save credentials",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: error.message || "Failed to save credentials", variant: "destructive" });
     },
   });
 
@@ -121,7 +100,7 @@ export default function ShopifySetupPage() {
   return (
     <PageLayout
       title="Shopify Setup Guide"
-      description="Step-by-step guide to connect your Shopify store"
+      description="Connect your Shopify store using the 2026 Client Credentials API"
     >
       <div className="p-6 max-w-4xl mx-auto space-y-6">
         {/* Progress Indicator */}
@@ -140,61 +119,63 @@ export default function ShopifySetupPage() {
                 {step < currentStep ? <CheckCircle className="h-4 w-4" /> : step}
               </div>
               {step < totalSteps && (
-                <div
-                  className={`h-0.5 w-12 ${
-                    step < currentStep ? "bg-green-500" : "bg-muted"
-                  }`}
-                />
+                <div className={`h-0.5 w-12 ${step < currentStep ? "bg-green-500" : "bg-muted"}`} />
               )}
             </div>
           ))}
         </div>
 
-        {/* Step 1: Get API Credentials */}
+        {/* Step 1: Create App & Get Credentials */}
         {currentStep === 1 && (
           <SettingsCard
             icon={Key}
-            title="Step 1: Get Shopify API Credentials"
-            description="Create a custom app in your Shopify Admin to get API access"
+            title="Step 1: Create a Shopify Custom App"
+            description="Get your Client ID and Client Secret from Shopify Partners or your store's app settings"
           >
             <div className="space-y-4">
+              <Alert>
+                <Shield className="h-4 w-4" />
+                <AlertDescription>
+                  <strong>2026 Update:</strong> Shopify now uses the Client Credentials Grant flow instead of static access tokens. You need a <strong>Client ID</strong> and <strong>Client Secret</strong> from a Custom App.
+                </AlertDescription>
+              </Alert>
+
               <div className="space-y-3">
-                <h4 className="text-sm font-medium">Follow these steps in your Shopify Admin:</h4>
+                <h4 className="text-sm font-medium">Steps in your Shopify Admin:</h4>
                 <ol className="space-y-3 text-sm text-muted-foreground list-decimal list-inside ml-2">
-                  <li>Navigate to <strong>Settings → Apps and sales channels</strong></li>
-                  <li>Click <strong>"Develop apps"</strong> button</li>
-                  <li>Click <strong>"Create an app"</strong></li>
-                  <li>Name it "OrderFlowAI" and click <strong>"Create app"</strong></li>
-                  <li>Click <strong>"Configure Admin API scopes"</strong></li>
-                  <li>Enable these scopes:
+                  <li>Go to <strong>Settings → Apps and sales channels</strong></li>
+                  <li>Click <strong>"Develop apps"</strong>, then <strong>"Create an app"</strong></li>
+                  <li>Name it (e.g. "OrderSync") and click <strong>"Create app"</strong></li>
+                  <li>Under <strong>Configuration → Admin API integration</strong>, enable these scopes:
                     <ul className="ml-6 mt-2 space-y-1 list-disc">
-                      <li><code className="bg-muted px-1 rounded text-xs">read_orders</code></li>
-                      <li><code className="bg-muted px-1 rounded text-xs">write_orders</code></li>
-                      <li><code className="bg-muted px-1 rounded text-xs">read_customers</code></li>
+                      <li><code className="bg-muted px-1 rounded text-xs">read_orders, write_orders</code></li>
+                      <li><code className="bg-muted px-1 rounded text-xs">read_customers, write_customers</code></li>
+                      <li><code className="bg-muted px-1 rounded text-xs">read_fulfillments, write_fulfillments</code></li>
+                      <li><code className="bg-muted px-1 rounded text-xs">read_products</code></li>
                     </ul>
                   </li>
                   <li>Click <strong>"Save"</strong> and then <strong>"Install app"</strong></li>
-                  <li>Copy your <strong>Admin API access token</strong> (shows only once!)</li>
+                  <li>Go to <strong>API credentials</strong> tab — copy your <strong>Client ID</strong> and <strong>Client Secret</strong></li>
                 </ol>
               </div>
 
               <Alert>
                 <ExternalLink className="h-4 w-4" />
                 <AlertDescription>
-                  <a 
-                    href="https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/generate-app-access-tokens-admin"
+                  <a
+                    href="https://shopify.dev/docs/apps/build/authentication-authorization/client-credentials"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary underline"
                   >
-                    View Shopify's official documentation →
+                    View Shopify Client Credentials documentation →
                   </a>
                 </AlertDescription>
               </Alert>
 
               <div className="flex justify-end">
-                <Button onClick={nextStep} className="gap-2">
-                  Next: Add Credentials
+                <Button onClick={nextStep} className="gap-2" data-testid="button-next-step">
+                  Next: Enter Credentials
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -202,24 +183,25 @@ export default function ShopifySetupPage() {
           </SettingsCard>
         )}
 
-        {/* Step 2: Add Credentials (In-App Form) */}
+        {/* Step 2: Enter Credentials */}
         {currentStep === 2 && (
           <SettingsCard
             icon={Key}
-            title="Step 2: Add Your Shopify Credentials"
-            description="Enter your credentials securely - they will be encrypted and stored safely"
+            title="Step 2: Enter Your App Credentials"
+            description="Your credentials are encrypted and stored securely — never shared"
           >
             <form onSubmit={form.handleSubmit(handleSaveCredentials)} className="space-y-4">
               <Alert>
+                <Shield className="h-4 w-4" />
                 <AlertDescription>
-                  <strong>Secure Storage:</strong> Your credentials will be encrypted and stored securely in the database. Never share your API keys.
+                  <strong>Secure Storage:</strong> All credentials are encrypted before being saved to the database.
                 </AlertDescription>
               </Alert>
 
-              {/* Store URL */}
+              {/* Shop Domain */}
               <div className="space-y-2">
                 <Label htmlFor="storeUrl">
-                  Store URL <span className="text-red-500">*</span>
+                  Shop Domain <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="storeUrl"
@@ -228,54 +210,21 @@ export default function ShopifySetupPage() {
                   {...form.register("storeUrl")}
                 />
                 {form.formState.errors.storeUrl && (
-                  <p className="text-sm text-red-500">{form.formState.errors.storeUrl.message}</p>
+                  <p className="text-sm text-destructive">{form.formState.errors.storeUrl.message}</p>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Your Shopify store domain (e.g., mystore.myshopify.com)
-                </p>
+                <p className="text-xs text-muted-foreground">Your store's .myshopify.com domain</p>
               </div>
 
-              {/* Admin API Access Token */}
-              <div className="space-y-2">
-                <Label htmlFor="accessToken">
-                  Admin API Access Token <span className="text-red-500">*</span>
-                </Label>
-                <div className="relative">
-                  <Input
-                    id="accessToken"
-                    type={showSecrets.accessToken ? "text" : "password"}
-                    placeholder="shpat_..."
-                    data-testid="input-access-token"
-                    {...form.register("accessToken")}
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => toggleSecret("accessToken")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    data-testid="toggle-access-token"
-                  >
-                    {showSecrets.accessToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {form.formState.errors.accessToken && (
-                  <p className="text-sm text-red-500">{form.formState.errors.accessToken.message}</p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  The Admin API access token you copied in Step 1
-                </p>
-              </div>
-
-              {/* API Key (Client ID) */}
+              {/* Client ID */}
               <div className="space-y-2">
                 <Label htmlFor="apiKey">
-                  API Key (Client ID) <span className="text-red-500">*</span>
+                  Client ID <span className="text-destructive">*</span>
                 </Label>
                 <div className="relative">
                   <Input
                     id="apiKey"
                     type={showSecrets.apiKey ? "text" : "password"}
-                    placeholder="Enter your API key"
+                    placeholder="Shopify app Client ID"
                     data-testid="input-api-key"
                     {...form.register("apiKey")}
                     className="pr-10"
@@ -290,23 +239,21 @@ export default function ShopifySetupPage() {
                   </button>
                 </div>
                 {form.formState.errors.apiKey && (
-                  <p className="text-sm text-red-500">{form.formState.errors.apiKey.message}</p>
+                  <p className="text-sm text-destructive">{form.formState.errors.apiKey.message}</p>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Found in your Shopify app's API credentials
-                </p>
+                <p className="text-xs text-muted-foreground">From your app's API credentials tab</p>
               </div>
 
-              {/* API Secret */}
+              {/* Client Secret */}
               <div className="space-y-2">
                 <Label htmlFor="apiSecret">
-                  API Secret Key <span className="text-red-500">*</span>
+                  Client Secret <span className="text-destructive">*</span>
                 </Label>
                 <div className="relative">
                   <Input
                     id="apiSecret"
                     type={showSecrets.apiSecret ? "text" : "password"}
-                    placeholder="Enter your API secret"
+                    placeholder="Shopify app Client Secret"
                     data-testid="input-api-secret"
                     {...form.register("apiSecret")}
                     className="pr-10"
@@ -321,11 +268,9 @@ export default function ShopifySetupPage() {
                   </button>
                 </div>
                 {form.formState.errors.apiSecret && (
-                  <p className="text-sm text-red-500">{form.formState.errors.apiSecret.message}</p>
+                  <p className="text-sm text-destructive">{form.formState.errors.apiSecret.message}</p>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Your app's secret key from Shopify settings
-                </p>
+                <p className="text-xs text-muted-foreground">From your app's API credentials tab</p>
               </div>
 
               {/* Webhook Secret (Optional) */}
@@ -337,7 +282,7 @@ export default function ShopifySetupPage() {
                   <Input
                     id="webhookSecret"
                     type={showSecrets.webhookSecret ? "text" : "password"}
-                    placeholder="For direct webhooks only"
+                    placeholder="For direct Shopify webhooks only"
                     data-testid="input-webhook-secret"
                     {...form.register("webhookSecret")}
                     className="pr-10"
@@ -351,9 +296,7 @@ export default function ShopifySetupPage() {
                     {showSecrets.webhookSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Only needed if using direct Shopify webhooks (n8n setup doesn't need this)
-                </p>
+                <p className="text-xs text-muted-foreground">Only needed for direct Shopify webhooks (not required for n8n relay)</p>
               </div>
 
               {connectionTestResult && !connectionTestResult.success && (
@@ -365,10 +308,10 @@ export default function ShopifySetupPage() {
               )}
 
               <div className="flex items-center justify-between pt-4">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={prevStep} 
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={prevStep}
                   className="gap-2"
                   disabled={saveCredentialsMutation.isPending}
                   data-testid="button-back"
@@ -376,8 +319,8 @@ export default function ShopifySetupPage() {
                   <ArrowLeft className="h-4 w-4" />
                   Back
                 </Button>
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   className="gap-2"
                   disabled={saveCredentialsMutation.isPending}
                   data-testid="button-save-credentials"
@@ -385,11 +328,11 @@ export default function ShopifySetupPage() {
                   {saveCredentialsMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Testing Connection...
+                      Testing & Saving...
                     </>
                   ) : (
                     <>
-                      Save & Test Connection
+                      Test Connection & Save
                       <ArrowRight className="h-4 w-4" />
                     </>
                   )}
@@ -399,19 +342,22 @@ export default function ShopifySetupPage() {
           </SettingsCard>
         )}
 
-        {/* Step 3: Connection Success */}
+        {/* Step 3: Setup Complete */}
         {currentStep === 3 && (
           <SettingsCard
             icon={CheckCircle}
             title="Step 3: Setup Complete!"
-            description="Your Shopify store is now connected"
+            description="Your Shopify store is now connected via Client Credentials"
           >
             <div className="space-y-4">
-              {connectionTestResult?.success && connectionTestResult.shopName && (
+              {connectionTestResult?.success && (
                 <Alert className="bg-green-500/10 border-green-500/20">
                   <CheckCircle className="h-4 w-4 text-green-600" />
                   <AlertDescription className="text-green-700 dark:text-green-400">
-                    <strong>Successfully Connected!</strong> Your store "{connectionTestResult.shopName}" is now linked to OrderFlowAI.
+                    <strong>Successfully Connected!</strong>{" "}
+                    {connectionTestResult.shopName
+                      ? `Your store "${connectionTestResult.shopName}" is now linked.`
+                      : "Your Shopify store is now linked to OrderSync."}
                   </AlertDescription>
                 </Alert>
               )}
@@ -420,7 +366,7 @@ export default function ShopifySetupPage() {
                 <Alert className="bg-green-500/10 border-green-500/20">
                   <CheckCircle className="h-4 w-4 text-green-600" />
                   <AlertDescription className="text-green-700 dark:text-green-400">
-                    <strong>Credentials Saved!</strong> Your Shopify credentials have been saved securely.
+                    <strong>Credentials Saved.</strong> The connection test failed — you can retry from Settings.
                   </AlertDescription>
                 </Alert>
               )}
@@ -435,22 +381,19 @@ export default function ShopifySetupPage() {
                 </ol>
               </div>
 
-              <div className="space-y-3">
-                <h4 className="text-sm font-medium">Next steps:</h4>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Link href="/settings">
-                    <Button variant="outline" className="w-full justify-start gap-2">
-                      Go to Shopify Settings
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <Link href="/settings/shopify/webhooks">
-                    <Button variant="outline" className="w-full justify-start gap-2">
-                      Setup Real-Time Webhooks
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </Link>
-                </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Link href="/settings">
+                  <Button variant="outline" className="w-full justify-start gap-2">
+                    Go to Shopify Settings
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </Link>
+                <Link href="/settings/shopify/webhooks">
+                  <Button variant="outline" className="w-full justify-start gap-2">
+                    Setup Real-Time Webhooks
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </Link>
               </div>
 
               <div className="flex items-center justify-between pt-4">
