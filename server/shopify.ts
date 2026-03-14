@@ -5,21 +5,87 @@ interface ShopifyConfig {
   apiKey: string;
   apiSecret: string;
   webhookSecret?: string;
+  useClientCredentials?: boolean;
 }
+
+interface TokenCache {
+  accessToken: string;
+  expiresAt: number;
+}
+
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh 5 minutes before expiry
 
 export class ShopifyClient {
   private config: ShopifyConfig;
   private baseUrl: string;
+  private tokenCache: TokenCache | null = null;
 
   constructor(config: ShopifyConfig) {
     this.config = config;
-    this.baseUrl = `https://${config.storeUrl}/admin/api/2024-01`;
+    this.baseUrl = `https://${this.sanitizeStoreUrl(config.storeUrl)}/admin/api/2024-01`;
   }
 
-  private getHeaders(): HeadersInit {
+  private sanitizeStoreUrl(url: string): string {
+    return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
+
+  private async fetchClientCredentialsToken(): Promise<TokenCache> {
+    const domain = this.sanitizeStoreUrl(this.config.storeUrl);
+    const url = `https://${domain}/admin/oauth/access_token`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: this.config.apiKey,
+        client_secret: this.config.apiSecret,
+        grant_type: "client_credentials",
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Shopify OAuth token fetch failed: ${response.status} ${response.statusText} - ${body}`,
+      );
+    }
+
+    const data = await response.json();
+    const expiresIn: number = data.expires_in ?? 86400; // default 24h
+
+    const cache: TokenCache = {
+      accessToken: data.access_token,
+      expiresAt: Date.now() + expiresIn * 1000,
+    };
+
+    console.log(
+      `[Shopify] Client credentials token fetched, expires in ${expiresIn}s`,
+    );
+    return cache;
+  }
+
+  private async getAccessToken(): Promise<string> {
+    if (!this.config.useClientCredentials) {
+      return this.config.apiKey;
+    }
+
+    const now = Date.now();
+    if (
+      this.tokenCache &&
+      this.tokenCache.expiresAt - TOKEN_REFRESH_BUFFER_MS > now
+    ) {
+      return this.tokenCache.accessToken;
+    }
+
+    this.tokenCache = await this.fetchClientCredentialsToken();
+    return this.tokenCache.accessToken;
+  }
+
+  private async getHeaders(): Promise<HeadersInit> {
+    const token = await this.getAccessToken();
     return {
       "Content-Type": "application/json",
-      "X-Shopify-Access-Token": this.config.apiKey,
+      "X-Shopify-Access-Token": token,
     };
   }
 
@@ -36,20 +102,20 @@ export class ShopifyClient {
     const url = `${this.baseUrl}/orders.json?${queryParams.toString()}`;
     const response = await fetch(url, {
       method: "GET",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
       const errorBody = await response.text();
-      console.error('Shopify API error details:', {
+      console.error("Shopify API error details:", {
         status: response.status,
         statusText: response.statusText,
         body: errorBody,
-        url: url.replace(/\.myshopify\.com/, '.myshopify.com'), // Don't log full URL
         hasApiKey: !!this.config.apiKey,
-        apiKeyLength: this.config.apiKey?.length || 0
       });
-      throw new Error(`Shopify API error: ${response.statusText} (${response.status})`);
+      throw new Error(
+        `Shopify API error: ${response.statusText} (${response.status})`,
+      );
     }
 
     return await response.json();
@@ -59,7 +125,7 @@ export class ShopifyClient {
     const url = `${this.baseUrl}/orders/${orderId}.json`;
     const response = await fetch(url, {
       method: "GET",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -73,7 +139,7 @@ export class ShopifyClient {
     const url = `${this.baseUrl}/customers/${customerId}.json`;
     const response = await fetch(url, {
       method: "GET",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -83,24 +149,40 @@ export class ShopifyClient {
     return await response.json();
   }
 
-  async getShopInfo(customConfig?: ShopifyConfig & { accessToken: string }): Promise<any> {
-    const config = customConfig || this.config;
-    const baseUrl = `https://${config.storeUrl}/admin/api/2024-01`;
-    const url = `${baseUrl}/shop.json`;
-    
+  async getShopInfo(
+    customConfig?: ShopifyConfig & { accessToken?: string },
+  ): Promise<any> {
+    const storeUrl = customConfig?.storeUrl || this.config.storeUrl;
+    const domain = this.sanitizeStoreUrl(storeUrl);
+    const url = `https://${domain}/admin/api/2024-01/shop.json`;
+
+    let token: string;
+    if (customConfig?.accessToken) {
+      token = customConfig.accessToken;
+    } else if (customConfig) {
+      const tempClient = new ShopifyClient({
+        storeUrl: customConfig.storeUrl,
+        apiKey: customConfig.apiKey,
+        apiSecret: customConfig.apiSecret,
+        useClientCredentials: customConfig.useClientCredentials,
+      });
+      token = await tempClient.getAccessToken();
+    } else {
+      token = await this.getAccessToken();
+    }
+
     const headers: HeadersInit = {
       "Content-Type": "application/json",
-      "X-Shopify-Access-Token": customConfig?.accessToken || this.config.apiKey,
+      "X-Shopify-Access-Token": token,
     };
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers,
-    });
+    const response = await fetch(url, { method: "GET", headers });
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(`Shopify API error: ${response.statusText} - ${errorBody}`);
+      throw new Error(
+        `Shopify API error: ${response.statusText} - ${errorBody}`,
+      );
     }
 
     const data = await response.json();
@@ -114,35 +196,35 @@ export class ShopifyClient {
 
     while (hasNextPage) {
       const queryParams = new URLSearchParams();
-      queryParams.set("limit", "250"); // Max per page
-      
-      if (pageInfo) {
-        queryParams.set("page_info", pageInfo);
-      }
+      queryParams.set("limit", "250");
+      if (pageInfo) queryParams.set("page_info", pageInfo);
 
       const url = `${this.baseUrl}/products.json?${queryParams.toString()}`;
       const response = await fetch(url, {
         method: "GET",
-        headers: this.getHeaders(),
+        headers: await this.getHeaders(),
       });
 
       if (!response.ok) {
         const errorBody = await response.text();
-        console.error('Shopify products API error:', {
+        console.error("Shopify products API error:", {
           status: response.status,
           statusText: response.statusText,
           body: errorBody,
         });
-        throw new Error(`Shopify API error: ${response.statusText} (${response.status})`);
+        throw new Error(
+          `Shopify API error: ${response.statusText} (${response.status})`,
+        );
       }
 
       const data = await response.json();
       allProducts.push(...(data.products || []));
 
-      // Check for pagination via Link header
       const linkHeader = response.headers.get("Link");
       if (linkHeader && linkHeader.includes('rel="next"')) {
-        const match = linkHeader.match(/<[^>]*page_info=([^>&>]+)[^>]*>;\s*rel="next"/);
+        const match = linkHeader.match(
+          /<[^>]*page_info=([^>&>]+)[^>]*>;\s*rel="next"/,
+        );
         pageInfo = match ? match[1] : null;
         hasNextPage = !!pageInfo;
       } else {
@@ -155,7 +237,9 @@ export class ShopifyClient {
 
   verifyWebhook(body: string, hmacHeader: string): boolean {
     if (!this.config.webhookSecret) {
-      throw new Error("Webhook secret not configured - refusing to process unverified webhooks");
+      throw new Error(
+        "Webhook secret not configured - refusing to process unverified webhooks",
+      );
     }
 
     const hash = crypto
@@ -166,21 +250,12 @@ export class ShopifyClient {
     return hash === hmacHeader;
   }
 
-  async registerWebhook(
-    topic: string,
-    address: string,
-  ): Promise<any> {
+  async registerWebhook(topic: string, address: string): Promise<any> {
     const url = `${this.baseUrl}/webhooks.json`;
     const response = await fetch(url, {
       method: "POST",
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        webhook: {
-          topic,
-          address,
-          format: "json",
-        },
-      }),
+      headers: await this.getHeaders(),
+      body: JSON.stringify({ webhook: { topic, address, format: "json" } }),
     });
 
     if (!response.ok) {
@@ -194,7 +269,7 @@ export class ShopifyClient {
     const url = `${this.baseUrl}/webhooks.json`;
     const response = await fetch(url, {
       method: "GET",
-      headers: this.getHeaders(),
+      headers: await this.getHeaders(),
     });
 
     if (!response.ok) {
@@ -209,60 +284,66 @@ export class ShopifyClient {
   // ============================================================================
 
   private async graphqlRequest(query: string, variables?: any): Promise<any> {
-    // Sanitize store URL: remove https://, http://, and trailing slashes
-    const sanitizedStoreUrl = this.config.storeUrl
-      .replace(/^https?:\/\//, '')
-      .replace(/\/$/, '');
-    
-    const url = `https://${sanitizedStoreUrl}/admin/api/2025-01/graphql.json`;
-    
-    // Log the request for debugging
-    console.log('[Shopify GraphQL] Request:', {
+    const domain = this.sanitizeStoreUrl(this.config.storeUrl);
+    const url = `https://${domain}/admin/api/2025-01/graphql.json`;
+    const token = await this.getAccessToken();
+
+    console.log("[Shopify GraphQL] Request:", {
       url,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': this.config.apiKey.substring(0, 10) + '...' // Mask token
-      },
-      query: query.substring(0, 100) + '...', // Truncate query
-      variables: JSON.stringify(variables)
+      tokenPrefix: token.substring(0, 10) + "...",
+      query: query.substring(0, 100) + "...",
+      variables: JSON.stringify(variables),
     });
 
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Shopify-Access-Token": this.config.apiKey,
+        "X-Shopify-Access-Token": token,
       },
       body: JSON.stringify({ query, variables }),
     });
 
     if (!response.ok) {
       const errorBody = await response.text();
-      console.error('[Shopify GraphQL] HTTP Error:', {
+      console.error("[Shopify GraphQL] HTTP Error:", {
         status: response.status,
         statusText: response.statusText,
-        body: errorBody
+        body: errorBody,
       });
-      throw new Error(`Shopify GraphQL error: ${response.statusText} - ${errorBody}`);
+      throw new Error(
+        `Shopify GraphQL error: ${response.statusText} - ${errorBody}`,
+      );
     }
 
     const result = await response.json();
-    
+
     if (result.errors) {
-      console.error('[Shopify GraphQL] GraphQL Errors:', JSON.stringify(result.errors, null, 2));
+      console.error(
+        "[Shopify GraphQL] GraphQL Errors:",
+        JSON.stringify(result.errors, null, 2),
+      );
       throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
     }
 
-    // Log userErrors if present in the response
     const mutationKey = Object.keys(result.data || {})[0];
-    if (mutationKey && result.data[mutationKey]?.userErrors?.length > 0) {
-      console.warn('[Shopify GraphQL] User Errors:', JSON.stringify(result.data[mutationKey].userErrors, null, 2));
+    if (
+      mutationKey &&
+      result.data[mutationKey]?.userErrors?.length > 0
+    ) {
+      console.warn(
+        "[Shopify GraphQL] User Errors:",
+        JSON.stringify(result.data[mutationKey].userErrors, null, 2),
+      );
     }
 
     return result.data;
   }
 
-  async updateOrderTags(shopifyOrderId: string, tags: string[]): Promise<any> {
+  async updateOrderTags(
+    shopifyOrderId: string,
+    tags: string[],
+  ): Promise<any> {
     const query = `
       mutation orderUpdate($input: OrderInput!) {
         orderUpdate(input: $input) {
@@ -280,15 +361,17 @@ export class ShopifyClient {
 
     const variables = {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
-        tags: tags,
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
+        tags,
       },
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
+
     if (data.orderUpdate.userErrors.length > 0) {
-      throw new Error(`Order update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+      throw new Error(
+        `Order update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`,
+      );
     }
 
     return data.orderUpdate.order;
@@ -312,31 +395,36 @@ export class ShopifyClient {
 
     const variables = {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
-        note: note,
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
+        note,
       },
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
+
     if (data.orderUpdate.userErrors.length > 0) {
-      throw new Error(`Order note update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+      throw new Error(
+        `Order note update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`,
+      );
     }
 
     return data.orderUpdate.order;
   }
 
-  async updateOrderShippingAddress(shopifyOrderId: string, shippingAddress: {
-    firstName?: string;
-    lastName?: string;
-    address1?: string;
-    address2?: string;
-    city?: string;
-    province?: string;
-    zip?: string;
-    country?: string;
-    phone?: string;
-  }): Promise<any> {
+  async updateOrderShippingAddress(
+    shopifyOrderId: string,
+    shippingAddress: {
+      firstName?: string;
+      lastName?: string;
+      address1?: string;
+      address2?: string;
+      city?: string;
+      province?: string;
+      zip?: string;
+      country?: string;
+      phone?: string;
+    },
+  ): Promise<any> {
     const query = `
       mutation orderUpdate($input: OrderInput!) {
         orderUpdate(input: $input) {
@@ -366,7 +454,7 @@ export class ShopifyClient {
 
     const variables = {
       input: {
-        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+        id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
         shippingAddress: {
           firstName: shippingAddress.firstName,
           lastName: shippingAddress.lastName,
@@ -382,44 +470,43 @@ export class ShopifyClient {
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
+
     if (data.orderUpdate.userErrors.length > 0) {
-      throw new Error(`Shipping address update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`);
+      throw new Error(
+        `Shipping address update failed: ${JSON.stringify(data.orderUpdate.userErrors)}`,
+      );
     }
 
     return data.orderUpdate.order;
   }
 
   async cancelOrder(
-    shopifyOrderId: string, 
-    reason: string, 
+    shopifyOrderId: string,
+    reason: string,
     notifyCustomer: boolean = true,
-    restock: boolean = true
+    restock: boolean = true,
   ): Promise<any> {
-    // STEP 1: Validate order state before cancellation
     const orderState = await this.getOrderState(shopifyOrderId);
-    
-    // Check if already cancelled
+
     if (orderState.cancelledAt !== null) {
       throw new Error("Order already cancelled");
     }
-    
-    // Check if voided or refunded
-    if (orderState.displayFinancialStatus === "VOIDED" || orderState.displayFinancialStatus === "REFUNDED") {
+    if (
+      orderState.displayFinancialStatus === "VOIDED" ||
+      orderState.displayFinancialStatus === "REFUNDED"
+    ) {
       throw new Error("Order already cancelled/refunded");
     }
-    
-    // Check if fulfilled
-    if (orderState.displayFulfillmentStatus === "FULFILLED" || orderState.displayFulfillmentStatus === "PARTIALLY_FULFILLED") {
+    if (
+      orderState.displayFulfillmentStatus === "FULFILLED" ||
+      orderState.displayFulfillmentStatus === "PARTIALLY_FULFILLED"
+    ) {
       throw new Error("Cannot cancel fulfilled orders");
     }
-    
-    // Check if archived
     if (orderState.closed === true) {
       throw new Error("Cannot cancel archived orders");
     }
 
-    // STEP 2: Proceed with cancellation
     const query = `
       mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $notifyCustomer: Boolean!, $restock: Boolean!, $refund: Boolean!) {
         orderCancel(
@@ -442,7 +529,6 @@ export class ShopifyClient {
       }
     `;
 
-    // Map our cancellation reasons to Shopify's enum values
     const shopifyReasonMap: Record<string, string> = {
       "Customer changed mind": "CUSTOMER",
       "Found better price elsewhere": "CUSTOMER",
@@ -452,33 +538,38 @@ export class ShopifyClient {
       "Fake/test order": "FRAUD",
       "Customer unreachable": "CUSTOMER",
       "Address issues": "CUSTOMER",
-      "Other": "OTHER",
+      Other: "OTHER",
     };
 
     const shopifyReason = shopifyReasonMap[reason] || "OTHER";
 
     const variables = {
-      orderId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+      orderId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
       reason: shopifyReason,
-      notifyCustomer: notifyCustomer,
-      restock: restock,
+      notifyCustomer,
+      restock,
       refund: true,
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
-    if (data.orderCancel.orderCancelUserErrors && data.orderCancel.orderCancelUserErrors.length > 0) {
-      throw new Error(`Order cancellation failed: ${JSON.stringify(data.orderCancel.orderCancelUserErrors)}`);
+
+    if (
+      data.orderCancel.orderCancelUserErrors &&
+      data.orderCancel.orderCancelUserErrors.length > 0
+    ) {
+      throw new Error(
+        `Order cancellation failed: ${JSON.stringify(data.orderCancel.orderCancelUserErrors)}`,
+      );
     }
 
     return data.orderCancel.job;
   }
 
   async updateMetafield(
-    shopifyOrderId: string, 
-    key: string, 
-    value: string, 
-    type: string = "single_line_text_field"
+    shopifyOrderId: string,
+    key: string,
+    value: string,
+    type: string = "single_line_text_field",
   ): Promise<any> {
     const query = `
       mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -500,19 +591,21 @@ export class ShopifyClient {
     const variables = {
       metafields: [
         {
-          ownerId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+          ownerId: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
           namespace: "orderflowai",
-          key: key,
-          value: value,
-          type: type,
+          key,
+          value,
+          type,
         },
       ],
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
+
     if (data.metafieldsSet.userErrors.length > 0) {
-      throw new Error(`Metafield update failed: ${JSON.stringify(data.metafieldsSet.userErrors)}`);
+      throw new Error(
+        `Metafield update failed: ${JSON.stringify(data.metafieldsSet.userErrors)}`,
+      );
     }
 
     return data.metafieldsSet.metafields;
@@ -537,11 +630,11 @@ export class ShopifyClient {
     `;
 
     const variables = {
-      id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, '')}`,
+      id: `gid://shopify/Order/${shopifyOrderId.replace(/^s/, "")}`,
     };
 
     const data = await this.graphqlRequest(query, variables);
-    
+
     if (!data.order) {
       throw new Error(`Order not found: ${shopifyOrderId}`);
     }
@@ -555,59 +648,80 @@ export class ShopifyClient {
   }
 }
 
-// Load credentials dynamically from DB or environment variables
+// ============================================================================
+// CREDENTIAL LOADING
+// ============================================================================
+
 async function loadShopifyCredentials(): Promise<ShopifyConfig> {
   try {
-    // Try to import storage (avoid circular dependency)
     const { storage } = await import("./storage");
     const { decrypt } = await import("./encryption");
-    
+
     const credentials = await storage.getShopifyCredentials();
-    
+
     if (credentials && credentials.isActive) {
-      // Use database credentials (decrypted)
       return {
         storeUrl: credentials.storeUrl,
-        apiKey: decrypt(credentials.accessToken), // Use accessToken as the API key for requests
+        apiKey: decrypt(credentials.accessToken),
         apiSecret: decrypt(credentials.apiSecret),
-        webhookSecret: credentials.webhookSecret ? decrypt(credentials.webhookSecret) : undefined,
+        webhookSecret: credentials.webhookSecret
+          ? decrypt(credentials.webhookSecret)
+          : undefined,
+        useClientCredentials: false,
       };
     }
-  } catch (error) {
-    console.log("No database credentials found, falling back to environment variables");
+  } catch {
+    console.log(
+      "No database credentials found, falling back to environment variables",
+    );
   }
 
-  // Fallback to environment variables
+  const shopDomain =
+    process.env.SHOPIFY_SHOP_DOMAIN || process.env.SHOPIFY_STORE_URL!;
+
   return {
-    storeUrl: process.env.SHOPIFY_STORE_URL!,
+    storeUrl: shopDomain,
     apiKey: process.env.SHOPIFY_API_KEY!,
     apiSecret: process.env.SHOPIFY_API_SECRET!,
     webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
+    useClientCredentials: true,
   };
 }
 
-// Initialize with environment variables (will be updated when first request comes in)
-const initialConfig = {
-  storeUrl: process.env.SHOPIFY_STORE_URL || "placeholder.myshopify.com",
+// ============================================================================
+// SINGLETON CLIENT
+// ============================================================================
+
+const shopDomain =
+  process.env.SHOPIFY_SHOP_DOMAIN ||
+  process.env.SHOPIFY_STORE_URL ||
+  "placeholder.myshopify.com";
+
+const initialConfig: ShopifyConfig = {
+  storeUrl: shopDomain,
   apiKey: process.env.SHOPIFY_API_KEY || "",
   apiSecret: process.env.SHOPIFY_API_SECRET || "",
   webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
+  useClientCredentials: true,
 };
 
-console.log('Shopify configuration status:', {
+console.log("Shopify configuration status:", {
   hasStoreUrl: !!initialConfig.storeUrl,
-  hasApiKey: !!initialConfig.apiKey,
-  hasApiSecret: !!initialConfig.apiSecret,
+  hasClientId: !!initialConfig.apiKey,
+  hasClientSecret: !!initialConfig.apiSecret,
   hasWebhookSecret: !!initialConfig.webhookSecret,
-  storeUrlFormat: initialConfig.storeUrl?.includes('.myshopify.com') ? 'valid' : 'invalid',
+  storeUrlFormat: initialConfig.storeUrl?.includes(".myshopify.com")
+    ? "valid"
+    : "invalid",
+  authMode: "client_credentials_grant",
 });
 
 export const shopifyClient = new ShopifyClient(initialConfig);
 
-// Update client configuration when needed
 export async function updateShopifyClient() {
   const config = await loadShopifyCredentials();
   (shopifyClient as any).config = config;
-  (shopifyClient as any).baseUrl = `https://${config.storeUrl}/admin/api/2024-01`;
+  (shopifyClient as any).baseUrl = `https://${shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "")}/admin/api/2024-01`;
+  (shopifyClient as any).tokenCache = null;
   return shopifyClient;
 }
