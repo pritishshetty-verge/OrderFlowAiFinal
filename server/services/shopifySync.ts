@@ -24,33 +24,75 @@ export class ShopifySyncService {
     syncType: 'confirmed' | 'cancelled' | 'followup',
     context: SyncContext
   ): Promise<void> {
+    const syncId = `sync-${Date.now()}-${orderId.slice(0, 8)}`;
+
     try {
-      // Get order from database
+      // ── 1. Load order ────────────────────────────────────────────────────────
       const order = await storage.getOrder(orderId);
       if (!order) {
-        console.error(`[Shopify Sync] Order not found: ${orderId}`);
+        console.error(`[Shopify Sync][${syncId}] ABORT — order not found in DB: ${orderId}`);
         return;
       }
-
       if (!order.shopifyOrderId) {
-        console.error(`[Shopify Sync] No Shopify order ID for order: ${orderId}`);
+        console.error(`[Shopify Sync][${syncId}] ABORT — order ${orderId} has no shopifyOrderId`);
         return;
       }
 
-      // Get user info if userId provided
+      // ── 2. Load user ─────────────────────────────────────────────────────────
       let user: User | undefined;
       if (context.userId) {
         user = await storage.getUser(context.userId);
       }
-
       const agentName = context.agentName || user?.fullName || "Agent";
 
-      console.log(`[Shopify Sync] Starting sync for order ${order.shopifyOrderNumber} (${syncType})`);
-
-      // Update Shopify client with latest credentials
+      // ── 3. Reload Shopify client from latest DB/env credentials ──────────────
       const client = await updateShopifyClient();
 
-      // Execute sync based on type
+      // Expose exactly which store we are targeting and what token prefix we got
+      const clientConfig = (client as any).config as {
+        storeUrl: string;
+        apiKey: string;
+        apiSecret: string;
+        useClientCredentials?: boolean;
+      };
+      const targetDomain = clientConfig.storeUrl
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "");
+      const graphqlEndpoint = `https://${targetDomain}/admin/api/2025-01/graphql.json`;
+      const restBase = `https://${targetDomain}/admin/api/2024-01`;
+      const credentialMode = clientConfig.useClientCredentials
+        ? "client_credentials_grant"
+        : "static_access_token";
+
+      console.log(
+        `\n[Shopify Sync][${syncId}] ══════════════════════════════════════`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  ORDER     : #${order.shopifyOrderNumber} (internal: ${orderId})`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  SHOPIFY ID: ${order.shopifyOrderId}`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  GID       : gid://shopify/Order/${order.shopifyOrderId}`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  SYNC TYPE : ${syncType}`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  AGENT     : ${agentName}`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  TARGET    : ${graphqlEndpoint}  (REST base: ${restBase})`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}]  AUTH MODE : ${credentialMode}`,
+      );
+      console.log(
+        `[Shopify Sync][${syncId}] ══════════════════════════════════════\n`,
+      );
+
+      // ── 4. Execute sync ───────────────────────────────────────────────────────
       switch (syncType) {
         case 'confirmed':
           await this.syncConfirmed(client, order, agentName, context.notes);
@@ -63,14 +105,23 @@ export class ShopifySyncService {
           break;
       }
 
-      // Update order sync status
+      // ── 5. Mark synced ────────────────────────────────────────────────────────
       await storage.updateOrderSyncStatus(orderId, 'synced', new Date());
 
-      console.log(`[Shopify Sync] ✓ Successfully synced order ${order.shopifyOrderNumber} (${syncType})`);
+      console.log(
+        `[Shopify Sync][${syncId}] ✓ SUCCESS — order #${order.shopifyOrderNumber} synced (${syncType})`,
+      );
     } catch (error) {
-      console.error(`[Shopify Sync] ✗ Failed to sync order ${orderId}:`, error);
-      
-      // Log error to database
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error(
+        `\n[Shopify Sync][${syncId}] ✗ FAILURE — orderId=${orderId} syncType=${syncType}`,
+      );
+      console.error(`[Shopify Sync][${syncId}]   Error: ${errMsg}`);
+      if (error instanceof Error && error.stack) {
+        console.error(`[Shopify Sync][${syncId}]   Stack: ${error.stack.split('\n').slice(1, 4).join(' | ')}`);
+      }
+
+      // Persist failure to shopify_sync_logs
       try {
         const order = await storage.getOrder(orderId);
         if (order) {
@@ -80,14 +131,13 @@ export class ShopifySyncService {
             syncType,
             syncAction: 'batch_update',
             syncStatus: 'failed',
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage: errMsg,
             retryCount: 0,
           });
-
           await storage.updateOrderSyncStatus(orderId, 'failed');
         }
       } catch (logError) {
-        console.error(`[Shopify Sync] Failed to log sync error:`, logError);
+        console.error(`[Shopify Sync][${syncId}] Failed to persist sync error to DB:`, logError);
       }
     }
   }

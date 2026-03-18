@@ -286,14 +286,21 @@ export class ShopifyClient {
   private async graphqlRequest(query: string, variables?: any): Promise<any> {
     const domain = this.sanitizeStoreUrl(this.config.storeUrl);
     const url = `https://${domain}/admin/api/2025-01/graphql.json`;
-    const token = await this.getAccessToken();
 
-    console.log("[Shopify GraphQL] Request:", {
-      url,
-      tokenPrefix: token.substring(0, 10) + "...",
-      query: query.substring(0, 100) + "...",
-      variables: JSON.stringify(variables),
-    });
+    // Resolve a fresh token (uses cache when valid, re-fetches when expired)
+    const token = await this.getAccessToken();
+    const tokenPrefix = token ? token.substring(0, 10) + "..." : "MISSING";
+
+    // Extract the mutation name for readable log labels
+    const mutationMatch = query.match(/mutation\s+(\w+)/);
+    const mutationName = mutationMatch?.[1] ?? "unknown";
+
+    console.log(
+      `[Shopify GraphQL] → ${mutationName}  url=${url}  token=${tokenPrefix}`,
+    );
+    console.log(
+      `[Shopify GraphQL]   variables=${JSON.stringify(variables)}`,
+    );
 
     const response = await fetch(url, {
       method: "POST",
@@ -304,36 +311,42 @@ export class ShopifyClient {
       body: JSON.stringify({ query, variables }),
     });
 
+    // ── HTTP-level failure (401 Unauthorized, 403 Forbidden, 429 Rate-limit, etc.)
     if (!response.ok) {
       const errorBody = await response.text();
-      console.error("[Shopify GraphQL] HTTP Error:", {
-        status: response.status,
-        statusText: response.statusText,
-        body: errorBody,
-      });
+      console.error(
+        `[Shopify GraphQL] ✗ HTTP ${response.status} ${response.statusText}  mutation=${mutationName}  url=${url}`,
+      );
+      console.error(`[Shopify GraphQL]   response body: ${errorBody}`);
       throw new Error(
-        `Shopify GraphQL error: ${response.statusText} - ${errorBody}`,
+        `Shopify GraphQL HTTP ${response.status} (${response.statusText}) for ${mutationName}: ${errorBody}`,
       );
     }
 
     const result = await response.json();
 
+    // ── GraphQL-level errors (schema/syntax errors returned with HTTP 200)
     if (result.errors) {
       console.error(
-        "[Shopify GraphQL] GraphQL Errors:",
+        `[Shopify GraphQL] ✗ GraphQL errors for ${mutationName}:`,
         JSON.stringify(result.errors, null, 2),
       );
-      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`);
+      throw new Error(
+        `GraphQL errors in ${mutationName}: ${JSON.stringify(result.errors)}`,
+      );
     }
 
+    // ── Business-level userErrors (e.g. "Order does not exist", scope denied)
     const mutationKey = Object.keys(result.data || {})[0];
-    if (
-      mutationKey &&
-      result.data[mutationKey]?.userErrors?.length > 0
-    ) {
-      console.warn(
-        "[Shopify GraphQL] User Errors:",
-        JSON.stringify(result.data[mutationKey].userErrors, null, 2),
+    if (mutationKey && result.data[mutationKey]?.userErrors?.length > 0) {
+      const userErrors = result.data[mutationKey].userErrors;
+      console.error(
+        `[Shopify GraphQL] ✗ userErrors in ${mutationName}:`,
+        JSON.stringify(userErrors, null, 2),
+      );
+    } else {
+      console.log(
+        `[Shopify GraphQL] ✓ ${mutationName} succeeded  HTTP ${response.status}`,
       );
     }
 
@@ -720,8 +733,22 @@ export const shopifyClient = new ShopifyClient(initialConfig);
 
 export async function updateShopifyClient() {
   const config = await loadShopifyCredentials();
+
+  // Derive baseUrl dynamically from config.storeUrl so that REST calls always
+  // target the correct store — critical for multi-store correctness.
+  // Previously used the module-level `shopDomain` constant (frozen at startup
+  // from env vars), which would have silently routed REST API calls to the
+  // wrong store if DB credentials pointed to a different domain.
+  const cleanDomain = config.storeUrl
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "");
+
+  console.log(
+    `[Shopify] updateShopifyClient: reloading credentials → domain=${cleanDomain}, useClientCredentials=${config.useClientCredentials}`,
+  );
+
   (shopifyClient as any).config = config;
-  (shopifyClient as any).baseUrl = `https://${shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "")}/admin/api/2024-01`;
-  (shopifyClient as any).tokenCache = null;
+  (shopifyClient as any).baseUrl = `https://${cleanDomain}/admin/api/2024-01`;
+  (shopifyClient as any).tokenCache = null; // force fresh token on next request
   return shopifyClient;
 }
