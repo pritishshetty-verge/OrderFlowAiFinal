@@ -421,6 +421,7 @@ export interface IStorage {
     fulfilledOrders: number;
     deliveredOrders: number;
     rtoOrders: number;
+    aiConfirmedOrders: number;
   }>;
 
   // Hourly Activity for Dashboard Chart
@@ -2563,6 +2564,7 @@ export class DbStorage implements IStorage {
     fulfilledOrders: number;
     deliveredOrders: number;
     rtoOrders: number;
+    aiConfirmedOrders: number;
   }> {
     // Helper function to build attribution condition for history-based queries
     // Uses fallback: (changed_by = userId) OR (changed_by IS NULL AND order assigned to userId)
@@ -2696,6 +2698,19 @@ export class DbStorage implements IStorage {
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
       .where(and(...followUpConditions));
 
+    // Query 8: AI Confirmed Orders (auto-confirmed by Scalysis AI, identified via note in history)
+    const aiConfirmedConditions = [
+      sql`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
+      sql`${orderStatusHistory.changedBy} IS NULL`,
+    ];
+    if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
+    if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
+
+    const [aiConfirmedResult] = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
+      .from(orderStatusHistory)
+      .where(and(...aiConfirmedConditions));
+
     return {
       assignedOrders: assignedCount,
       confirmedOrders: Number(confirmedResult?.count) || 0,
@@ -2704,6 +2719,7 @@ export class DbStorage implements IStorage {
       fulfilledOrders: Number(shippedResult?.count) || 0,
       deliveredOrders: Number(deliveredResult?.count) || 0,
       rtoOrders: Number(rtoResult?.count) || 0,
+      aiConfirmedOrders: Number(aiConfirmedResult?.count) || 0,
     };
   }
 

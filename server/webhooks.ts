@@ -313,6 +313,11 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shopifyOrder.cancelled_at,
     );
 
+    // Detect Scalysis AI auto-confirmation tag
+    const SCALYSIS_TAG = "Scalysis: Order Confirmed ✅";
+    const isScalysisConfirmed = tags.includes(SCALYSIS_TAG);
+    const alreadyConfirmed = existingOrder.callStatus === "Confirmed";
+
     const orderData: Partial<InsertOrder> = {
       status: newStatus,
       fulfillmentStatus: shopifyOrder.fulfillment_status || null,
@@ -334,6 +339,15 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
     };
 
+    // Apply Scalysis AI confirmation (only if not already confirmed to avoid overwriting)
+    if (isScalysisConfirmed && !alreadyConfirmed) {
+      console.log(`[Scalysis] Auto-confirming order ${existingOrder.shopifyOrderNumber} via AI tag`);
+      orderData.callStatus = "Confirmed";
+      orderData.confirmedAt = new Date();
+      orderData.confirmedBy = null;
+      orderData.confirmedNotes = "Auto-confirmed by Scalysis AI";
+    }
+
     await storage.updateOrder(existingOrder.id, orderData);
 
     // Create status history if status changed
@@ -344,6 +358,17 @@ export async function handleOrderUpdated(req: Request, res: Response) {
         previousStatus: existingOrder.status,
         changedBy: null,
         note: "Status updated from Shopify",
+      });
+    }
+
+    // Create Scalysis AI confirmation history entry
+    if (isScalysisConfirmed && !alreadyConfirmed) {
+      await storage.createOrderStatus({
+        orderId: existingOrder.id,
+        status: "confirmed",
+        previousStatus: existingOrder.callStatus || "Pending",
+        changedBy: null,
+        note: "Auto-confirmed by Scalysis AI",
       });
     }
 

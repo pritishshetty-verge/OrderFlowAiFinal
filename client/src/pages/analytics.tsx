@@ -36,6 +36,7 @@ interface DashboardMetrics {
   fulfilledOrders: number;
   deliveredOrders: number;
   rtoOrders: number;
+  aiConfirmedOrders: number;
 }
 
 interface RTOInsights {
@@ -113,6 +114,7 @@ export default function AnalyticsPage() {
     fulfilledOrders: metrics?.fulfilledOrders || 0,
     deliveredOrders: metrics?.deliveredOrders || 0,
     rtoOrders: metrics?.rtoOrders || 0,
+    aiConfirmedOrders: metrics?.aiConfirmedOrders || 0,
   };
 
   const userName = currentUser?.fullName || currentUser?.username || "there";

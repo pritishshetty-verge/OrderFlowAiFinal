@@ -8,7 +8,8 @@ import {
   Truck, 
   TrendingUp, 
   Target,
-  AlertTriangle 
+  AlertTriangle,
+  Bot
 } from "lucide-react";
 
 interface StatCardProps {
@@ -50,6 +51,7 @@ interface DashboardStatsProps {
   fulfilledOrders: number;
   deliveredOrders: number;
   rtoOrders: number;
+  aiConfirmedOrders: number;
   isLoading?: boolean;
 }
 
@@ -61,6 +63,7 @@ export function DashboardStats({
   fulfilledOrders,
   deliveredOrders,
   rtoOrders,
+  aiConfirmedOrders,
   isLoading = false,
 }: DashboardStatsProps) {
   const confirmationRate = assignedOrders > 0 
@@ -103,7 +106,7 @@ export function DashboardStats({
           isLoading={isLoading}
         />
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="Fulfilled (Shipped)"
           value={fulfilledOrders}
@@ -130,6 +133,13 @@ export function DashboardStats({
           value={rtoOrders}
           icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
           description="Returned to origin"
+          isLoading={isLoading}
+        />
+        <StatCard
+          title="AI Agent Confirmed"
+          value={aiConfirmedOrders}
+          icon={<Bot className="h-4 w-4 text-violet-600" />}
+          description="Auto-confirmed by Scalysis"
           isLoading={isLoading}
         />
       </div>
