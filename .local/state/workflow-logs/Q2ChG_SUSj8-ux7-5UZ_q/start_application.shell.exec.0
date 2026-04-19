@@ -1,0 +1,38 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0K⠙[1G[0KDatabase connection config: {
+  host: [32m'helium'[39m,
+  port: [33m5432[39m,
+  database: [32m'heliumdb'[39m,
+  user: [32m'postgres'[39m,
+  passwordLength: [33m8[39m,
+  ssl: { rejectUnauthorized: [33mfalse[39m }
+}
+Shopify configuration status: {
+  hasStoreUrl: [33mtrue[39m,
+  hasClientId: [33mtrue[39m,
+  hasClientSecret: [33mtrue[39m,
+  hasWebhookSecret: [33mtrue[39m,
+  storeUrlFormat: [32m'valid'[39m,
+  authMode: [32m'client_credentials_grant'[39m
+}
+12:27:46 PM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+12:27:57 PM [express] GET /api/users/by-email/pritish@vergescales.com 304 in 14ms :: {"id":"44bea3ec-…
+12:27:57 PM [express] GET /api/attendance/today/44bea3ec-801f-476f-b8b1-614fcb563783 200 in 33ms
+12:27:57 PM [express] GET /api/dashboard/hourly-activity 200 in 23ms :: {"data":[{"hour":"12 AM","con…
+12:27:57 PM [express] GET /api/notifications/unread-count 304 in 35ms :: {"count":0}
+12:27:57 PM [express] GET /api/attendance 304 in 26ms :: []
+12:27:57 PM [express] GET /api/dashboard/metrics 304 in 50ms :: {"assignedOrders":84,"confirmedOrders…
+12:27:57 PM [express] GET /api/analytics/rto-insights 304 in 6ms :: {"kpis":{"overall_rto_rate":1.55,…
+12:34:38 PM [express] GET /api/notifications/unread-count 304 in 18ms :: {"count":0}
+12:34:38 PM [express] GET /api/dashboard/metrics 304 in 38ms :: {"assignedOrders":84,"confirmedOrders…
+12:34:57 PM [express] GET /api/dashboard/hourly-activity 304 in 3ms :: {"data":[{"hour":"12 AM","conf…
+12:34:57 PM [express] GET /api/attendance/today/44bea3ec-801f-476f-b8b1-614fcb563783 304 in 4ms
+12:34:58 PM [express] GET /api/analytics/rto-insights 304 in 5ms :: {"kpis":{"overall_rto_rate":1.55,…

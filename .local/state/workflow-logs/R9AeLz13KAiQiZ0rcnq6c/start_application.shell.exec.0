@@ -1,0 +1,148 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0K⠙[1G[0KDatabase connection config: {
+  host: [32m'helium'[39m,
+  port: [33m5432[39m,
+  database: [32m'heliumdb'[39m,
+  user: [32m'postgres'[39m,
+  passwordLength: [33m8[39m,
+  ssl: { rejectUnauthorized: [33mfalse[39m }
+}
+Shopify configuration status: {
+  hasStoreUrl: [33mtrue[39m,
+  hasClientId: [33mtrue[39m,
+  hasClientSecret: [33mtrue[39m,
+  hasWebhookSecret: [33mtrue[39m,
+  storeUrlFormat: [32m'valid'[39m,
+  authMode: [32m'client_credentials_grant'[39m
+}
+4:03:58 AM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 18 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+4:04:10 AM [express] GET /api/analytics/rto-insights 304 in 12ms :: {"kpis":{"overall_rto_rate":1.55…
+4:04:10 AM [express] GET /api/users/by-email/pritish@vergescales.com 304 in 10ms :: {"id":"44bea3ec-…
+4:04:10 AM [express] GET /api/notifications/unread-count 304 in 41ms :: {"count":0}
+4:04:10 AM [express] GET /api/attendance 200 in 39ms :: []
+4:04:10 AM [express] GET /api/attendance/today/44bea3ec-801f-476f-b8b1-614fcb563783 200 in 29ms
+4:04:10 AM [express] GET /api/dashboard/hourly-activity 200 in 36ms :: {"data":[{"hour":"12 AM","con…
+4:04:11 AM [express] GET /api/dashboard/metrics 304 in 22ms :: {"assignedOrders":84,"confirmedOrders…
+4:08:11 AM [express] GET /api/analytics/rto-insights 304 in 6ms :: {"kpis":{"overall_rto_rate":1.55,…
+4:08:11 AM [express] GET /api/attendance/today/44bea3ec-801f-476f-b8b1-614fcb563783 304 in 4ms
+4:08:11 AM [express] GET /api/notifications/unread-count 304 in 18ms :: {"count":0}
+4:08:11 AM [express] GET /api/dashboard/hourly-activity 304 in 14ms :: {"data":[{"hour":"12 AM","con…
+4:08:11 AM [express] GET /api/dashboard/metrics 304 in 19ms :: {"assignedOrders":84,"confirmedOrders…
+4:08:41 AM [express] GET /api/notifications/unread-count 304 in 19ms :: {"count":0}
+4:08:41 AM [express] GET /api/dashboard/metrics 304 in 18ms :: {"assignedOrders":84,"confirmedOrders…
+========================================
+IVR WEBHOOK RECEIVED AT: 2026-04-01T05:42:07.390Z
+Raw payload: {
+  "did_no": "+918044475956",
+  "client_no": "+919041350197",
+  "extn_1": "325106",
+  "extn_1_phone": "",
+  "extn_2": "325113",
+  "extn_2_phone": "09201492338",
+  "extn_3": "325112",
+  "extn_3_phone": "09217793499",
+  "extn_4": "",
+  "extn_4_phone": "",
+  "extn_5": "",
+  "extn_5_phone": "",
+  "attended_by": "",
+  "call_time": "2026-04-01T16:41:12+05:30",
+  "call_duration": "0",
+  "recording_url": "https://calls2.ivrsolutions.in/monitor/1775022026.1986820260401111042.wav",
+  "call_type": "incoming",
+  "outgoing_ext": "",
+  "sip_call_id": "LU-177502202692372-14312517@i4.kka58.org",
+  "recordid": "9087044"
+}
+========================================
+❌ IVR webhook authentication failed
+5:42:07 AM [express] POST /api/webhooks/ivr-call-events 401 in 1ms :: {"error":"Unauthorized"}
+========================================
+IVR WEBHOOK RECEIVED AT: 2026-04-01T05:47:04.912Z
+Raw payload: {
+  "did_no": "+918044475956",
+  "client_no": "+919041350197",
+  "extn_1": "",
+  "extn_1_phone": "",
+  "extn_2": "",
+  "extn_2_phone": "",
+  "extn_3": "",
+  "extn_3_phone": "",
+  "extn_4": "",
+  "extn_4_phone": "",
+  "extn_5": "",
+  "extn_5_phone": "",
+  "attended_by": "",
+  "call_time": "2026-04-01T16:46:54+05:30",
+  "call_duration": "0",
+  "recording_url": "",
+  "call_type": "incoming",
+  "outgoing_ext": "",
+  "sip_call_id": "",
+  "recordid": "9087226"
+}
+========================================
+❌ IVR webhook authentication failed
+5:47:04 AM [express] POST /api/webhooks/ivr-call-events 401 in 3ms :: {"error":"Unauthorized"}
+========================================
+IVR WEBHOOK RECEIVED AT: 2026-04-01T05:49:04.448Z
+Raw payload: {
+  "did_no": "+918044475956",
+  "client_no": "+919041350197",
+  "extn_1": "325106",
+  "extn_1_phone": "",
+  "extn_2": "325113",
+  "extn_2_phone": "09201492338",
+  "extn_3": "325112",
+  "extn_3_phone": "09217793499",
+  "extn_4": "",
+  "extn_4_phone": "",
+  "extn_5": "",
+  "extn_5_phone": "",
+  "attended_by": "",
+  "call_time": "2026-04-01T16:48:23+05:30",
+  "call_duration": "0",
+  "recording_url": "https://calls2.ivrsolutions.in/monitor/1775022457.2099120260401111753.wav",
+  "call_type": "incoming",
+  "outgoing_ext": "",
+  "sip_call_id": "LU-1775022457415687-14313066@i4.kka58.org",
+  "recordid": "9087272"
+}
+========================================
+❌ IVR webhook authentication failed
+5:49:04 AM [express] POST /api/webhooks/ivr-call-events 401 in 1ms :: {"error":"Unauthorized"}
+========================================
+IVR WEBHOOK RECEIVED AT: 2026-04-01T06:32:06.703Z
+Raw payload: {
+  "did_no": "+911294914299",
+  "client_no": "+919664066608",
+  "extn_1": "325106",
+  "extn_1_phone": "",
+  "extn_2": "325113",
+  "extn_2_phone": "09201492338",
+  "extn_3": "325112",
+  "extn_3_phone": "09217793499",
+  "extn_4": "",
+  "extn_4_phone": "",
+  "extn_5": "",
+  "extn_5_phone": "",
+  "attended_by": "",
+  "call_time": "2026-04-01T17:31:04+05:30",
+  "call_duration": "0",
+  "recording_url": "https://calls4.ivrsolutions.in/monitor/1775025012.179720260401120032.wav",
+  "call_type": "incoming",
+  "outgoing_ext": "",
+  "sip_call_id": "LU-1775025012647453-73788171@i8.dla36.org",
+  "recordid": "9090028"
+}
+========================================
+❌ IVR webhook authentication failed
+6:32:06 AM [express] POST /api/webhooks/ivr-call-events 401 in 1ms :: {"error":"Unauthorized"}

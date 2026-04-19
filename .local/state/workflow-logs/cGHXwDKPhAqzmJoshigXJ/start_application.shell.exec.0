@@ -1,0 +1,21 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0K⠙[1G[0KDatabase connection config: {
+  host: [32m'helium'[39m,
+  port: [33m5432[39m,
+  database: [32m'heliumdb'[39m,
+  user: [32m'postgres'[39m,
+  passwordLength: [33m8[39m,
+  ssl: { rejectUnauthorized: [33mfalse[39m }
+}
+Shopify configuration status: {
+  hasStoreUrl: [33mtrue[39m,
+  hasClientId: [33mtrue[39m,
+  hasClientSecret: [33mtrue[39m,
+  hasWebhookSecret: [33mtrue[39m,
+  storeUrlFormat: [32m'valid'[39m,
+  authMode: [32m'client_credentials_grant'[39m
+}
+1:18:45 PM [express] serving on port 5000

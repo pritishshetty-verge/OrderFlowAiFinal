@@ -1,0 +1,33 @@
+VERDICT: APPROVED
+The diff correctly implements the Scalysis AI calling integration end-to-end with no blocking functional issues.
+
+Critical findings / analysis:
+- **Webhook interception (`server/webhooks.ts`)**: Logic now parses tags, detects `"ScVERDICT: APPROVED
+alysis: Order Confirmed ✅"`, and applies auto-confirm fields only when `eThe diff correctly implements the Scalysis AI calling integration end-to-end with no blocking functional issues.
+xistingOrder.callStatus !== "Confirmed"`. It sets `callStatus: "Con
+firmed"`, `confirmedAt: now`, `confirmedBy: null`, and `confirmedNCritical findings / analysis:
+otes: "Auto-confirmed by Scalysis AI"`, then writes an `order_status_history` record with `changedBy: null` and the same note. This satisfies idempotency expectations for repeated webhook deliveries.
+- **Dashboard metric in storage (`server/storage.ts`)**: `IStorage.getDashboardMetrics` and `DbStorage.getDashboardMetrics` return types now include `aiConfirmedOrders`. Query counts distinct `orderStatusHistory.orderId` where `note = 'Auto-confirmed by Scalysis AI'` and `changedBy IS NULL`, filtered by `startDate/endDate`, then returns the value in the metrics payload.
+- **API pass-through (`server/routes.ts`)**: `GET /api/dashboard/metrics` already returns `res.json(metrics)` directly, so the new field is forwarded without filtering.
+- **Frontend wiring (`analytics.tsx`, `dashboard-stats.tsx`)**: `DashboardMetrics` and stats mapping include `aiConfirmedOrders`; `DashboardStatsProps` includes it; UI renders a new “AI Agent Confirmed” card using a distinct `Bot` icon and required description.
+- **Human attribution unchanged**: Existing confirmed/cancelled/etc. logic and attribution conditions were not altered by this diff.
+
+Security:
+- **None observed** (no serious authz, injection, secret handling, or data exposure regressions introduced by these changes).
+
+Next actions:
+1. Add/extend automated tests for `orders/update` webhook idempotency (first Scalysis tag confirms + history; repeated delivery does not duplicate).
+2. Add a storage-level test for `aiConfirmedOrders` date filtering and distinct-order counting behavior.
+3. Optional: monitor production logs for Scalysis tag detection frequency and mismatched tag formatting edge cases.- **Webhook interception (`server/webhooks.ts`)**: Logic now parses tags, detects `"Scalysis: Order Confirmed ✅"`, and applies auto-confirm fields only when `existingOrder.callStatus !== "Confirmed"`. It sets `callStatus: "Confirmed"`, `confirmedAt: now`, `confirmedBy: null`, and `confirmedNotes: "Auto-confirmed by Scalysis AI"`, then writes an `order_status_history` record with `changedBy: null` and the same note. This satisfies idempotency expectations for repeated webhook deliveries.
+- **Dashboard metric in storage (`server/storage.ts`)**: `IStorage.getDashboardMetrics` and `DbStorage.getDashboardMetrics` return types now include `aiConfirmedOrders`. Query counts distinct `orderStatusHistory.orderId` where `note = 'Auto-confirmed by Scalysis AI'` and `changedBy IS NULL`, filtered by `startDate/endDate`, then returns the value in the metrics payload.
+- **API pass-through (`server/routes.ts`)**: `GET /api/dashboard/metrics` already returns `res.json(metrics)` directly, so the new field is forwarded without filtering.
+- **Frontend wiring (`analytics.tsx`, `dashboard-stats.tsx`)**: `DashboardMetrics` and stats mapping include `aiConfirmedOrders`; `DashboardStatsProps` includes it; UI renders a new “AI Agent Confirmed” card using a distinct `Bot` icon and required description.
+- **Human attribution unchanged**: Existing confirmed/cancelled/etc. logic and attribution conditions were not altered by this diff.
+
+Security:
+- **None observed** (no serious authz, injection, secret handling, or data exposure regressions introduced by these changes).
+
+Next actions:
+1. Add/extend automated tests for `orders/update` webhook idempotency (first Scalysis tag confirms + history; repeated delivery does not duplicate).
+2. Add a storage-level test for `aiConfirmedOrders` date filtering and distinct-order counting behavior.
+3. Optional: monitor production logs for Scalysis tag detection frequency and mismatched tag formatting edge cases.

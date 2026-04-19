@@ -1,0 +1,38 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0K⠙[1G[0KDatabase connection config: {
+  host: [32m'helium'[39m,
+  port: [33m5432[39m,
+  database: [32m'heliumdb'[39m,
+  user: [32m'postgres'[39m,
+  passwordLength: [33m8[39m,
+  ssl: { rejectUnauthorized: [33mfalse[39m }
+}
+Shopify configuration status: {
+  hasStoreUrl: [33mtrue[39m,
+  hasClientId: [33mtrue[39m,
+  hasClientSecret: [33mtrue[39m,
+  hasWebhookSecret: [33mtrue[39m,
+  storeUrlFormat: [32m'valid'[39m,
+  authMode: [32m'client_credentials_grant'[39m
+}
+Uncaught exception (server staying alive): Cannot set property message of #<ErrorEvent> which has only a getter
+Stack: TypeError: Cannot set property message of #<ErrorEvent> which has only a getter
+    at An._connectionCallback (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:1384:72)
+    at An._handleErrorWhileConnecting (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:1290:38)
+    at An._handleErrorEvent (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:1291:33)
+    at fn.emit (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:397:12)
+    at v.reportStreamError (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:1201:46)
+    at v.emit (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:397:12)
+    at WebSocket.<anonymous> (file:///home/runner/workspace/node_modules/@neondatabase/serverless/index.mjs:986:42)
+    at callListener (/home/runner/workspace/node_modules/ws/lib/event-target.js:290:14)
+    at WebSocket.onError (/home/runner/workspace/node_modules/ws/lib/event-target.js:230:9)
+    at WebSocket.emit (node:events:524:28)
+[1G[0K⠙[1G[0K[1mnpm[22m [96mnotice[39m
+[1mnpm[22m [96mnotice[39m New [31mmajor[39m version of npm available! [31m10.8.2[39m -> [34m11.12.1[39m
+[1mnpm[22m [96mnotice[39m Changelog: [34mhttps://github.com/npm/cli/releases/tag/v11.12.1[39m
+[1mnpm[22m [96mnotice[39m To update run: [4mnpm install -g npm@11.12.1[24m
+[1mnpm[22m [96mnotice[39m
+[1G[0K⠙[1G[0K

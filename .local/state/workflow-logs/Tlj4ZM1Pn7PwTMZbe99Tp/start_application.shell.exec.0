@@ -1,0 +1,103 @@
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0KDatabase connection config: {
+  host: [32m'helium'[39m,
+  port: [33m5432[39m,
+  database: [32m'heliumdb'[39m,
+  user: [32m'postgres'[39m,
+  passwordLength: [33m8[39m,
+  ssl: { rejectUnauthorized: [33mfalse[39m }
+}
+Shopify configuration status: {
+  hasStoreUrl: [33mtrue[39m,
+  hasClientId: [33mtrue[39m,
+  hasClientSecret: [33mtrue[39m,
+  hasWebhookSecret: [33mtrue[39m,
+  storeUrlFormat: [32m'valid'[39m,
+  authMode: [32m'client_credentials_grant'[39m
+}
+12:35:55 PM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 17 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+12:36:05 PM [express] GET /api/users/by-email/pritish@vergescales.com 304 in 10ms :: {"id":"44bea3ec-…
+12:36:05 PM [express] GET /api/attendance 304 in 13ms :: []
+12:36:05 PM [express] GET /api/analytics/rto-insights 304 in 35ms :: {"kpis":{"overall_rto_rate":1.55…
+12:36:05 PM [express] GET /api/notifications/unread-count 304 in 33ms :: {"count":0}
+12:36:05 PM [express] GET /api/dashboard/hourly-activity 304 in 30ms :: {"data":[{"hour":"12 AM","con…
+12:36:05 PM [express] GET /api/attendance/today/44bea3ec-801f-476f-b8b1-614fcb563783 304 in 36ms
+12:36:05 PM [express] GET /api/dashboard/metrics 304 in 21ms :: {"assignedOrders":84,"confirmedOrders…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m12:37:35 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/analytics.tsx, /src/index.css?v=qBOdpZQELmn3-qdQ9P2hO[22m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[1;1H[0J[2m12:37:42 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/analytics.tsx, /src/index.css?v=qBOdpZQELmn3-qdQ9P2hO[22m [33m(x2)[39m

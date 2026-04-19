@@ -1,0 +1,40 @@
+feat: Scalysis AI calling agent integration
+
+## Task
+Integrate Scalysis AI voice agent auto-confirmation tracking into OrderSync.
+
+## Changes Made
+
+### server/webhooks.ts
+- Added Scalysis tag detection in `handleOrderUpdated()` after parsing tags
+- Detects exact tag string "Scalysis: Order Confirmed ✅" in tags array
+- Idempotency guard: only applies if order callStatus !== "Confirmed" already
+- Sets callStatus="Confirmed", confirmedAt=now, confirmedBy=null (no human agent),
+  confirmedNotes="Auto-confirmed by Scalysis AI" on the order update payload
+- Creates order_status_history entry with note="Auto-confirmed by Scalysis AI"
+  and changedBy=null after saving the order
+
+### server/storage.ts
+- Added aiConfirmedOrders: number to IStorage.getDashboardMetrics() return type
+- Added aiConfirmedOrders: number to DatabaseStorage.getDashboardMetrics() implementation return type
+- Added Query 8: counts distinct orders from order_status_history where
+  note='Auto-confirmed by Scalysis AI' AND changedBy IS NULL, date-range filtered
+- Returns aiConfirmedOrders alongside existing 7 metrics
+
+### server/routes.ts
+- No changes needed: GET /api/dashboard/metrics does res.json(metrics) which
+  automatically forwards all fields including the new aiConfirmedOrders
+
+### client/src/pages/analytics.tsx
+- Added aiConfirmedOrders to DashboardMetrics interface
+- Added aiConfirmedOrders to stats object passed to DashboardStats
+
+### client/src/components/dashboard-stats.tsx
+- Added Bot icon import from lucide-react
+- Added aiConfirmedOrders to DashboardStatsProps interface
+- Added aiConfirmedOrders to DashboardStats function parameters
+- Added new "AI Agent Confirmed" StatCard with violet Bot icon in second row
+- Second row now uses lg:grid-cols-5 to accommodate the new card
+
+## No DB schema changes — uses existing callStatus, confirmedAt, confirmedBy,
+## confirmedNotes on orders table and note/changedBy on order_status_history.

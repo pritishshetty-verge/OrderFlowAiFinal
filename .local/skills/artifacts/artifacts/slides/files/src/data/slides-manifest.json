@@ -1,0 +1,10 @@
+[
+  {
+    "id": "9f61f7eb-1ace-47f3-b8d5-9d5413e1282a",
+    "position": 1,
+    "filepath": "src/pages/slides/TitleSlide.tsx",
+    "title": "Welcome",
+    "description": "Opening title slide with deck name and presenter details.",
+    "speakerNotes": ""
+  }
+]
