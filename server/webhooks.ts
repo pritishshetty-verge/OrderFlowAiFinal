@@ -163,6 +163,11 @@ export async function handleOrderCreated(req: Request, res: Response) {
       rawShopifyData: shopifyOrder,
       shopifyCreatedAt: new Date(shopifyOrder.created_at),
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
+      // processed_at is the canonical financial timestamp Shopify's
+      // sales reports bucket on — and what Pare's Phase 1 waterfall
+      // uses. Fall back to created_at if absent so the column is
+      // never NULL (matches server/routes.ts historical sync).
+      processedAt: (shopifyOrder.processed_at ?? shopifyOrder.created_at) as string,
     };
 
     const order = await storage.createOrder(orderData);
@@ -337,6 +342,11 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       tags: tags,
       rawShopifyData: shopifyOrder,
       shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
+      // Keep processed_at in sync on updates. Shopify mutates this
+      // field when payment captures late (e.g., authorize-then-capture
+      // flows), so we refresh it here to keep Pare's Phase 1 daily
+      // bucketing aligned with Shopify's own sales reports.
+      processedAt: (shopifyOrder.processed_at ?? shopifyOrder.created_at) as string,
     };
 
     // Apply Scalysis AI confirmation (only if not already confirmed to avoid overwriting)
@@ -418,7 +428,13 @@ export async function handleOrderCancelled(req: Request, res: Response) {
       return res.status(404).json({ error: "Order not found" });
     }
 
-    // Update order status to cancelled
+    // Update order status to cancelled.
+    // Intentionally a targeted patch: we do NOT re-send processed_at
+    // here, so the original financial timestamp is preserved. That
+    // keeps the order in the SAME daily bucket in Pare's Phase 1
+    // waterfall — it just shifts from Order Revenue into Canceled GMV
+    // on the day the purchase actually happened, not the day it was
+    // cancelled. This is the behaviour Shopify's own sales report has.
     await storage.updateOrder(existingOrder.id, {
       status: "Cancelled",
     });

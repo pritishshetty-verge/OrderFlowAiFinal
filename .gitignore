@@ -4,3 +4,21 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Secrets — never commit. .env.example is tracked as a template.
+.env
+.env.local
+.env.*.local
+
+# Local-only dev artifacts
+logs/
+
+# KYC + payslip uploads (local-only; moving to S3 later). Keep the dir,
+# ignore contents — payroll PDFs in uploads/payslips/ in particular
+# must NEVER be pushed.
+uploads/**
+!uploads/
+!uploads/**/.gitkeep
+
+# Pin-code seed data — 23 MB, local reference only.
+pincodes.csv

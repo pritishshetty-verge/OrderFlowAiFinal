@@ -18,6 +18,10 @@ import { encrypt, decrypt } from "./encryption";
 import { OrderAssignmentEngine } from "./assignment";
 import axios from "axios";
 import { sendInvitationEmail } from "./resend";
+import { kycUpload, resolveKycFilePath, KYC_UPLOAD_DIR } from "./upload";
+import { getPareMetrics } from "./services/analytics";
+import fs from "fs";
+import path from "path";
 import {
   canAssignOrders,
   canBulkAssignOrders,
@@ -30,6 +34,7 @@ import {
   canAssignExtensions,
   canManageIVR,
   isFullControlAdmin,
+  isAdmin,
 } from "./permissions";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 
@@ -136,7 +141,105 @@ function normalizeFastrrPayload(raw: any): NormalizedFastrrPayload {
   };
 }
 
+// ============================================================================
+// SHOPIFY SYNC — LIVE STATE
+// ============================================================================
+// Module-level singleton that tracks the in-flight Shopify sync so the
+// frontend can poll GET /api/shopify/sync/status and render real-time
+// progress. This intentionally lives in process memory — on Vercel it
+// resets per cold-start invocation, which is fine because the historical
+// sync is a manual, local-dev operation.
+
+type ShopifySyncError = { orderId: string; reason: string };
+type ShopifySyncState = {
+  isRunning: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  syncedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  totalFetched: number;
+  pagesFetched: number;
+  lastSinceId: string | null;
+  errors: ShopifySyncError[];
+  errorsTruncated: boolean;
+  lastError: string | null;
+  reachedMaxPages: boolean;
+};
+
+// Cap errors to protect memory on long-running syncs. 5,000 rows × ~200
+// bytes each ≈ 1 MB worst case.
+const SHOPIFY_SYNC_ERROR_CAP = 5000;
+
+const shopifySyncState: ShopifySyncState = {
+  isRunning: false,
+  startedAt: null,
+  finishedAt: null,
+  syncedCount: 0,
+  skippedCount: 0,
+  failedCount: 0,
+  totalFetched: 0,
+  pagesFetched: 0,
+  lastSinceId: null,
+  errors: [],
+  errorsTruncated: false,
+  lastError: null,
+  reachedMaxPages: false,
+};
+
+function resetShopifySyncState() {
+  shopifySyncState.isRunning = true;
+  shopifySyncState.startedAt = new Date().toISOString();
+  shopifySyncState.finishedAt = null;
+  shopifySyncState.syncedCount = 0;
+  shopifySyncState.skippedCount = 0;
+  shopifySyncState.failedCount = 0;
+  shopifySyncState.totalFetched = 0;
+  shopifySyncState.pagesFetched = 0;
+  shopifySyncState.lastSinceId = null;
+  shopifySyncState.errors = [];
+  shopifySyncState.errorsTruncated = false;
+  shopifySyncState.lastError = null;
+  shopifySyncState.reachedMaxPages = false;
+}
+
+function recordShopifySyncError(orderId: string, reason: string) {
+  if (shopifySyncState.errors.length < SHOPIFY_SYNC_ERROR_CAP) {
+    shopifySyncState.errors.push({ orderId, reason });
+  } else {
+    shopifySyncState.errorsTruncated = true;
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  // ============================================================================
+  // HEALTH CHECK
+  // ============================================================================
+  //
+  // Lightweight liveness + DB reachability probe. Hits `SELECT 1` so a
+  // 200 here means both the Node process is up *and* the Neon
+  // connection pool is producing fresh rows. Anything else returns a
+  // 503 with a brief reason so it's safe to wire to a load-balancer
+  // healthcheck or a status-page monitor.
+  app.get("/api/health", async (_req, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT 1 AS ok`);
+      const ok = ((r as any).rows ?? r)[0]?.ok === 1;
+      res.status(ok ? 200 : 503).json({
+        status: ok ? "ok" : "degraded",
+        db: ok ? "reachable" : "unexpected-response",
+        ts: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(503).json({
+        status: "degraded",
+        db: "unreachable",
+        error: err?.message ?? String(err),
+        ts: new Date().toISOString(),
+      });
+    }
+  });
+
   // ============================================================================
   // AUTHORIZATION HELPERS
   // ============================================================================
@@ -335,6 +438,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/orders/update", handleOrderUpdated);
   app.post("/api/webhooks/orders/cancelled", handleOrderCancelled);
   app.post("/api/webhooks/fulfillments/update", handleFulfillmentUpdate);
+
+  // ── Admin: force re-registration of Shopify webhooks ──────────────
+  // Reuses the same idempotent path as the boot-time hook. Safe to
+  // call repeatedly — topics already registered at the same address
+  // report back as "unchanged". Use this when APP_URL rotates (ngrok
+  // reboot) or when a connection to Shopify was lost at boot.
+  // NOTE: No session guard here — matches the current app-wide auth
+  // posture (see TODO at ~L2479). Tighten when JWT/session auth lands.
+  app.post("/api/shopify/webhooks/register-all", async (req, res) => {
+    try {
+      const overrideUrl = typeof req.body?.appUrl === "string" ? req.body.appUrl : undefined;
+      const appUrl = overrideUrl || process.env.APP_URL;
+      if (!appUrl) {
+        return res.status(400).json({
+          error: "APP_URL not set",
+          hint: "Set APP_URL in your .env (e.g. an ngrok HTTPS URL) or pass { appUrl } in the request body.",
+        });
+      }
+      if (!/^https:\/\//i.test(appUrl)) {
+        return res.status(400).json({
+          error: "APP_URL must be HTTPS",
+          received: appUrl,
+          hint: "Shopify requires HTTPS for webhook endpoints.",
+        });
+      }
+      const { shopifyClient } = await import("./shopify");
+      const result = await shopifyClient.registerAllWebhooks(appUrl);
+      const failed = result.topics.filter((t) => t.action === "failed");
+      res.status(failed.length > 0 ? 207 : 200).json({
+        appUrl,
+        topics: result.topics,
+        summary: {
+          created: result.topics.filter((t) => t.action === "created").length,
+          updated: result.topics.filter((t) => t.action === "updated").length,
+          unchanged: result.topics.filter((t) => t.action === "unchanged").length,
+          failed: failed.length,
+        },
+      });
+    } catch (err: any) {
+      console.error("[register-all webhooks] failed:", err);
+      res.status(500).json({ error: err?.message ?? "Unknown error" });
+    }
+  });
+
+  // GET companion so the UI can display the current state without
+  // triggering a re-registration.
+  app.get("/api/shopify/webhooks", async (_req, res) => {
+    try {
+      const { shopifyClient } = await import("./shopify");
+      const result = await shopifyClient.listWebhooks();
+      res.json(result);
+    } catch (err: any) {
+      console.error("[list webhooks] failed:", err);
+      res.status(500).json({ error: err?.message ?? "Unknown error" });
+    }
+  });
   
   // Courier webhook (Shiprocket)
   // Note: Renamed from /api/webhooks/shiprocket to /api/webhooks/courier-events
@@ -716,6 +875,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching hourly activity:", error);
       res.status(500).json({ error: "Failed to fetch hourly activity" });
+    }
+  });
+
+  // ============================================================================
+  // PARE ANALYTICS — Clean Revenue diagnostic
+  // ============================================================================
+  //
+  // Strips vanity GMV down to True Net Revenue by accounting for fulfillment
+  // leakage (cancellations, RTOs, refunds). See Pare-PRD-v3.pdf §1.
+  //
+  // Query params:
+  //   ?startDate=YYYY-MM-DD   (optional; default: 30 days ago)
+  //   ?endDate=YYYY-MM-DD     (optional; default: now)
+  //
+  // All aggregations run in a single Postgres query using FILTER (WHERE …).
+  //
+  // Access control: admin-only. The client sends ?userId=<uuid> (same
+  // pattern as /api/dashboard/metrics); we resolve the user and reject
+  // any non-admin with 403. Missing/unknown userId is treated as
+  // "not signed in" and rejected with 401 so the client can redirect
+  // to /login instead of getting a cryptic 403.
+  //
+  // TODO(auth): replace this userId-query-param shim with real
+  // session auth once it lands, and gate behind canViewAnalytics.
+  app.get("/api/analytics/pare", async (req, res) => {
+    try {
+      const requesterId =
+        typeof req.query.userId === "string" ? req.query.userId : null;
+      if (!requesterId) {
+        return res
+          .status(401)
+          .json({ error: "Unauthorized: userId query parameter required." });
+      }
+      const requester = await storage.getUser(requesterId);
+      if (!requester) {
+        return res.status(401).json({ error: "Unauthorized: user not found." });
+      }
+      if (!isAdmin(requester)) {
+        return res
+          .status(403)
+          .json({ error: "Forbidden: admin role required to view Pare." });
+      }
+
+      const now = new Date();
+      let endDate = now;
+      let startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      if (typeof req.query.endDate === "string" && req.query.endDate) {
+        const parsed = new Date(req.query.endDate);
+        if (Number.isNaN(parsed.getTime())) {
+          return res
+            .status(400)
+            .json({ error: "Invalid endDate. Expected ISO date string." });
+        }
+        endDate = parsed;
+      }
+      if (typeof req.query.startDate === "string" && req.query.startDate) {
+        const parsed = new Date(req.query.startDate);
+        if (Number.isNaN(parsed.getTime())) {
+          return res
+            .status(400)
+            .json({ error: "Invalid startDate. Expected ISO date string." });
+        }
+        startDate = parsed;
+      }
+
+      if (startDate > endDate) {
+        return res
+          .status(400)
+          .json({ error: "startDate must be on or before endDate." });
+      }
+
+      const metrics = await getPareMetrics({ startDate, endDate });
+      res.json(metrics);
+    } catch (error) {
+      console.error("Error computing Pare metrics:", error);
+      res.status(500).json({ error: "Failed to compute Pare metrics" });
     }
   });
 
@@ -1449,100 +1685,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
 
   // Trigger manual sync of orders from Shopify
-  app.post("/api/shopify/sync", async (req, res) => {
+  // Lightweight polling endpoint for live sync progress.
+  app.get("/api/shopify/sync/status", (_req, res) => {
+    res.json(shopifySyncState);
+  });
+
+  // ============================================================================
+  // META / FB ADS SYNC
+  // ============================================================================
+  // Fetches daily spend + purchases across all configured ad accounts and
+  // upserts into marketing_metrics. Intended to be triggered manually or via
+  // a scheduled cron — NOT on every page load.
+  app.post("/api/meta/sync", async (req, res) => {
     try {
-      const { limit = 50 } = req.body;
+      const { syncMetaInsights } = await import("./services/meta");
+      const days = Math.max(1, Math.min(Number(req.body?.days) || 30, 365));
+      const end = new Date();
+      const start = new Date(end.getTime() - (days - 1) * 864e5);
+      const startDate = start.toISOString().slice(0, 10);
+      const endDate = end.toISOString().slice(0, 10);
+      const result = await syncMetaInsights(startDate, endDate);
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error syncing Meta insights:", err);
+      res
+        .status(500)
+        .json({ error: err?.message || "Failed to sync Meta insights" });
+    }
+  });
+
+  app.post("/api/shopify/sync", async (req, res) => {
+    // Only one sync may run at a time. Concurrent POSTs get 409.
+    if (shopifySyncState.isRunning) {
+      return res.status(409).json({
+        error: "A Shopify sync is already in progress.",
+        state: shopifySyncState,
+      });
+    }
+    resetShopifySyncState();
+    try {
+      // Page size: Shopify REST caps `limit` at 250. Default to 250 to
+      // minimize round-trips for historical backfills.
+      const rawLimit = parseInt(String(req.body.limit ?? 250), 10);
+      const pageLimit = Math.min(Math.max(isNaN(rawLimit) ? 250 : rawLimit, 1), 250);
+
+      // Cursor — when `since_id` is set, Shopify returns orders with
+      // `id > sinceId` in ascending id order.
+      //
+      // Smart resume: if the caller didn't pass an explicit cursor, pick
+      // up from the highest shopify_order_id already in our DB. This means
+      // clicking "Sync Now" after a prior partial import continues from
+      // where we stopped, instead of re-walking history from "0".
+      let sinceId: string;
+      if (req.body.sinceId) {
+        sinceId = String(req.body.sinceId);
+      } else {
+        const maxLocal = await storage.getMaxShopifyOrderId();
+        sinceId = maxLocal ?? "0";
+      }
+      console.log(`[shopify-sync] starting with sinceId=${sinceId}`);
+
+      // Safety cap: 500 pages × 250 = 125,000 orders. Prevents a runaway
+      // loop if Shopify ever returns a full page indefinitely.
+      const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
 
       // Update client with latest credentials from DB or env vars
       const { updateShopifyClient } = await import("./shopify");
       const client = await updateShopifyClient();
 
-      const response = await client.fetchOrders({
-        status: "any",
-        limit,
-      });
+      // ────────────────────────────────────────────────────────────────
+      // Preload: build in-memory lookups used on every iteration.
+      // Without this, we'd hit the DB 2× per line item for image lookups
+      // (≈270k queries for a 45k-order import). With this, it's zero.
+      // ────────────────────────────────────────────────────────────────
+      const allProducts = await storage.listProducts();
+      const productByVariant = new Map<string, typeof allProducts[number]>();
+      const productByProduct = new Map<string, typeof allProducts[number]>();
+      for (const p of allProducts) {
+        if (p.shopifyVariantId) productByVariant.set(p.shopifyVariantId, p);
+        if (p.shopifyProductId) productByProduct.set(p.shopifyProductId, p);
+      }
+      console.log(
+        `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`,
+      );
+
+      // Webhook bypass: if no `order.created` webhooks are active, skip
+      // triggerWebhooks entirely during the import (avoids one SELECT per
+      // order against the webhooks table).
+      const activeOrderCreatedWebhooks = await db
+        .select()
+        .from(webhooks)
+        .where(
+          and(eq(webhooks.eventType, "order.created"), eq(webhooks.isActive, true)),
+        );
+      const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
+      if (!shouldFireWebhooks) {
+        console.log(
+          `[shopify-sync] no active order.created webhooks — skipping webhook fan-out`,
+        );
+      }
 
       let syncedCount = 0;
       let skippedCount = 0;
+      let failedCount = 0;
+      let totalFetched = 0;
+      let pagesFetched = 0;
+      let lastSinceId = sinceId;
 
-      for (const shopifyOrder of response.orders || []) {
-        const existingOrder = await storage.getOrderByShopifyId(
-          shopifyOrder.id.toString(),
+      // Image-resolver closure used by both batch and sequential paths.
+      const resolveImage = (
+        variantId?: string | number | null,
+        productId?: string | number | null,
+      ): string | null => {
+        if (variantId != null) {
+          const p = productByVariant.get(variantId.toString());
+          if (p?.imageUrl) return p.imageUrl;
+        }
+        if (productId != null) {
+          const p = productByProduct.get(productId.toString());
+          if (p?.imageUrl) return p.imageUrl;
+        }
+        return null;
+      };
+
+      // Build an order insert record from a Shopify order payload.
+      const buildOrderInsert = (
+        shopifyOrder: any,
+        customerId: string | null,
+      ) => {
+        const fulfillmentTracking = extractFulfillmentTracking(
+          shopifyOrder.fulfillments,
         );
-
-        if (existingOrder) {
-          // Still update order items with images from local products cache
-          if (shopifyOrder.line_items?.length > 0) {
-            const existingItems = await storage.getOrderItems(existingOrder.id);
-            
-            for (const item of existingItems) {
-              // Skip if already has an image
-              if (item.imageUrl) continue;
-              
-              // Look up product image from our local products cache
-              let imageUrl: string | null = null;
-              
-              if (item.shopifyVariantId) {
-                const productByVariant = await storage.getProductByVariantId(item.shopifyVariantId);
-                if (productByVariant?.imageUrl) {
-                  imageUrl = productByVariant.imageUrl;
-                }
-              }
-              
-              if (!imageUrl && item.shopifyProductId) {
-                const productByProduct = await storage.getProductByProductId(item.shopifyProductId);
-                if (productByProduct?.imageUrl) {
-                  imageUrl = productByProduct.imageUrl;
-                }
-              }
-              
-              // Update the order item with the image
-              if (imageUrl) {
-                await storage.updateOrderItemImage(item.id, imageUrl);
-              }
-            }
-          }
-          
-          skippedCount++;
-          continue;
-        }
-
-        // Create customer if needed
-        let customer;
-        if (shopifyOrder.customer) {
-          const existingCustomer = await storage.getCustomerByShopifyId(
-            shopifyOrder.customer.id.toString(),
-          );
-
-          const customerData = {
-            shopifyCustomerId: shopifyOrder.customer.id.toString(),
-            email: shopifyOrder.customer.email || shopifyOrder.email || null,
-            firstName: shopifyOrder.customer.first_name || null,
-            lastName: shopifyOrder.customer.last_name || null,
-            phone: shopifyOrder.customer.phone || shopifyOrder.phone || null,
-          };
-
-          if (existingCustomer) {
-            customer = await storage.updateCustomer(
-              existingCustomer.id,
-              customerData,
-            );
-          } else {
-            customer = await storage.createCustomer(customerData);
-          }
-        }
-
-        // Extract fulfillment tracking info
-        const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
-
-        // Create order
-        const orderData = {
+        return {
           shopifyOrderId: shopifyOrder.id.toString(),
-          shopifyOrderNumber: shopifyOrder.order_number?.toString() || shopifyOrder.name,
-          customerId: customer?.id || null,
-          customerName: `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() || shopifyOrder.billing_address?.name || "Guest",
+          shopifyOrderNumber:
+            shopifyOrder.order_number?.toString() || shopifyOrder.name,
+          customerId,
+          customerName:
+            `${shopifyOrder.customer?.first_name || ""} ${shopifyOrder.customer?.last_name || ""}`.trim() ||
+            shopifyOrder.billing_address?.name ||
+            "Guest",
           customerEmail: shopifyOrder.email || null,
-          customerPhone: shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
+          customerPhone:
+            shopifyOrder.phone || shopifyOrder.shipping_address?.phone || "",
           status: mapShopifyStatus(
             shopifyOrder.financial_status,
             shopifyOrder.fulfillment_status,
@@ -1550,14 +1835,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             shopifyOrder.cancelled_at || null,
           ),
           fulfillmentStatus: shopifyOrder.fulfillment_status || null,
-          fulfilledAt: shopifyOrder.fulfilled_at ? new Date(shopifyOrder.fulfilled_at) : null,
+          fulfilledAt: shopifyOrder.fulfilled_at
+            ? new Date(shopifyOrder.fulfilled_at)
+            : null,
           financialStatus: shopifyOrder.financial_status || null,
           totalPrice: shopifyOrder.total_price || "0",
           subtotal: shopifyOrder.subtotal_price || "0",
           totalTax: shopifyOrder.total_tax || "0",
           totalDiscount: shopifyOrder.total_discounts || "0",
           discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
-          shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
+          shippingPrice:
+            shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
           currency: shopifyOrder.currency || "INR",
           paymentMethod: shopifyOrder.payment_gateway_names?.[0] || "Unknown",
           shippingAddress: shopifyOrder.shipping_address || null,
@@ -1568,91 +1856,314 @@ export async function registerRoutes(app: Express): Promise<Server> {
           shippingPincode: shopifyOrder.shipping_address?.zip || null,
           shippingCountry: shopifyOrder.shipping_address?.country || null,
           itemsCount: shopifyOrder.line_items?.length || 1,
-          itemsSummary: shopifyOrder.line_items?.map((item: any) => item.name).join(", ") || null,
+          itemsSummary:
+            shopifyOrder.line_items?.map((item: any) => item.name).join(", ") ||
+            null,
           assignedTo: null,
           assignedAt: null,
           shipmentStatus: fulfillmentTracking.shipmentStatus,
           trackingNumber: fulfillmentTracking.trackingNumber,
           trackingUrl: fulfillmentTracking.trackingUrl,
           courierName: fulfillmentTracking.trackingCompany,
+          // Shopify's `test` boolean marks orders created in test mode
+          // (Bogus Gateway, manual test orders). Pare's Phase 1 filters
+          // these out to match Shopify's own sales reports.
+          testOrder: shopifyOrder.test === true,
           rawShopifyData: shopifyOrder,
           shopifyCreatedAt: new Date(shopifyOrder.created_at),
           shopifyUpdatedAt: new Date(shopifyOrder.updated_at),
+          // processed_at is the financial timestamp Shopify's own sales
+          // reports bucket on. Fall back to created_at if absent so the
+          // column never has a NULL.
+          processedAt: (shopifyOrder.processed_at ?? shopifyOrder.created_at) as string,
         };
+      };
 
-        const order = await storage.createOrder(orderData);
-
-        // Create order items with product image lookup from local products table
-        if (shopifyOrder.line_items?.length > 0) {
-          const items = await Promise.all(
-            shopifyOrder.line_items.map(async (item: any) => {
-              // Look up product image from our local products cache
-              let imageUrl: string | null = null;
-              
-              // Try by variant ID first (more specific)
-              if (item.variant_id) {
-                const productByVariant = await storage.getProductByVariantId(item.variant_id.toString());
-                if (productByVariant?.imageUrl) {
-                  imageUrl = productByVariant.imageUrl;
-                }
-              }
-              
-              // Fall back to product ID if no variant match
-              if (!imageUrl && item.product_id) {
-                const productByProduct = await storage.getProductByProductId(item.product_id.toString());
-                if (productByProduct?.imageUrl) {
-                  imageUrl = productByProduct.imageUrl;
-                }
-              }
-              
-              return {
-                orderId: order.id,
-                shopifyLineItemId: item.id?.toString() || null,
-                shopifyProductId: item.product_id?.toString() || null,
-                shopifyVariantId: item.variant_id?.toString() || null,
-                productName: item.name || "Unknown Product",
-                variantTitle: item.variant_title || null,
-                sku: item.sku || null,
-                quantity: item.quantity,
-                price: item.price || "0",
-                totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
-                imageUrl: imageUrl,
-              };
-            })
-          );
-
-          await storage.createOrderItems(items);
-        }
-
-        // Create initial status history
-        await storage.createOrderStatus({
-          orderId: order.id,
-          status: orderData.status,
-          previousStatus: null,
-          changedBy: null,
-          note: "Imported from Shopify",
+      while (pagesFetched < maxPages) {
+        const response = await client.fetchOrders({
+          status: "any",
+          limit: pageLimit,
+          sinceId,
         });
 
-        const finalOrder = await storage.getOrder(order.id);
-        let assignedAgentEmail: string | null = null;
-        if (finalOrder?.assignedTo) {
-          const agent = await storage.getUser(finalOrder.assignedTo);
-          if (agent) assignedAgentEmail = agent.email;
-        }
-        triggerWebhooks('order.created', { order: finalOrder || order, shopifyOrderId: shopifyOrder.id, assignedAgentEmail });
+        const orders = response.orders || [];
+        pagesFetched++;
+        totalFetched += orders.length;
+        shopifySyncState.pagesFetched = pagesFetched;
+        shopifySyncState.totalFetched = totalFetched;
+        console.log(
+          `[shopify-sync] page ${pagesFetched}: fetched ${orders.length} orders (sinceId=${sinceId})`,
+        );
 
-        syncedCount++;
+        if (orders.length === 0) break;
+
+        // ──────────────────────────────────────────────────────────────
+        // Batch dedupe: one SELECT against our orders table instead of
+        // 250 sequential SELECTs. Anything already imported is skipped.
+        // ──────────────────────────────────────────────────────────────
+        const pageShopifyIds = orders.map((o: any) => o.id.toString());
+        const alreadyImported =
+          await storage.getExistingShopifyOrderIds(pageShopifyIds);
+        const newOrders = orders.filter(
+          (o: any) => !alreadyImported.has(o.id.toString()),
+        );
+        skippedCount += orders.length - newOrders.length;
+        shopifySyncState.skippedCount = skippedCount;
+
+        if (newOrders.length > 0) {
+          let batchSucceeded = false;
+          try {
+            // ──────────────────────────────────────────────────────────
+            // Customers: dedupe within the page and batch-fetch existing.
+            // ──────────────────────────────────────────────────────────
+            const uniqueShopifyCustomerIds: string[] = Array.from(
+              new Set<string>(
+                newOrders
+                  .filter((o: any) => o.customer?.id)
+                  .map((o: any) => o.customer.id.toString() as string),
+              ),
+            );
+            const existingCustomers =
+              await storage.getCustomersByShopifyIds(uniqueShopifyCustomerIds);
+            const customerByShopifyId = new Map(
+              existingCustomers.map((c) => [c.shopifyCustomerId!, c] as const),
+            );
+
+            const customersToInsert: any[] = [];
+            const seenCustomer = new Set<string>();
+            for (const o of newOrders) {
+              const sid = o.customer?.id?.toString();
+              if (!sid) continue;
+              if (seenCustomer.has(sid) || customerByShopifyId.has(sid)) continue;
+              seenCustomer.add(sid);
+              customersToInsert.push({
+                shopifyCustomerId: sid,
+                email: o.customer.email || o.email || null,
+                firstName: o.customer.first_name || null,
+                lastName: o.customer.last_name || null,
+                phone: o.customer.phone || o.phone || null,
+              });
+            }
+            if (customersToInsert.length > 0) {
+              const inserted =
+                await storage.createCustomersBatch(customersToInsert);
+              for (const c of inserted) {
+                if (c.shopifyCustomerId)
+                  customerByShopifyId.set(c.shopifyCustomerId, c);
+              }
+            }
+
+            // ──────────────────────────────────────────────────────────
+            // Orders: one INSERT … VALUES (…),(…) for the whole page.
+            // ──────────────────────────────────────────────────────────
+            const orderInserts = newOrders.map((o: any) => {
+              const sid = o.customer?.id?.toString();
+              const customerId = sid
+                ? customerByShopifyId.get(sid)?.id ?? null
+                : null;
+              return buildOrderInsert(o, customerId);
+            });
+            const insertedOrders =
+              await storage.createOrdersBatch(orderInserts);
+            const orderIdByShopifyId = new Map(
+              insertedOrders.map((o) => [o.shopifyOrderId!, o] as const),
+            );
+
+            // ──────────────────────────────────────────────────────────
+            // Order items: flatten every line item across the page into
+            // one INSERT. Image lookup is now a Map get — zero queries.
+            // ──────────────────────────────────────────────────────────
+            const orderItemInserts: any[] = [];
+            for (const o of newOrders) {
+              const dbOrder = orderIdByShopifyId.get(o.id.toString());
+              if (!dbOrder) continue;
+              for (const item of o.line_items || []) {
+                orderItemInserts.push({
+                  orderId: dbOrder.id,
+                  shopifyLineItemId: item.id?.toString() || null,
+                  shopifyProductId: item.product_id?.toString() || null,
+                  shopifyVariantId: item.variant_id?.toString() || null,
+                  productName: item.name || "Unknown Product",
+                  variantTitle: item.variant_title || null,
+                  sku: item.sku || null,
+                  quantity: item.quantity,
+                  price: item.price || "0",
+                  totalPrice: (
+                    parseFloat(item.price || "0") * item.quantity
+                  ).toString(),
+                  imageUrl: resolveImage(item.variant_id, item.product_id),
+                });
+              }
+            }
+            if (orderItemInserts.length > 0) {
+              await storage.createOrderItems(orderItemInserts);
+            }
+
+            // ──────────────────────────────────────────────────────────
+            // Order status history: one INSERT for the whole page.
+            // ──────────────────────────────────────────────────────────
+            const statusInserts = insertedOrders.map((o) => ({
+              orderId: o.id,
+              status: o.status,
+              previousStatus: null,
+              changedBy: null,
+              note: "Imported from Shopify",
+            }));
+            if (statusInserts.length > 0) {
+              await storage.createOrderStatusBatch(statusInserts);
+            }
+
+            // Webhook fan-out: only when there's something listening.
+            if (shouldFireWebhooks) {
+              for (const o of insertedOrders) {
+                triggerWebhooks("order.created", {
+                  order: o,
+                  shopifyOrderId: o.shopifyOrderId,
+                  assignedAgentEmail: null,
+                });
+              }
+            }
+
+            syncedCount += insertedOrders.length;
+            shopifySyncState.syncedCount = syncedCount;
+            batchSucceeded = true;
+            console.log(
+              `[shopify-sync] page ${pagesFetched}: batch-inserted ${insertedOrders.length} orders (skipped ${orders.length - newOrders.length})`,
+            );
+          } catch (batchErr) {
+            const msg =
+              batchErr instanceof Error ? batchErr.message : String(batchErr);
+            console.warn(
+              `[shopify-sync] page ${pagesFetched} batch path failed (${msg}); falling back to per-order sequential insert`,
+            );
+          }
+
+          // ──────────────────────────────────────────────────────────────
+          // Fallback: if the batch path threw (e.g. one row violated a
+          // constraint and the whole transaction aborted), re-process
+          // this page one order at a time so the bad rows are isolated
+          // and every good row still lands.
+          // ──────────────────────────────────────────────────────────────
+          if (!batchSucceeded) {
+            for (const shopifyOrder of newOrders) {
+              try {
+                let customer;
+                if (shopifyOrder.customer) {
+                  const existingCustomer = await storage.getCustomerByShopifyId(
+                    shopifyOrder.customer.id.toString(),
+                  );
+                  const customerData = {
+                    shopifyCustomerId: shopifyOrder.customer.id.toString(),
+                    email:
+                      shopifyOrder.customer.email || shopifyOrder.email || null,
+                    firstName: shopifyOrder.customer.first_name || null,
+                    lastName: shopifyOrder.customer.last_name || null,
+                    phone:
+                      shopifyOrder.customer.phone || shopifyOrder.phone || null,
+                  };
+                  customer = existingCustomer
+                    ? await storage.updateCustomer(
+                        existingCustomer.id,
+                        customerData,
+                      )
+                    : await storage.createCustomer(customerData);
+                }
+
+                const orderData = buildOrderInsert(
+                  shopifyOrder,
+                  customer?.id || null,
+                );
+                const order = await storage.createOrder(orderData);
+
+                if (shopifyOrder.line_items?.length > 0) {
+                  const items = shopifyOrder.line_items.map((item: any) => ({
+                    orderId: order.id,
+                    shopifyLineItemId: item.id?.toString() || null,
+                    shopifyProductId: item.product_id?.toString() || null,
+                    shopifyVariantId: item.variant_id?.toString() || null,
+                    productName: item.name || "Unknown Product",
+                    variantTitle: item.variant_title || null,
+                    sku: item.sku || null,
+                    quantity: item.quantity,
+                    price: item.price || "0",
+                    totalPrice: (
+                      parseFloat(item.price || "0") * item.quantity
+                    ).toString(),
+                    imageUrl: resolveImage(item.variant_id, item.product_id),
+                  }));
+                  await storage.createOrderItems(items);
+                }
+
+                await storage.createOrderStatus({
+                  orderId: order.id,
+                  status: orderData.status,
+                  previousStatus: null,
+                  changedBy: null,
+                  note: "Imported from Shopify",
+                });
+
+                if (shouldFireWebhooks) {
+                  triggerWebhooks("order.created", {
+                    order,
+                    shopifyOrderId: shopifyOrder.id,
+                    assignedAgentEmail: null,
+                  });
+                }
+
+                syncedCount++;
+                shopifySyncState.syncedCount = syncedCount;
+              } catch (err) {
+                const orderId = String(shopifyOrder?.id ?? "<unknown>");
+                const orderName = shopifyOrder?.name ?? "";
+                const message =
+                  err instanceof Error ? err.message : String(err);
+                console.warn(
+                  `[shopify-sync] failed to import order ${orderId} ${orderName}: ${message}`,
+                );
+                failedCount++;
+                shopifySyncState.failedCount = failedCount;
+                recordShopifySyncError(
+                  orderName ? `${orderId} (${orderName})` : orderId,
+                  message,
+                );
+              }
+            }
+          }
+        }
+
+        // Advance the cursor. Shopify returns ASC by id when `since_id`
+        // is set, so the last order of the batch has the highest id.
+        const lastOrder = orders[orders.length - 1];
+        sinceId = lastOrder.id.toString();
+        lastSinceId = sinceId;
+        shopifySyncState.lastSinceId = lastSinceId;
+
+        // If we got a short page, there are no more orders to fetch.
+        if (orders.length < pageLimit) break;
+
+        // Pause briefly to stay under Shopify's 2 req/s REST limit.
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
+      shopifySyncState.reachedMaxPages = pagesFetched >= maxPages;
       res.json({
         message: "Sync completed",
-        syncedCount: syncedCount,
-        skippedCount: skippedCount,
-        totalOrders: (response.orders || []).length,
+        syncedCount,
+        skippedCount,
+        failedCount,
+        totalFetched,
+        pagesFetched,
+        lastSinceId,
+        reachedMaxPages: pagesFetched >= maxPages,
       });
     } catch (error) {
       console.error("Error syncing orders:", error);
+      shopifySyncState.lastError =
+        error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: "Failed to sync orders" });
+    } finally {
+      shopifySyncState.isRunning = false;
+      shopifySyncState.finishedAt = new Date().toISOString();
     }
   });
 
@@ -2189,6 +2700,79 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // BOOTSTRAP: FIRST-ADMIN SELF-SIGNUP
+  // ============================================================================
+  //
+  // This endpoint lets the very first user register themselves as a
+  // full-control admin. It is ONLY accessible when the users table is empty.
+  // Every subsequent attempt returns 403 and directs the caller to the
+  // invite flow. This is how a freshly provisioned database bootstraps the
+  // first administrator without needing an out-of-band invite.
+
+  // Lightweight probe for the frontend to decide whether to show the
+  // "Create admin account" tab on the login page.
+  app.get("/api/auth/can-register-admin", async (_req, res) => {
+    try {
+      const existing = await storage.listUsers({});
+      res.json({ canRegister: existing.length === 0 });
+    } catch (error) {
+      console.error("Error checking bootstrap state:", error);
+      res.status(500).json({ error: "Failed to check bootstrap state" });
+    }
+  });
+
+  app.post("/api/auth/register-admin", async (req, res) => {
+    try {
+      // Gate: only allowed on a completely empty users table.
+      const existing = await storage.listUsers({});
+      if (existing.length > 0) {
+        return res.status(403).json({
+          error:
+            "Registration is closed. This workspace already has administrators — ask one of them to send you an invite.",
+        });
+      }
+
+      // Force admin role regardless of what the client sends.
+      const payload = {
+        ...req.body,
+        role: "admin" as const,
+        adminType: "full_control" as const,
+        permissions: null,
+      };
+
+      const validatedData = insertUserSchema.parse(payload);
+
+      // Double-check uniqueness (defensive — the table should be empty).
+      const existingUsername = await storage.getUserByUsername(
+        validatedData.username,
+      );
+      if (existingUsername) {
+        return res.status(400).json({ error: "Username already exists" });
+      }
+      const existingEmail = await storage.getUserByEmail(validatedData.email);
+      if (existingEmail) {
+        return res.status(400).json({ error: "Email already exists" });
+      }
+
+      const user = await storage.createUser(validatedData);
+
+      // Strip the password field from the response so it doesn't hit the
+      // client. (Passwords are stored as plaintext in this app today — see
+      // shared/schema.ts — so avoid echoing them back.)
+      const { password: _password, ...safeUser } = user as any;
+      res.status(201).json(safeUser);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res
+          .status(400)
+          .json({ error: "Invalid user data", details: error.errors });
+      }
+      console.error("Error registering first admin:", error);
+      res.status(500).json({ error: "Failed to register first admin" });
+    }
+  });
+
   app.patch("/api/users/:id", async (req, res) => {
     try {
       // Get currentUserId from body (for admin edits) or default to target user (self-edit)
@@ -2245,6 +2829,152 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.error("Error updating user:", error);
       res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // ============================================================================
+  // KYC DOCUMENT UPLOAD
+  // ============================================================================
+  //
+  // Local-disk foundation. When we move to S3:
+  //  - swap `kycUpload` in server/upload.ts for a `multer-s3` storage engine
+  //  - change the stored value to the S3 object key
+  //  - replace the download route with a 302 to a pre-signed S3 URL
+  // The frontend contract stays identical.
+
+  app.post(
+    "/api/users/:id/kyc-upload",
+    (req, res, next) => {
+      // Multer throws for size/mime/ext issues — translate to a clean 400.
+      kycUpload.single("document")(req, res, (err: any) => {
+        if (err) {
+          const message =
+            err?.code === "LIMIT_FILE_SIZE"
+              ? "File too large. Max 5 MB."
+              : err?.message || "Invalid file";
+          return res.status(400).json({ error: message });
+        }
+        next();
+      });
+    },
+    async (req, res) => {
+      const file = (req as any).file as Express.Multer.File | undefined;
+      try {
+        const targetUserId = req.params.id;
+        const currentUserId =
+          (req.body?.currentUserId as string) ||
+          (req.query?.currentUserId as string) ||
+          targetUserId;
+
+        // Same auth pattern as PATCH /api/users/:id: self-edit is allowed;
+        // editing someone else's profile requires canEditProfiles.
+        const currentUser = await storage.getUser(currentUserId);
+        if (!currentUser) {
+          return res.status(404).json({ error: "Current user not found" });
+        }
+        if (targetUserId !== currentUserId && !canEditProfiles(currentUser)) {
+          return res
+            .status(403)
+            .json({ error: "You don't have permission to upload for this user" });
+        }
+
+        if (!file) {
+          return res.status(400).json({ error: "No file uploaded" });
+        }
+
+        // Verify the target user exists, and remove the previous KYC file
+        // (if any) so we don't leave orphaned documents on disk.
+        const targetUser = await storage.getUser(targetUserId);
+        if (!targetUser) {
+          // Best-effort cleanup of the just-uploaded file before erroring.
+          try {
+            fs.unlinkSync(file.path);
+          } catch {}
+          return res.status(404).json({ error: "User not found" });
+        }
+        if (targetUser.kycDocumentUrl) {
+          const prior = resolveKycFilePath(targetUser.kycDocumentUrl);
+          if (prior) {
+            try {
+              fs.unlinkSync(prior);
+            } catch (e) {
+              console.warn("[kyc] failed to remove prior file:", e);
+            }
+          }
+        }
+
+        const updated = await storage.updateUser(targetUserId, {
+          kycDocumentUrl: file.filename,
+        });
+        if (!updated) {
+          return res.status(404).json({ error: "User not found" });
+        }
+        res.json({
+          message: "KYC document uploaded",
+          kycDocumentUrl: updated.kycDocumentUrl,
+          originalName: file.originalname,
+          size: file.size,
+        });
+      } catch (err: any) {
+        // If anything failed after the file landed on disk, remove it so
+        // we don't accumulate orphaned uploads.
+        if (file?.path) {
+          try {
+            fs.unlinkSync(file.path);
+          } catch {}
+        }
+        console.error("Error uploading KYC document:", err);
+        res.status(500).json({ error: "Failed to upload KYC document" });
+      }
+    },
+  );
+
+  // Gated download — in production on S3, this would 302 to a pre-signed
+  // URL instead of streaming the file.
+  app.get("/api/users/:id/kyc-document", async (req, res) => {
+    try {
+      const targetUserId = req.params.id;
+      const currentUserId =
+        (req.query?.currentUserId as string) || targetUserId;
+
+      const currentUser = await storage.getUser(currentUserId);
+      if (!currentUser) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      if (targetUserId !== currentUserId && !canEditProfiles(currentUser)) {
+        return res
+          .status(403)
+          .json({ error: "You don't have permission to view this document" });
+      }
+
+      const targetUser = await storage.getUser(targetUserId);
+      if (!targetUser?.kycDocumentUrl) {
+        return res.status(404).json({ error: "No KYC document on file" });
+      }
+
+      const filePath = resolveKycFilePath(targetUser.kycDocumentUrl);
+      if (!filePath) {
+        return res
+          .status(404)
+          .json({ error: "KYC document file missing on disk" });
+      }
+
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType =
+        ext === ".pdf"
+          ? "application/pdf"
+          : ext === ".png"
+            ? "image/png"
+            : "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="kyc-${targetUserId}${ext}"`,
+      );
+      res.sendFile(filePath);
+    } catch (err) {
+      console.error("Error serving KYC document:", err);
+      res.status(500).json({ error: "Failed to serve KYC document" });
     }
   });
 
@@ -2487,6 +3217,450 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to clock out" });
     }
   });
+
+  // ============================================================================
+  // HOLIDAYS
+  // ============================================================================
+  //
+  // GET /api/holidays?userId=<id>&year=<yyyy>
+  //
+  // Returns the holiday calendar for the requesting user's
+  // `users.holidayState` (MUMBAI / DELHI / BENGALURU / HYDERABAD). If
+  // no state is assigned yet, returns []. The frontend attendance
+  // calendar uses this to paint purple holiday markers — it doesn't
+  // need to know which state to query.
+  //
+  // `year` defaults to the current calendar year (server clock) so a
+  // request from January gets January-onwards correctly.
+  //
+  // Auth: same lightweight `userId` query-string convention as
+  // /api/attendance et al.
+  app.get("/api/holidays", async (req, res) => {
+    try {
+      const userId = typeof req.query.userId === "string" ? req.query.userId : null;
+      if (!userId) {
+        return res.status(400).json({ error: "userId query parameter required" });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      // No state assigned yet: return [] rather than 4-state-mashup
+      // so the calendar simply shows zero holidays for unassigned
+      // employees (matches the seed plan).
+      if (!user.holidayState) {
+        return res.json([]);
+      }
+      const yearParam = typeof req.query.year === "string" ? req.query.year : null;
+      const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear();
+      const rows = await storage.listHolidaysByState(
+        user.holidayState,
+        Number.isFinite(year) ? year : undefined,
+      );
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching holidays:", error);
+      res.status(500).json({ error: "Failed to fetch holidays" });
+    }
+  });
+
+  // ============================================================================
+  // PAYROLL
+  // ============================================================================
+  //
+  // Three admin-only endpoints powering the Payroll dashboard:
+  //   GET  /api/payroll/preview   — auto-fetch metrics + dry-run math
+  //   POST /api/payroll/run       — finalize, render PDF, email, write ledger
+  //   GET  /api/payroll/ledger    — list past runs for a (year, month)
+  //   GET  /api/payroll/ledger/:id/pdf — download a previously generated PDF
+  //
+  // Auth: every endpoint demands `currentUserId` and rejects non-admins
+  // with 403. Same convention as /api/analytics/pare.
+
+  async function requireAdmin(req: any, res: any): Promise<{ ok: true } | { ok: false }> {
+    const requesterId = typeof req.query.currentUserId === "string"
+      ? req.query.currentUserId
+      : typeof req.body?.currentUserId === "string"
+        ? req.body.currentUserId
+        : null;
+    if (!requesterId) {
+      res.status(401).json({ error: "Unauthorized: currentUserId required." });
+      return { ok: false };
+    }
+    const requester = await storage.getUser(requesterId);
+    if (!requester) {
+      res.status(401).json({ error: "Unauthorized: user not found." });
+      return { ok: false };
+    }
+    if (!isAdmin(requester)) {
+      res.status(403).json({ error: "Forbidden: admin role required." });
+      return { ok: false };
+    }
+    return { ok: true };
+  }
+
+  app.get("/api/payroll/preview", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const userId = String(req.query.userId ?? "");
+      const year = parseInt(String(req.query.year ?? ""), 10);
+      const month = parseInt(String(req.query.month ?? ""), 10);
+      if (!userId || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "userId, year, month required (month 1-12)" });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const [
+        { expectedWorkingDays, runPayrollMath, ANNUAL_PAID_HOLIDAY_CAP },
+        metrics,
+      ] = await Promise.all([
+        import("./services/payroll"),
+        import("./services/payroll-metrics"),
+      ]);
+
+      const expectedDays = expectedWorkingDays(year, month);
+      const [att, autoHolidays, deliveryRate, teamRate, ytdHolidays, existing] = await Promise.all([
+        metrics.getAttendanceMetrics(userId, year, month),
+        user.holidayState ? metrics.getAutoPaidHolidaysCount(user.holidayState, year, month) : 0,
+        metrics.getConfirmationDeliveryRatePct(userId, year, month),
+        metrics.getTeamDeliveryRatePct(year, month),
+        metrics.getYtdPaidHolidaysUsed(userId, year, month),
+        storage.getPayrollLedgerByPeriod(userId, year, month),
+      ]);
+
+      // Clip auto-holiday count to the remaining annual quota (cap = 11).
+      // The admin can still override on the dashboard.
+      const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
+      const paidHolidaysAuto = Math.min(autoHolidays, remainingQuota);
+
+      const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
+      const result = runPayrollMath({
+        baseSalary,
+        expectedWorkingDays: expectedDays,
+        daysPresent: att.daysPresent,
+        paidHolidaysUsed: paidHolidaysAuto,
+        compensationProfile: (user.compensationProfile as any) ?? null,
+        deliveryRatePct: deliveryRate,
+        teamDeliveryRatePct: teamRate,
+        personalRecoveryRatePct: null, // admin enters
+        reshipsCount: null, // admin enters
+      });
+
+      res.json({
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          email: user.email,
+          role: user.role,
+          holidayState: user.holidayState,
+          compensationProfile: user.compensationProfile,
+          baseSalary,
+          employeeId: user.employeeId,
+          department: user.department,
+        },
+        period: { year, month },
+        attendance: { ...att, expectedWorkingDays: expectedDays },
+        holidayQuota: {
+          annualCap: ANNUAL_PAID_HOLIDAY_CAP,
+          ytdUsed: ytdHolidays,
+          remaining: remainingQuota,
+          autoCountFromCalendar: autoHolidays,
+          autoCountAfterQuota: paidHolidaysAuto,
+        },
+        autoMetrics: {
+          deliveryRatePct: deliveryRate,
+          teamDeliveryRatePct: teamRate,
+          personalRecoveryRatePct: null,
+          reshipsCount: null,
+        },
+        math: result,
+        existingLedger: existing
+          ? {
+              id: existing.id,
+              status: existing.status,
+              sentAt: existing.sentAt,
+              finalPayout: existing.finalPayout,
+            }
+          : null,
+      });
+    } catch (error) {
+      console.error("Error in /api/payroll/preview:", error);
+      res.status(500).json({ error: "Failed to compute payroll preview" });
+    }
+  });
+
+  app.post("/api/payroll/run", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const userId = String(body.userId ?? "");
+      const year = parseInt(String(body.year ?? ""), 10);
+      const month = parseInt(String(body.month ?? ""), 10);
+      if (!userId || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "userId, year, month required (month 1-12)" });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      if (user.baseSalary == null) {
+        return res.status(400).json({ error: "User has no base salary set." });
+      }
+
+      const payroll = await import("./services/payroll");
+      const expectedDays = payroll.expectedWorkingDays(year, month);
+
+      // Caller-supplied numbers (admin overrides). If a field is
+      // missing/null we leave it unset; the engine treats null as zero
+      // for incentive components.
+      const daysPresent = parseIntOr(body.daysPresent, 0);
+      const paidHolidaysUsed = parseIntOr(body.paidHolidaysUsed, 0);
+      const deliveryRatePct = parseFloatOrNull(body.deliveryRatePct);
+      const teamDeliveryRatePct = parseFloatOrNull(body.teamDeliveryRatePct);
+      const personalRecoveryRatePct = parseFloatOrNull(body.personalRecoveryRatePct);
+      const reshipsCount = parseIntOr(body.reshipsCount, 0);
+      const notes = typeof body.notes === "string" ? body.notes : null;
+
+      const baseSalary = Number(user.baseSalary);
+      const profile =
+        (user.compensationProfile as
+          | "ORDER_CONFIRMATION"
+          | "NDR_RTO"
+          | "CHAT_SUPPORT"
+          | null) ?? null;
+
+      const math = payroll.runPayrollMath({
+        baseSalary,
+        expectedWorkingDays: expectedDays,
+        daysPresent,
+        paidHolidaysUsed,
+        compensationProfile: profile,
+        deliveryRatePct,
+        teamDeliveryRatePct,
+        personalRecoveryRatePct,
+        reshipsCount,
+      });
+
+      // Persist (or update existing) ledger row before email — that
+      // way a Resend failure doesn't lose the calculation; the route
+      // patches dispatch fields after the email attempt.
+      const created = await storage.upsertPayrollLedger({
+        userId,
+        year,
+        month,
+        baseSalary: String(baseSalary),
+        expectedWorkingDays: expectedDays,
+        daysPresent,
+        paidHolidaysUsed,
+        basePayRatio: String(round4(math.base.ratio)),
+        basePayAmount: String(math.base.amount),
+        compensationProfile: profile,
+        deliveryRatePct: deliveryRatePct != null ? String(deliveryRatePct) : null,
+        teamDeliveryRatePct: teamDeliveryRatePct != null ? String(teamDeliveryRatePct) : null,
+        recoveryRatePct: personalRecoveryRatePct != null ? String(personalRecoveryRatePct) : null,
+        reshipsCount,
+        confirmationBonus: String(math.incentives.confirmationBonus),
+        teamDeliveryBonus: String(math.incentives.teamDeliveryBonus),
+        recoveryBonus: String(math.incentives.recoveryBonus),
+        reshipsBonus: String(math.incentives.reshipsBonus),
+        totalIncentives: String(math.incentives.total),
+        finalPayout: String(math.finalPayout),
+        currency: "INR",
+        status: "finalized",
+        recipientEmail: user.email,
+        notes,
+        createdBy: req.body?.currentUserId ?? null,
+      });
+
+      // ── Render PDF + email ──────────────────────────────────────
+      const { renderPayslipPdf } = await import("./services/payslip-pdf");
+      const { sendPayslipEmail } = await import("./services/payslip-email");
+      const data = {
+        employee: {
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId ?? null,
+          holidayState: user.holidayState ?? null,
+          department: user.department ?? null,
+        },
+        period: { year, month },
+        base: {
+          baseSalary,
+          expectedWorkingDays: expectedDays,
+          daysPresent,
+          paidHolidaysUsed,
+          ratio: math.base.ratio,
+          amount: math.base.amount,
+          capped: math.base.capped,
+        },
+        incentives: {
+          profile,
+          deliveryRatePct,
+          teamDeliveryRatePct,
+          recoveryRatePct: personalRecoveryRatePct,
+          reshipsCount,
+          confirmationBonus: math.incentives.confirmationBonus,
+          teamDeliveryBonus: math.incentives.teamDeliveryBonus,
+          recoveryBonus: math.incentives.recoveryBonus,
+          reshipsBonus: math.incentives.reshipsBonus,
+          total: math.incentives.total,
+        },
+        finalPayout: math.finalPayout,
+        ledgerId: created.id,
+        generatedAt: new Date(),
+      };
+
+      let pdfFile: Awaited<ReturnType<typeof renderPayslipPdf>>;
+      try {
+        pdfFile = await renderPayslipPdf(data);
+      } catch (pdfErr: any) {
+        await storage.updatePayrollLedgerDispatch(created.id, {
+          status: "failed",
+          emailError: `PDF render failed: ${pdfErr?.message ?? String(pdfErr)}`,
+        });
+        return res.status(500).json({ error: "Payroll persisted but PDF render failed", ledgerId: created.id });
+      }
+
+      let dispatchOk = true;
+      let dispatchErr: string | null = null;
+      try {
+        await sendPayslipEmail(data, pdfFile);
+      } catch (emailErr: any) {
+        dispatchOk = false;
+        dispatchErr = emailErr?.message ?? String(emailErr);
+      }
+
+      await storage.updatePayrollLedgerDispatch(created.id, {
+        status: dispatchOk ? "sent" : "failed",
+        pdfFilename: pdfFile.filename,
+        sentAt: dispatchOk ? new Date() : null,
+        emailError: dispatchErr,
+      });
+
+      const fresh = await storage.getPayrollLedgerById(created.id);
+      res.json({
+        ledger: fresh,
+        math,
+        pdf: { filename: pdfFile.filename, byteLength: pdfFile.byteLength },
+        emailSent: dispatchOk,
+        emailError: dispatchErr,
+      });
+    } catch (error: any) {
+      console.error("Error in /api/payroll/run:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to run payroll" });
+    }
+  });
+
+  app.get("/api/payroll/ledger", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const year = parseInt(String(req.query.year ?? ""), 10);
+      const month = parseInt(String(req.query.month ?? ""), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const rows = await storage.listPayrollLedger(year, month);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error in /api/payroll/ledger:", error);
+      res.status(500).json({ error: "Failed to list payroll ledger" });
+    }
+  });
+
+  // Re-render the PDF on demand from the persisted ledger row. This is
+  // Vercel-safe: the previous implementation read from
+  // `uploads/payslips/`, which is ephemeral on serverless (the file
+  // from the original Run is gone the moment that invocation ends).
+  // The ledger row carries every input the engine needs, and the PDF
+  // template is a deterministic function of those inputs, so a fresh
+  // render reproduces the original byte-for-byte (modulo
+  // `generatedAt`, which intentionally reflects the download time).
+  app.get("/api/payroll/ledger/:id/pdf", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const row = await storage.getPayrollLedgerById(req.params.id);
+      if (!row) return res.status(404).json({ error: "Ledger entry not found" });
+
+      const user = await storage.getUser(row.userId);
+      if (!user) return res.status(404).json({ error: "Employee record missing" });
+
+      const { renderPayslipPdfBuffer } = await import("./services/payslip-pdf");
+      const period = `${row.year}-${String(row.month).padStart(2, "0")}`;
+      const safeName = user.fullName.replace(/[^a-z0-9]/gi, "_");
+      const filename = `${safeName}__${period}.pdf`;
+
+      const buf = await renderPayslipPdfBuffer({
+        employee: {
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId ?? null,
+          holidayState: user.holidayState ?? null,
+          department: user.department ?? null,
+        },
+        period: { year: row.year, month: row.month },
+        base: {
+          baseSalary: Number(row.baseSalary),
+          expectedWorkingDays: row.expectedWorkingDays,
+          daysPresent: row.daysPresent,
+          paidHolidaysUsed: row.paidHolidaysUsed,
+          ratio: Number(row.basePayRatio),
+          amount: Number(row.basePayAmount),
+          // capped is derivable from ratio == 1 AND
+          // (daysPresent + paidHolidays) > expectedWorkingDays
+          capped:
+            Number(row.basePayRatio) >= 1 &&
+            row.daysPresent + row.paidHolidaysUsed > row.expectedWorkingDays,
+        },
+        incentives: {
+          profile:
+            (row.compensationProfile as
+              | "ORDER_CONFIRMATION"
+              | "NDR_RTO"
+              | "CHAT_SUPPORT"
+              | null) ?? null,
+          deliveryRatePct: row.deliveryRatePct != null ? Number(row.deliveryRatePct) : null,
+          teamDeliveryRatePct:
+            row.teamDeliveryRatePct != null ? Number(row.teamDeliveryRatePct) : null,
+          recoveryRatePct: row.recoveryRatePct != null ? Number(row.recoveryRatePct) : null,
+          reshipsCount: row.reshipsCount ?? 0,
+          confirmationBonus: Number(row.confirmationBonus),
+          teamDeliveryBonus: Number(row.teamDeliveryBonus),
+          recoveryBonus: Number(row.recoveryBonus),
+          reshipsBonus: Number(row.reshipsBonus),
+          total: Number(row.totalIncentives),
+        },
+        finalPayout: Number(row.finalPayout),
+        ledgerId: row.id,
+        generatedAt: new Date(),
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", String(buf.byteLength));
+      res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+      res.end(buf);
+    } catch (error: any) {
+      console.error("Error rendering payslip PDF:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to render payslip PDF" });
+    }
+  });
+
+  // Helpers used by the payroll routes (kept local to avoid leaking
+  // into the global module surface).
+  function parseIntOr(v: any, fallback: number): number {
+    const n = parseInt(String(v ?? ""), 10);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function parseFloatOrNull(v: any): number | null {
+    if (v == null || v === "") return null;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : null;
+  }
+  function round4(n: number): number {
+    return Math.round(n * 10000) / 10000;
+  }
 
   // Get attendance records
   app.get("/api/attendance", async (req, res) => {

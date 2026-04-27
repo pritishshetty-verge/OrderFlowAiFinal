@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, Webhook, FileJson } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -45,6 +45,11 @@ const adminMenuItems: MenuItem[] = [
     icon: Home,
   },
   {
+    title: "Pare",
+    url: "/pare",
+    icon: Activity,
+  },
+  {
     title: "Orders",
     icon: Package,
     items: [
@@ -86,10 +91,18 @@ const adminMenuItems: MenuItem[] = [
     icon: Users,
   },
   {
-    title: "Webhooks",
-    url: "/webhooks",
-    icon: Webhook,
+    title: "Payroll",
+    url: "/payroll",
+    icon: Wallet,
   },
+  {
+    title: "Integrations",
+    url: "/integrations",
+    icon: Plug,
+  },
+  // "Webhooks" intentionally removed from the sidebar — it's now
+  // surfaced as the action button on the Custom Webhooks card inside
+  // /integrations to declutter primary navigation.
   {
     title: "API Logs",
     url: "/api-logs",
@@ -134,7 +147,17 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   });
 
   const isRecoveryAgent = userRole === "recovery_agent";
-  const menuItems = isRecoveryAgent ? recoveryAgentMenuItems : adminMenuItems;
+  const isAdmin = userRole === "admin";
+  // Admin menu is shared with agents today, but a few entries are
+  // admin-only. Filter them here so the nav matches the route guards
+  // (AdminOnlyGuard in App.tsx, 403 on the server).
+  const baseMenuItems = isRecoveryAgent ? recoveryAgentMenuItems : adminMenuItems;
+  const ADMIN_ONLY_URLS = new Set(["/pare", "/integrations", "/payroll"]);
+  const menuItems = isAdmin
+    ? baseMenuItems
+    : baseMenuItems.filter(
+        (item) => !(item.url && ADMIN_ONLY_URLS.has(item.url)),
+      );
 
   const isPathActive = (url: string) => {
     if (url === "/") return location === "/";

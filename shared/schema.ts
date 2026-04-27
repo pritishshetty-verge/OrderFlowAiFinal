@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -22,7 +22,25 @@ export const users = pgTable("users", {
   employeeId: text("employee_id").unique(),
   agentExtension: varchar("agent_extension", { length: 10 }), // IVR phone extension for agents
   presenceStatus: text("presence_status").notNull().default("present"), // present, onleave, inactive
+  // Which city's holiday calendar this employee follows. Drives the
+  // purple "holiday" markers on /api/holidays + attendance calendar.
+  // One of: MUMBAI, DELHI, BENGALURU, HYDERABAD. Nullable — pre-payroll
+  // hires haven't been assigned a state yet.
+  holidayState: text("holiday_state"),
+  // ── Payroll ─────────────────────────────────────────────────────
+  // Monthly gross salary in INR (whole rupees + paise). Drives the
+  // base-pay leg of /api/payroll/preview & /run. Nullable: roles that
+  // don't pull payroll (e.g. external contractors) have no salary set.
+  baseSalary: decimal("base_salary", { precision: 12, scale: 2 }),
+  // Drives which incentive ladder applies on /api/payroll/preview.
+  // One of: ORDER_CONFIRMATION (delivery-rate tier), NDR_RTO
+  // (stackable team-delivery + personal-recovery + reships), or null
+  // for staff that don't earn variable pay.
+  compensationProfile: text("compensation_profile"),
   isActive: boolean("is_active").notNull().default(true),
+  // KYC document: currently holds the local filename in uploads/kyc/.
+  // Will be swapped for the S3 object key once migrated.
+  kycDocumentUrl: text("kyc_document_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -53,7 +71,11 @@ export const updateUserSchema = createInsertSchema(users).pick({
   employeeId: true,
   agentExtension: true,
   presenceStatus: true,
+  holidayState: true,
+  baseSalary: true,
+  compensationProfile: true,
   isActive: true,
+  kycDocumentUrl: true,
 }).partial();
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -160,6 +182,38 @@ export type Invite = typeof invites.$inferSelect;
 // CUSTOMERS
 // ============================================================================
 
+// ============================================================================
+// PIN-CODE TIERS (for Pare Phase 5 · Geographic Risk Segmentation)
+// ============================================================================
+
+// ============================================================================
+// MARKETING METRICS (for Pare Phase 4 · Meta/FB ad data, aggregated per day)
+// ============================================================================
+
+export const marketingMetrics = pgTable("marketing_metrics", {
+  date: date("date").primaryKey(),
+  fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
+  // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
+  fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
+  fbGmv: decimal("fb_gmv", { precision: 14, scale: 2 }).notNull().default("0"),
+  fbOrders: integer("fb_orders").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type MarketingMetric = typeof marketingMetrics.$inferSelect;
+export type InsertMarketingMetric = typeof marketingMetrics.$inferInsert;
+
+export const pincodeTiers = pgTable("pincode_tiers", {
+  pincode: varchar("pincode", { length: 12 }).primaryKey(),
+  city: varchar("city", { length: 128 }),
+  state: varchar("state", { length: 64 }),
+  // 'Tier 1' | 'Tier 2' | 'Tier 3' | 'Unknown'
+  tier: varchar("tier", { length: 16 }).notNull(),
+});
+
+export type PincodeTier = typeof pincodeTiers.$inferSelect;
+export type InsertPincodeTier = typeof pincodeTiers.$inferInsert;
+
 export const customers = pgTable("customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   shopifyCustomerId: text("shopify_customer_id").unique(),
@@ -255,6 +309,10 @@ export const orders = pgTable("orders", {
   // Metadata
   tags: text("tags").array(),
   notes: text("notes"),
+  // Shopify marks test orders (created via Bogus Gateway or test mode) with
+  // order.test = true. Pare's analytics MUST exclude these from the
+  // financial waterfall — they don't appear in Shopify's own sales reports.
+  testOrder: boolean("test_order").notNull().default(false),
   rawShopifyData: jsonb("raw_shopify_data"), // Store full Shopify order data
   
   // Shopify Sync Tracking
@@ -263,6 +321,12 @@ export const orders = pgTable("orders", {
   
   // Timestamps
   shopifyCreatedAt: timestamp("shopify_created_at").notNull(),
+  // Shopify's processed_at is the canonical "financial" timestamp —
+  // what Shopify's own sales reports bucket on. Stored as timestamptz
+  // so IST bucketing math is correct without ambiguous plain-ts casts.
+  // Nullable initially so the backfill can populate historic rows; the
+  // sync writes it on every new order going forward.
+  processedAt: timestamp("processed_at", { mode: "string", withTimezone: true }),
   shopifyUpdatedAt: timestamp("shopify_updated_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -530,6 +594,102 @@ export const insertAttendanceBreakSchema = createInsertSchema(attendanceBreaks).
 
 export type InsertAttendanceBreak = z.infer<typeof insertAttendanceBreakSchema>;
 export type AttendanceBreak = typeof attendanceBreaks.$inferSelect;
+
+// ============================================================================
+// HOLIDAYS (Payroll: per-state holiday calendar)
+// ============================================================================
+//
+// One row per (state, date). Seeded annually from the official Verge
+// Scales calendar PDF — see `server/scripts/seed-holidays.ts`. The
+// frontend attendance calendar consults this table via GET /api/holidays
+// to render purple holiday markers, scoped to the logged-in user's
+// `users.holidayState`.
+
+export const holidays = pgTable("holidays", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  date: date("date").notNull(), // YYYY-MM-DD; PG `date` type, not timestamptz
+  name: text("name").notNull(), // "Diwali", "Republic Day", etc.
+  state: text("state").notNull(), // MUMBAI | DELHI | BENGALURU | HYDERABAD
+  type: text("type").notNull(), // Fixed | Optional
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertHolidaySchema = createInsertSchema(holidays).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertHoliday = z.infer<typeof insertHolidaySchema>;
+export type Holiday = typeof holidays.$inferSelect;
+
+// ============================================================================
+// PAYROLL LEDGER (Monthly payroll runs, one row per (user, year, month))
+// ============================================================================
+//
+// Persisted result of a payroll run. The values stored here are the
+// numbers actually disbursed — including any admin overrides — and the
+// pay components are denormalised out of the math service so a future
+// audit doesn't depend on re-running the engine. The PDF generated at
+// run time is also referenced by filename for re-download.
+
+export const payrollLedger = pgTable("payroll_ledger", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  year: integer("year").notNull(),
+  month: integer("month").notNull(), // 1–12
+
+  // ── Base-pay inputs ─────────────────────────────────────────────
+  baseSalary: decimal("base_salary", { precision: 12, scale: 2 }).notNull(),
+  expectedWorkingDays: integer("expected_working_days").notNull(),
+  daysPresent: integer("days_present").notNull(),
+  paidHolidaysUsed: integer("paid_holidays_used").notNull().default(0),
+  // Capped ratio ((daysPresent + paidHolidays) / expectedDays), max 1.0
+  basePayRatio: decimal("base_pay_ratio", { precision: 5, scale: 4 }).notNull(),
+  basePayAmount: decimal("base_pay_amount", { precision: 12, scale: 2 }).notNull(),
+
+  // ── Incentive inputs (% values stored as 0–100, not 0–1) ────────
+  compensationProfile: text("compensation_profile"), // mirrors users.compensationProfile at run time
+  deliveryRatePct: decimal("delivery_rate_pct", { precision: 5, scale: 2 }),
+  teamDeliveryRatePct: decimal("team_delivery_rate_pct", { precision: 5, scale: 2 }),
+  recoveryRatePct: decimal("recovery_rate_pct", { precision: 5, scale: 2 }),
+  reshipsCount: integer("reships_count").default(0),
+
+  // ── Incentive outputs ───────────────────────────────────────────
+  confirmationBonus: decimal("confirmation_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
+  teamDeliveryBonus: decimal("team_delivery_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
+  recoveryBonus: decimal("recovery_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
+  reshipsBonus: decimal("reships_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalIncentives: decimal("total_incentives", { precision: 12, scale: 2 }).notNull().default("0"),
+
+  // ── Final payout ────────────────────────────────────────────────
+  finalPayout: decimal("final_payout", { precision: 12, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("INR"),
+
+  // ── Lifecycle ───────────────────────────────────────────────────
+  status: text("status").notNull().default("finalized"), // finalized | sent | failed
+  pdfFilename: text("pdf_filename"), // relative to uploads/payslips/
+  recipientEmail: text("recipient_email"),
+  sentAt: timestamp("sent_at"),
+  emailError: text("email_error"), // populated on failure for retry / debug
+
+  // Free-text notes the admin attached on Run (override reasons, etc.)
+  notes: text("notes"),
+
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertPayrollLedgerSchema = createInsertSchema(payrollLedger).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPayrollLedger = z.infer<typeof insertPayrollLedgerSchema>;
+export type PayrollLedger = typeof payrollLedger.$inferSelect;
 
 // ============================================================================
 // CALLS (IVR Click-to-Call Tracking)

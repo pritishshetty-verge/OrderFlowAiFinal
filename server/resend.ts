@@ -1,43 +1,24 @@
 import { Resend } from 'resend';
 
-let connectionSettings: any;
+function getResendConfig() {
+  const apiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.RESEND_FROM_EMAIL;
 
-async function getCredentials() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
-
-  if (!xReplitToken) {
-    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY environment variable is not set');
+  }
+  if (!fromEmail) {
+    throw new Error('RESEND_FROM_EMAIL environment variable is not set');
   }
 
-  connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
-    {
-      headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
-
-  if (!connectionSettings || (!connectionSettings.settings.api_key)) {
-    throw new Error('Resend not connected');
-  }
-  return {
-    apiKey: connectionSettings.settings.api_key, 
-    fromEmail: connectionSettings.settings.from_email
-  };
+  return { apiKey, fromEmail };
 }
 
 export async function getUncachableResendClient() {
-  const credentials = await getCredentials();
+  const { apiKey, fromEmail } = getResendConfig();
   return {
-    client: new Resend(credentials.apiKey),
-    fromEmail: connectionSettings.settings.from_email
+    client: new Resend(apiKey),
+    fromEmail,
   };
 }
 
@@ -50,8 +31,7 @@ export async function sendInvitationEmail(params: {
 }) {
   const { client, fromEmail } = await getUncachableResendClient();
   
-  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  const baseUrl = domain ? `https://${domain}` : 'http://localhost:5000';
+  const baseUrl = process.env.APP_BASE_URL || 'http://localhost:5000';
   const inviteUrl = `${baseUrl}/signup?token=${params.inviteToken}`;
   
   const expiryDate = new Date(params.expiresAt).toLocaleDateString('en-US', {

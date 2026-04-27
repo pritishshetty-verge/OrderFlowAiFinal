@@ -10,6 +10,7 @@ import { ScopeProvider } from "@/contexts/scope-context";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import OverviewPage from "@/pages/analytics";
+import ParePage from "@/pages/pare";
 import OrdersPage from "@/pages/orders";
 import FulfilPage from "@/pages/fulfil";
 import NDRPage from "@/pages/ndr";
@@ -30,6 +31,8 @@ import LearningCenterPlaceholder from "@/pages/LearningCenter";
 import TeamsPlaceholder from "@/pages/Teams";
 import WebhooksSettingsPage from "@/pages/webhooks-settings";
 import WebhookLogsPage from "@/pages/webhook-logs";
+import IntegrationsPage from "@/pages/integrations";
+import PayrollPage from "@/pages/payroll";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -76,6 +79,21 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
   return <ProtectedRoute component={Component} />;
 }
 
+// Admin-only guard — stricter superset of ProtectedRoute. Use for routes
+// like /pare (Clean Revenue analytics) that agents and recovery_agents
+// must not see. If the user is signed-in-but-not-admin, bounce them to
+// the Overview page (/). Signed-out users fall through to
+// ProtectedRoute's /login redirect.
+function AdminOnlyGuard({ component: Component }: { component: React.ComponentType }) {
+  const userRole = localStorage.getItem("userRole");
+
+  if (userRole && userRole !== "admin") {
+    return <Redirect to="/" />;
+  }
+
+  return <ProtectedRoute component={Component} />;
+}
+
 function Router() {
   const userRole = localStorage.getItem("userRole") || "admin";
   
@@ -97,6 +115,9 @@ function Router() {
       </Route>
       <Route path="/team">
         {() => <RecoveryAgentGuard component={TeamPage} />}
+      </Route>
+      <Route path="/pare">
+        {() => <AdminOnlyGuard component={ParePage} />}
       </Route>
       <Route path="/profile">
         {() => <ProtectedRoute component={ProfilePage} />}
@@ -145,6 +166,12 @@ function Router() {
       </Route>
       <Route path="/api-logs">
         {() => <RecoveryAgentGuard component={WebhookLogsPage} />}
+      </Route>
+      <Route path="/integrations">
+        {() => <AdminOnlyGuard component={IntegrationsPage} />}
+      </Route>
+      <Route path="/payroll">
+        {() => <AdminOnlyGuard component={PayrollPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
