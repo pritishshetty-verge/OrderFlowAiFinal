@@ -1,7 +1,41 @@
-server/public
-vite.config.ts.*
-*.tar.gznode_modules/
-.env
-.claude/
-uploads/
+# Dependencies & build
+node_modules/
 dist/
+build/
+.cache/
+
+# Env / secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local-only Claude state + worktrees
+.claude/
+.agents/
+.local/
+.config/
+
+# Uploads (KYC docs, payslip PDFs — local-only, may contain PII).
+# Keep the dir scaffolding so the app boots; ignore contents.
+uploads/**
+!uploads/
+!uploads/**/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Large local-only seed data (23 MB — host elsewhere)
+pincodes.csv
+
+# Reference PDFs dropped into the repo locally
+*.pdf
+
+# tsx/Vite intermediate
+vite.config.ts.*
