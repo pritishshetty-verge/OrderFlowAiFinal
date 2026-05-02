@@ -1,4 +1,4 @@
-import { LoginForm } from "@/components/login-form";
+import { LoginForm, type RegisterPayload } from "@/components/login-form";
 import { useLocation } from "wouter";
 
 export default function LoginPage() {
@@ -6,7 +6,7 @@ export default function LoginPage() {
 
   const handleLogin = async (email: string, password: string, role: string) => {
     console.log("Login successful:", { email, role });
-    
+
     // Fetch actual user from database by email to get real userId
     try {
       const response = await fetch(`/api/users/by-email/${encodeURIComponent(email)}`);
@@ -30,9 +30,36 @@ export default function LoginPage() {
       localStorage.setItem("userId", crypto.randomUUID());
       localStorage.setItem("userEmail", email);
     }
-    
+
     setLocation("/");
   };
 
-  return <LoginForm onLogin={handleLogin} />;
+  const handleRegister = async (data: RegisterPayload) => {
+    const response = await fetch("/api/auth/register-admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      let message = "Failed to create account";
+      try {
+        const body = await response.json();
+        if (body?.error) message = body.error;
+        else if (body?.details?.[0]?.message)
+          message = body.details[0].message;
+      } catch {
+        // ignore parse errors; fall back to default message
+      }
+      throw new Error(message);
+    }
+
+    const user = await response.json();
+    localStorage.setItem("userRole", user.role);
+    localStorage.setItem("userId", user.id);
+    localStorage.setItem("userEmail", user.email);
+    setLocation("/");
+  };
+
+  return <LoginForm onLogin={handleLogin} onRegister={handleRegister} />;
 }

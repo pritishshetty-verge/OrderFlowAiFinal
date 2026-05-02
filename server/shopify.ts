@@ -13,6 +13,18 @@ interface TokenCache {
   expiresAt: number;
 }
 
+// Shape of a webhook record as returned by Shopify's REST Admin API
+// (`GET /admin/api/{version}/webhooks.json`). Narrow type — we only
+// touch the fields the idempotent registration needs.
+export interface ShopifyWebhook {
+  id: number;
+  topic: string;
+  address: string;
+  format: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh 5 minutes before expiry
 
 export class ShopifyClient {
@@ -189,6 +201,69 @@ export class ShopifyClient {
     return data.shop;
   }
 
+  // Fetch every test-mode order (Shopify's `test=true` flag) across the
+  // whole store, paginated. Uses the same Link-header cursor pattern as
+  // fetchAllProducts. Shopify's REST filter `test=true` is accepted as
+  // a query param; we also filter client-side as a defence-in-depth in
+  // case the param is ever silently ignored.
+  async fetchAllTestOrders(): Promise<
+    Array<{ id: number; name: string; test: boolean }>
+  > {
+    const out: Array<{ id: number; name: string; test: boolean }> = [];
+    let pageInfo: string | null = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const params = new URLSearchParams();
+      params.set("limit", "250");
+      params.set("status", "any");
+      params.set("fields", "id,name,test");
+      // Initial page can pass additional filters; Link-cursor pages
+      // must NOT include any filter other than page_info.
+      if (pageInfo) {
+        params.set("page_info", pageInfo);
+      } else {
+        params.set("test", "true");
+      }
+
+      const url = `${this.baseUrl}/orders.json?${params.toString()}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: await this.getHeaders(),
+      });
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("Shopify test-orders API error:", {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorBody,
+        });
+        throw new Error(
+          `Shopify API error: ${response.statusText} (${response.status})`,
+        );
+      }
+      const data = await response.json();
+      for (const o of data.orders || []) {
+        if (o.test === true) {
+          out.push({ id: Number(o.id), name: String(o.name ?? ""), test: true });
+        }
+      }
+
+      const linkHeader = response.headers.get("Link");
+      if (linkHeader && linkHeader.includes('rel="next"')) {
+        const match = linkHeader.match(
+          /<[^>]*page_info=([^>&>]+)[^>]*>;\s*rel="next"/,
+        );
+        pageInfo = match ? match[1] : null;
+        hasNextPage = !!pageInfo;
+      } else {
+        hasNextPage = false;
+      }
+    }
+
+    return out;
+  }
+
   async fetchAllProducts(): Promise<any[]> {
     const allProducts: any[] = [];
     let pageInfo: string | null = null;
@@ -250,7 +325,54 @@ export class ShopifyClient {
     return hash === hmacHeader;
   }
 
-  async registerWebhook(topic: string, address: string): Promise<any> {
+  // ── Webhook registration ──────────────────────────────────────────
+  // Idempotent by design so it's safe to call on every server boot:
+  //   • "unchanged" — same topic+address already registered, no-op
+  //   • "updated"   — topic exists but at a different address (e.g.
+  //                   ngrok tunnel rotated), we PUT the new address
+  //   • "created"   — topic wasn't registered, we POST a new one
+  //
+  // Callers pass in a pre-fetched `existing` list to avoid re-listing
+  // once per registration. See `registerAllWebhooks()` for usage.
+  async registerWebhook(
+    topic: string,
+    address: string,
+    existing?: ShopifyWebhook[],
+  ): Promise<{
+    action: "created" | "updated" | "unchanged";
+    webhook: ShopifyWebhook;
+  }> {
+    const list = existing ?? (await this.listWebhooks()).webhooks ?? [];
+    const match = list.find((w: ShopifyWebhook) => w.topic === topic);
+
+    // Same topic + same address → nothing to do.
+    if (match && match.address === address) {
+      return { action: "unchanged", webhook: match };
+    }
+
+    // Same topic, different address → PUT to update the address. This
+    // handles the ngrok-URL-rotation case without leaving orphan
+    // registrations pointing at dead hosts.
+    if (match && match.address !== address) {
+      const url = `${this.baseUrl}/webhooks/${match.id}.json`;
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: await this.getHeaders(),
+        body: JSON.stringify({ webhook: { id: match.id, address } }),
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(
+          `Failed to update webhook ${match.id} (${topic}): ${response.status} ${response.statusText} — ${body}`,
+        );
+      }
+      const json = await response.json();
+      return { action: "updated", webhook: json.webhook };
+    }
+
+    // New topic → POST. Shopify returns 422 if we race with another
+    // process; treat that as "already exists" and fall through to a
+    // second listWebhooks() to pick up whichever one won.
     const url = `${this.baseUrl}/webhooks.json`;
     const response = await fetch(url, {
       method: "POST",
@@ -258,14 +380,25 @@ export class ShopifyClient {
       body: JSON.stringify({ webhook: { topic, address, format: "json" } }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to register webhook: ${response.statusText}`);
+    if (response.status === 422) {
+      const fresh = (await this.listWebhooks()).webhooks ?? [];
+      const now = fresh.find((w: ShopifyWebhook) => w.topic === topic);
+      if (now) return { action: "unchanged", webhook: now };
+      // Fall through with the original 422 error if we still can't find it.
     }
 
-    return await response.json();
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Failed to register webhook (${topic} → ${address}): ${response.status} ${response.statusText} — ${body}`,
+      );
+    }
+
+    const json = await response.json();
+    return { action: "created", webhook: json.webhook };
   }
 
-  async listWebhooks(): Promise<any> {
+  async listWebhooks(): Promise<{ webhooks: ShopifyWebhook[] }> {
     const url = `${this.baseUrl}/webhooks.json`;
     const response = await fetch(url, {
       method: "GET",
@@ -277,6 +410,69 @@ export class ShopifyClient {
     }
 
     return await response.json();
+  }
+
+  // Register the full set of webhooks Pare needs. Topic → subpath
+  // mapping matches the handlers wired in server/routes.ts. One
+  // listWebhooks() call is reused for all four registrations so we
+  // don't hammer Shopify on every boot.
+  async registerAllWebhooks(appUrl: string): Promise<{
+    topics: Array<{
+      topic: string;
+      address: string;
+      action: "created" | "updated" | "unchanged" | "failed";
+      error?: string;
+    }>;
+  }> {
+    const base = appUrl.replace(/\/+$/, "");
+    const TOPIC_MAP: Array<{ topic: string; subpath: string }> = [
+      { topic: "orders/create",       subpath: "/api/webhooks/orders/create" },
+      { topic: "orders/updated",      subpath: "/api/webhooks/orders/update" },
+      { topic: "orders/cancelled",    subpath: "/api/webhooks/orders/cancelled" },
+      { topic: "fulfillments/update", subpath: "/api/webhooks/fulfillments/update" },
+    ];
+
+    // Fetch once, reuse for all four registrations.
+    let existing: ShopifyWebhook[] = [];
+    try {
+      const res = await this.listWebhooks();
+      existing = res.webhooks ?? [];
+    } catch (err: any) {
+      // If we can't list, don't try to register — every call would
+      // trip the duplicate-detection fallback unnecessarily. Surface
+      // the failure for each topic so the UI can show it.
+      const msg = err?.message ?? String(err);
+      return {
+        topics: TOPIC_MAP.map((t) => ({
+          topic: t.topic,
+          address: `${base}${t.subpath}`,
+          action: "failed" as const,
+          error: `listWebhooks() failed: ${msg}`,
+        })),
+      };
+    }
+
+    const results: Array<{
+      topic: string;
+      address: string;
+      action: "created" | "updated" | "unchanged" | "failed";
+      error?: string;
+    }> = [];
+    for (const { topic, subpath } of TOPIC_MAP) {
+      const address = `${base}${subpath}`;
+      try {
+        const { action } = await this.registerWebhook(topic, address, existing);
+        results.push({ topic, address, action });
+      } catch (err: any) {
+        results.push({
+          topic,
+          address,
+          action: "failed",
+          error: err?.message ?? String(err),
+        });
+      }
+    }
+    return { topics: results };
   }
 
   // ============================================================================

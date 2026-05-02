@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { PageLayout } from "@/components/page-layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,10 +8,57 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, Webhook, GitBranch, CheckCircle, AlertCircle, ExternalLink } from "lucide-react";
+import { ArrowLeft, Webhook, GitBranch, CheckCircle, AlertCircle, ExternalLink, Zap, Loader2, XCircle } from "lucide-react";
+
+// Shape mirrors POST /api/shopify/webhooks/register-all response.
+type RegisterTopic = {
+  topic: string;
+  address: string;
+  action: "created" | "updated" | "unchanged" | "failed";
+  error?: string;
+};
+type RegisterResult = {
+  appUrl: string;
+  topics: RegisterTopic[];
+  summary: { created: number; updated: number; unchanged: number; failed: number };
+};
 
 export default function ShopifyWebhooksPage() {
   const appUrl = window.location.origin;
+
+  // "Register All Now" state — standalone fetch instead of react-query
+  // because this is a one-shot imperative action triggered by a button.
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerResult, setRegisterResult] = useState<RegisterResult | null>(null);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+
+  async function handleRegisterAll() {
+    setIsRegistering(true);
+    setRegisterError(null);
+    setRegisterResult(null);
+    try {
+      const res = await fetch("/api/shopify/webhooks/register-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok && res.status !== 207) {
+        // 207 Multi-Status = some topics failed but the call itself
+        // succeeded. Treat it as a partial result, not a hard error.
+        setRegisterError(
+          body?.error ??
+            `Registration failed (HTTP ${res.status}). ${body?.hint ?? ""}`,
+        );
+        return;
+      }
+      setRegisterResult(body as RegisterResult);
+    } catch (err: any) {
+      setRegisterError(err?.message ?? "Network error");
+    } finally {
+      setIsRegistering(false);
+    }
+  }
 
   return (
     <PageLayout
@@ -28,6 +76,130 @@ export default function ShopifyWebhooksPage() {
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
+            {/* ── Direct-registration card (primary path) ─────────────── */}
+            <SettingsCard
+              icon={Zap}
+              title="Direct Registration (Recommended)"
+              description="Skip n8n entirely. Shopify posts straight to this server."
+            >
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  The server auto-registers all four webhook topics at boot using the{" "}
+                  <code className="bg-muted px-1 rounded">APP_URL</code> env var.
+                  Use the button below to force a re-registration if a tunnel
+                  rotated or a registration dropped.
+                </p>
+
+                <div className="rounded-lg border p-4 bg-muted/30 space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">Register all topics now</p>
+                      <p className="text-xs text-muted-foreground">
+                        Idempotent — topics already pointing at the right address report back as{" "}
+                        <code className="bg-muted px-1 rounded">unchanged</code>.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={handleRegisterAll}
+                      disabled={isRegistering}
+                      data-testid="btn-register-all-webhooks"
+                      className="shrink-0"
+                    >
+                      {isRegistering ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          Registering…
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4 mr-2" />
+                          Register All Now
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {registerError && (
+                    <Alert className="bg-red-500/10 border-red-500/20">
+                      <XCircle className="h-4 w-4 text-red-600" />
+                      <AlertDescription className="text-red-700 dark:text-red-400 text-xs">
+                        {registerError}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {registerResult && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-muted-foreground">Target:</span>
+                        <code className="bg-muted px-2 py-0.5 rounded">
+                          {registerResult.appUrl}
+                        </code>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {registerResult.summary.created > 0 && (
+                          <Badge className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20">
+                            {registerResult.summary.created} created
+                          </Badge>
+                        )}
+                        {registerResult.summary.updated > 0 && (
+                          <Badge className="bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20">
+                            {registerResult.summary.updated} updated
+                          </Badge>
+                        )}
+                        {registerResult.summary.unchanged > 0 && (
+                          <Badge variant="outline">
+                            {registerResult.summary.unchanged} unchanged
+                          </Badge>
+                        )}
+                        {registerResult.summary.failed > 0 && (
+                          <Badge className="bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20">
+                            {registerResult.summary.failed} failed
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="space-y-1 text-xs font-mono">
+                        {registerResult.topics.map((t) => (
+                          <div
+                            key={t.topic}
+                            className="flex items-start gap-2 py-1"
+                            data-testid={`webhook-topic-${t.topic.replace("/", "-")}`}
+                          >
+                            {t.action === "failed" ? (
+                              <XCircle className="h-3.5 w-3.5 text-red-600 mt-0.5 shrink-0" />
+                            ) : (
+                              <CheckCircle className="h-3.5 w-3.5 text-green-600 mt-0.5 shrink-0" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div>
+                                <span className="text-muted-foreground">{t.action}</span>{" "}
+                                <span className="font-semibold">{t.topic}</span>
+                              </div>
+                              <div className="text-muted-foreground truncate">{t.address}</div>
+                              {t.error && (
+                                <div className="text-red-600 mt-0.5">{t.error}</div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    <strong>Set up:</strong> Add{" "}
+                    <code className="bg-muted px-1 rounded">APP_URL</code> to your{" "}
+                    <code className="bg-muted px-1 rounded">.env</code> (HTTPS only — use
+                    ngrok for local dev). The server will auto-register webhooks on the
+                    next boot. Use the button above to re-run on demand.
+                  </AlertDescription>
+                </Alert>
+              </div>
+            </SettingsCard>
+
             <SettingsCard
               icon={Webhook}
               title="What are Webhooks?"

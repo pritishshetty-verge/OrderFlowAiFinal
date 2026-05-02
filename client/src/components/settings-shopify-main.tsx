@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings, CreditCard, ArrowLeftRight, Save } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings, CreditCard, ArrowLeftRight, Save, Download } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +26,22 @@ interface SyncResult {
   syncedCount: number;
   skippedCount: number;
   totalOrders: number;
+}
+
+interface ShopifySyncState {
+  isRunning: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  syncedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  totalFetched: number;
+  pagesFetched: number;
+  lastSinceId: string | null;
+  errors: Array<{ orderId: string; reason: string }>;
+  errorsTruncated: boolean;
+  lastError: string | null;
+  reachedMaxPages: boolean;
 }
 
 interface BackendOrder {
@@ -53,9 +69,113 @@ interface CredentialsStatus {
   testMessage?: string;
 }
 
-export function ShopifySettingsMain() {
+// ─────────────────────────────────────────────────────────────────────
+// ShopifyConnectionCard
+//
+// The credentials/sync/disconnect surface. This is what the Integrations
+// hub embeds inside its slide-over Sheet — everything operational
+// (webhook status, product catalog, payment mapping, help) lives in
+// separate exported components below so Settings can host them on the
+// "Store Operations" tab.
+// ─────────────────────────────────────────────────────────────────────
+export function ShopifyConnectionCard() {
   const { toast } = useToast();
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+  const [syncProgress, setSyncProgress] = useState<ShopifySyncState | null>(null);
+  const pollingRef = useRef<number | null>(null);
+
+  // Stop polling on unmount so we don't leak intervals if the user navigates
+  // away mid-sync.
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current !== null) {
+        window.clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, []);
+
+  // Resume sync awareness on (re)mount: if the backend reports a sync is
+  // already running (user switched tabs mid-sync and came back), immediately
+  // hydrate the progress card and restart the polling interval. We also
+  // restore the card for a sync that has *just* finished so the user can
+  // still see the final counts and download the error CSV if needed.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/shopify/sync/status");
+        if (!res.ok || cancelled) return;
+        const state = (await res.json()) as ShopifySyncState;
+        if (state.startedAt) {
+          setSyncProgress(state);
+        }
+        if (state.isRunning) {
+          startPolling();
+        }
+      } catch {
+        // Initial status fetch is best-effort; ignore failures.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stopPolling = () => {
+    if (pollingRef.current !== null) {
+      window.clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  };
+
+  const pollSyncStatus = async () => {
+    try {
+      const res = await fetch("/api/shopify/sync/status");
+      if (!res.ok) return;
+      const state = (await res.json()) as ShopifySyncState;
+      setSyncProgress(state);
+      if (!state.isRunning) {
+        stopPolling();
+      }
+    } catch {
+      // Transient polling failure — ignore; next tick will retry.
+    }
+  };
+
+  const startPolling = () => {
+    stopPolling();
+    // Poll immediately, then every 1.5s.
+    pollSyncStatus();
+    pollingRef.current = window.setInterval(pollSyncStatus, 1500);
+  };
+
+  // Build a CSV from the errors array and trigger a browser download.
+  const downloadErrorsCsv = () => {
+    if (!syncProgress || syncProgress.errors.length === 0) return;
+    const escape = (v: string) => {
+      // RFC 4180: wrap in quotes, double any embedded quote.
+      const needsQuote = /[",\r\n]/.test(v);
+      const escaped = v.replace(/"/g, '""');
+      return needsQuote ? `"${escaped}"` : escaped;
+    };
+    const header = "Order ID,Reason";
+    const rows = syncProgress.errors.map(
+      (e) => `${escape(e.orderId)},${escape(e.reason)}`,
+    );
+    const csv = [header, ...rows].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    a.href = url;
+    a.download = `shopify-sync-errors-${ts}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Fetch credentials status from database (source of truth for connection state)
   const { data: credentialsStatus } = useQuery<CredentialsStatus>({
@@ -63,38 +183,47 @@ export function ShopifySettingsMain() {
     refetchInterval: 30000,
   });
 
-  // Fetch most recent order to show webhook activity
-  const { data: recentOrderData, isLoading: isLoadingOrders } = useQuery<{ orders: BackendOrder[]; total: number }>({
+  // Pull the lightweight order count to surface "Total Orders" on the
+  // connection card. Webhook health is shown by ShopifyWebhookStatusCard
+  // (Settings → Store Operations).
+  const { data: recentOrderData } = useQuery<{ orders: BackendOrder[]; total: number }>({
     queryKey: ["/api/orders?limit=1"],
     refetchInterval: 30000,
   });
 
-  const lastOrder = recentOrderData?.orders?.[0];
   // Connection status is determined ONLY by database credentials, not by order count
   const isConnected = credentialsStatus?.configured === true;
 
   // Manual sync mutation
   const syncMutation = useMutation({
     mutationFn: async () => {
+      // Kick off polling immediately so the UI shows activity even during
+      // the first page fetch (which can take a few seconds).
+      startPolling();
       const response = await apiRequest("POST", "/api/shopify/sync", {
-        limit: 100,
+        limit: 250,
       });
       return response.json();
     },
     onSuccess: (data) => {
       setSyncResult(data);
+      // Do one final poll to flush the terminal state, then stop.
+      pollSyncStatus();
+      stopPolling();
       toast({
         title: "Sync Completed",
-        description: `Synced ${data.syncedCount} new orders, skipped ${data.skippedCount} existing orders.`,
+        description: `Synced ${data.syncedCount} new · skipped ${data.skippedCount} · failed ${data.failedCount ?? 0}`,
       });
     },
     onError: (error: Error) => {
+      pollSyncStatus();
+      stopPolling();
       const errorMessage = error.message || "Failed to sync orders from Shopify.";
       const isUnauthorized = errorMessage.includes("Unauthorized") || errorMessage.includes("401");
-      
+
       toast({
         title: "Sync Failed",
-        description: isUnauthorized 
+        description: isUnauthorized
           ? "Invalid Shopify credentials. Please check your API credentials."
           : errorMessage,
         variant: "destructive",
@@ -144,7 +273,6 @@ export function ShopifySettingsMain() {
 
   return (
     <div className="space-y-6">
-      {/* Connection Status */}
       <SettingsCard
         iconImg="https://cdn.shopify.com/s/files/1/0741/0594/6252/files/Shopify-logo.png?v=1765021115"
         title="Shopify Connection"
@@ -186,11 +314,11 @@ export function ShopifySettingsMain() {
             <div className="flex items-center gap-3">
               <Button
                 onClick={handleSync}
-                disabled={syncMutation.isPending}
+                disabled={syncMutation.isPending || syncProgress?.isRunning === true}
                 data-testid="button-sync-orders"
                 className="gap-2"
               >
-                {syncMutation.isPending ? (
+                {syncMutation.isPending || syncProgress?.isRunning ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
                     Syncing...
@@ -203,10 +331,98 @@ export function ShopifySettingsMain() {
                 )}
               </Button>
               <p className="text-sm text-muted-foreground">
-                Import the latest 100 orders from Shopify
+                Paginates through your entire Shopify order history
               </p>
             </div>
-            {syncResult && (
+
+            {/* Live progress — visible while syncing and after it finishes
+                until the user clicks Sync Now again. */}
+            {syncProgress && (
+              <div
+                className="rounded-lg border bg-muted/30 p-4 space-y-3"
+                data-testid="sync-progress"
+              >
+                <div className="flex items-center gap-2">
+                  {syncProgress.isRunning ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                  )}
+                  <p className="text-sm font-medium">
+                    {syncProgress.isRunning ? "Sync in progress" : "Sync finished"}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Pages</p>
+                    <p
+                      className="font-mono font-medium"
+                      data-testid="sync-pages"
+                    >
+                      {syncProgress.pagesFetched}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Synced</p>
+                    <p
+                      className="font-mono font-medium text-green-600"
+                      data-testid="sync-synced"
+                    >
+                      {syncProgress.syncedCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Skipped</p>
+                    <p
+                      className="font-mono font-medium text-muted-foreground"
+                      data-testid="sync-skipped"
+                    >
+                      {syncProgress.skippedCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Failed</p>
+                    <p
+                      className={`font-mono font-medium ${
+                        syncProgress.failedCount > 0
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
+                      data-testid="sync-failed"
+                    >
+                      {syncProgress.failedCount}
+                    </p>
+                  </div>
+                </div>
+                {syncProgress.lastError && (
+                  <p className="text-xs text-destructive">
+                    Last error: {syncProgress.lastError}
+                  </p>
+                )}
+                {!syncProgress.isRunning &&
+                  syncProgress.failedCount > 0 && (
+                    <div className="pt-2 border-t">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={downloadErrorsCsv}
+                        className="gap-2"
+                        data-testid="button-download-sync-errors"
+                      >
+                        <Download className="h-4 w-4" />
+                        Download Error Report (CSV)
+                      </Button>
+                      {syncProgress.errorsTruncated && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Error list truncated at {syncProgress.errors.length} rows.
+                        </p>
+                      )}
+                    </div>
+                  )}
+              </div>
+            )}
+
+            {syncResult && !syncProgress && (
               <Alert>
                 <CheckCircle className="h-4 w-4 text-green-600" />
                 <AlertDescription>
@@ -268,99 +484,118 @@ export function ShopifySettingsMain() {
           </div>
         )}
       </SettingsCard>
-
-      {/* Real-Time Webhook Status */}
-      <SettingsCard
-        icon={Activity}
-        title="Real-Time Sync"
-        description="Automatic order synchronization via webhooks"
-        testId="card-webhook-status"
-        action={
-          lastOrder ? (
-            <StatusBadge status="active" label="Webhooks Active" />
-          ) : (
-            <StatusBadge status="inactive" label="Not Configured" />
-          )
-        }
-      >
-        {isLoadingOrders ? (
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
-          </div>
-        ) : lastOrder ? (
-          <div className="space-y-4">
-            <div className="rounded-lg border bg-green-500/5 p-4">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500 mt-0.5" />
-                <div className="flex-1 space-y-1">
-                  <p className="text-sm font-medium">Webhooks are working correctly</p>
-                  <p className="text-sm text-muted-foreground">
-                    Last order received: <strong>#{lastOrder.orderNumber}</strong> ({lastOrder.customerName})
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(lastOrder.createdAt), { addSuffix: true })}
-                  </p>
-                </div>
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              New orders are automatically syncing every 30 seconds.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                No webhooks have been received yet. Set up real-time sync to automatically import new orders.
-              </AlertDescription>
-            </Alert>
-            <Link href="/settings/shopify/webhooks">
-              <Button variant="outline" className="gap-2" data-testid="button-setup-webhooks">
-                Setup Webhooks
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </div>
-        )}
-      </SettingsCard>
-
-      {/* Product Catalog Sync */}
-      <ProductCatalogSync />
-
-      {/* Payment Mapping Settings */}
-      <PaymentMappingSettings />
-
-      {/* IVR Connection Status */}
-      <IVRConnectionStatus />
-
-      {/* Help Section */}
-      <SettingsCard
-        title="Need Help?"
-        description="Access setup guides and documentation"
-        testId="card-help"
-      >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Link href="/settings/shopify/setup">
-            <Button variant="outline" className="w-full justify-start gap-2">
-              <Settings className="h-4 w-4" />
-              Initial Setup Guide
-            </Button>
-          </Link>
-          <Link href="/settings/shopify/webhooks">
-            <Button variant="outline" className="w-full justify-start gap-2">
-              <Activity className="h-4 w-4" />
-              Webhook Setup Guide
-            </Button>
-          </Link>
-        </div>
-      </SettingsCard>
     </div>
   );
 }
 
-function IVRConnectionStatus() {
+// ─────────────────────────────────────────────────────────────────────
+// ShopifyWebhookStatusCard
+//
+// Read-only card showing whether webhooks are flowing (latest order
+// timestamp). Lives on Settings → Store Operations now that the
+// Integrations hub is a clean catalog view.
+// ─────────────────────────────────────────────────────────────────────
+export function ShopifyWebhookStatusCard() {
+  const { data: recentOrderData, isLoading: isLoadingOrders } = useQuery<{
+    orders: BackendOrder[];
+    total: number;
+  }>({
+    queryKey: ["/api/orders?limit=1"],
+    refetchInterval: 30000,
+  });
+  const lastOrder = recentOrderData?.orders?.[0];
+
+  return (
+    <SettingsCard
+      icon={Activity}
+      title="Real-Time Sync"
+      description="Automatic order synchronization via webhooks"
+      testId="card-webhook-status"
+      action={
+        lastOrder ? (
+          <StatusBadge status="active" label="Webhooks Active" />
+        ) : (
+          <StatusBadge status="inactive" label="Not Configured" />
+        )
+      }
+    >
+      {isLoadingOrders ? (
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      ) : lastOrder ? (
+        <div className="space-y-4">
+          <div className="rounded-lg border bg-green-500/5 p-4">
+            <div className="flex items-start gap-3">
+              <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium">Webhooks are working correctly</p>
+                <p className="text-sm text-muted-foreground">
+                  Last order received: <strong>#{lastOrder.orderNumber}</strong> ({lastOrder.customerName})
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatDistanceToNow(new Date(lastOrder.createdAt), { addSuffix: true })}
+                </p>
+              </div>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            New orders are automatically syncing every 30 seconds.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              No webhooks have been received yet. Set up real-time sync to automatically import new orders.
+            </AlertDescription>
+          </Alert>
+          <Link href="/settings/shopify/webhooks">
+            <Button variant="outline" className="gap-2" data-testid="button-setup-webhooks">
+              Setup Webhooks
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Link>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ShopifyHelpCard
+//
+// Quick links to the standalone setup/webhook guide pages. Belongs in
+// Settings now, not in the Integrations hub.
+// ─────────────────────────────────────────────────────────────────────
+export function ShopifyHelpCard() {
+  return (
+    <SettingsCard
+      title="Need Help?"
+      description="Access setup guides and documentation"
+      testId="card-help"
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Link href="/settings/shopify/setup">
+          <Button variant="outline" className="w-full justify-start gap-2">
+            <Settings className="h-4 w-4" />
+            Initial Setup Guide
+          </Button>
+        </Link>
+        <Link href="/settings/shopify/webhooks">
+          <Button variant="outline" className="w-full justify-start gap-2">
+            <Activity className="h-4 w-4" />
+            Webhook Setup Guide
+          </Button>
+        </Link>
+      </div>
+    </SettingsCard>
+  );
+}
+
+export function IVRConnectionStatus() {
   const { toast } = useToast();
   const [testResult, setTestResult] = useState<any>(null);
 
@@ -539,7 +774,7 @@ interface ProductSyncResult {
   variantsCount: number;
 }
 
-function ProductCatalogSync() {
+export function ProductCatalogSync() {
   const { toast } = useToast();
 
   const { data: syncStatus, isLoading } = useQuery<ProductSyncStatus>({
@@ -652,7 +887,7 @@ interface PaymentSettingsResponse {
   prepaidMethods: string[];
 }
 
-function PaymentMappingSettings() {
+export function PaymentMappingSettings() {
   const { toast } = useToast();
   const [prepaidMethods, setPrepaidMethods] = useState<string[]>([]);
   const [hasChanges, setHasChanges] = useState(false);

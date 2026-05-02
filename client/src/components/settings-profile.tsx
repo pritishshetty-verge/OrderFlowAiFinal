@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -27,7 +27,7 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Check, Save, Loader2, Camera } from "lucide-react";
+import { Check, Save, Loader2, Camera, FileText, Upload, CheckCircle2, Eye } from "lucide-react";
 import type { User } from "@shared/schema";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
@@ -98,6 +98,99 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
       });
     },
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // KYC document upload
+  // ────────────────────────────────────────────────────────────────
+  const kycFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [kycSelectedName, setKycSelectedName] = useState<string | null>(null);
+
+  const kycUploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!user?.id) throw new Error("User not loaded");
+      const currentUserId = localStorage.getItem("userId") || user.id;
+      const formData = new FormData();
+      formData.append("document", file);
+      formData.append("currentUserId", currentUserId);
+
+      // Use raw fetch — apiRequest JSON-serializes the body, which would
+      // break the multipart stream.
+      const res = await fetch(`/api/users/${user.id}/kyc-upload`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        let message = "Upload failed";
+        try {
+          const body = await res.json();
+          if (body?.error) message = body.error;
+        } catch {}
+        throw new Error(message);
+      }
+      return res.json() as Promise<{
+        kycDocumentUrl: string;
+        originalName: string;
+        size: number;
+      }>;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "KYC Document Uploaded",
+        description: `${data.originalName} (${Math.round(data.size / 1024)} KB) saved.`,
+      });
+      setKycSelectedName(null);
+      if (kycFileInputRef.current) kycFileInputRef.current.value = "";
+      queryClient.invalidateQueries({
+        queryKey: [`/api/users/by-email/${userEmail}`],
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Upload Failed",
+        description: error.message || "Failed to upload KYC document.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleKycFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setKycSelectedName(null);
+      return;
+    }
+    // Client-side guardrails matching the server limits.
+    const maxBytes = 5 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      toast({
+        title: "File Too Large",
+        description: "Max 5 MB. Please compress or pick a smaller file.",
+        variant: "destructive",
+      });
+      if (kycFileInputRef.current) kycFileInputRef.current.value = "";
+      return;
+    }
+    setKycSelectedName(file.name);
+  };
+
+  const handleKycUpload = () => {
+    const file = kycFileInputRef.current?.files?.[0];
+    if (!file) {
+      toast({
+        title: "No File Selected",
+        description: "Choose a .jpg, .png, or .pdf file first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    kycUploadMutation.mutate(file);
+  };
+
+  const kycViewUrl = user?.id
+    ? `/api/users/${user.id}/kyc-document?currentUserId=${encodeURIComponent(
+        localStorage.getItem("userId") || user.id,
+      )}`
+    : null;
 
   const updateAvatarMutation = useMutation({
     mutationFn: async (avatarImage: string) => {
@@ -343,6 +436,96 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
               </div>
             </form>
           </Form>
+        </CardContent>
+      </Card>
+
+      {/* ────────────────────────────────────────────────────────────
+          KYC Documentation
+          ──────────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5" />
+            KYC Documentation
+          </CardTitle>
+          <CardDescription>
+            Upload a government-issued ID (.jpg, .png, or .pdf — max 5 MB).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {user?.kycDocumentUrl ? (
+            <div
+              className="flex items-center gap-3 rounded-lg border bg-green-500/5 p-3"
+              data-testid="kyc-status-uploaded"
+            >
+              <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-500" />
+              <div className="flex-1">
+                <p className="text-sm font-medium">
+                  KYC document on file
+                </p>
+                <p className="text-xs text-muted-foreground font-mono">
+                  {user.kycDocumentUrl}
+                </p>
+              </div>
+              {kycViewUrl && (
+                <a href={kycViewUrl} target="_blank" rel="noopener noreferrer">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    data-testid="button-view-kyc"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View Uploaded KYC
+                  </Button>
+                </a>
+              )}
+            </div>
+          ) : (
+            <div
+              className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+              data-testid="kyc-status-empty"
+            >
+              No KYC document uploaded yet.
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Input
+              ref={kycFileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+              onChange={handleKycFileChange}
+              disabled={kycUploadMutation.isPending}
+              data-testid="input-kyc-file"
+            />
+            {kycSelectedName && (
+              <p className="text-xs text-muted-foreground">
+                Selected: <span className="font-mono">{kycSelectedName}</span>
+              </p>
+            )}
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                onClick={handleKycUpload}
+                disabled={!kycSelectedName || kycUploadMutation.isPending}
+                data-testid="button-upload-kyc"
+                className="gap-2"
+              >
+                {kycUploadMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Uploading…
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4" />
+                    {user?.kycDocumentUrl ? "Replace Document" : "Upload Document"}
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

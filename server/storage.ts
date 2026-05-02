@@ -1,4 +1,4 @@
-import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull } from "drizzle-orm";
+import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull, inArray } from "drizzle-orm";
 import { db } from "./db";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
@@ -95,6 +95,11 @@ import {
   inboundWebhookLogs,
   type InboundWebhookLog,
   type InsertInboundWebhookLog,
+  holidays,
+  type Holiday,
+  payrollLedger,
+  type PayrollLedger,
+  type InsertPayrollLedger,
 } from "@shared/schema";
 
 /**
@@ -181,14 +186,19 @@ export interface IStorage {
   // Customers
   getCustomer(id: string): Promise<Customer | undefined>;
   getCustomerByShopifyId(shopifyId: string): Promise<Customer | undefined>;
+  getCustomersByShopifyIds(shopifyIds: string[]): Promise<Customer[]>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
+  createCustomersBatch(customers: InsertCustomer[]): Promise<Customer[]>;
   updateCustomer(id: string, data: Partial<InsertCustomer>): Promise<Customer | undefined>;
 
   // Orders
   getOrder(id: string): Promise<Order | undefined>;
   getOrderByShopifyId(shopifyId: string): Promise<Order | undefined>;
   getOrderByShopifyOrderNumber(orderNumber: string): Promise<Order | undefined>;
+  getExistingShopifyOrderIds(shopifyIds: string[]): Promise<Set<string>>;
+  getMaxShopifyOrderId(): Promise<string | null>;
   createOrder(order: InsertOrder): Promise<Order>;
+  createOrdersBatch(orders: InsertOrder[]): Promise<Order[]>;
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
   listOrders(filters?: {
     status?: string;
@@ -262,6 +272,7 @@ export interface IStorage {
   // Order Status History
   getOrderHistory(orderId: string): Promise<OrderStatusHistory[]>;
   createOrderStatus(status: InsertOrderStatusHistory): Promise<OrderStatusHistory>;
+  createOrderStatusBatch(statuses: InsertOrderStatusHistory[]): Promise<OrderStatusHistory[]>;
 
   // Leave Requests
   getLeaveRequest(id: string): Promise<LeaveRequest | undefined>;
@@ -300,6 +311,16 @@ export interface IStorage {
     startDate?: Date;
     endDate?: Date;
   }): Promise<Attendance[]>;
+
+  // Holidays (Payroll: per-state holiday calendar — see seed-holidays.ts)
+  listHolidaysByState(state: string, year?: number): Promise<Holiday[]>;
+
+  // Payroll Ledger (Monthly payroll runs)
+  upsertPayrollLedger(entry: InsertPayrollLedger): Promise<PayrollLedger>;
+  getPayrollLedgerByPeriod(userId: string, year: number, month: number): Promise<PayrollLedger | undefined>;
+  getPayrollLedgerById(id: string): Promise<PayrollLedger | undefined>;
+  listPayrollLedger(year: number, month: number): Promise<PayrollLedger[]>;
+  updatePayrollLedgerDispatch(id: string, data: { status: string; pdfFilename?: string; sentAt?: Date | null; emailError?: string | null }): Promise<void>;
 
   // Attendance Breaks
   startBreak(attendanceId: string): Promise<AttendanceBreak>;
@@ -622,6 +643,21 @@ export class DbStorage implements IStorage {
     return customer;
   }
 
+  async getCustomersByShopifyIds(shopifyIds: string[]): Promise<Customer[]> {
+    if (shopifyIds.length === 0) return [];
+    return await db
+      .select()
+      .from(customers)
+      .where(inArray(customers.shopifyCustomerId, shopifyIds));
+  }
+
+  async createCustomersBatch(
+    insertCustomers: InsertCustomer[],
+  ): Promise<Customer[]> {
+    if (insertCustomers.length === 0) return [];
+    return await db.insert(customers).values(insertCustomers).returning();
+  }
+
   async updateCustomer(
     id: string,
     data: Partial<InsertCustomer>,
@@ -672,6 +708,37 @@ export class DbStorage implements IStorage {
   async createOrder(insertOrder: InsertOrder): Promise<Order> {
     const [order] = await db.insert(orders).values(insertOrder).returning();
     return order;
+  }
+
+  async createOrdersBatch(insertOrders: InsertOrder[]): Promise<Order[]> {
+    if (insertOrders.length === 0) return [];
+    return await db.insert(orders).values(insertOrders).returning();
+  }
+
+  async getExistingShopifyOrderIds(
+    shopifyIds: string[],
+  ): Promise<Set<string>> {
+    if (shopifyIds.length === 0) return new Set();
+    const rows = await db
+      .select({ shopifyOrderId: orders.shopifyOrderId })
+      .from(orders)
+      .where(inArray(orders.shopifyOrderId, shopifyIds));
+    return new Set(
+      rows
+        .map((r) => r.shopifyOrderId)
+        .filter((v): v is string => v !== null && v !== undefined),
+    );
+  }
+
+  async getMaxShopifyOrderId(): Promise<string | null> {
+    // Shopify order IDs are numeric but stored as text. Cast to BIGINT for
+    // proper ordering (otherwise lexicographic comparison picks "999…" over
+    // "1000…").
+    const rows = await db.execute<{ max_id: string | null }>(
+      sql`SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id FROM ${orders}`,
+    );
+    const first = (rows as any).rows?.[0] ?? (rows as any)[0];
+    return first?.max_id ?? null;
   }
 
   async updateOrder(
@@ -1167,6 +1234,13 @@ export class DbStorage implements IStorage {
     return history;
   }
 
+  async createOrderStatusBatch(
+    statuses: InsertOrderStatusHistory[],
+  ): Promise<OrderStatusHistory[]> {
+    if (statuses.length === 0) return [];
+    return await db.insert(orderStatusHistory).values(statuses).returning();
+  }
+
   // ============================================================================
   // LEAVE REQUESTS
   // ============================================================================
@@ -1583,6 +1657,96 @@ export class DbStorage implements IStorage {
     }
 
     return await query;
+  }
+
+  // ============================================================================
+  // HOLIDAYS
+  // ============================================================================
+
+  async listHolidaysByState(state: string, year?: number): Promise<Holiday[]> {
+    // Year filter is optional — when present we restrict to that
+    // calendar year so the calendar view only loads what it needs.
+    // Default behaviour returns the full table for the state.
+    const conditions = [eq(holidays.state, state)];
+    if (year !== undefined) {
+      conditions.push(gte(holidays.date, `${year}-01-01`));
+      conditions.push(lte(holidays.date, `${year}-12-31`));
+    }
+    return await db
+      .select()
+      .from(holidays)
+      .where(and(...conditions))
+      .orderBy(asc(holidays.date));
+  }
+
+  // ============================================================================
+  // PAYROLL LEDGER
+  // ============================================================================
+
+  async upsertPayrollLedger(entry: InsertPayrollLedger): Promise<PayrollLedger> {
+    // (userId, year, month) uniquely identifies a payroll run. Re-running
+    // the same month overwrites the prior row (admin tweak after preview)
+    // — the dispatch fields (pdf, sent_at) are reset on every Run by the
+    // route handler so a re-run produces a fresh PDF.
+    const existing = await this.getPayrollLedgerByPeriod(entry.userId, entry.year, entry.month);
+    if (existing) {
+      const [updated] = await db
+        .update(payrollLedger)
+        .set({ ...entry, updatedAt: new Date() })
+        .where(eq(payrollLedger.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(payrollLedger).values(entry).returning();
+    return created;
+  }
+
+  async getPayrollLedgerByPeriod(
+    userId: string,
+    year: number,
+    month: number,
+  ): Promise<PayrollLedger | undefined> {
+    const [row] = await db
+      .select()
+      .from(payrollLedger)
+      .where(
+        and(
+          eq(payrollLedger.userId, userId),
+          eq(payrollLedger.year, year),
+          eq(payrollLedger.month, month),
+        ),
+      )
+      .limit(1);
+    return row;
+  }
+
+  async getPayrollLedgerById(id: string): Promise<PayrollLedger | undefined> {
+    const [row] = await db.select().from(payrollLedger).where(eq(payrollLedger.id, id)).limit(1);
+    return row;
+  }
+
+  async listPayrollLedger(year: number, month: number): Promise<PayrollLedger[]> {
+    return await db
+      .select()
+      .from(payrollLedger)
+      .where(and(eq(payrollLedger.year, year), eq(payrollLedger.month, month)))
+      .orderBy(desc(payrollLedger.createdAt));
+  }
+
+  async updatePayrollLedgerDispatch(
+    id: string,
+    data: { status: string; pdfFilename?: string; sentAt?: Date | null; emailError?: string | null },
+  ): Promise<void> {
+    await db
+      .update(payrollLedger)
+      .set({
+        status: data.status,
+        ...(data.pdfFilename !== undefined ? { pdfFilename: data.pdfFilename } : {}),
+        ...(data.sentAt !== undefined ? { sentAt: data.sentAt } : {}),
+        ...(data.emailError !== undefined ? { emailError: data.emailError } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(payrollLedger.id, id));
   }
 
   // ============================================================================

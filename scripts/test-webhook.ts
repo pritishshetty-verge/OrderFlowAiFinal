@@ -3,9 +3,7 @@
  * Run with: npx tsx scripts/test-webhook.ts
  */
 
-const BASE_URL = process.env.REPLIT_DEV_DOMAIN 
-  ? `https://${process.env.REPLIT_DEV_DOMAIN}` 
-  : 'http://localhost:5000';
+const BASE_URL = process.env.APP_BASE_URL || 'http://localhost:5000';
 
 // Sample Delhivery NDR payload based on their documentation
 const sampleNDRPayload = {

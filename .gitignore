@@ -4,7 +4,7 @@ dist/
 build/
 .cache/
 
-# Env / secrets — never commit
+# Env / secrets — never commit. .env.example is tracked as a template.
 .env
 .env.local
 .env.*.local
@@ -23,6 +23,7 @@ build/
 
 # Uploads (KYC docs, payslip PDFs — local-only, may contain PII).
 # Keep the dir scaffolding so the app boots; ignore contents.
+# Payroll PDFs in uploads/payslips/ in particular MUST NEVER be pushed.
 uploads/**
 !uploads/
 !uploads/**/.gitkeep
@@ -36,6 +37,9 @@ pincodes.csv
 
 # Reference PDFs dropped into the repo locally
 *.pdf
+
+# Archives sometimes left over from local builds
+*.tar.gz
 
 # tsx/Vite intermediate
 vite.config.ts.*
