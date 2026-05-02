@@ -43,3 +43,8 @@ pincodes.csv
 
 # tsx/Vite intermediate
 vite.config.ts.*
+
+# Bundled API serverless function — regenerated each deploy by
+# scripts/build-api.mjs. Source of truth lives at server/api-handler.ts.
+api/index.js
+api/index.js.map
