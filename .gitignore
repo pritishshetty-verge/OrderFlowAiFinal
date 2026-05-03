@@ -48,3 +48,5 @@ vite.config.ts.*
 # scripts/build-api.mjs. Source of truth lives at server/api-handler.ts.
 api/index.js
 api/index.js.map
+.vercel
+.env*.local

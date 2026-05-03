@@ -1,12 +1,29 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
-import { createServer as createViteServer, createLogger } from "vite";
 import { type Server } from "http";
-import viteConfig from "../vite.config";
 import { nanoid } from "nanoid";
 
-const viteLogger = createLogger();
+// IMPORTANT: vite must be loaded dynamically AND we cannot import the
+// project's vite.config from this file.
+//
+// We bundle this file into api/index.js for Vercel via esbuild.
+//   1. ESM `import` statements are hoisted and eagerly evaluated at
+//      module load, which would pull `vite` → `rollup` →
+//      @rollup/rollup-linux-x64-gnu (a platform-specific native binary)
+//      into the cold-start path even in production where setupVite()
+//      is never called. Vercel's serverless container doesn't ship
+//      that optional binary, so the function crashes with
+//      MODULE_NOT_FOUND. Solution: dynamic `await import("vite")` only
+//      inside setupVite(), so it's reached only on the dev path.
+//   2. Static `import viteConfig from "../vite.config"` was the
+//      sneakier offender: esbuild bundled vite.config.ts, and *its*
+//      top-level `import { defineConfig } from "vite"` got hoisted to
+//      the top of the merged bundle — pulling vite/rollup in eagerly
+//      regardless of how we wrote the surrounding logic. Solution: do
+//      NOT import vite.config at all. Pass `configFile: true` to
+//      createViteServer so Vite reads vite.config.ts from disk at dev
+//      runtime. The Vercel bundle never references it.
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -20,15 +37,21 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  const { createServer: createViteServer, createLogger } = await import("vite");
+
+  const viteLogger = createLogger();
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
     allowedHosts: true as const,
   };
 
+  // configFile: true (default) tells Vite to load vite.config.ts from
+  // the cwd at dev runtime — see the file-level comment above for why
+  // we don't import it statically.
   const vite = await createViteServer({
-    ...viteConfig,
-    configFile: false,
+    configFile: true,
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
