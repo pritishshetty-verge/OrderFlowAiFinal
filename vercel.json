@@ -1,17 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-
-  "installCommand": "npm install && npm run build:api",
-  "buildCommand": "vite build",
+  "buildCommand": "npm run build",
   "outputDirectory": "dist/public",
-
   "functions": {
     "api/index.js": {
       "maxDuration": 30
     }
   },
-
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/((?!assets/|favicon|.*\\..*).*)", "destination": "/index.html" }
