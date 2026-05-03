@@ -6088,6 +6088,7 @@ init_storage();
 init_db();
 init_schema();
 import { createServer } from "http";
+import crypto5 from "node:crypto";
 import { eq as eq3, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
@@ -11059,10 +11060,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const token = Array.from(
-        { length: 32 },
-        () => Math.random().toString(36).charAt(2)
-      ).join("");
+      const token = crypto5.randomBytes(32).toString("hex");
       const expiresAt = /* @__PURE__ */ new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       const existingInvite = await storage.getInviteByEmail(validatedData.email);

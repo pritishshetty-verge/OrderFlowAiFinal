@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import crypto from "node:crypto";
 import { storage } from "./storage";
 import { db } from "./db";
 import { 
@@ -5346,10 +5347,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Generate unique invite token
-      const token = Array.from({ length: 32 }, () => 
-        Math.random().toString(36).charAt(2)
-      ).join('');
+      // Generate a cryptographically secure 64-char hex token (32
+      // random bytes). Replaces the previous Math.random()-based token
+      // which was predictable from a known seed and not safe for an
+      // auth primitive — anyone who could observe a few tokens could
+      // recover the PRNG state and forge new ones for arbitrary
+      // emails. crypto.randomBytes draws from the OS CSPRNG.
+      const token = crypto.randomBytes(32).toString("hex");
       
       // Set expiration to 7 days from now
       const expiresAt = new Date();
