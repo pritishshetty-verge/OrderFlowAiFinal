@@ -576,22 +576,29 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     Joined {member.joinedDate}
                   </span>
                 </div>
-                {/* Compensation & Calendar — admin can set holiday city,
-                    base salary, and incentive profile in one dialog.
-                    The summary line below shows whichever payroll
-                    fields are configured so admins can see at-a-glance
-                    who's still missing data. */}
-                <div className="flex items-center gap-2 text-sm justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <MapPin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                    <span
-                      className="text-muted-foreground text-xs truncate"
-                      data-testid={`text-compensation-${member.id}`}
-                    >
-                      {summarizeCompensation(member)}
-                    </span>
-                  </div>
-                  {userRole === "admin" && (
+                {/* Compensation & Calendar — admin-only. This block
+                    leaks salary, compensation profile, and the
+                    holiday-calendar city of every team member, so we
+                    gate the entire row behind the admin role. The
+                    edit pencil was already admin-only, but the summary
+                    text was visible to agents prior to this fix —
+                    which both leaked compensation info and confused
+                    agents who read "Mumbai" as a physical office
+                    location rather than a holiday-calendar selection.
+                    See server/routes.ts /api/users for the matching
+                    server-side scrub if/when you decide to redact the
+                    raw fields from the agent-facing API response. */}
+                {userRole === "admin" && (
+                  <div className="flex items-center gap-2 text-sm justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <MapPin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                      <span
+                        className="text-muted-foreground text-xs truncate"
+                        data-testid={`text-compensation-${member.id}`}
+                      >
+                        {summarizeCompensation(member)}
+                      </span>
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -601,8 +608,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     >
                       <Pencil className="h-3 w-3" />
                     </Button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-3 border-t">
