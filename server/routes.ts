@@ -20,6 +20,7 @@ import axios from "axios";
 import { sendInvitationEmail } from "./resend";
 import { kycUpload, resolveKycFilePath, KYC_UPLOAD_DIR } from "./upload";
 import { getPareMetrics } from "./services/analytics";
+import { hashPassword, verifyPassword } from "./auth";
 import fs from "fs";
 import path from "path";
 import {
@@ -2759,34 +2760,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create new user/team member
-  app.post("/api/users", async (req, res) => {
-    try {
-      const validatedData = insertUserSchema.parse(req.body);
-      
-      // Check if username or email already exists
-      const existingUsername = await storage.getUserByUsername(validatedData.username);
-      if (existingUsername) {
-        return res.status(400).json({ error: "Username already exists" });
-      }
-      
-      const existingEmail = await storage.getUserByEmail(validatedData.email);
-      if (existingEmail) {
-        return res.status(400).json({ error: "Email already exists" });
-      }
-      
-      const user = await storage.createUser(validatedData);
-      // Strip password from the response — only an admin reaches this
-      // route (user-creation flow), so payroll fields can stay.
-      res.json(stripPassword(user));
-    } catch (error) {
-      if (error instanceof ZodError) {
-        return res.status(400).json({ error: "Invalid user data", details: error.errors });
-      }
-      console.error("Error creating user:", error);
-      res.status(500).json({ error: "Failed to create user" });
-    }
-  });
+  // POST /api/users — DELETED (security patch).
+  //
+  // Previously this endpoint accepted an unauthenticated payload and
+  // wrote it straight to the users table, including a client-supplied
+  // `role`. An anonymous attacker could register themselves as a
+  // full-control admin with one curl request. No frontend code called
+  // this route; it was an orphaned vulnerability.
+  //
+  // All legitimate user-creation paths now go through:
+  //   - POST /api/invites           (admin invites teammate)
+  //   - POST /api/invites/accept    (invitee creates their account)
+  //   - POST /api/auth/register-admin (one-time bootstrap when users
+  //                                   table is empty)
+  //
+  // Anything hitting POST /api/users now falls through Express's
+  // default handler and returns 404 — intentional.
 
   // ============================================================================
   // BOOTSTRAP: FIRST-ADMIN SELF-SIGNUP
@@ -2800,6 +2789,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Lightweight probe for the frontend to decide whether to show the
   // "Create admin account" tab on the login page.
+  // ============================================================================
+  // POST /api/auth/login
+  //
+  // Server-authoritative password verification. Replaces the previous
+  // client-side compare (which fetched /api/users/by-email and string-
+  // compared the plaintext password in the browser — a security
+  // disaster).
+  //
+  // Behaviour:
+  //   1. Look up user by email.
+  //   2. Verify password via bcryptjs (handles both bcrypt-shaped
+  //      hashes and legacy plaintext rows during the cutover — see
+  //      server/auth.ts verifyPassword for the migration logic).
+  //   3. If the row is still plaintext, silently re-hash and write
+  //      back so the next login takes the secure path.
+  //   4. Return the user (password stripped) for the client's
+  //      transitional localStorage shim. Phase 2 will replace this
+  //      with a real signed session cookie.
+  //
+  // Errors are intentionally generic ("Invalid email or password") to
+  // avoid leaking which half of the credential pair was wrong.
+  // ============================================================================
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required." });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      // Always run a bcrypt compare — even on miss — to keep response
+      // timing roughly constant and avoid an email-enumeration oracle.
+      // We feed a known-bad hash so the path is real work, not a stub.
+      const TIMING_DECOY = "$2b$12$0000000000000000000000000000000000000000000000000000Q";
+      if (!user) {
+        await verifyPassword(password, TIMING_DECOY);
+        return res.status(401).json({ error: "Invalid email or password." });
+      }
+
+      const { ok, needsRehash } = await verifyPassword(password, user.password);
+      if (!ok) {
+        return res.status(401).json({ error: "Invalid email or password." });
+      }
+
+      if (!user.isActive) {
+        return res.status(403).json({ error: "This account has been deactivated. Contact your admin." });
+      }
+
+      // Transitional rehash: the row was plaintext; write the bcrypt
+      // form back so the next login takes the secure path. Don't
+      // block the response on this — fire and forget.
+      if (needsRehash) {
+        hashPassword(password)
+          .then((hashed) => storage.setUserPassword(user.id, hashed))
+          .catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
+      }
+
+      // Strip password (and password-shaped fields) before responding.
+      // Returns the same shape the legacy /api/users/by-email endpoint
+      // does so the client's transitional localStorage shim keeps
+      // working without changes elsewhere.
+      const { password: _pw, ...safe } = user as any;
+      res.json(safe);
+    } catch (error: any) {
+      console.error("Error in /api/auth/login:", error);
+      res.status(500).json({ error: "Login failed. Please try again." });
+    }
+  });
+
   app.get("/api/auth/can-register-admin", async (_req, res) => {
     try {
       const existing = await storage.listUsers({});
@@ -2843,11 +2902,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Email already exists" });
       }
 
-      const user = await storage.createUser(validatedData);
+      // Bcrypt-hash the password BEFORE inserting. This is the
+      // bootstrap/first-admin path so there's no existing row to
+      // collide with, but the security invariant is the same as
+      // every other write path: plaintext never reaches users.password.
+      const hashedPassword = await hashPassword(validatedData.password);
+      const user = await storage.createUser({
+        ...validatedData,
+        password: hashedPassword,
+      });
 
-      // Strip the password field from the response so it doesn't hit the
-      // client. (Passwords are stored as plaintext in this app today — see
-      // shared/schema.ts — so avoid echoing them back.)
       const { password: _password, ...safeUser } = user as any;
       res.status(201).json(safeUser);
     } catch (error) {
@@ -5518,10 +5582,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "This username is already taken" });
       }
 
+      // Bcrypt-hash the password BEFORE inserting. The invitee just
+      // typed it in plaintext on the signup form; from this row's
+      // creation onward, only the hash exists.
+      const hashedPassword = await hashPassword(password);
       const newUser = await storage.createUser({
         email: invite.email,
         username,
-        password,
+        password: hashedPassword,
         fullName,
         phone: phone || null,
         role: invite.role,

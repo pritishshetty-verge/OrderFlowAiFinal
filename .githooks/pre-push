@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Auto-installed by scripts/setup-hooks.mjs — see that file for context.
+# Rebuilds api/index.js and aborts the push if the committed bundle is
+# stale relative to the current source.
+
+set -e
+
+# Skip the hook if we're not pushing the main branch (preview pushes
+# are okay to ship slightly-stale bundles — Vercel will re-bundle on
+# the dev's next merge).
+range="$1"
+remote_url="$2"
+# Read the refs being pushed from stdin (git's documented input format).
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [[ "$remote_ref" != "refs/heads/main" ]]; then
+    continue
+  fi
+
+  echo "[pre-push] re-bundling api/index.js…"
+  npm run build:api --silent
+  if ! git diff --quiet --exit-code -- api/index.js; then
+    echo
+    echo "✗ api/index.js was out of sync with server/ source."
+    echo "  The hook regenerated it. Add and amend, then push again:"
+    echo
+    echo "    git add api/index.js"
+    echo "    git commit --amend --no-edit"
+    echo "    git push"
+    echo
+    exit 1
+  fi
+done
+exit 0

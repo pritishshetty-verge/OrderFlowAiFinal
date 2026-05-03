@@ -171,6 +171,7 @@ export interface IStorage {
   getUserByAgentExtension(agentExtension: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: UpdateUser): Promise<User | undefined>;
+  setUserPassword(id: string, hashedPassword: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
   listUsers(filters?: { role?: string; isActive?: boolean }): Promise<User[]>;
 
@@ -509,6 +510,19 @@ export class DbStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return user;
+  }
+
+  // Dedicated password-write path. Kept separate from updateUser()
+  // because the public update schema deliberately excludes `password`
+  // (no PATCH /api/users/:id should accept a password change without
+  // going through the auth flow). The bcrypt-hashed value is the only
+  // thing that should ever land in users.password — callers must hash
+  // before invoking this.
+  async setUserPassword(id: string, hashedPassword: string): Promise<void> {
+    await db
+      .update(users)
+      .set({ password: hashedPassword, updatedAt: new Date() })
+      .where(eq(users.id, id));
   }
 
   async deleteUser(id: string): Promise<void> {

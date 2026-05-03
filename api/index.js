@@ -1113,6 +1113,15 @@ var init_storage = __esm({
         const [user] = await db.update(users).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id)).returning();
         return user;
       }
+      // Dedicated password-write path. Kept separate from updateUser()
+      // because the public update schema deliberately excludes `password`
+      // (no PATCH /api/users/:id should accept a password change without
+      // going through the auth flow). The bcrypt-hashed value is the only
+      // thing that should ever land in users.password — callers must hash
+      // before invoking this.
+      async setUserPassword(id, hashedPassword) {
+        await db.update(users).set({ password: hashedPassword, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id));
+      }
       async deleteUser(id) {
         await db.delete(users).where(eq(users.id, id));
       }
@@ -7218,6 +7227,31 @@ async function getPareMetrics(dateRange) {
   };
 }
 
+// server/auth.ts
+import bcrypt from "bcryptjs";
+var BCRYPT_COST = 12;
+async function hashPassword(plaintext) {
+  if (typeof plaintext !== "string" || plaintext.length === 0) {
+    throw new Error("hashPassword: empty or non-string input");
+  }
+  return bcrypt.hash(plaintext, BCRYPT_COST);
+}
+function isBcryptHash(stored) {
+  if (!stored) return false;
+  return /^\$2[aby]\$\d{2}\$/.test(stored);
+}
+async function verifyPassword(plaintext, stored) {
+  if (!stored || typeof plaintext !== "string" || plaintext.length === 0) {
+    return { ok: false, needsRehash: false };
+  }
+  if (isBcryptHash(stored)) {
+    const ok2 = await bcrypt.compare(plaintext, stored);
+    return { ok: ok2, needsRehash: false };
+  }
+  const ok = plaintext === stored;
+  return { ok, needsRehash: ok };
+}
+
 // server/routes.ts
 import fs4 from "fs";
 import path3 from "path";
@@ -9140,25 +9174,34 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to fetch user" });
     }
   });
-  app2.post("/api/users", async (req, res) => {
+  app2.post("/api/auth/login", async (req, res) => {
     try {
-      const validatedData = insertUserSchema.parse(req.body);
-      const existingUsername = await storage.getUserByUsername(validatedData.username);
-      if (existingUsername) {
-        return res.status(400).json({ error: "Username already exists" });
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password required." });
       }
-      const existingEmail = await storage.getUserByEmail(validatedData.email);
-      if (existingEmail) {
-        return res.status(400).json({ error: "Email already exists" });
+      const user = await storage.getUserByEmail(email);
+      const TIMING_DECOY = "$2b$12$0000000000000000000000000000000000000000000000000000Q";
+      if (!user) {
+        await verifyPassword(password, TIMING_DECOY);
+        return res.status(401).json({ error: "Invalid email or password." });
       }
-      const user = await storage.createUser(validatedData);
-      res.json(stripPassword(user));
+      const { ok, needsRehash } = await verifyPassword(password, user.password);
+      if (!ok) {
+        return res.status(401).json({ error: "Invalid email or password." });
+      }
+      if (!user.isActive) {
+        return res.status(403).json({ error: "This account has been deactivated. Contact your admin." });
+      }
+      if (needsRehash) {
+        hashPassword(password).then((hashed) => storage.setUserPassword(user.id, hashed)).catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
+      }
+      const { password: _pw, ...safe } = user;
+      res.json(safe);
     } catch (error) {
-      if (error instanceof ZodError) {
-        return res.status(400).json({ error: "Invalid user data", details: error.errors });
-      }
-      console.error("Error creating user:", error);
-      res.status(500).json({ error: "Failed to create user" });
+      console.error("Error in /api/auth/login:", error);
+      res.status(500).json({ error: "Login failed. Please try again." });
     }
   });
   app2.get("/api/auth/can-register-admin", async (_req, res) => {
@@ -9195,7 +9238,11 @@ async function registerRoutes(app2) {
       if (existingEmail) {
         return res.status(400).json({ error: "Email already exists" });
       }
-      const user = await storage.createUser(validatedData);
+      const hashedPassword = await hashPassword(validatedData.password);
+      const user = await storage.createUser({
+        ...validatedData,
+        password: hashedPassword
+      });
       const { password: _password, ...safeUser } = user;
       res.status(201).json(safeUser);
     } catch (error) {
@@ -11197,10 +11244,11 @@ async function registerRoutes(app2) {
       if (existingUsername) {
         return res.status(400).json({ error: "This username is already taken" });
       }
+      const hashedPassword = await hashPassword(password);
       const newUser = await storage.createUser({
         email: invite.email,
         username,
-        password,
+        password: hashedPassword,
         fullName,
         phone: phone || null,
         role: invite.role,
