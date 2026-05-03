@@ -119,9 +119,21 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [userToEditCompensation, setUserToEditCompensation] = useState<TeamMember | null>(null);
   const { toast } = useToast();
 
-  // Fetch users and orders from backend
+  // currentUserId hoisted to the top of the component because both the
+  // /api/users and /api/orders queries need it.
+  const currentUserId = localStorage.getItem("userId") ?? "";
+
+  // Users query: passes currentUserId so the server returns the full
+  // payroll fields (baseSalary / compensationProfile / holidayState)
+  // when the requester is an admin. Non-admins (or requests without
+  // a currentUserId) get those fields stripped server-side — see
+  // resolveUserScrub in server/routes.ts. The agent UI doesn't render
+  // those fields anyway, so a stripped response is fine for them.
+  const usersUrl = currentUserId
+    ? `/api/users?currentUserId=${encodeURIComponent(currentUserId)}`
+    : "/api/users";
   const { data: users, isLoading: usersLoading } = useQuery<User[]>({
-    queryKey: ["/api/users"],
+    queryKey: [usersUrl],
   });
 
   // Orders query: drives the per-member "Active / Completed" counters.
@@ -131,7 +143,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   // the team list short-circuits to [] (which is exactly the empty
   // directory bug). We also opt admins into `scope=global` so the
   // counts reflect every order, not just the admin's assigned subset.
-  const currentUserId = localStorage.getItem("userId") ?? "";
   const ordersUrl = currentUserId
     ? `/api/orders?currentUserId=${encodeURIComponent(currentUserId)}&scope=global&limit=1000`
     : null;
@@ -229,7 +240,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       // Close dialog and invalidate cache
       setDeleteDialogOpen(false);
       setUserToDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ predicate: (q) => { const k = q.queryKey?.[0]; return typeof k === "string" && k.startsWith("/api/users"); } });
       toast({
         title: "Success",
         description: "Team member deleted successfully",
@@ -255,7 +266,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       setEditExtensionDialogOpen(false);
       setUserToEditExtension(null);
       extensionForm.reset();
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ predicate: (q) => { const k = q.queryKey?.[0]; return typeof k === "string" && k.startsWith("/api/users"); } });
       toast({
         title: "Success",
         description: "Agent extension updated successfully",
@@ -308,7 +319,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       setEditCompensationDialogOpen(false);
       setUserToEditCompensation(null);
       compensationForm.reset();
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      queryClient.invalidateQueries({ predicate: (q) => { const k = q.queryKey?.[0]; return typeof k === "string" && k.startsWith("/api/users"); } });
       // Calendar markers + payroll preview both depend on user.holiday_state
       // / user.base_salary — invalidate so an edit reflects without a
       // hard refresh.

@@ -211,6 +211,80 @@ function recordShopifySyncError(orderId: string, reason: string) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// User-object response sanitizers
+//
+// Two layers of protection on every endpoint that returns a `User`:
+//
+//   1. stripPassword(): drops `users.password` unconditionally. Even
+//      admins should never receive this field over the wire — there is
+//      no legitimate UI that needs it, and once it's on the client
+//      it's leaked into devtools / network tabs / browser caches.
+//      (Reminder: passwords are still stored as plaintext in the DB
+//      until a bcrypt migration lands. Once they're hashed, the API
+//      contract here doesn't change — we still drop the field.)
+//
+//   2. redactPayrollForAgent(): when the requester is NOT an admin,
+//      additionally drops `baseSalary`, `compensationProfile`, and
+//      `holidayState`. These were leaking through the team-directory
+//      list endpoint and exposing teammates' compensation. The
+//      team-directory UI was patched in the previous commit; this
+//      adds the matching server-side scrub so a curious agent can't
+//      pull the data via devtools.
+//
+// Both helpers accept either a single user or a list. Callers that
+// already do an explicit allowlist projection (e.g. /api/users/agents)
+// don't need these helpers but stay consistent if they migrate later.
+// ─────────────────────────────────────────────────────────────────────
+
+type UserRecord = Record<string, any>;
+
+function stripPassword<T extends UserRecord | undefined | null>(user: T): T {
+  if (!user) return user;
+  // Avoid mutating the row object in case it's referenced elsewhere
+  // (e.g. cached by storage). Return a shallow copy without password.
+  const { password: _password, ...rest } = user as UserRecord;
+  return rest as T;
+}
+
+function redactPayrollForAgent<T extends UserRecord | undefined | null>(
+  user: T,
+): T {
+  if (!user) return user;
+  const cleaned = stripPassword(user) as UserRecord;
+  delete cleaned.baseSalary;
+  delete cleaned.compensationProfile;
+  delete cleaned.holidayState;
+  return cleaned as T;
+}
+
+/**
+ * Resolve the `currentUserId` query parameter to a User and decide
+ * whether the requester should see admin-scoped fields. We treat any
+ * absent / unresolvable / non-admin requester as "agent" so the safe
+ * default is redaction. This intentionally never throws — callers
+ * apply the returned scrub function blindly to the response payload.
+ */
+async function resolveUserScrub(req: any): Promise<{
+  isAdmin: boolean;
+  scrub: <T extends UserRecord | undefined | null>(u: T) => T;
+}> {
+  const currentUserId =
+    typeof req.query?.currentUserId === "string"
+      ? req.query.currentUserId
+      : typeof req.body?.currentUserId === "string"
+        ? req.body.currentUserId
+        : null;
+  if (!currentUserId) {
+    return { isAdmin: false, scrub: redactPayrollForAgent };
+  }
+  const requester = await storage.getUser(currentUserId);
+  if (requester && isAdmin(requester)) {
+    return { isAdmin: true, scrub: stripPassword };
+  }
+  return { isAdmin: false, scrub: redactPayrollForAgent };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   // HEALTH CHECK
@@ -2637,7 +2711,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isActive: isActive === "true" ? true : isActive === "false" ? false : undefined,
       };
       const users = await storage.listUsers(filters);
-      res.json(users);
+      // Always strip password; additionally strip payroll fields when
+      // the requester is not an admin (or when no currentUserId is
+      // supplied, which we treat as the safe default).
+      const { scrub } = await resolveUserScrub(req);
+      res.json(users.map(scrub));
     } catch (error) {
       console.error("Error fetching users:", error);
       res.status(500).json({ error: "Failed to fetch users" });
@@ -2666,7 +2744,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
+      // Self-fetches return full payroll fields; cross-user fetches
+      // are scrubbed for non-admins. resolveUserScrub treats a missing
+      // currentUserId as agent-level (safe default).
+      const { isAdmin: requesterIsAdmin, scrub } = await resolveUserScrub(req);
+      const isSelf =
+        typeof req.query.currentUserId === "string" &&
+        req.query.currentUserId === req.params.id;
+      const finalScrub = requesterIsAdmin || isSelf ? stripPassword : scrub;
+      res.json(finalScrub(user));
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ error: "Failed to fetch user" });
@@ -2690,7 +2776,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const user = await storage.createUser(validatedData);
-      res.json(user);
+      // Strip password from the response — only an admin reaches this
+      // route (user-creation flow), so payroll fields can stay.
+      res.json(stripPassword(user));
     } catch (error) {
       if (error instanceof ZodError) {
         return res.status(400).json({ error: "Invalid user data", details: error.errors });
@@ -2822,7 +2910,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
+      // PATCH is admin-only at the auth layer above; safe to leave
+      // payroll fields. Always strip password.
+      res.json(stripPassword(user));
     } catch (error: any) {
       if (error instanceof ZodError) {
         return res.status(400).json({ error: "Invalid request data", details: error.errors });
@@ -2994,7 +3084,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
-      res.json({ success: true, user });
+      res.json({ success: true, user: stripPassword(user) });
     } catch (error) {
       console.error("Error updating presence status:", error);
       res.status(500).json({ error: "Failed to update presence status" });
@@ -3021,7 +3111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
-      res.json({ success: true, user });
+      res.json({ success: true, user: stripPassword(user) });
     } catch (error) {
       console.error("Error updating presence status:", error);
       res.status(500).json({ error: "Failed to update presence status" });

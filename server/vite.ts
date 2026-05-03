@@ -47,11 +47,14 @@ export async function setupVite(app: Express, server: Server) {
     allowedHosts: true as const,
   };
 
-  // configFile: true (default) tells Vite to load vite.config.ts from
-  // the cwd at dev runtime — see the file-level comment above for why
-  // we don't import it statically.
+  // configFile typing is `string | false | undefined`. `undefined`
+  // (omitting the property entirely) is the default Vite behaviour:
+  // it auto-discovers vite.config.{ts,js,mjs,cjs} from the cwd at dev
+  // runtime. Passing a literal path would also work but adds noise; we
+  // want the same behaviour as `vite dev` from the command line.
+  // See the file-level comment above for why we deliberately do NOT
+  // statically import the config from this file.
   const vite = await createViteServer({
-    configFile: true,
     customLogger: {
       ...viteLogger,
       error: (msg, options) => {
