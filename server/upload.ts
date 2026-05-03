@@ -1,30 +1,50 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import crypto from "crypto";
 import multer from "multer";
 import type { Request } from "express";
 
 // ─────────────────────────────────────────────────────────────────────
-// KYC upload — local disk storage.
+// KYC upload — local/ephemeral disk storage.
 //
-// This is the "foundation" step. When we migrate to S3, replace the
-// diskStorage + file-serving code with:
-//   - `multer.memoryStorage()` to buffer the file, OR
-//   - `multer-s3` for streaming uploads to S3
-// and swap the download route to return a pre-signed S3 URL.
-// Keep the same POST /api/users/:id/kyc-upload contract so the frontend
-// doesn't need to change.
+// On Vercel, /var/task is read-only and the only writable directory is
+// /tmp (wiped between invocations). On a long-running host (npm run
+// dev) we want uploads to persist between restarts, so we keep using
+// ./uploads/kyc relative to the project root.
+//
+// The path is selected at module load:
+//   - VERCEL=1            → os.tmpdir()/orderflow-kyc       (ephemeral)
+//   - everywhere else     → <repo>/uploads/kyc              (persistent)
+//
+// Until we move KYC to S3, files uploaded on Vercel won't survive past
+// the function invocation that received them. The legitimate
+// production path is "drop a real S3 bucket here" — see the upgrade
+// notes below.
+//
+// When we migrate to S3, replace the diskStorage + file-serving code
+// with `multer-s3` (streaming) or `multer.memoryStorage()` + manual
+// PutObject calls. Keep the same POST /api/users/:id/kyc-upload
+// contract so the frontend doesn't need to change.
 // ─────────────────────────────────────────────────────────────────────
 
-export const KYC_UPLOAD_DIR = path.resolve(
-  import.meta.dirname,
-  "..",
-  "uploads",
-  "kyc",
-);
+export const KYC_UPLOAD_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), "orderflow-kyc")
+  : path.resolve(import.meta.dirname, "..", "uploads", "kyc");
 
-// Defensive mkdirp — `-p` semantics, safe on repeat boots.
-fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true });
+// Defensive mkdirp — `-p` semantics, safe on repeat boots. Wrapped in
+// try/catch so a permissions blip on a serverless cold start (e.g. a
+// pre-existing /tmp dir, or fs being unmounted in some edge runtime)
+// doesn't take down the whole API at module-load time.
+try {
+  fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true });
+} catch (err: any) {
+  if (err?.code !== "EEXIST") {
+    console.warn(
+      `[kyc-upload] could not pre-create ${KYC_UPLOAD_DIR}: ${err?.message ?? err}`,
+    );
+  }
+}
 
 const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".pdf"]);
 const ALLOWED_MIME_TYPES = new Set([
