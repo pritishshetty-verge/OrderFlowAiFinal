@@ -3,7 +3,14 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Eye, EyeOff, Workflow } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
+// Same logo asset the sidebar uses — `@assets` is the Vite alias for
+// `attached_assets/` (see vite.config.ts). The asset itself is a small
+// PNG with a transparent background, which is why we render it inside
+// a translucent white rounded tile on the dark gradient panel — the
+// tile gives it a clean light backdrop without needing a CSS invert
+// filter that would distort the brand colours.
+import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 // ─────────────────────────────────────────────────────────────────────
 // Login page — split-screen premium SaaS layout.
@@ -104,8 +111,12 @@ export default function LoginPage() {
 
         {/* Brand mark */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-lg bg-white/15 backdrop-blur-sm">
-            <Workflow className="h-5 w-5" />
+          <div className="grid h-10 w-10 place-items-center rounded-lg bg-white/95 backdrop-blur-sm shadow-sm">
+            <img
+              src={logoUrl}
+              alt="OrderFlow"
+              className="h-7 w-7 object-contain"
+            />
           </div>
           <span className="text-lg font-semibold tracking-tight">OrderFlow</span>
         </div>
@@ -130,10 +141,15 @@ export default function LoginPage() {
       {/* ── Right: form ── */}
       <main className="flex items-center justify-center p-6 md:p-12">
         <div className="w-full max-w-sm space-y-8">
-          {/* Mobile-only brand mark */}
+          {/* Mobile-only brand mark — uses a light tile so the logo
+              keeps its natural colours, matching the desktop panel. */}
           <div className="md:hidden flex items-center gap-2">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-blue-700 text-white">
-              <Workflow className="h-4 w-4" />
+            <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 ring-1 ring-slate-200">
+              <img
+                src={logoUrl}
+                alt="OrderFlow"
+                className="h-6 w-6 object-contain"
+              />
             </div>
             <span className="text-base font-semibold tracking-tight text-slate-900">
               OrderFlow
