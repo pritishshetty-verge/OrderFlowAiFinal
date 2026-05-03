@@ -30,9 +30,33 @@ export async function sendInvitationEmail(params: {
   expiresAt: Date;
 }) {
   const { client, fromEmail } = await getUncachableResendClient();
-  
-  const baseUrl = process.env.APP_BASE_URL || 'http://localhost:5000';
-  const inviteUrl = `${baseUrl}/signup?token=${params.inviteToken}`;
+
+  // Resolve the base URL the invite link points at. Priority:
+  //   1. process.env.APP_BASE_URL  — set on Vercel for prod / preview.
+  //   2. https://www.orderflow.sbs — official production domain. This
+  //      is a hard-coded safety net against the env var being wrong
+  //      (which is exactly what got us here: Vercel had APP_BASE_URL=
+  //      'https://placeholder.vercel.app' from initial setup, so every
+  //      invite email shipped a broken link). Any non-empty / non-
+  //      placeholder env value still wins; this fallback only fires
+  //      when the env var is missing or set to the literal
+  //      'placeholder' string.
+  //   3. http://localhost:5001     — local dev fallback (matches the
+  //      port `npm run dev` actually binds to).
+  const envBase =
+    typeof process.env.APP_BASE_URL === "string"
+      ? process.env.APP_BASE_URL.trim()
+      : "";
+  const isUsableEnvBase =
+    envBase.length > 0 && !/placeholder/i.test(envBase);
+  const baseUrl = isUsableEnvBase
+    ? envBase
+    : process.env.NODE_ENV === "production"
+      ? "https://www.orderflow.sbs"
+      : "http://localhost:5001";
+  // Strip a trailing slash so the join below never produces a double-slash.
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const inviteUrl = `${cleanBase}/signup?token=${params.inviteToken}`;
   
   const expiryDate = new Date(params.expiresAt).toLocaleDateString('en-US', {
     month: 'long',
