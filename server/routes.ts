@@ -347,6 +347,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * @param requestedScope - 'global' for all orders, 'assigned' or undefined for agent's orders
    * @param requestedAssignedTo - Optional filter by specific agent (admin only)
    */
+  // Roles with admin-equivalent READ access on the order surface.
+  // Listed users see every order regardless of assignment, the same
+  // way an admin does. They do NOT inherit modify privileges —
+  // canUserAccessOrder (the modify gate) still requires assignment
+  // ownership for these roles.
+  //
+  //   admin         — full read + write
+  //   chat_support  — full read only (per role-brief: "view ALL
+  //                    orders, exactly like an Admin")
+  //
+  // Add a new role here when it should have org-wide read scope on
+  // /api/orders and /api/orders/:id without needing the Global View
+  // scope=global toggle.
+  const ORDER_FULL_READ_ROLES: ReadonlySet<string> = new Set([
+    "admin",
+    "chat_support",
+  ]);
+  const hasFullOrderReadAccess = (user: { role?: string } | null | undefined) =>
+    !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
+
   async function buildOrderReadScope(
     requestingUserId: string | undefined,
     requestedScope: OrderReadScope,
@@ -354,28 +374,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
     // SECURITY: currentUserId is REQUIRED - never allow access without verified user identity
     if (!requestingUserId) {
-      return { 
-        assignedTo: "__UNAUTHORIZED__", 
-        isAdmin: false, 
-        unauthorized: true, 
-        reason: "currentUserId is required for authorization" 
+      return {
+        assignedTo: "__UNAUTHORIZED__",
+        isAdmin: false,
+        unauthorized: true,
+        reason: "currentUserId is required for authorization"
       };
     }
-    
+
     const user = await storage.getUser(requestingUserId);
     if (!user) {
       // Unknown user - reject access
-      return { 
-        assignedTo: "__UNAUTHORIZED__", 
-        isAdmin: false, 
-        unauthorized: true, 
-        reason: "User not found" 
+      return {
+        assignedTo: "__UNAUTHORIZED__",
+        isAdmin: false,
+        unauthorized: true,
+        reason: "User not found"
       };
     }
-    
-    // Admins can see all orders or filter as requested
-    if (user.role === "admin") {
-      return { assignedTo: requestedAssignedTo, isAdmin: true, unauthorized: false };
+
+    // Roles with admin-equivalent read scope. The `isAdmin` flag in
+    // the return value preserves its original meaning (true ONLY for
+    // role==='admin') because downstream callers use it for write-
+    // path decisions where chat_support must NOT be elevated.
+    // Read-side filters use the bypassed-assignedTo result, which is
+    // what gives chat_support the full list.
+    if (hasFullOrderReadAccess(user)) {
+      return {
+        assignedTo: requestedAssignedTo,
+        isAdmin: user.role === "admin",
+        unauthorized: false,
+      };
     }
     
     // =========================================================================
@@ -481,12 +510,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!user) {
       return { authorized: false, reason: "User not found", isAdmin: false };
     }
-    
-    // Admins can read any order
-    if (user.role === "admin") {
-      return { authorized: true, isAdmin: true };
+
+    // Admin-equivalent read: admins AND chat_support can read any
+    // order without needing scope=global. The `isAdmin` field in the
+    // return value still reflects the literal role check so write-
+    // path decisions downstream don't accidentally elevate
+    // chat_support. Modify gates (canUserAccessOrder) still block
+    // chat_support from changing anything.
+    if (hasFullOrderReadAccess(user)) {
+      return { authorized: true, isAdmin: user.role === "admin" };
     }
-    
+
     // GLOBAL VIEW: Agent explicitly requested global scope - allow reading any order
     // Note: Write protection (canUserModifyOrder) still blocks modifications
     if (scope === 'global') {

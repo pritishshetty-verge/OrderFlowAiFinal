@@ -7473,6 +7473,11 @@ async function registerRoutes(app2) {
       });
     }
   });
+  const ORDER_FULL_READ_ROLES = /* @__PURE__ */ new Set([
+    "admin",
+    "chat_support"
+  ]);
+  const hasFullOrderReadAccess = (user) => !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
   async function buildOrderReadScope(requestingUserId, requestedScope, requestedAssignedTo) {
     if (!requestingUserId) {
       return {
@@ -7491,8 +7496,12 @@ async function registerRoutes(app2) {
         reason: "User not found"
       };
     }
-    if (user.role === "admin") {
-      return { assignedTo: requestedAssignedTo, isAdmin: true, unauthorized: false };
+    if (hasFullOrderReadAccess(user)) {
+      return {
+        assignedTo: requestedAssignedTo,
+        isAdmin: user.role === "admin",
+        unauthorized: false
+      };
     }
     if (requestedScope === "global") {
       return { assignedTo: void 0, isAdmin: false, unauthorized: false };
@@ -7531,8 +7540,8 @@ async function registerRoutes(app2) {
     if (!user) {
       return { authorized: false, reason: "User not found", isAdmin: false };
     }
-    if (user.role === "admin") {
-      return { authorized: true, isAdmin: true };
+    if (hasFullOrderReadAccess(user)) {
+      return { authorized: true, isAdmin: user.role === "admin" };
     }
     if (scope === "global") {
       return { authorized: true, isAdmin: false };
