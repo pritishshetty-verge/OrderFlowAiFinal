@@ -218,7 +218,12 @@ var init_schema = __esm({
       email: z.string().email("Invalid email address"),
       firstName: z.string().optional(),
       lastName: z.string().optional(),
-      role: z.enum(["admin", "agent", "recovery_agent"]).default("agent"),
+      // Allowed roles. Order matters in the dropdown rendering on the
+      // client. New roles must be added in BOTH this enum and the
+      // matching frontend-side `inviteUserSchema` in
+      // client/src/components/team-directory.tsx, otherwise the form
+      // either refuses to submit or the server refuses to accept it.
+      role: z.enum(["admin", "agent", "recovery_agent", "chat_support"]).default("agent"),
       adminType: z.enum(["full_control", "partial_control"]).optional(),
       permissions: z.record(z.any()).optional()
     });

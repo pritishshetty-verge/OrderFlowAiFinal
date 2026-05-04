@@ -79,6 +79,51 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
   return <ProtectedRoute component={Component} />;
 }
 
+// Chat Support sees only the dashboard, the order list, and the team
+// directory. Anything else (fulfilment, NDR, call logs, payroll,
+// integrations, settings, learning center, abandoned carts) is
+// off-limits — both via sidebar (see app-sidebar.tsx
+// chatSupportMenuItems) and via direct URL typing (this guard).
+//
+// /profile, /login, /signup remain reachable so the user can manage
+// their own account / accept invites / reauth without a redirect
+// loop. Routes wrapped in AdminOnlyGuard (e.g. /payroll) already
+// reject chat_support — no extra coverage needed there.
+const CHAT_SUPPORT_ALLOWED_PATHS = [
+  "/",
+  "/orders",
+  "/team",
+  "/profile",
+  // /settings is reachable so chat_support can manage their own
+  // preferences / password / notifications. The page itself gates
+  // its admin-only tabs (Operations, IVR) by role, so allowing the
+  // route here doesn't expose anything privileged.
+  "/settings",
+  "/login",
+  "/signup",
+];
+
+function ChatSupportGuard({ component: Component }: { component: React.ComponentType }) {
+  const [location] = useLocation();
+  const userRole = localStorage.getItem("userRole");
+
+  if (userRole === "chat_support") {
+    const isAllowed = CHAT_SUPPORT_ALLOWED_PATHS.some(
+      (path) =>
+        location === path ||
+        (path !== "/" && location.startsWith(path + "/")),
+    );
+    if (!isAllowed) {
+      return <Redirect to="/" />;
+    }
+  }
+
+  // Chain through to RecoveryAgentGuard so a single decorator covers
+  // both restricted roles. ProtectedRoute (login check) is at the
+  // bottom of the chain.
+  return <RecoveryAgentGuard component={Component} />;
+}
+
 // Admin-only guard — stricter superset of ProtectedRoute. Use for routes
 // like /pare (Clean Revenue analytics) that agents and recovery_agents
 // must not see. If the user is signed-in-but-not-admin, bounce them to
@@ -108,10 +153,10 @@ function Router() {
         {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole as any} />} />}
       </Route>
       <Route path="/fulfil">
-        {() => <RecoveryAgentGuard component={FulfilPage} />}
+        {() => <ChatSupportGuard component={FulfilPage} />}
       </Route>
       <Route path="/ndr">
-        {() => <RecoveryAgentGuard component={NDRPage} />}
+        {() => <ChatSupportGuard component={NDRPage} />}
       </Route>
       <Route path="/team">
         {() => <RecoveryAgentGuard component={TeamPage} />}
@@ -126,46 +171,46 @@ function Router() {
         {() => <RecoveryAgentGuard component={SettingsPage} />}
       </Route>
       <Route path="/settings/shopify/setup">
-        {() => <RecoveryAgentGuard component={ShopifySetupPage} />}
+        {() => <ChatSupportGuard component={ShopifySetupPage} />}
       </Route>
       <Route path="/settings/shopify/webhooks">
-        {() => <RecoveryAgentGuard component={ShopifyWebhooksPage} />}
+        {() => <ChatSupportGuard component={ShopifyWebhooksPage} />}
       </Route>
       <Route path="/learning">
-        {() => <RecoveryAgentGuard component={LearningCenterPage} />}
+        {() => <ChatSupportGuard component={LearningCenterPage} />}
       </Route>
       <Route path="/learning/courses/:slug">
-        {() => <RecoveryAgentGuard component={CourseDetailPage} />}
+        {() => <ChatSupportGuard component={CourseDetailPage} />}
       </Route>
       <Route path="/learning/lessons/:slug">
-        {() => <RecoveryAgentGuard component={LessonPage} />}
+        {() => <ChatSupportGuard component={LessonPage} />}
       </Route>
       <Route path="/learning/admin">
-        {() => <RecoveryAgentGuard component={AdminLearningDashboard} />}
+        {() => <ChatSupportGuard component={AdminLearningDashboard} />}
       </Route>
       <Route path="/learning/admin/courses/:id">
-        {() => <RecoveryAgentGuard component={AdminCourseForm} />}
+        {() => <ChatSupportGuard component={AdminCourseForm} />}
       </Route>
       <Route path="/learning/admin/lessons/:id">
-        {() => <RecoveryAgentGuard component={AdminLessonForm} />}
+        {() => <ChatSupportGuard component={AdminLessonForm} />}
       </Route>
       <Route path="/call-logs">
-        {() => <RecoveryAgentGuard component={CallLogsPage} />}
+        {() => <ChatSupportGuard component={CallLogsPage} />}
       </Route>
       <Route path="/abandoned-carts">
-        {() => <ProtectedRoute component={AbandonedCartsPage} />}
+        {() => <ChatSupportGuard component={AbandonedCartsPage} />}
       </Route>
       <Route path="/learning-center">
-        {() => <RecoveryAgentGuard component={LearningCenterPlaceholder} />}
+        {() => <ChatSupportGuard component={LearningCenterPlaceholder} />}
       </Route>
       <Route path="/teams">
-        {() => <RecoveryAgentGuard component={TeamsPlaceholder} />}
+        {() => <ChatSupportGuard component={TeamsPlaceholder} />}
       </Route>
       <Route path="/webhooks">
-        {() => <RecoveryAgentGuard component={WebhooksSettingsPage} />}
+        {() => <ChatSupportGuard component={WebhooksSettingsPage} />}
       </Route>
       <Route path="/api-logs">
-        {() => <RecoveryAgentGuard component={WebhookLogsPage} />}
+        {() => <AdminOnlyGuard component={WebhookLogsPage} />}
       </Route>
       <Route path="/integrations">
         {() => <AdminOnlyGuard component={IntegrationsPage} />}

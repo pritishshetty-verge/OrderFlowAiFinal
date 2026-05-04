@@ -48,7 +48,7 @@ const COMPENSATION_PROFILE_OPTIONS: { value: CompensationProfile | "NONE"; label
 interface TeamMember {
   id: string;
   name: string;
-  role: "admin" | "agent" | "recovery_agent";
+  role: "admin" | "agent" | "recovery_agent" | "chat_support";
   adminType?: "full_control" | "partial_control";
   email: string;
   phone: string;
@@ -72,7 +72,12 @@ const inviteUserSchema = z.object({
   email: z.string().email("Invalid email address"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
-  role: z.enum(["admin", "agent", "recovery_agent"]).default("agent"),
+  // Mirror of shared/schema.ts insertInviteSchema. Both must be kept
+  // in sync — drift here means the form rejects roles the server
+  // accepts, or vice-versa.
+  role: z
+    .enum(["admin", "agent", "recovery_agent", "chat_support"])
+    .default("agent"),
 });
 
 type InviteUserFormData = z.infer<typeof inviteUserSchema>;
@@ -464,10 +469,29 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       case "admin":
         return "default";
       case "recovery_agent":
+      case "chat_support":
         return "secondary";
       case "agent":
       default:
         return "outline";
+    }
+  };
+
+  // Friendly display name for each role. Used by the badge on each
+  // member card. Keep in sync with the SelectItem labels in the
+  // invite dialog further down so the same role reads the same way
+  // throughout the UI.
+  const formatRoleLabel = (role: TeamMember["role"]): string => {
+    switch (role) {
+      case "recovery_agent":
+        return "Recovery Agent";
+      case "chat_support":
+        return "Chat Support";
+      case "admin":
+        return "Admin";
+      case "agent":
+      default:
+        return "Agent";
     }
   };
 
@@ -536,14 +560,12 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     </CardDescription>
                   </div>
                 </div>
-                <Badge variant={getRoleBadgeVariant(member.role)} className="capitalize">
+                <Badge variant={getRoleBadgeVariant(member.role)}>
                   {member.role === "admin" && member.adminType
                     ? member.adminType === "full_control"
                       ? "Full Control Admin"
                       : "Partial Control Admin"
-                    : member.role === "recovery_agent"
-                      ? "Recovery Agent"
-                      : member.role}
+                    : formatRoleLabel(member.role)}
                 </Badge>
               </div>
             </CardHeader>
@@ -734,6 +756,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         <SelectItem value="agent">Agent</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="recovery_agent">Recovery Agent</SelectItem>
+                        <SelectItem value="chat_support">Chat Support</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />

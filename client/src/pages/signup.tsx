@@ -205,13 +205,14 @@ export default function SignupPage() {
           <Badge
             variant="secondary"
             data-testid="badge-role"
-            className="capitalize"
           >
             {inviteData?.role === "admin"
               ? "Administrator"
               : inviteData?.role === "recovery_agent"
                 ? "Recovery Agent"
-                : "Agent"}
+                : inviteData?.role === "chat_support"
+                  ? "Chat Support"
+                  : "Agent"}
           </Badge>
         </div>
 

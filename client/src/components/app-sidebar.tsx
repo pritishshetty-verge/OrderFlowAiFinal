@@ -133,6 +133,29 @@ const recoveryAgentMenuItems: MenuItem[] = [
   },
 ];
 
+// Chat Support sees a deliberately tiny surface: a glanceable order
+// list and a way to message the team. No fulfilment / NDR / call logs
+// / abandoned-carts / payroll / integrations. Orders is rendered as a
+// flat link rather than the collapsible parent that admins / agents
+// see — chat support has no use for the sub-pages.
+const chatSupportMenuItems: MenuItem[] = [
+  {
+    title: "Overview",
+    url: "/",
+    icon: Home,
+  },
+  {
+    title: "Orders",
+    url: "/orders",
+    icon: Package,
+  },
+  {
+    title: "Team",
+    url: "/team",
+    icon: Users,
+  },
+];
+
 interface AppSidebarProps {
   userRole?: string;
 }
@@ -147,12 +170,30 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   });
 
   const isRecoveryAgent = userRole === "recovery_agent";
+  const isChatSupport = userRole === "chat_support";
   const isAdmin = userRole === "admin";
-  // Admin menu is shared with agents today, but a few entries are
-  // admin-only. Filter them here so the nav matches the route guards
-  // (AdminOnlyGuard in App.tsx, 403 on the server).
-  const baseMenuItems = isRecoveryAgent ? recoveryAgentMenuItems : adminMenuItems;
-  const ADMIN_ONLY_URLS = new Set(["/pare", "/integrations", "/payroll"]);
+
+  // Pick the per-role menu. Each role with a heavily-restricted nav
+  // (recovery_agent, chat_support) gets its own dedicated array so we
+  // never have to filter against a long admin-default list. The
+  // open-ended `agent` role still falls through to adminMenuItems and
+  // gets the ADMIN_ONLY_URLS filter applied below.
+  const baseMenuItems = isRecoveryAgent
+    ? recoveryAgentMenuItems
+    : isChatSupport
+      ? chatSupportMenuItems
+      : adminMenuItems;
+
+  // URLs that should be hidden from the sidebar for any non-admin
+  // role. These match the AdminOnlyGuard routes in App.tsx (server
+  // returns 403 too — this is just visual). API Logs was previously
+  // visible to plain agents; locked down now per role brief.
+  const ADMIN_ONLY_URLS = new Set([
+    "/pare",
+    "/integrations",
+    "/payroll",
+    "/api-logs",
+  ]);
   const menuItems = isAdmin
     ? baseMenuItems
     : baseMenuItems.filter(
