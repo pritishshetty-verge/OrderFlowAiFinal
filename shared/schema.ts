@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -194,11 +194,106 @@ export type Invite = typeof invites.$inferSelect;
 // ============================================================================
 
 // ============================================================================
+// STORES (Multi-tenant Phase 1: one row per connected Shopify store)
+// ============================================================================
+//
+// This is the canonical store registry. In the single-store world we
+// kept the connected store's data in `shopify_credentials`; that table
+// stays intact (existing code still reads it) but new code should use
+// `stores`. The Phase-1 backfill copies the single active credentials
+// row into a `stores` row and links every existing order/customer/etc.
+// to it via the nullable `storeId` columns added below.
+//
+// Migration path forward (Phase 4/5): the read-paths flip over to
+// stores → getShopifyClient(storeId) factory; shopify_credentials gets
+// deprecated and eventually dropped.
+export const stores = pgTable("stores", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Display name fetched from Shopify on connect.
+  storeName: text("store_name"),
+  // .myshopify.com domain — globally unique because it IS Shopify's
+  // tenant identifier. We use this to route inbound webhooks via the
+  // X-Shopify-Shop-Domain header (Phase 5).
+  storeUrl: text("store_url").notNull().unique(),
+  // Encrypted via server/encryption.ts. Optional during the
+  // transition because the existing credentials still live in
+  // shopify_credentials; the Phase-5 migration moves them in.
+  apiKey: text("api_key"),
+  apiSecret: text("api_secret"),
+  accessToken: text("access_token"),
+  webhookSecret: text("webhook_secret"),
+  isActive: boolean("is_active").notNull().default(true),
+  lastTestedAt: timestamp("last_tested_at"),
+  testStatus: text("test_status"), // success | failed
+  testMessage: text("test_message"),
+  // Audit: which admin connected the store. Nullable so the Phase-1
+  // backfill (which can't know the original connector) can leave it
+  // empty for the legacy store.
+  connectedBy: varchar("connected_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertStoreSchema = createInsertSchema(stores).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertStore = z.infer<typeof insertStoreSchema>;
+export type Store = typeof stores.$inferSelect;
+
+// ============================================================================
+// USER ↔ STORE membership (RBAC mapping)
+// ============================================================================
+//
+// Which non-admin users can see which stores. Admins implicitly get
+// every store (no row needed). Agents / recovery_agent / chat_support
+// see exactly the stores they have rows for.
+//
+// (userId, storeId) is unique — one membership per pair. ON DELETE
+// CASCADE on both sides cleans up automatically when a user or store
+// is removed.
+export const userStores = pgTable(
+  "user_stores",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    storeId: varchar("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdBy: varchar("created_by").references(() => users.id),
+  },
+  (table) => ({
+    uniqUserStore: unique().on(table.userId, table.storeId),
+  }),
+);
+
+export const insertUserStoreSchema = createInsertSchema(userStores).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertUserStore = z.infer<typeof insertUserStoreSchema>;
+export type UserStore = typeof userStores.$inferSelect;
+
+// ============================================================================
 // MARKETING METRICS (for Pare Phase 4 · Meta/FB ad data, aggregated per day)
 // ============================================================================
-
+//
+// Phase 1 caveat: `date` remains the sole PK column for now. The
+// multi-store-correct schema has a composite PK of (date, storeId),
+// but a composite PK cannot include a nullable column. Since storeId
+// is nullable until the Phase-1 backfill runs in production, we keep
+// the single-column PK + add a nullable storeId. After backfill, a
+// follow-up migration drops the date-only PK and adds the composite.
+// See server/scripts/backfill-store-id.ts for the ordering.
 export const marketingMetrics = pgTable("marketing_metrics", {
   date: date("date").primaryKey(),
+  // Added in Phase 1, nullable. Flipped NOT NULL + folded into the PK
+  // in a follow-up after backfill.
+  storeId: varchar("store_id").references(() => stores.id),
   fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
   // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
   fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
@@ -223,6 +318,10 @@ export type InsertPincodeTier = typeof pincodeTiers.$inferInsert;
 
 export const customers = pgTable("customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Multi-store: which store this customer belongs to. Nullable in
+  // Phase 1; backfilled to the single existing store; will be flipped
+  // NOT NULL after the production backfill runs.
+  storeId: varchar("store_id").references(() => stores.id),
   shopifyCustomerId: text("shopify_customer_id").unique(),
   email: text("email"),
   phone: text("phone"),
@@ -246,6 +345,9 @@ export type Customer = typeof customers.$inferSelect;
 
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Multi-store FK. Nullable in Phase 1; backfilled in production
+  // before being flipped NOT NULL.
+  storeId: varchar("store_id").references(() => stores.id),
   shopifyOrderId: text("shopify_order_id").notNull().unique(),
   shopifyOrderNumber: text("shopify_order_number").notNull(),
   customerId: varchar("customer_id").references(() => customers.id),
@@ -349,6 +451,9 @@ export type Order = typeof orders.$inferSelect;
 
 export const orderItems = pgTable("order_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order. Saves a join on catalog/analytics
+  // queries that already filter by store. Nullable in Phase 1.
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   shopifyLineItemId: text("shopify_line_item_id"),
   shopifyProductId: text("shopify_product_id"),
@@ -377,6 +482,11 @@ export type OrderItem = typeof orderItems.$inferSelect;
 
 export const products = pgTable("products", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Multi-store: catalog cache is per-store. Nullable in Phase 1.
+  // Once backfilled, the `shopifyVariantId` UNIQUE constraint should
+  // be relaxed to UNIQUE(storeId, shopifyVariantId) so different
+  // stores' catalogs can coexist — deferred to Phase 5.
+  storeId: varchar("store_id").references(() => stores.id),
   shopifyProductId: text("shopify_product_id").notNull(),
   shopifyVariantId: text("shopify_variant_id").notNull().unique(),
   
@@ -402,6 +512,8 @@ export type Product = typeof products.$inferSelect;
 
 export const orderAssignments = pgTable("order_assignments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order for direct store-scoped queries.
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   assignedBy: varchar("assigned_by").references(() => users.id, { onDelete: "set null" }),
@@ -419,6 +531,9 @@ export type OrderAssignment = typeof orderAssignments.$inferSelect;
 
 export const orderStatusHistory = pgTable("order_status_history", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order. Pare analytics reads this heavily;
+  // having storeId on the row avoids a join on every analytics query.
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   status: text("status").notNull(),
   previousStatus: text("previous_status"),
@@ -437,6 +552,8 @@ export type OrderStatusHistory = typeof orderStatusHistory.$inferSelect;
 
 export const shopifySyncLogs = pgTable("shopify_sync_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Each sync attempt is per-store (outbound tag/note/metafield updates).
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   shopifyOrderId: text("shopify_order_id").notNull(),
   syncType: text("sync_type").notNull(), // confirmed, cancelled, followup
@@ -507,6 +624,10 @@ export type TeamMessage = typeof teamMessages.$inferSelect;
 
 export const webhookLogs = pgTable("webhook_logs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Which store this webhook payload was resolved to. Phase 5 reads
+  // X-Shopify-Shop-Domain to populate this; until then, every row
+  // inherits the single legacy store via backfill.
+  storeId: varchar("store_id").references(() => stores.id),
   topic: text("topic").notNull(), // e.g., "orders/create"
   shopifyOrderId: text("shopify_order_id"),
   payload: jsonb("payload").notNull(),
@@ -704,6 +825,9 @@ export type PayrollLedger = typeof payrollLedger.$inferSelect;
 
 export const calls = pgTable("calls", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order so call-log queries are
+  // store-scoped without joining orders.
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   agentId: varchar("agent_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   customerPhone: text("customer_phone").notNull(),
@@ -1002,6 +1126,8 @@ export type UserOnboardingProgress = typeof userOnboardingProgress.$inferSelect;
 
 export const shipments = pgTable("shipments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order.
+  storeId: varchar("store_id").references(() => stores.id),
   orderId: varchar("order_id").notNull().unique().references(() => orders.id, { onDelete: "cascade" }), // One shipment per order
   shopifyOrderId: text("shopify_order_id").notNull(),
   
@@ -1056,6 +1182,8 @@ export type Shipment = typeof shipments.$inferSelect;
 
 export const ndrEvents = pgTable("ndr_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Denormalised from parent order/shipment.
+  storeId: varchar("store_id").references(() => stores.id),
   shipmentId: varchar("shipment_id").notNull().references(() => shipments.id, { onDelete: "cascade" }),
   orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
   awb: text("awb").notNull(),
@@ -1122,6 +1250,9 @@ export type AppSetting = typeof appSettings.$inferSelect;
 
 export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   id: serial("id").primaryKey(),
+  // Multi-store: the Fastrr/Shopify checkout that produced this
+  // abandoned cart belongs to one store. Nullable in Phase 1.
+  storeId: varchar("store_id").references(() => stores.id),
   externalId: text("external_id"),
   customerName: text("customer_name"),
   customerPhone: text("customer_phone"),

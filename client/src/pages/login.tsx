@@ -62,6 +62,11 @@ export default function LoginPage() {
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
+        // `credentials: "include"` is the explicit form — same-origin
+        // requests carry cookies by default, but being explicit
+        // future-proofs the call if the frontend ever moves to a
+        // different domain than the API.
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), password }),
       });

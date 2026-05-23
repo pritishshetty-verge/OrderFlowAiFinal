@@ -2882,6 +2882,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
       }
 
+      // Establish a real server-side session. After this line the
+      // identity middleware (server/index.ts) will inject this userId
+      // into every subsequent request, overriding anything the client
+      // tries to claim via ?currentUserId=.
+      req.session.userId = user.id;
+      // Force a save so the Set-Cookie header is committed before the
+      // response goes out (saveUninitialized: false means we have to
+      // mutate the session to trigger persistence, which we just did).
+      await new Promise<void>((resolve, reject) =>
+        req.session.save((err) => (err ? reject(err) : resolve())),
+      );
+
       // Strip password (and password-shaped fields) before responding.
       // Returns the same shape the legacy /api/users/by-email endpoint
       // does so the client's transitional localStorage shim keeps
@@ -2892,6 +2904,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error in /api/auth/login:", error);
       res.status(500).json({ error: "Login failed. Please try again." });
     }
+  });
+
+  // ============================================================================
+  // GET /api/auth/me
+  //
+  // Returns the current session-authenticated user. Used by the
+  // frontend's useAuth() hook on app boot to rehydrate identity from
+  // the cookie (and, in Phase 3+, to populate the active-store list).
+  //
+  // 200 → user object (password stripped)
+  // 401 → no valid session
+  // ============================================================================
+  app.get("/api/auth/me", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        // Session points at a user that no longer exists (deleted).
+        // Clear the session and 401 — the client will redirect to login.
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!user.isActive) {
+        req.session.destroy(() => {});
+        return res.status(403).json({ error: "This account has been deactivated." });
+      }
+      const { password: _pw, ...safe } = user as any;
+      res.json(safe);
+    } catch (error: any) {
+      console.error("Error in /api/auth/me:", error);
+      res.status(500).json({ error: "Failed to load session." });
+    }
+  });
+
+  // ============================================================================
+  // POST /api/auth/logout
+  //
+  // Destroys the server-side session row and clears the cookie. The
+  // client should also clear its localStorage shim after this returns
+  // 200 (handled by the frontend logout handler — see profile-dropdown).
+  // ============================================================================
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("Error destroying session:", err);
+        // Even on error, clear the cookie on the client. The orphan
+        // session row in the DB will TTL out via connect-pg-simple's
+        // pruner — not a security risk because the cookie is gone.
+      }
+      res.clearCookie("orderflow.sid");
+      res.json({ ok: true });
+    });
   });
 
   app.get("/api/auth/can-register-admin", async (_req, res) => {
@@ -2946,6 +3013,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...validatedData,
         password: hashedPassword,
       });
+
+      // Bootstrap admins are logged in immediately — same session
+      // contract as /api/auth/login so the redirect to / works.
+      req.session.userId = user.id;
+      await new Promise<void>((resolve, reject) =>
+        req.session.save((err) => (err ? reject(err) : resolve())),
+      );
 
       const { password: _password, ...safeUser } = user as any;
       res.status(201).json(safeUser);
@@ -5637,6 +5711,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       await storage.updateInviteStatus(invite.id, 'accepted');
+
+      // Log the new user in immediately — they just proved ownership
+      // of the invite token + chose a password, so a session is
+      // appropriate. Avoids forcing them through the login form they
+      // just finished setting credentials for.
+      req.session.userId = newUser.id;
+      await new Promise<void>((resolve, reject) =>
+        req.session.save((err) => (err ? reject(err) : resolve())),
+      );
 
       res.json({
         message: "Account created successfully",

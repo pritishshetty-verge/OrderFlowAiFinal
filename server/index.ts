@@ -66,6 +66,18 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Augment express-session's SessionData so TypeScript knows about the
+// fields we store on `req.session`. Today only `userId` lives there;
+// any future per-session state (e.g. activeStoreId in Phase 3) gets
+// added here.
+// ─────────────────────────────────────────────────────────────────────
+declare module "express-session" {
+  interface SessionData {
+    userId?: string;
+  }
+}
 app.use(
   express.json({
     verify: (req, _res, buf) => {
@@ -107,6 +119,47 @@ app.use(
     },
   }),
 );
+
+// ─────────────────────────────────────────────────────────────────────
+// Server-authoritative identity middleware (Phase 0).
+//
+// Until now, every authenticated route trusted `?currentUserId=…` from
+// the URL or `currentUserId` from the body — i.e. the client declared
+// its own identity. That was a real spoofing vector and the
+// fundamental hole the multi-store RBAC design can't safely sit on.
+//
+// This middleware fixes it without touching all 133 routes one-by-one:
+//   • If the request has a valid session (`req.session.userId` set
+//     by POST /api/auth/login), it OVERWRITES whatever the client
+//     put in `req.query.currentUserId` and `req.body.currentUserId`
+//     with the server-trusted value from the session. Spoofs are
+//     silently corrected — the route handler reads what we say.
+//   • If there is no session (logged-out client, webhook from
+//     Shopify, an old cached frontend that hasn't redeployed yet),
+//     the middleware does nothing and the legacy
+//     client-supplied `currentUserId` path still works. This keeps
+//     the deploy gracefully backwards-compatible during the
+//     transition; the fallback will be deleted in a follow-up once
+//     the whole frontend is migrated.
+//
+// Placement: must run AFTER session() (needs `req.session`) and
+// AFTER express.json/urlencoded (needs `req.body`), BEFORE routes.
+// ─────────────────────────────────────────────────────────────────────
+app.use((req, _res, next) => {
+  const sessionUserId = req.session?.userId;
+  if (sessionUserId) {
+    // Express 4's `req.query` is a mutable plain object; safe to assign.
+    (req.query as any).currentUserId = sessionUserId;
+    if (
+      req.body &&
+      typeof req.body === "object" &&
+      !Array.isArray(req.body)
+    ) {
+      (req.body as any).currentUserId = sessionUserId;
+    }
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

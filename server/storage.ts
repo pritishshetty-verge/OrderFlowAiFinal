@@ -3070,6 +3070,9 @@ export class DbStorage implements IStorage {
     const results = await db
       .select({
         id: abandonedCheckouts.id,
+        // storeId added in Phase 1 (multi-store schema). Nullable
+        // until backfill flips it NOT NULL.
+        storeId: abandonedCheckouts.storeId,
         externalId: abandonedCheckouts.externalId,
         customerName: abandonedCheckouts.customerName,
         customerPhone: abandonedCheckouts.customerPhone,

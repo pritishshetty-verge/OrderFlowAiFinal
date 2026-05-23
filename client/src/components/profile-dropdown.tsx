@@ -23,10 +23,25 @@ export function ProfileDropdown({ userRole, userName, userEmail, avatarImage }: 
   const [open, setOpen] = useState(false);
   const { theme, setTheme } = useTheme();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Server-side: destroy the session row + clear the orderflow.sid
+    // cookie. Wrapped so a network blip doesn't strand the user in
+    // a half-logged-in state.
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      console.warn("[logout] /api/auth/logout failed:", err);
+    }
+    // Client-side: clear the transitional localStorage shim so the
+    // ~30 components that still read role/id from localStorage don't
+    // think the user is still signed in.
     localStorage.removeItem("userRole");
     localStorage.removeItem("userId");
     localStorage.removeItem("userEmail");
+    localStorage.removeItem("userFullName");
     setLocation("/login");
   };
 

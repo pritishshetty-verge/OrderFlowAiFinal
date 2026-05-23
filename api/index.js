@@ -48,10 +48,12 @@ __export(schema_exports, {
   insertShipmentSchema: () => insertShipmentSchema,
   insertShopifyCredentialsSchema: () => insertShopifyCredentialsSchema,
   insertShopifySyncLogSchema: () => insertShopifySyncLogSchema,
+  insertStoreSchema: () => insertStoreSchema,
   insertTeamMessageSchema: () => insertTeamMessageSchema,
   insertUserLessonProgressSchema: () => insertUserLessonProgressSchema,
   insertUserOnboardingProgressSchema: () => insertUserOnboardingProgressSchema,
   insertUserSchema: () => insertUserSchema,
+  insertUserStoreSchema: () => insertUserStoreSchema,
   insertWebhookLogSchema: () => insertWebhookLogSchema,
   insertWebhookSchema: () => insertWebhookSchema,
   invites: () => invites,
@@ -73,19 +75,21 @@ __export(schema_exports, {
   shipments: () => shipments,
   shopifyCredentials: () => shopifyCredentials,
   shopifySyncLogs: () => shopifySyncLogs,
+  stores: () => stores,
   teamMessages: () => teamMessages,
   updateUserSchema: () => updateUserSchema,
   userLessonProgress: () => userLessonProgress,
   userOnboardingProgress: () => userOnboardingProgress,
+  userStores: () => userStores,
   users: () => users,
   webhookLogs: () => webhookLogs,
   webhooks: () => webhooks
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -227,8 +231,60 @@ var init_schema = __esm({
       adminType: z.enum(["full_control", "partial_control"]).optional(),
       permissions: z.record(z.any()).optional()
     });
+    stores = pgTable("stores", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Display name fetched from Shopify on connect.
+      storeName: text("store_name"),
+      // .myshopify.com domain — globally unique because it IS Shopify's
+      // tenant identifier. We use this to route inbound webhooks via the
+      // X-Shopify-Shop-Domain header (Phase 5).
+      storeUrl: text("store_url").notNull().unique(),
+      // Encrypted via server/encryption.ts. Optional during the
+      // transition because the existing credentials still live in
+      // shopify_credentials; the Phase-5 migration moves them in.
+      apiKey: text("api_key"),
+      apiSecret: text("api_secret"),
+      accessToken: text("access_token"),
+      webhookSecret: text("webhook_secret"),
+      isActive: boolean("is_active").notNull().default(true),
+      lastTestedAt: timestamp("last_tested_at"),
+      testStatus: text("test_status"),
+      // success | failed
+      testMessage: text("test_message"),
+      // Audit: which admin connected the store. Nullable so the Phase-1
+      // backfill (which can't know the original connector) can leave it
+      // empty for the legacy store.
+      connectedBy: varchar("connected_by").references(() => users.id),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+      updatedAt: timestamp("updated_at").notNull().defaultNow()
+    });
+    insertStoreSchema = createInsertSchema(stores).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
+    userStores = pgTable(
+      "user_stores",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        storeId: varchar("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        createdBy: varchar("created_by").references(() => users.id)
+      },
+      (table) => ({
+        uniqUserStore: unique().on(table.userId, table.storeId)
+      })
+    );
+    insertUserStoreSchema = createInsertSchema(userStores).omit({
+      id: true,
+      createdAt: true
+    });
     marketingMetrics = pgTable("marketing_metrics", {
       date: date("date").primaryKey(),
+      // Added in Phase 1, nullable. Flipped NOT NULL + folded into the PK
+      // in a follow-up after backfill.
+      storeId: varchar("store_id").references(() => stores.id),
       fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
       // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
       fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
@@ -245,6 +301,10 @@ var init_schema = __esm({
     });
     customers = pgTable("customers", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Multi-store: which store this customer belongs to. Nullable in
+      // Phase 1; backfilled to the single existing store; will be flipped
+      // NOT NULL after the production backfill runs.
+      storeId: varchar("store_id").references(() => stores.id),
       shopifyCustomerId: text("shopify_customer_id").unique(),
       email: text("email"),
       phone: text("phone"),
@@ -261,6 +321,9 @@ var init_schema = __esm({
     insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true, updatedAt: true });
     orders = pgTable("orders", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Multi-store FK. Nullable in Phase 1; backfilled in production
+      // before being flipped NOT NULL.
+      storeId: varchar("store_id").references(() => stores.id),
       shopifyOrderId: text("shopify_order_id").notNull().unique(),
       shopifyOrderNumber: text("shopify_order_number").notNull(),
       customerId: varchar("customer_id").references(() => customers.id),
@@ -356,6 +419,9 @@ var init_schema = __esm({
     insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
     orderItems = pgTable("order_items", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order. Saves a join on catalog/analytics
+      // queries that already filter by store. Nullable in Phase 1.
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       shopifyLineItemId: text("shopify_line_item_id"),
       shopifyProductId: text("shopify_product_id"),
@@ -372,6 +438,11 @@ var init_schema = __esm({
     insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true });
     products = pgTable("products", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Multi-store: catalog cache is per-store. Nullable in Phase 1.
+      // Once backfilled, the `shopifyVariantId` UNIQUE constraint should
+      // be relaxed to UNIQUE(storeId, shopifyVariantId) so different
+      // stores' catalogs can coexist — deferred to Phase 5.
+      storeId: varchar("store_id").references(() => stores.id),
       shopifyProductId: text("shopify_product_id").notNull(),
       shopifyVariantId: text("shopify_variant_id").notNull().unique(),
       title: text("title").notNull(),
@@ -386,6 +457,8 @@ var init_schema = __esm({
     insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true, updatedAt: true });
     orderAssignments = pgTable("order_assignments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order for direct store-scoped queries.
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
       assignedBy: varchar("assigned_by").references(() => users.id, { onDelete: "set null" }),
@@ -395,6 +468,9 @@ var init_schema = __esm({
     insertOrderAssignmentSchema = createInsertSchema(orderAssignments).omit({ id: true, createdAt: true });
     orderStatusHistory = pgTable("order_status_history", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order. Pare analytics reads this heavily;
+      // having storeId on the row avoids a join on every analytics query.
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       status: text("status").notNull(),
       previousStatus: text("previous_status"),
@@ -405,6 +481,8 @@ var init_schema = __esm({
     insertOrderStatusHistorySchema = createInsertSchema(orderStatusHistory).omit({ id: true, createdAt: true });
     shopifySyncLogs = pgTable("shopify_sync_logs", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Each sync attempt is per-store (outbound tag/note/metafield updates).
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       shopifyOrderId: text("shopify_order_id").notNull(),
       syncType: text("sync_type").notNull(),
@@ -454,6 +532,10 @@ var init_schema = __esm({
     insertTeamMessageSchema = createInsertSchema(teamMessages).omit({ id: true, createdAt: true });
     webhookLogs = pgTable("webhook_logs", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Which store this webhook payload was resolved to. Phase 5 reads
+      // X-Shopify-Shop-Domain to populate this; until then, every row
+      // inherits the single legacy store via backfill.
+      storeId: varchar("store_id").references(() => stores.id),
       topic: text("topic").notNull(),
       // e.g., "orders/create"
       shopifyOrderId: text("shopify_order_id"),
@@ -596,6 +678,9 @@ var init_schema = __esm({
     });
     calls = pgTable("calls", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order so call-log queries are
+      // store-scoped without joining orders.
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       agentId: varchar("agent_id").notNull().references(() => users.id, { onDelete: "cascade" }),
       customerPhone: text("customer_phone").notNull(),
@@ -827,6 +912,8 @@ var init_schema = __esm({
     });
     shipments = pgTable("shipments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order.
+      storeId: varchar("store_id").references(() => stores.id),
       orderId: varchar("order_id").notNull().unique().references(() => orders.id, { onDelete: "cascade" }),
       // One shipment per order
       shopifyOrderId: text("shopify_order_id").notNull(),
@@ -873,6 +960,8 @@ var init_schema = __esm({
     });
     ndrEvents = pgTable("ndr_events", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Denormalised from parent order/shipment.
+      storeId: varchar("store_id").references(() => stores.id),
       shipmentId: varchar("shipment_id").notNull().references(() => shipments.id, { onDelete: "cascade" }),
       orderId: varchar("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
       awb: text("awb").notNull(),
@@ -920,6 +1009,9 @@ var init_schema = __esm({
     insertAppSettingSchema = createInsertSchema(appSettings);
     abandonedCheckouts = pgTable("abandoned_checkouts", {
       id: serial("id").primaryKey(),
+      // Multi-store: the Fastrr/Shopify checkout that produced this
+      // abandoned cart belongs to one store. Nullable in Phase 1.
+      storeId: varchar("store_id").references(() => stores.id),
       externalId: text("external_id"),
       customerName: text("customer_name"),
       customerPhone: text("customer_phone"),
@@ -2630,6 +2722,9 @@ var init_storage = __esm({
       async getAbandonedCheckouts() {
         const results = await db.select({
           id: abandonedCheckouts.id,
+          // storeId added in Phase 1 (multi-store schema). Nullable
+          // until backfill flips it NOT NULL.
+          storeId: abandonedCheckouts.storeId,
           externalId: abandonedCheckouts.externalId,
           customerName: abandonedCheckouts.customerName,
           customerPhone: abandonedCheckouts.customerPhone,
@@ -9215,12 +9310,49 @@ async function registerRoutes(app2) {
       if (needsRehash) {
         hashPassword(password).then((hashed) => storage.setUserPassword(user.id, hashed)).catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
       }
+      req.session.userId = user.id;
+      await new Promise(
+        (resolve, reject) => req.session.save((err) => err ? reject(err) : resolve())
+      );
       const { password: _pw, ...safe } = user;
       res.json(safe);
     } catch (error) {
       console.error("Error in /api/auth/login:", error);
       res.status(500).json({ error: "Login failed. Please try again." });
     }
+  });
+  app2.get("/api/auth/me", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!user.isActive) {
+        req.session.destroy(() => {
+        });
+        return res.status(403).json({ error: "This account has been deactivated." });
+      }
+      const { password: _pw, ...safe } = user;
+      res.json(safe);
+    } catch (error) {
+      console.error("Error in /api/auth/me:", error);
+      res.status(500).json({ error: "Failed to load session." });
+    }
+  });
+  app2.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("Error destroying session:", err);
+      }
+      res.clearCookie("orderflow.sid");
+      res.json({ ok: true });
+    });
   });
   app2.get("/api/auth/can-register-admin", async (_req, res) => {
     try {
@@ -9261,6 +9393,10 @@ async function registerRoutes(app2) {
         ...validatedData,
         password: hashedPassword
       });
+      req.session.userId = user.id;
+      await new Promise(
+        (resolve, reject) => req.session.save((err) => err ? reject(err) : resolve())
+      );
       const { password: _password, ...safeUser } = user;
       res.status(201).json(safeUser);
     } catch (error) {
@@ -11272,6 +11408,10 @@ async function registerRoutes(app2) {
         department: null
       });
       await storage.updateInviteStatus(invite.id, "accepted");
+      req.session.userId = newUser.id;
+      await new Promise(
+        (resolve, reject) => req.session.save((err) => err ? reject(err) : resolve())
+      );
       res.json({
         message: "Account created successfully",
         user: {
@@ -12102,6 +12242,16 @@ app.use(
     }
   })
 );
+app.use((req, _res, next) => {
+  const sessionUserId = req.session?.userId;
+  if (sessionUserId) {
+    req.query.currentUserId = sessionUserId;
+    if (req.body && typeof req.body === "object" && !Array.isArray(req.body)) {
+      req.body.currentUserId = sessionUserId;
+    }
+  }
+  next();
+});
 app.use((req, res, next) => {
   const start = Date.now();
   const path5 = req.path;

@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
+import { AuthProvider } from "@/hooks/use-auth";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import OverviewPage from "@/pages/analytics";
@@ -239,15 +240,20 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
-          <ScopeProvider>
-            <SidebarProvider style={style as React.CSSProperties}>
-              <div className="flex h-screen w-full">
-                {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
-                <Router />
-              </div>
-            </SidebarProvider>
-            <Toaster />
-          </ScopeProvider>
+          {/* AuthProvider wraps everything so any nested component can
+              call useAuth(). It fetches /api/auth/me on mount to
+              rehydrate identity from the session cookie. */}
+          <AuthProvider>
+            <ScopeProvider>
+              <SidebarProvider style={style as React.CSSProperties}>
+                <div className="flex h-screen w-full">
+                  {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
+                  <Router />
+                </div>
+              </SidebarProvider>
+              <Toaster />
+            </ScopeProvider>
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
