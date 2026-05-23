@@ -1073,6 +1073,11 @@ var init_schema = __esm({
 });
 
 // server/db.ts
+var db_exports = {};
+__export(db_exports, {
+  db: () => db,
+  pool: () => pool
+});
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import ws from "ws";
@@ -1382,6 +1387,8 @@ var init_storage = __esm({
       }
       async listOrders(filters) {
         const conditions = [];
+        if (filters?.storeId)
+          conditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.status) conditions.push(eq(orders.status, filters.status));
         if (filters?.callStatus) {
           if (filters.callStatus === "Pending") {
@@ -1429,6 +1436,7 @@ var init_storage = __esm({
         }
         const [{ value: total }] = await countQuery;
         const statsConditions = [];
+        if (filters?.storeId) statsConditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
         const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : void 0;
         let totalCountQuery = db.select({ value: count() }).from(orders);
@@ -1482,6 +1490,7 @@ var init_storage = __esm({
       }
       async exportOrders(filters) {
         const conditions = [];
+        if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.status) conditions.push(eq(orders.status, filters.status));
         if (filters?.callStatus) {
           if (filters.callStatus === "Pending") {
@@ -2216,14 +2225,14 @@ var init_storage = __esm({
         return updated;
       }
       async listUnresolvedNDREvents(filters) {
-        const conditions = [eq(ndrEvents.resolved, false)];
+        const baseConds = [eq(ndrEvents.resolved, false)];
+        if (filters?.storeId) baseConds.push(eq(ndrEvents.storeId, filters.storeId));
         if (filters?.assignedTo) {
-          let query2 = db.select({ ndrEvent: ndrEvents }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(
-            and(
-              eq(ndrEvents.resolved, false),
-              eq(orders.assignedTo, filters.assignedTo)
-            )
-          ).orderBy(desc(ndrEvents.createdAt));
+          const conds = [
+            ...baseConds,
+            eq(orders.assignedTo, filters.assignedTo)
+          ];
+          let query2 = db.select({ ndrEvent: ndrEvents }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds)).orderBy(desc(ndrEvents.createdAt));
           if (filters?.limit) {
             query2 = query2.limit(filters.limit);
           }
@@ -2232,18 +2241,13 @@ var init_storage = __esm({
           }
           const results = await query2;
           const events2 = results.map((r) => r.ndrEvent);
-          const countResult2 = await db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(
-            and(
-              eq(ndrEvents.resolved, false),
-              eq(orders.assignedTo, filters.assignedTo)
-            )
-          );
+          const countResult2 = await db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds));
           return {
             events: events2,
             total: countResult2[0]?.count || 0
           };
         }
-        const baseQuery = db.select().from(ndrEvents).where(eq(ndrEvents.resolved, false));
+        const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
         let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
         if (filters?.limit) {
           query = query.limit(filters.limit);
@@ -2252,7 +2256,7 @@ var init_storage = __esm({
           query = query.offset(filters.offset);
         }
         const events = await query;
-        const countResult = await db.select({ count: count() }).from(ndrEvents).where(eq(ndrEvents.resolved, false));
+        const countResult = await db.select({ count: count() }).from(ndrEvents).where(and(...baseConds));
         return {
           events,
           total: countResult[0]?.count || 0
@@ -2827,6 +2831,9 @@ var init_encryption = __esm({
 var shopify_exports = {};
 __export(shopify_exports, {
   ShopifyClient: () => ShopifyClient,
+  getLegacyStoreShopifyClient: () => getLegacyStoreShopifyClient,
+  getShopifyClient: () => getShopifyClient,
+  invalidateShopifyClient: () => invalidateShopifyClient,
   shopifyClient: () => shopifyClient,
   updateShopifyClient: () => updateShopifyClient
 });
@@ -2872,7 +2879,61 @@ async function updateShopifyClient() {
   shopifyClient.tokenCache = null;
   return shopifyClient;
 }
-var TOKEN_REFRESH_BUFFER_MS, ShopifyClient, shopDomain, initialConfig, shopifyClient;
+async function loadShopifyConfigForStore(storeId) {
+  const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+  const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+  const { eq: eq5 } = await import("drizzle-orm");
+  const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
+  const [row] = await db2.select().from(stores2).where(eq5(stores2.id, storeId)).limit(1);
+  if (!row) {
+    throw new Error(
+      `[Shopify] getShopifyClient: no stores row for id ${storeId}`
+    );
+  }
+  return {
+    storeUrl: row.storeUrl,
+    apiKey: row.apiKey ? decrypt2(row.apiKey) : "",
+    apiSecret: row.apiSecret ? decrypt2(row.apiSecret) : "",
+    webhookSecret: row.webhookSecret ? decrypt2(row.webhookSecret) : void 0,
+    useClientCredentials: true
+  };
+}
+async function getShopifyClient(storeId) {
+  const cached = clientCache.get(storeId);
+  if (cached) return cached.client;
+  const inFlight = inFlightLoads.get(storeId);
+  if (inFlight) return inFlight;
+  const promise = (async () => {
+    const config = await loadShopifyConfigForStore(storeId);
+    const client = new ShopifyClient(config);
+    clientCache.set(storeId, { client, loadedAt: Date.now() });
+    return client;
+  })();
+  inFlightLoads.set(storeId, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightLoads.delete(storeId);
+  }
+}
+function invalidateShopifyClient(storeId) {
+  if (storeId) {
+    clientCache.delete(storeId);
+  } else {
+    clientCache.clear();
+  }
+}
+async function getLegacyStoreShopifyClient() {
+  const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+  const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+  const { asc: asc3 } = await import("drizzle-orm");
+  const [row] = await db2.select({ id: stores2.id }).from(stores2).orderBy(asc3(stores2.createdAt)).limit(1);
+  if (!row) {
+    return shopifyClient;
+  }
+  return getShopifyClient(row.id);
+}
+var TOKEN_REFRESH_BUFFER_MS, ShopifyClient, shopDomain, initialConfig, shopifyClient, clientCache, inFlightLoads;
 var init_shopify = __esm({
   "server/shopify.ts"() {
     "use strict";
@@ -3530,6 +3591,8 @@ var init_shopify = __esm({
       authMode: "client_credentials_grant"
     });
     shopifyClient = new ShopifyClient(initialConfig);
+    clientCache = /* @__PURE__ */ new Map();
+    inFlightLoads = /* @__PURE__ */ new Map();
   }
 });
 
@@ -4447,7 +4510,15 @@ var init_shopifySync = __esm({
             user = await storage.getUser(context.userId);
           }
           const agentName = context.agentName || user?.fullName || "Agent";
-          const client = await updateShopifyClient();
+          let client;
+          if (order.storeId) {
+            client = await getShopifyClient(order.storeId);
+          } else {
+            console.warn(
+              `[Shopify Sync][${syncId}] order ${orderId} has no storeId \u2014 falling back to legacy store`
+            );
+            client = await getLegacyStoreShopifyClient();
+          }
           const clientConfig = client.config;
           const targetDomain = clientConfig.storeUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
           const graphqlEndpoint = `https://${targetDomain}/admin/api/2025-01/graphql.json`;
@@ -7014,7 +7085,9 @@ function enumerateDays(startDate, endDate) {
   return out;
 }
 async function getPareMetrics(dateRange) {
-  const { startDate, endDate } = dateRange;
+  const { startDate, endDate, storeId } = dateRange;
+  const storeFilter = storeId ? sql3`AND store_id = ${storeId}` : sql3``;
+  const mmStoreFilter = storeId ? sql3`AND mm.store_id = ${storeId}` : sql3``;
   const query = sql3`
     SELECT
       (DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata'))::date::text AS day,
@@ -7158,13 +7231,17 @@ async function getPareMetrics(dateRange) {
       MAX(mm.fb_orders)::int4 AS fb_orders
     FROM ${orders}
     LEFT JOIN ${pincodeTiers} pt ON pt.pincode = ${orders}.shipping_pincode
-    LEFT JOIN ${marketingMetrics} mm ON mm.date = DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata')::date
+    LEFT JOIN ${marketingMetrics} mm
+      ON mm.date = DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata')::date
+      ${mmStoreFilter}
     -- Bucket + filter on processed_at (the financial timestamp Shopify
     -- uses in its sales reports), not shopify_created_at. COD orders
     -- and delayed-capture payments routinely drift a day between the
     -- two — this matches Shopifys own numbers 1:1.
     WHERE processed_at >= ${startDate}
       AND processed_at <= ${endDate}
+      -- Phase 2: scope to a single store when the caller asks.
+      ${storeFilter}
       -- Exclude test-mode orders (Shopifys test boolean). Populated
       -- by the historical backfill script at server/scripts/flag-test-orders.ts
       -- and by the regular sync going forward (see buildOrderInsert).
@@ -7604,10 +7681,11 @@ async function registerRoutes(app2) {
     "chat_support"
   ]);
   const hasFullOrderReadAccess = (user) => !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
-  async function buildOrderReadScope(requestingUserId, requestedScope, requestedAssignedTo) {
+  async function buildOrderReadScope(requestingUserId, requestedScope, requestedAssignedTo, storeId) {
     if (!requestingUserId) {
       return {
         assignedTo: "__UNAUTHORIZED__",
+        storeId,
         isAdmin: false,
         unauthorized: true,
         reason: "currentUserId is required for authorization"
@@ -7617,6 +7695,7 @@ async function registerRoutes(app2) {
     if (!user) {
       return {
         assignedTo: "__UNAUTHORIZED__",
+        storeId,
         isAdmin: false,
         unauthorized: true,
         reason: "User not found"
@@ -7625,17 +7704,18 @@ async function registerRoutes(app2) {
     if (hasFullOrderReadAccess(user)) {
       return {
         assignedTo: requestedAssignedTo,
+        storeId,
         isAdmin: user.role === "admin",
         unauthorized: false
       };
     }
     if (requestedScope === "global") {
-      return { assignedTo: void 0, isAdmin: false, unauthorized: false };
+      return { assignedTo: void 0, storeId, isAdmin: false, unauthorized: false };
     }
-    return { assignedTo: requestingUserId, isAdmin: false, unauthorized: false };
+    return { assignedTo: requestingUserId, storeId, isAdmin: false, unauthorized: false };
   }
-  async function enforceAgentReadFilter(requestingUserId, requestedAssignedTo) {
-    return buildOrderReadScope(requestingUserId, "assigned", requestedAssignedTo);
+  async function enforceAgentReadFilter(requestingUserId, requestedAssignedTo, storeId) {
+    return buildOrderReadScope(requestingUserId, "assigned", requestedAssignedTo, storeId);
   }
   async function canUserAccessOrder(userId, orderId) {
     if (!userId) {
@@ -7658,7 +7738,7 @@ async function registerRoutes(app2) {
     return { authorized: true, isAdmin: false };
   }
   const canUserModifyOrder = canUserAccessOrder;
-  async function canUserReadOrder(userId, orderId, scope) {
+  async function canUserReadOrder(userId, orderId, scope, activeStoreId) {
     if (!userId) {
       return { authorized: false, reason: "User ID is required for authorization", isAdmin: false };
     }
@@ -7666,15 +7746,22 @@ async function registerRoutes(app2) {
     if (!user) {
       return { authorized: false, reason: "User not found", isAdmin: false };
     }
+    const order = await storage.getOrder(orderId);
+    if (!order) {
+      return { authorized: false, reason: "Order not found", isAdmin: false };
+    }
+    if (activeStoreId && order.storeId && order.storeId !== activeStoreId) {
+      return {
+        authorized: false,
+        reason: "Order does not belong to the active store",
+        isAdmin: user.role === "admin"
+      };
+    }
     if (hasFullOrderReadAccess(user)) {
       return { authorized: true, isAdmin: user.role === "admin" };
     }
     if (scope === "global") {
       return { authorized: true, isAdmin: false };
-    }
-    const order = await storage.getOrder(orderId);
-    if (!order) {
-      return { authorized: false, reason: "Order not found", isAdmin: false };
     }
     if (order.assignedTo !== userId) {
       return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
@@ -7702,8 +7789,8 @@ async function registerRoutes(app2) {
           hint: "Shopify requires HTTPS for webhook endpoints."
         });
       }
-      const { shopifyClient: shopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const result = await shopifyClient2.registerAllWebhooks(appUrl);
+      const { shopifyClient: shopifyClient3 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const result = await shopifyClient3.registerAllWebhooks(appUrl);
       const failed = result.topics.filter((t) => t.action === "failed");
       res.status(failed.length > 0 ? 207 : 200).json({
         appUrl,
@@ -7722,8 +7809,8 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/shopify/webhooks", async (_req, res) => {
     try {
-      const { shopifyClient: shopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const result = await shopifyClient2.listWebhooks();
+      const { shopifyClient: shopifyClient3 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const result = await shopifyClient3.listWebhooks();
       res.json(result);
     } catch (err) {
       console.error("[list webhooks] failed:", err);
@@ -7795,16 +7882,20 @@ async function registerRoutes(app2) {
         const d = new Date(endDate);
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
+      const activeStoreId = req.storeScope?.storeId;
       const parsedScope = scope === "global" ? "global" : void 0;
       const authResult = await buildOrderReadScope(
         currentUserId,
         parsedScope,
-        assignedTo
+        assignedTo,
+        activeStoreId
       );
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
       const filters = {
+        storeId: authResult.storeId,
+        // Phase 2: scope reads to the active store
         status,
         paymentMethod,
         assignedTo: authResult.assignedTo,
@@ -7845,12 +7936,15 @@ async function registerRoutes(app2) {
       }
       const authResult = await enforceAgentReadFilter(
         currentUserId,
-        assignedTo
+        assignedTo,
+        req.storeScope?.storeId
       );
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
       const filters = {
+        storeId: authResult.storeId,
+        // Phase 2: scope export to active store
         status,
         paymentMethod,
         assignedTo: authResult.assignedTo,
@@ -7936,12 +8030,14 @@ async function registerRoutes(app2) {
       const { currentUserId } = req.query;
       const authResult = await enforceAgentReadFilter(
         currentUserId,
-        void 0
+        void 0,
+        req.storeScope?.storeId
       );
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
       const agentFilter = authResult.assignedTo ? sql6`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql6``;
+      const storeFilter = authResult.storeId ? sql6`AND ${orders.storeId} = ${authResult.storeId}` : sql6``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -7974,7 +8070,8 @@ async function registerRoutes(app2) {
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in transit%'
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in-transit%'
         AND ${orders.shipmentStatus} != 'IT'
-        ${agentFilter}`
+        ${agentFilter}
+        ${storeFilter}`
       ).orderBy(desc2(orders.createdAt)).limit(100);
       res.json({ orders: result, total: result.length });
     } catch (error) {
@@ -8058,7 +8155,11 @@ async function registerRoutes(app2) {
       if (startDate > endDate) {
         return res.status(400).json({ error: "startDate must be on or before endDate." });
       }
-      const metrics = await getPareMetrics({ startDate, endDate });
+      const metrics = await getPareMetrics({
+        startDate,
+        endDate,
+        storeId: req.storeScope?.storeId
+      });
       res.json(metrics);
     } catch (error) {
       console.error("Error computing Pare metrics:", error);
@@ -8071,7 +8172,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8092,7 +8194,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8110,7 +8213,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8128,7 +8232,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8146,7 +8251,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8172,7 +8278,8 @@ async function registerRoutes(app2) {
       const authCheck = await canUserReadOrder(
         currentUserId,
         req.params.id,
-        scope
+        scope,
+        req.storeScope?.storeId
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -8512,8 +8619,8 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Order has no Shopify ID" });
       }
       try {
-        const { updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-        const client = await updateShopifyClient2();
+        const { getShopifyClient: getShopifyClient2, getLegacyStoreShopifyClient: getLegacyStoreShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+        const client = existingOrder.storeId ? await getShopifyClient2(existingOrder.storeId) : await getLegacyStoreShopifyClient2();
         await client.cancelOrder(
           existingOrder.shopifyOrderId,
           reason,
@@ -8624,8 +8731,11 @@ async function registerRoutes(app2) {
       }
       console.log(`[shopify-sync] starting with sinceId=${sinceId}`);
       const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
-      const { updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const client = await updateShopifyClient2();
+      const { getShopifyClient: getShopifyClient2, getLegacyStoreShopifyClient: getLegacyStoreShopifyClient2, updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const syncStoreId = req.storeScope?.storeId;
+      const client = syncStoreId ? await getShopifyClient2(syncStoreId) : await getLegacyStoreShopifyClient2();
+      void updateShopifyClient2().catch(() => {
+      });
       const allProducts = await storage.listProducts();
       const productByVariant = /* @__PURE__ */ new Map();
       const productByProduct = /* @__PURE__ */ new Map();
@@ -10889,7 +10999,8 @@ async function registerRoutes(app2) {
       const { limit, offset, currentUserId } = req.query;
       const authResult = await enforceAgentReadFilter(
         currentUserId,
-        void 0
+        void 0,
+        req.storeScope?.storeId
       );
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
@@ -10897,8 +11008,10 @@ async function registerRoutes(app2) {
       const result = await storage.listUnresolvedNDREvents({
         limit: limit ? parseInt(limit) : 50,
         offset: offset ? parseInt(offset) : 0,
-        assignedTo: authResult.assignedTo
+        assignedTo: authResult.assignedTo,
         // Filter by agent if not admin
+        storeId: authResult.storeId
+        // Phase 2: scope to active store
       });
       const enrichedEvents = await Promise.all(
         result.events.map(async (event) => {
@@ -12214,6 +12327,99 @@ function serveStatic(app2) {
 init_storage();
 init_db();
 init_shopify();
+
+// server/storeScope.ts
+init_db();
+init_schema();
+import { eq as eq4, and as and4, asc as asc2 } from "drizzle-orm";
+var STORE_HEADER_NAME = "x-active-store-id";
+var StoreScopeError = class extends Error {
+  status;
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+    this.name = "StoreScopeError";
+  }
+};
+async function resolveStoreScope(req) {
+  const sessionUserId = req.session?.userId;
+  if (!sessionUserId) {
+    return null;
+  }
+  const [user] = await db.select().from(users).where(eq4(users.id, sessionUserId)).limit(1);
+  if (!user) {
+    return null;
+  }
+  const requestedHeader = readHeader(req);
+  if (isAdmin(user)) {
+    if (requestedHeader) {
+      const [row] = await db.select({ id: stores.id }).from(stores).where(eq4(stores.id, requestedHeader)).limit(1);
+      if (!row) {
+        throw new StoreScopeError(
+          404,
+          `Store ${requestedHeader} not found`
+        );
+      }
+      return { storeId: row.id, isAdmin: true, isFallback: false };
+    }
+    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc2(stores.createdAt)).limit(1);
+    if (!fallback) {
+      return null;
+    }
+    return { storeId: fallback.id, isAdmin: true, isFallback: true };
+  }
+  if (requestedHeader) {
+    const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
+      and4(
+        eq4(userStores.userId, user.id),
+        eq4(userStores.storeId, requestedHeader)
+      )
+    ).limit(1);
+    if (!membership) {
+      throw new StoreScopeError(
+        403,
+        "You do not have access to this store"
+      );
+    }
+    return {
+      storeId: membership.storeId,
+      isAdmin: false,
+      isFallback: false
+    };
+  }
+  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
+  if (!first) {
+    throw new StoreScopeError(
+      403,
+      "Your account is not attached to any store. Ask an administrator to grant access."
+    );
+  }
+  return { storeId: first.storeId, isAdmin: false, isFallback: true };
+}
+async function attachStoreScope(req, _res, next) {
+  if (req.path.startsWith("/api/webhooks/")) {
+    return next();
+  }
+  try {
+    const scope = await resolveStoreScope(req);
+    if (scope) req.storeScope = scope;
+    next();
+  } catch (err) {
+    if (err instanceof StoreScopeError) {
+      req.storeScopeError = err;
+      return next();
+    }
+    next(err);
+  }
+}
+function readHeader(req) {
+  const raw = req.headers[STORE_HEADER_NAME];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+// server/index.ts
 var NEON_WS_FINGERPRINT = "Cannot set property message of #<ErrorEvent>";
 process.on("uncaughtException", (err) => {
   if (err?.message?.includes(NEON_WS_FINGERPRINT)) {
@@ -12283,6 +12489,7 @@ app.use((req, _res, next) => {
   }
   next();
 });
+app.use(attachStoreScope);
 app.use((req, res, next) => {
   const start = Date.now();
   const path5 = req.path;
@@ -12336,7 +12543,8 @@ async function registerAllWebhooks() {
   }
   console.log(`[webhook-register] Registering Shopify webhooks for ${appUrl}\u2026`);
   try {
-    const { topics } = await shopifyClient.registerAllWebhooks(appUrl);
+    const client = await getLegacyStoreShopifyClient();
+    const { topics } = await client.registerAllWebhooks(appUrl);
     const summary = topics.map((t) => `  ${t.action.padEnd(9)} ${t.topic.padEnd(22)} \u2192 ${t.address}${t.error ? `  (${t.error})` : ""}`).join("\n");
     console.log(`[webhook-register] Done.
 ${summary}`);

@@ -1,5 +1,8 @@
 import { storage } from "../storage";
-import { updateShopifyClient } from "../shopify";
+import {
+  getShopifyClient,
+  getLegacyStoreShopifyClient,
+} from "../shopify";
 import type { Order, User } from "@shared/schema";
 
 interface SyncContext {
@@ -45,8 +48,21 @@ export class ShopifySyncService {
       }
       const agentName = context.agentName || user?.fullName || "Agent";
 
-      // ── 3. Reload Shopify client from latest DB/env credentials ──────────────
-      const client = await updateShopifyClient();
+      // ── 3. Resolve the Shopify client for THIS order's store ───────────────
+      // Phase 2 multi-store: orders carry a storeId. We route every
+      // outbound mutation through the per-store factory so a sync for
+      // store A never targets store B's shop. Orders that pre-date the
+      // backfill (storeId null) fall back to the legacy single store,
+      // matching the previous behaviour exactly.
+      let client;
+      if (order.storeId) {
+        client = await getShopifyClient(order.storeId);
+      } else {
+        console.warn(
+          `[Shopify Sync][${syncId}] order ${orderId} has no storeId — falling back to legacy store`,
+        );
+        client = await getLegacyStoreShopifyClient();
+      }
 
       // Expose exactly which store we are targeting and what token prefix we got
       const clientConfig = (client as any).config as {

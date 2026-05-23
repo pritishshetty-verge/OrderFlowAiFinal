@@ -6,7 +6,8 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 import { pool } from "./db";
-import { shopifyClient } from "./shopify";
+import { shopifyClient, getLegacyStoreShopifyClient } from "./shopify";
+import { attachStoreScope } from "./storeScope";
 
 // ─────────────────────────────────────────────────────────────────────
 // Global crash safety net.
@@ -161,6 +162,31 @@ app.use((req, _res, next) => {
   next();
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// Store scope resolution (Phase 2).
+//
+// Runs AFTER the identity-injection middleware (which gives us a
+// trustworthy req.session.userId) and BEFORE route handlers. Attaches
+// `req.storeScope = { storeId, isAdmin, isFallback }` on every
+// authenticated request so handlers can scope reads to the active
+// store without re-doing the user_stores lookup. Webhooks and other
+// unauthenticated endpoints pass through untouched; the middleware
+// noops for them.
+//
+// Resolution order (see server/storeScope.ts for full rules):
+//   1. X-Active-Store-Id header (what the Phase 3 store-switcher
+//      writes from the frontend).
+//   2. Fallback to the user's first user_stores row, or — for
+//      admins — the oldest stores row.
+//
+// Authorization failures (user requested a store they don't belong
+// to) are NOT raised here — they're stashed on req and surfaced when
+// a route handler actually pulls the scope via requireStoreScope().
+// That keeps non-scoped endpoints (e.g. /api/auth/me) reachable for
+// users whose membership is still being set up.
+// ─────────────────────────────────────────────────────────────────────
+app.use(attachStoreScope);
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -239,7 +265,12 @@ async function registerAllWebhooks(): Promise<void> {
 
   console.log(`[webhook-register] Registering Shopify webhooks for ${appUrl}…`);
   try {
-    const { topics } = await shopifyClient.registerAllWebhooks(appUrl);
+    // Boot-time registration: route through the legacy store's
+    // client so multi-store creds in `stores` are picked up instead
+    // of the env-var fallback. Falls back to the env-singleton when
+    // no `stores` row exists yet (very first boot before any seed).
+    const client = await getLegacyStoreShopifyClient();
+    const { topics } = await client.registerAllWebhooks(appUrl);
     const summary = topics
       .map((t) => `  ${t.action.padEnd(9)} ${t.topic.padEnd(22)} → ${t.address}${t.error ? `  (${t.error})` : ""}`)
       .join("\n");

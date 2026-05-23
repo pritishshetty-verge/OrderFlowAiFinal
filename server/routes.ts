@@ -12,7 +12,8 @@ import {
 import { eq, or, sql, desc, gte, lte, and } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
-import { shopifyClient } from "./shopify";
+import { shopifyClient, getShopifyClient } from "./shopify";
+import { requireStoreScope } from "./storeScope";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
@@ -370,12 +371,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function buildOrderReadScope(
     requestingUserId: string | undefined,
     requestedScope: OrderReadScope,
-    requestedAssignedTo: string | undefined
-  ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
+    requestedAssignedTo: string | undefined,
+    storeId?: string,
+  ): Promise<{ assignedTo: string | undefined; storeId: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
     // SECURITY: currentUserId is REQUIRED - never allow access without verified user identity
     if (!requestingUserId) {
       return {
         assignedTo: "__UNAUTHORIZED__",
+        storeId,
         isAdmin: false,
         unauthorized: true,
         reason: "currentUserId is required for authorization"
@@ -387,6 +390,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Unknown user - reject access
       return {
         assignedTo: "__UNAUTHORIZED__",
+        storeId,
         isAdmin: false,
         unauthorized: true,
         reason: "User not found"
@@ -402,15 +406,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (hasFullOrderReadAccess(user)) {
       return {
         assignedTo: requestedAssignedTo,
+        storeId,
         isAdmin: user.role === "admin",
         unauthorized: false,
       };
     }
-    
+
     // =========================================================================
     // AGENT READ SCOPE LOGIC
     // =========================================================================
-    // 
+    //
     // GLOBAL VIEW (scope='global'):
     //   - Agent explicitly requested to see all orders via "All Orders" toggle
     //   - Allow read access to ALL orders (no assignedTo filter)
@@ -420,17 +425,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     //   - Default behavior, or explicit personal view request
     //   - Only show orders assigned to this agent
     //   - This is the safe default for Resume action (no scope sent)
+    //
+    // The `storeId` filter is orthogonal to the assignedTo decision —
+    // it's always applied when present, so the agent's "Global View"
+    // is still scoped to their active store.
     // =========================================================================
-    
+
     if (requestedScope === 'global') {
-      // Agent requested Global View - allow seeing all orders
+      // Agent requested Global View - allow seeing all orders (in their store)
       // Note: They still cannot MODIFY orders they don't own (canUserAccessOrder blocks that)
-      return { assignedTo: undefined, isAdmin: false, unauthorized: false };
+      return { assignedTo: undefined, storeId, isAdmin: false, unauthorized: false };
     }
-    
+
     // Default: Personal view - only show agent's assigned orders
     // This is the safe default that fixes the Resume bug
-    return { assignedTo: requestingUserId, isAdmin: false, unauthorized: false };
+    return { assignedTo: requestingUserId, storeId, isAdmin: false, unauthorized: false };
   }
   
   /**
@@ -439,10 +448,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
    */
   async function enforceAgentReadFilter(
     requestingUserId: string | undefined,
-    requestedAssignedTo: string | undefined
-  ): Promise<{ assignedTo: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
+    requestedAssignedTo: string | undefined,
+    storeId?: string,
+  ): Promise<{ assignedTo: string | undefined; storeId: string | undefined; isAdmin: boolean; unauthorized: boolean; reason?: string }> {
     // For legacy callers, always use 'assigned' scope (no global view)
-    return buildOrderReadScope(requestingUserId, 'assigned', requestedAssignedTo);
+    return buildOrderReadScope(requestingUserId, 'assigned', requestedAssignedTo, storeId);
   }
   
   /**
@@ -500,23 +510,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function canUserReadOrder(
     userId: string | undefined,
     orderId: string,
-    scope: string | undefined
+    scope: string | undefined,
+    activeStoreId?: string,
   ): Promise<{ authorized: boolean; reason?: string; isAdmin: boolean }> {
     if (!userId) {
       return { authorized: false, reason: "User ID is required for authorization", isAdmin: false };
     }
-    
+
     const user = await storage.getUser(userId);
     if (!user) {
       return { authorized: false, reason: "User not found", isAdmin: false };
     }
 
+    // Phase 2: cross-store containment.
+    //
+    // When the caller has an active store scope, we fetch the order
+    // up front and reject if it belongs to a different store — even
+    // for admins, who still must point their store-switcher at the
+    // right shop to see the data. This is the cheapest place to
+    // enforce "your URL says order X but X lives in a different
+    // tenant" without re-doing the check at every callsite.
+    //
+    // Orders whose storeId is still NULL (pre-backfill rows that
+    // somehow slipped through) are allowed through — the legacy
+    // single-store contract is preserved.
+    const order = await storage.getOrder(orderId);
+    if (!order) {
+      return { authorized: false, reason: "Order not found", isAdmin: false };
+    }
+    if (activeStoreId && order.storeId && order.storeId !== activeStoreId) {
+      return {
+        authorized: false,
+        reason: "Order does not belong to the active store",
+        isAdmin: user.role === "admin",
+      };
+    }
+
     // Admin-equivalent read: admins AND chat_support can read any
-    // order without needing scope=global. The `isAdmin` field in the
-    // return value still reflects the literal role check so write-
-    // path decisions downstream don't accidentally elevate
-    // chat_support. Modify gates (canUserAccessOrder) still block
-    // chat_support from changing anything.
+    // order within the current store scope without needing
+    // scope=global. The `isAdmin` field in the return value still
+    // reflects the literal role check so write-path decisions
+    // downstream don't accidentally elevate chat_support. Modify
+    // gates (canUserAccessOrder) still block chat_support from
+    // changing anything.
     if (hasFullOrderReadAccess(user)) {
       return { authorized: true, isAdmin: user.role === "admin" };
     }
@@ -526,17 +562,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (scope === 'global') {
       return { authorized: true, isAdmin: false };
     }
-    
+
     // DEFAULT: Personal view - verify agent owns this order
-    const order = await storage.getOrder(orderId);
-    if (!order) {
-      return { authorized: false, reason: "Order not found", isAdmin: false };
-    }
-    
     if (order.assignedTo !== userId) {
       return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
     }
-    
+
     return { authorized: true, isAdmin: false };
   }
   
@@ -705,19 +736,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // - scope='global': Agent can see all orders (for "All Orders" toggle)
       // - scope=undefined: Agent sees only assigned orders (default, fixes Resume bug)
       // - Admins always see all orders (with optional assignedTo filter)
+      // Phase 2: also restrict to the active store id resolved by the
+      // storeScope middleware. `req.storeScope` is set whenever there
+      // is a valid session — webhooks/login don't reach here.
+      const activeStoreId = req.storeScope?.storeId;
       const parsedScope = scope === 'global' ? 'global' : undefined;
       const authResult = await buildOrderReadScope(
         currentUserId as string | undefined,
         parsedScope,
-        assignedTo as string | undefined
+        assignedTo as string | undefined,
+        activeStoreId,
       );
-      
+
       // SECURITY: Reject requests without valid user context
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
 
       const filters = {
+        storeId: authResult.storeId, // Phase 2: scope reads to the active store
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
         assignedTo: authResult.assignedTo, // Use enforced value instead of raw request value
@@ -761,17 +798,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // SECURITY: Enforce agent-level read filter for exports
+      // Phase 2: thread the active store id so a CSV export never
+      // includes orders from a store the user is not currently in.
       const authResult = await enforceAgentReadFilter(
         currentUserId as string | undefined,
-        assignedTo as string | undefined
+        assignedTo as string | undefined,
+        req.storeScope?.storeId,
       );
-      
+
       // SECURITY: Reject requests without valid user context
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
 
       const filters = {
+        storeId: authResult.storeId, // Phase 2: scope export to active store
         status: status as string | undefined,
         paymentMethod: paymentMethod as string | undefined,
         assignedTo: authResult.assignedTo, // Use enforced value
@@ -873,18 +914,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId } = req.query;
       
       // SECURITY: Enforce agent-level read filter
+      // Phase 2: also restrict by active store id so an OFD board
+      // never lists shipments belonging to a different shop.
       const authResult = await enforceAgentReadFilter(
         currentUserId as string | undefined,
-        undefined
+        undefined,
+        req.storeScope?.storeId,
       );
-      
+
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      
-      // Build agent filter condition for OFD query
-      const agentFilter = authResult.assignedTo 
+
+      // Build agent + store filter conditions for the OFD query
+      const agentFilter = authResult.assignedTo
         ? sql`AND ${orders.assignedTo} = ${authResult.assignedTo}`
+        : sql``;
+      const storeFilter = authResult.storeId
+        ? sql`AND ${orders.storeId} = ${authResult.storeId}`
         : sql``;
       
       const result = await db.select({
@@ -921,7 +968,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in transit%'
         AND LOWER(COALESCE(${orders.shipmentStatus}, '')) NOT LIKE '%in-transit%'
         AND ${orders.shipmentStatus} != 'IT'
-        ${agentFilter}`
+        ${agentFilter}
+        ${storeFilter}`
       )
       .orderBy(desc(orders.createdAt))
       .limit(100);
@@ -1057,7 +1105,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ error: "startDate must be on or before endDate." });
       }
 
-      const metrics = await getPareMetrics({ startDate, endDate });
+      // Phase 2: scope the Pare aggregate to the active store. The
+      // storeScope middleware resolves this from the X-Active-Store-Id
+      // header or the user's first membership, so a multi-store user
+      // never sees blended numbers across shops.
+      const metrics = await getPareMetrics({
+        startDate,
+        endDate,
+        storeId: req.storeScope?.storeId,
+      });
       res.json(metrics);
     } catch (error) {
       console.error("Error computing Pare metrics:", error);
@@ -1075,10 +1131,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1104,10 +1164,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1130,10 +1194,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1156,10 +1224,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1182,10 +1254,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1219,10 +1295,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { currentUserId, scope } = req.query;
       
       // SECURITY: Use canUserReadOrder which respects Global View scope
+      // Phase 2: also pass the active store id so cross-store URL
+      // tampering surfaces as 403 ("Order does not belong to the
+      // active store") instead of a silent leak.
       const authCheck = await canUserReadOrder(
-        currentUserId as string | undefined, 
+        currentUserId as string | undefined,
         req.params.id,
-        scope as string | undefined
+        scope as string | undefined,
+        req.storeScope?.storeId,
       );
       if (!authCheck.authorized) {
         return res.status(403).json({ error: authCheck.reason || "You are not authorized to access this order" });
@@ -1690,9 +1770,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // STEP 2: Validate and cancel in Shopify FIRST (this includes all validation checks)
       try {
-        const { updateShopifyClient } = await import("./shopify");
-        const client = await updateShopifyClient();
-        
+        // Phase 2: route through the per-store factory keyed by the
+        // order's own storeId, falling back to the legacy/env client
+        // for pre-backfill rows.
+        const { getShopifyClient, getLegacyStoreShopifyClient } = await import("./shopify");
+        const client = existingOrder.storeId
+          ? await getShopifyClient(existingOrder.storeId)
+          : await getLegacyStoreShopifyClient();
+
         // This method validates order state and cancels in Shopify (with refund, email, restock)
         await client.cancelOrder(
           existingOrder.shopifyOrderId,
@@ -1859,9 +1944,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // loop if Shopify ever returns a full page indefinitely.
       const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
 
-      // Update client with latest credentials from DB or env vars
-      const { updateShopifyClient } = await import("./shopify");
-      const client = await updateShopifyClient();
+      // Phase 2: route the bulk historical sync through the per-
+      // store factory. The admin who triggered the sync has an
+      // active store scope, so we pull credentials for THAT store —
+      // not the env-var fallback. updateShopifyClient() is still
+      // invoked alongside so the legacy `shopifyClient` singleton
+      // stays warm for any non-store-aware caller in the same boot.
+      const { getShopifyClient, getLegacyStoreShopifyClient, updateShopifyClient } = await import("./shopify");
+      const syncStoreId = req.storeScope?.storeId;
+      const client = syncStoreId
+        ? await getShopifyClient(syncStoreId)
+        : await getLegacyStoreShopifyClient();
+      void updateShopifyClient().catch(() => {});
 
       // ────────────────────────────────────────────────────────────────
       // Preload: build in-memory lookups used on every iteration.
@@ -4963,11 +5057,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { limit, offset, currentUserId } = req.query;
       
       // SECURITY: Enforce agent-level read filter
+      // Phase 2: thread the active store id through so an agent's
+      // NDR feed never includes events from a store they're not
+      // currently looking at.
       const authResult = await enforceAgentReadFilter(
         currentUserId as string | undefined,
-        undefined
+        undefined,
+        req.storeScope?.storeId,
       );
-      
+
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
@@ -4977,6 +5075,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         limit: limit ? parseInt(limit as string) : 50,
         offset: offset ? parseInt(offset as string) : 0,
         assignedTo: authResult.assignedTo, // Filter by agent if not admin
+        storeId: authResult.storeId, // Phase 2: scope to active store
       });
 
       // Enrich each NDR event with order-level NDR fields

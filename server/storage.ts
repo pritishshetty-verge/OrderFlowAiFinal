@@ -202,6 +202,7 @@ export interface IStorage {
   createOrdersBatch(orders: InsertOrder[]): Promise<Order[]>;
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
   listOrders(filters?: {
+    storeId?: string; // Phase 2: restrict to a single store (resolved via storeScope)
     status?: string;
     callStatus?: string;
     paymentMethod?: string;
@@ -212,7 +213,7 @@ export interface IStorage {
     tag?: string; // Filter by tag (exact match in tags array)
     limit?: number;
     offset?: number;
-  }): Promise<{ 
+  }): Promise<{
     orders: Order[]; 
     total: number;
     stats: {
@@ -224,6 +225,7 @@ export interface IStorage {
     };
   }>;
   exportOrders(filters?: {
+    storeId?: string; // Phase 2: scope CSV export to the active store
     status?: string;
     callStatus?: string;
     paymentMethod?: string;
@@ -371,7 +373,7 @@ export interface IStorage {
   getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]>;
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
-  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string }): Promise<{ events: NdrEvent[]; total: number }>;
+  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }>;
 
   // Learning Center - Courses
   getCourse(id: string): Promise<Course | undefined>;
@@ -768,6 +770,7 @@ export class DbStorage implements IStorage {
   }
 
   async listOrders(filters?: {
+    storeId?: string; // Phase 2: restrict to a single store (resolved via storeScope)
     status?: string;
     callStatus?: string;
     paymentMethod?: string;
@@ -780,7 +783,7 @@ export class DbStorage implements IStorage {
     tag?: string; // Filter by tag (exact match in tags array using @> operator)
     limit?: number;
     offset?: number;
-  }): Promise<{ 
+  }): Promise<{
     orders: Order[]; 
     total: number;
     stats: {
@@ -792,6 +795,15 @@ export class DbStorage implements IStorage {
     };
   }> {
     const conditions = [];
+    // Phase 2: multi-store scoping. Every authenticated read goes
+    // through a resolved storeScope, so callers should always pass
+    // storeId. We keep it optional in the signature so internal
+    // callers (assignment engine, webhook handlers) that already
+    // know they're working on a single-store dataset don't have to
+    // thread it through right away — they'll inherit scoping when
+    // the order itself carries a storeId.
+    if (filters?.storeId)
+      conditions.push(eq(orders.storeId, filters.storeId));
     if (filters?.status) conditions.push(eq(orders.status, filters.status));
     if (filters?.callStatus) {
       // Handle 'Pending' specially - includes NULL/undefined callStatus
@@ -854,8 +866,11 @@ export class DbStorage implements IStorage {
     const [{ value: total }] = await countQuery;
 
     // Get global stats (respects assignedTo filter for role-based access, but ignores callStatus filter)
-    // This ensures agents see their own stats, admins see all stats
+    // This ensures agents see their own stats, admins see all stats.
+    // Phase 2: also restrict the stats panel to the active store so
+    // cross-store totals don't leak through the dashboard chips.
     const statsConditions = [];
+    if (filters?.storeId) statsConditions.push(eq(orders.storeId, filters.storeId));
     if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
     const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : undefined;
 
@@ -931,6 +946,7 @@ export class DbStorage implements IStorage {
   }
 
   async exportOrders(filters?: {
+    storeId?: string; // Phase 2: scope CSV export to the active store
     status?: string;
     callStatus?: string;
     paymentMethod?: string;
@@ -961,6 +977,10 @@ export class DbStorage implements IStorage {
   }>> {
     // Build filter conditions (same as listOrders)
     const conditions = [];
+    // Phase 2: scope export to the active store when the route layer
+    // resolved one. Pre-Phase-2 callers (and the very small number of
+    // tests that call this without scope) keep the legacy behaviour.
+    if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
     if (filters?.status) conditions.push(eq(orders.status, filters.status));
     if (filters?.callStatus) {
       if (filters.callStatus === 'Pending') {
@@ -2188,54 +2208,52 @@ export class DbStorage implements IStorage {
     return updated;
   }
 
-  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string }): Promise<{ events: NdrEvent[]; total: number }> {
-    // Build conditions array
-    const conditions = [eq(ndrEvents.resolved, false)];
-    
+  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }> {
+    // Phase 2: storeId is the multi-store scope. Either branch below
+    // (agent-filtered or admin-wide) adds it to the WHERE clause when
+    // present so an NDR list for store A never includes store B.
+    const baseConds = [eq(ndrEvents.resolved, false)];
+    if (filters?.storeId) baseConds.push(eq(ndrEvents.storeId, filters.storeId));
+
     // If assignedTo is specified (agent filter), join with orders to filter by assignment
     if (filters?.assignedTo) {
+      const conds = [
+        ...baseConds,
+        eq(orders.assignedTo, filters.assignedTo),
+      ];
       // Get NDR events joined with orders to filter by agent assignment
       let query = db.select({ ndrEvent: ndrEvents })
         .from(ndrEvents)
         .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
-        .where(
-          and(
-            eq(ndrEvents.resolved, false),
-            eq(orders.assignedTo, filters.assignedTo)
-          )
-        )
+        .where(and(...conds))
         .orderBy(desc(ndrEvents.createdAt));
-      
+
       if (filters?.limit) {
         query = query.limit(filters.limit) as any;
       }
       if (filters?.offset) {
         query = query.offset(filters.offset) as any;
       }
-      
+
       const results = await query;
       const events = results.map(r => r.ndrEvent);
-      
+
       // Count for pagination
       const countResult = await db
         .select({ count: count() })
         .from(ndrEvents)
         .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
-        .where(
-          and(
-            eq(ndrEvents.resolved, false),
-            eq(orders.assignedTo, filters.assignedTo)
-          )
-        );
-      
+        .where(and(...conds));
+
       return {
         events,
         total: countResult[0]?.count || 0,
       };
     }
-    
+
     // Admin path: no assignedTo filter, return all unresolved NDR events
-    const baseQuery = db.select().from(ndrEvents).where(eq(ndrEvents.resolved, false));
+    // (still scoped to the active store when storeId is set).
+    const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
 
     let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
 
@@ -2252,7 +2270,7 @@ export class DbStorage implements IStorage {
     const countResult = await db
       .select({ count: count() })
       .from(ndrEvents)
-      .where(eq(ndrEvents.resolved, false));
+      .where(and(...baseConds));
 
     return {
       events,

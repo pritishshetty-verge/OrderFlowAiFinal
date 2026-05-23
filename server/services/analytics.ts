@@ -17,6 +17,11 @@ import { orders, pincodeTiers, marketingMetrics } from "@shared/schema";
 export type DateRange = {
   startDate: Date;
   endDate: Date;
+  // Phase 2: when set, the SQL aggregate restricts to a single store.
+  // The route layer passes the storeId resolved from the storeScope
+  // middleware, so multi-store users only ever see their active
+  // store's funnel.
+  storeId?: string;
 };
 
 export type Bucket = {
@@ -177,7 +182,18 @@ function enumerateDays(startDate: Date, endDate: Date): string[] {
 export async function getPareMetrics(
   dateRange: DateRange,
 ): Promise<PareMetrics> {
-  const { startDate, endDate } = dateRange;
+  const { startDate, endDate, storeId } = dateRange;
+  // Phase 2: optional store scope. When `storeId` is provided we add
+  // a single equality predicate to the WHERE clause; the per-day
+  // GROUP BY, FILTER predicates, and JOINs are otherwise unchanged.
+  // We also restrict the marketing_metrics join the same way so a
+  // store's ad spend doesn't bleed across the rest of the funnel.
+  const storeFilter = storeId
+    ? sql`AND store_id = ${storeId}`
+    : sql``;
+  const mmStoreFilter = storeId
+    ? sql`AND mm.store_id = ${storeId}`
+    : sql``;
 
   // Single query. Everything filters against the same date window and
   // gets bucketed by IST calendar day.
@@ -324,13 +340,17 @@ export async function getPareMetrics(
       MAX(mm.fb_orders)::int4 AS fb_orders
     FROM ${orders}
     LEFT JOIN ${pincodeTiers} pt ON pt.pincode = ${orders}.shipping_pincode
-    LEFT JOIN ${marketingMetrics} mm ON mm.date = DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata')::date
+    LEFT JOIN ${marketingMetrics} mm
+      ON mm.date = DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata')::date
+      ${mmStoreFilter}
     -- Bucket + filter on processed_at (the financial timestamp Shopify
     -- uses in its sales reports), not shopify_created_at. COD orders
     -- and delayed-capture payments routinely drift a day between the
     -- two — this matches Shopifys own numbers 1:1.
     WHERE processed_at >= ${startDate}
       AND processed_at <= ${endDate}
+      -- Phase 2: scope to a single store when the caller asks.
+      ${storeFilter}
       -- Exclude test-mode orders (Shopifys test boolean). Populated
       -- by the historical backfill script at server/scripts/flag-test-orders.ts
       -- and by the regular sync going forward (see buildOrderInsert).

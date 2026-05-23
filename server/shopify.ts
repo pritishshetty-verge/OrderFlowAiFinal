@@ -898,7 +898,7 @@ async function loadShopifyCredentials(): Promise<ShopifyConfig> {
 }
 
 // ============================================================================
-// SINGLETON CLIENT
+// SINGLETON CLIENT (legacy — kept for back-compat)
 // ============================================================================
 
 const shopDomain =
@@ -925,6 +925,18 @@ console.log("Shopify configuration status:", {
   authMode: "client_credentials_grant",
 });
 
+/**
+ * Legacy module-level singleton. New code should call
+ * `getShopifyClient(storeId)` so the right shop is targeted in a
+ * multi-store world. This export remains for code paths that aren't
+ * yet store-aware (boot-time webhook registration, the old
+ * shopify_credentials settings flow). It's a thin proxy that hot-
+ * swaps its internal config when `updateShopifyClient()` is called.
+ *
+ * Phase 3 cleanup: delete this once every caller has migrated to the
+ * factory, then we can drop the env-var fallback in
+ * loadShopifyCredentials() too.
+ */
 export const shopifyClient = new ShopifyClient(initialConfig);
 
 export async function updateShopifyClient() {
@@ -947,4 +959,132 @@ export async function updateShopifyClient() {
   (shopifyClient as any).baseUrl = `https://${cleanDomain}/admin/api/2024-01`;
   (shopifyClient as any).tokenCache = null; // force fresh token on next request
   return shopifyClient;
+}
+
+// ============================================================================
+// PER-STORE FACTORY (Phase 2 multi-store)
+// ============================================================================
+//
+// `getShopifyClient(storeId)` loads credentials from the `stores`
+// table, decrypts them, and returns an initialized ShopifyClient.
+// Clients are cached in-process keyed by storeId so we don't re-read
+// the DB + re-fetch the OAuth token on every outbound call. The cache
+// is invalidated explicitly by `invalidateShopifyClient(storeId)` —
+// callers must do this after persisting a credential change, so the
+// next outbound call picks up the new token.
+//
+// Concurrency: we wrap the per-store load behind an in-flight promise
+// so two concurrent callers don't both pay the DB round-trip — the
+// second waits on the first's promise.
+
+type CachedClient = {
+  client: ShopifyClient;
+  loadedAt: number;
+};
+
+const clientCache = new Map<string, CachedClient>();
+const inFlightLoads = new Map<string, Promise<ShopifyClient>>();
+
+async function loadShopifyConfigForStore(
+  storeId: string,
+): Promise<ShopifyConfig> {
+  // Lazy imports break the otherwise-circular deps: db / storage both
+  // import from server/shopify.ts indirectly via the boot graph.
+  const { db } = await import("./db");
+  const { stores } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+  const { decrypt } = await import("./encryption");
+
+  const [row] = await db
+    .select()
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  if (!row) {
+    throw new Error(
+      `[Shopify] getShopifyClient: no stores row for id ${storeId}`,
+    );
+  }
+  // Match the legacy `loadShopifyCredentials()` shape exactly. Stores
+  // rows mirror the old shopify_credentials table; the only field
+  // that's required at construct time is storeUrl — we want a usable
+  // ShopifyClient even when credentials haven't been entered yet
+  // (e.g. the admin just connected a store but hasn't run the test).
+  return {
+    storeUrl: row.storeUrl,
+    apiKey: row.apiKey ? decrypt(row.apiKey) : "",
+    apiSecret: row.apiSecret ? decrypt(row.apiSecret) : "",
+    webhookSecret: row.webhookSecret ? decrypt(row.webhookSecret) : undefined,
+    useClientCredentials: true,
+  };
+}
+
+/**
+ * Per-store Shopify client factory. Use this in any code that knows
+ * which store it's operating on — webhook handlers, request-scoped
+ * routes that pulled `req.storeScope`, scheduled syncs that iterate
+ * over `stores`.
+ *
+ * The returned client is cached, so calling this on every outbound
+ * mutation is cheap. Invalidate with `invalidateShopifyClient(storeId)`
+ * after persisting a credential change.
+ */
+export async function getShopifyClient(
+  storeId: string,
+): Promise<ShopifyClient> {
+  const cached = clientCache.get(storeId);
+  if (cached) return cached.client;
+
+  const inFlight = inFlightLoads.get(storeId);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    const config = await loadShopifyConfigForStore(storeId);
+    const client = new ShopifyClient(config);
+    clientCache.set(storeId, { client, loadedAt: Date.now() });
+    return client;
+  })();
+  inFlightLoads.set(storeId, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightLoads.delete(storeId);
+  }
+}
+
+/**
+ * Drop the cached client for a store. Call this after persisting a
+ * credential change so the next outbound call re-reads the row.
+ * Passing no argument clears the entire cache (useful in tests).
+ */
+export function invalidateShopifyClient(storeId?: string): void {
+  if (storeId) {
+    clientCache.delete(storeId);
+  } else {
+    clientCache.clear();
+  }
+}
+
+/**
+ * Resolve the "legacy" store — the single row created by the Phase 1
+ * backfill — and return its ShopifyClient. Used by code paths that
+ * don't have an explicit storeId yet (boot-time webhook registrar,
+ * the admin settings test flow). Phase 3 will migrate these away.
+ */
+export async function getLegacyStoreShopifyClient(): Promise<ShopifyClient> {
+  const { db } = await import("./db");
+  const { stores } = await import("@shared/schema");
+  const { asc } = await import("drizzle-orm");
+  const [row] = await db
+    .select({ id: stores.id })
+    .from(stores)
+    .orderBy(asc(stores.createdAt))
+    .limit(1);
+  if (!row) {
+    // No stores row yet — fall back to the legacy env-var singleton
+    // so the server still boots and the existing settings flow can
+    // create the first store.
+    return shopifyClient;
+  }
+  return getShopifyClient(row.id);
 }
