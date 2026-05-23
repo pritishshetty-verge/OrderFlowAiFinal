@@ -43,6 +43,13 @@ export interface StoreSummary {
   id: string;
   storeName: string | null;
   storeUrl: string;
+  /**
+   * Optional workspace logo — either a base64 data URI uploaded
+   * through Settings → Workspace, or a plain http(s) URL. The
+   * StoreSwitcher renders this in the avatar tile when present and
+   * falls back to a deterministic gradient avatar otherwise.
+   */
+  logoUrl: string | null;
   isActive: boolean | null;
   createdAt: string | null;
 }

@@ -3052,6 +3052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
+        logoUrl: stores.logoUrl,
         isActive: stores.isActive,
         createdAt: stores.createdAt,
       };
@@ -3060,6 +3061,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: string;
         storeName: string | null;
         storeUrl: string;
+        logoUrl: string | null;
         isActive: boolean | null;
         createdAt: Date | null;
       }>;
@@ -3082,6 +3084,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error in /api/stores/me:", error);
       res.status(500).json({ error: "Failed to load stores." });
+    }
+  });
+
+  // ============================================================================
+  // PATCH /api/stores/:id — admin updates a store's display metadata
+  //
+  // Today this only touches storeName and logoUrl — fields the team
+  // wants to control without going back into the Shopify admin. Auth
+  // headers, webhook secrets, and the rest of the credential block
+  // are deliberately NOT mutable through this route; those still
+  // flow through the dedicated /api/settings/shopify connect/test
+  // path.
+  //
+  // Authorization: admin role only. Non-admins (agents, chat_support,
+  // recovery_agent) can't reach this even for stores they have
+  // user_stores membership for — branding is a tenant-admin concern,
+  // not an agent task. The route returns 403 with a clear message
+  // so the UI knows to hide the editor for those roles.
+  //
+  // logoUrl shapes accepted:
+  //   • data:image/(png|jpeg|jpg|webp|svg+xml);base64,<…>
+  //   • http://… or https://… URLs
+  //   • null / empty string → clears the logo, switcher falls back
+  //     to the deterministic gradient avatar.
+  //
+  // Size cap: 2 MB after base64 expansion. 2 MB of base64 is ~1.5 MB
+  // of real image bytes; well above what a sensible workspace logo
+  // needs. We reject larger uploads here so the orders/users rows
+  // beside this in pg don't get noisy with 5+ MB blobs.
+  // ============================================================================
+  const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+  app.patch("/api/stores/:id", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res
+          .status(403)
+          .json({ error: "Only admins can update store details." });
+      }
+
+      const storeId = req.params.id;
+      const [existing] = await db
+        .select()
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+
+      // Validate logoUrl if present in the body. We treat "field
+      // omitted entirely" as "don't touch this column", while explicit
+      // null or "" clears it. That distinction matters when the UI
+      // wants to update just storeName without re-sending the logo.
+      const patch: Partial<{ storeName: string | null; logoUrl: string | null }> = {};
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "storeName")) {
+        const v = req.body.storeName;
+        if (v === null || v === "") {
+          patch.storeName = null;
+        } else if (typeof v === "string" && v.trim().length <= 120) {
+          patch.storeName = v.trim();
+        } else {
+          return res
+            .status(400)
+            .json({ error: "storeName must be a string up to 120 characters." });
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "logoUrl")) {
+        const v = req.body.logoUrl;
+        if (v === null || v === "") {
+          patch.logoUrl = null;
+        } else if (typeof v !== "string") {
+          return res.status(400).json({ error: "logoUrl must be a string." });
+        } else {
+          const trimmed = v.trim();
+          const isHttp = /^https?:\/\//i.test(trimmed);
+          const dataUriMatch = trimmed.match(
+            /^data:image\/(png|jpe?g|webp|svg\+xml|gif);base64,([A-Za-z0-9+/=]+)$/i,
+          );
+          if (!isHttp && !dataUriMatch) {
+            return res.status(400).json({
+              error:
+                "logoUrl must be an http(s) URL or a base64 data URI for png/jpeg/webp/svg/gif.",
+            });
+          }
+          // Soft size cap on data URIs — http URLs we trust (we're
+          // not fetching them server-side here).
+          if (dataUriMatch) {
+            // Bytes of the encoded source (the data URI string),
+            // since that's what Postgres will store. Cheaper to
+            // check than decoding the base64.
+            if (Buffer.byteLength(trimmed, "utf8") > MAX_LOGO_BYTES) {
+              return res.status(413).json({
+                error: `Logo data URI exceeds ${MAX_LOGO_BYTES} bytes. Compress the image or host it on a URL.`,
+              });
+            }
+          }
+          patch.logoUrl = trimmed;
+        }
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res
+          .status(400)
+          .json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
+      }
+
+      const [updated] = await db
+        .update(stores)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(stores.id, storeId))
+        .returning({
+          id: stores.id,
+          storeName: stores.storeName,
+          storeUrl: stores.storeUrl,
+          logoUrl: stores.logoUrl,
+          isActive: stores.isActive,
+          createdAt: stores.createdAt,
+          updatedAt: stores.updatedAt,
+        });
+
+      // Defensive: drop the cached ShopifyClient for this store so
+      // any subsequent outbound call re-reads the row. logoUrl
+      // itself isn't in the ShopifyConfig, but keeping cache and
+      // DB perfectly in lock-step is cheap and avoids a "why didn't
+      // my rename take?" debug spiral later.
+      const { invalidateShopifyClient } = await import("./shopify");
+      invalidateShopifyClient(storeId);
+
+      res.json({ store: updated });
+    } catch (error: any) {
+      console.error("Error in PATCH /api/stores/:id:", error);
+      res.status(500).json({ error: "Failed to update store." });
     }
   });
 

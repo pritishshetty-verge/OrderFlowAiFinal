@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PreferencesSettings } from "@/components/settings-preferences";
 import { NotificationsSettings } from "@/components/settings-notifications";
 import { SecuritySettings } from "@/components/settings-security";
+import { WorkspaceSettings } from "@/components/settings-workspace";
 import {
   IVRConnectionStatus,
   ShopifyWebhookStatusCard,
@@ -29,12 +30,14 @@ type SettingsTab =
   | "preferences"
   | "notifications"
   | "security"
+  | "workspace"
   | "operations"
   | "ivr";
 const VALID_TABS: SettingsTab[] = [
   "preferences",
   "notifications",
   "security",
+  "workspace",
   "operations",
   "ivr",
 ];
@@ -74,7 +77,7 @@ export default function SettingsPage() {
   // If a non-admin lands on an admin-only tab via a bookmarked URL,
   // fall back to preferences so they don't see a blank card.
   useEffect(() => {
-    const adminOnly: SettingsTab[] = ["operations", "ivr"];
+    const adminOnly: SettingsTab[] = ["workspace", "operations", "ivr"];
     if (adminOnly.includes(activeTab) && userRole !== "admin") {
       handleTabChange("preferences");
     }
@@ -161,6 +164,11 @@ export default function SettingsPage() {
               Security
             </TabsTrigger>
             {userRole === "admin" && (
+              <TabsTrigger value="workspace" data-testid="tab-workspace">
+                Workspace
+              </TabsTrigger>
+            )}
+            {userRole === "admin" && (
               <TabsTrigger value="operations" data-testid="tab-operations">
                 Store Operations
               </TabsTrigger>
@@ -183,6 +191,12 @@ export default function SettingsPage() {
           <TabsContent value="security">
             <SecuritySettings />
           </TabsContent>
+
+          {userRole === "admin" && (
+            <TabsContent value="workspace" className="space-y-6">
+              <WorkspaceSettings />
+            </TabsContent>
+          )}
 
           {userRole === "admin" && (
             <TabsContent value="operations" className="space-y-6">

@@ -63,6 +63,17 @@ function storeInitial(store: StoreSummary): string {
 /**
  * Reusable square avatar tile. Used in both the trigger and inside
  * each dropdown row so the visual rhyme is tight.
+ *
+ * Render strategy:
+ *   1. If the store has a logoUrl (uploaded via Settings → Workspace,
+ *      or set to a CDN URL), render <img> on a neutral background.
+ *      object-contain keeps the aspect ratio so a wide wordmark
+ *      doesn't get cropped into a square. A faint ring + white
+ *      backdrop give it visual weight against the sidebar.
+ *   2. Otherwise fall back to the deterministic gradient avatar
+ *      (djb2 hash of store.id → HSL gradient) with the first
+ *      letter of the store name inside. Every store gets a stable,
+ *      unique tile without any uploads.
  */
 function StoreAvatar({
   store,
@@ -73,6 +84,39 @@ function StoreAvatar({
 }) {
   const gradient = useMemo(() => storeGradient(store.id), [store.id]);
   const initial = storeInitial(store);
+  const sizeClass = size === "sm" ? "h-7 w-7" : "h-8 w-8";
+
+  if (store.logoUrl) {
+    return (
+      <div
+        className={cn(
+          "shrink-0 rounded-md overflow-hidden",
+          "bg-white shadow-sm ring-1 ring-black/5",
+          "flex items-center justify-center",
+          sizeClass,
+        )}
+        aria-hidden
+      >
+        <img
+          src={store.logoUrl}
+          alt=""
+          // object-contain so non-square logos (most wordmarks) keep
+          // their aspect ratio. A tiny inset keeps the asset from
+          // touching the rounded edge.
+          className="h-full w-full object-contain p-0.5"
+          // Defensive: a broken/expired CDN URL shouldn't break the
+          // entire sidebar layout. Hide the img on error and let the
+          // white tile show through. (We don't fall back to the
+          // gradient at runtime — that would require a state hook
+          // here; the empty white tile is the calmer failure mode.)
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(

@@ -251,6 +251,17 @@ var init_schema = __esm({
       // tenant identifier. We use this to route inbound webhooks via the
       // X-Shopify-Shop-Domain header (Phase 5).
       storeUrl: text("store_url").notNull().unique(),
+      // Optional workspace logo. Two accepted shapes (the route layer
+      // validates):
+      //   • base64 data URI ("data:image/png;base64,…") — what the
+      //     in-product upload writes today. No S3 round-trip needed at
+      //     small org sizes; <= ~1 MB after client-side downscaling.
+      //   • plain http(s) URL — for orgs that prefer to host the asset
+      //     on their own CDN. Useful once we expose a "logo URL" field
+      //     alongside the file picker.
+      // Falls back to the deterministic gradient avatar (see
+      // client/src/components/store-switcher.tsx) when null.
+      logoUrl: text("logo_url"),
       // Encrypted via server/encryption.ts. Optional during the
       // transition because the existing credentials still live in
       // shopify_credentials; the Phase-5 migration moves them in.
@@ -9478,6 +9489,7 @@ async function registerRoutes(app2) {
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
+        logoUrl: stores.logoUrl,
         isActive: stores.isActive,
         createdAt: stores.createdAt
       };
@@ -9491,6 +9503,85 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error in /api/stores/me:", error);
       res.status(500).json({ error: "Failed to load stores." });
+    }
+  });
+  const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+  app2.patch("/api/stores/:id", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Only admins can update store details." });
+      }
+      const storeId = req.params.id;
+      const [existing] = await db.select().from(stores).where(eq3(stores.id, storeId)).limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      const patch = {};
+      if (Object.prototype.hasOwnProperty.call(req.body, "storeName")) {
+        const v = req.body.storeName;
+        if (v === null || v === "") {
+          patch.storeName = null;
+        } else if (typeof v === "string" && v.trim().length <= 120) {
+          patch.storeName = v.trim();
+        } else {
+          return res.status(400).json({ error: "storeName must be a string up to 120 characters." });
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, "logoUrl")) {
+        const v = req.body.logoUrl;
+        if (v === null || v === "") {
+          patch.logoUrl = null;
+        } else if (typeof v !== "string") {
+          return res.status(400).json({ error: "logoUrl must be a string." });
+        } else {
+          const trimmed = v.trim();
+          const isHttp = /^https?:\/\//i.test(trimmed);
+          const dataUriMatch = trimmed.match(
+            /^data:image\/(png|jpe?g|webp|svg\+xml|gif);base64,([A-Za-z0-9+/=]+)$/i
+          );
+          if (!isHttp && !dataUriMatch) {
+            return res.status(400).json({
+              error: "logoUrl must be an http(s) URL or a base64 data URI for png/jpeg/webp/svg/gif."
+            });
+          }
+          if (dataUriMatch) {
+            if (Buffer.byteLength(trimmed, "utf8") > MAX_LOGO_BYTES) {
+              return res.status(413).json({
+                error: `Logo data URI exceeds ${MAX_LOGO_BYTES} bytes. Compress the image or host it on a URL.`
+              });
+            }
+          }
+          patch.logoUrl = trimmed;
+        }
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
+      }
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(stores.id, storeId)).returning({
+        id: stores.id,
+        storeName: stores.storeName,
+        storeUrl: stores.storeUrl,
+        logoUrl: stores.logoUrl,
+        isActive: stores.isActive,
+        createdAt: stores.createdAt,
+        updatedAt: stores.updatedAt
+      });
+      const { invalidateShopifyClient: invalidateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      invalidateShopifyClient2(storeId);
+      res.json({ store: updated });
+    } catch (error) {
+      console.error("Error in PATCH /api/stores/:id:", error);
+      res.status(500).json({ error: "Failed to update store." });
     }
   });
   app2.get("/api/auth/me", async (req, res) => {

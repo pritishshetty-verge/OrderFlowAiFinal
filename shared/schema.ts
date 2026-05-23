@@ -247,6 +247,17 @@ export const stores = pgTable("stores", {
   // tenant identifier. We use this to route inbound webhooks via the
   // X-Shopify-Shop-Domain header (Phase 5).
   storeUrl: text("store_url").notNull().unique(),
+  // Optional workspace logo. Two accepted shapes (the route layer
+  // validates):
+  //   • base64 data URI ("data:image/png;base64,…") — what the
+  //     in-product upload writes today. No S3 round-trip needed at
+  //     small org sizes; <= ~1 MB after client-side downscaling.
+  //   • plain http(s) URL — for orgs that prefer to host the asset
+  //     on their own CDN. Useful once we expose a "logo URL" field
+  //     alongside the file picker.
+  // Falls back to the deterministic gradient avatar (see
+  // client/src/components/store-switcher.tsx) when null.
+  logoUrl: text("logo_url"),
   // Encrypted via server/encryption.ts. Optional during the
   // transition because the existing credentials still live in
   // shopify_credentials; the Phase-5 migration moves them in.
