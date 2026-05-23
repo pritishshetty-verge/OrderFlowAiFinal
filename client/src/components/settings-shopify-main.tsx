@@ -8,18 +8,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Unplug, Settings, CreditCard, ArrowLeftRight, Save, Download } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { useActiveStore } from "@/hooks/use-store";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -177,22 +167,56 @@ export function ShopifyConnectionCard() {
     URL.revokeObjectURL(url);
   };
 
-  // Fetch credentials status from database (source of truth for connection state)
-  const { data: credentialsStatus } = useQuery<CredentialsStatus>({
-    queryKey: ["/api/shopify/credentials/status"],
-    refetchInterval: 30000,
-  });
+  // Multi-store source of truth: whichever store the sidebar
+  // switcher currently points at. Replaces the legacy
+  // /api/shopify/credentials/status lookup, which was tied to the
+  // single-row shopify_credentials table and was the reason this
+  // card kept showing "OLB" even after the user switched to a
+  // second store (Phase 4 bug fix).
+  //
+  // The interceptor in lib/queryClient.ts already attaches
+  // X-Active-Store-Id on every fetch, so order count, sync calls,
+  // and webhook status all naturally re-scope when the user picks
+  // a different store in the sidebar — we just need to render
+  // identity from the active store object directly.
+  const {
+    activeStore,
+    stores: accessibleStores,
+    loading: storesLoading,
+    hasMultipleStores,
+  } = useActiveStore();
 
   // Pull the lightweight order count to surface "Total Orders" on the
-  // connection card. Webhook health is shown by ShopifyWebhookStatusCard
-  // (Settings → Store Operations).
+  // connection card. The Phase-3 fetch interceptor attaches the
+  // active store id, so this number is always scoped to whichever
+  // store the user is currently looking at. Webhook health is shown
+  // by ShopifyWebhookStatusCard (Settings → Store Operations).
+  //
+  // Keying the query on activeStore.id forces a refetch when the
+  // user switches stores — without this, React Query would serve
+  // the previous store's cached total before the next 30s tick.
   const { data: recentOrderData } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders?limit=1"],
+    queryKey: ["/api/orders?limit=1", activeStore?.id ?? "none"],
+    queryFn: async () => {
+      const res = await fetch("/api/orders?limit=1", {
+        credentials: "include",
+        headers: activeStore?.id
+          ? { "X-Active-Store-Id": activeStore.id }
+          : undefined,
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+    enabled: !!activeStore,
     refetchInterval: 30000,
   });
 
-  // Connection status is determined ONLY by database credentials, not by order count
-  const isConnected = credentialsStatus?.configured === true;
+  // A store is "connected" once there's an active store row at all —
+  // the POST /api/stores endpoint only inserts rows after a
+  // successful credential test, so an active store in user_stores
+  // implies working credentials. Storage of last-tested-at lives on
+  // the row for future surface; right now the bool suffices.
+  const isConnected = !!activeStore;
 
   // Manual sync mutation
   const syncMutation = useMutation({
@@ -231,45 +255,23 @@ export function ShopifyConnectionCard() {
     },
   });
 
-  // Disconnect store mutation
-  const disconnectMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("DELETE", "/api/shopify/credentials");
-      return response.json();
-    },
-    onSuccess: () => {
-      toast({
-        title: "Store Disconnected",
-        description: "Your Shopify store has been disconnected. You can now reconnect with fresh credentials.",
-      });
-      // Invalidate relevant queries to refresh the UI state
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
-    },
-    onError: () => {
-      // Even on error, force cache invalidation to escape "zombie" state
-      // The backend now returns 200 for "already cleared" so errors are real failures
-      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/shopify/credentials/status"] });
-      toast({
-        title: "Store Disconnected",
-        description: "Credentials have been cleared. You can now reconnect with fresh credentials.",
-      });
-    },
-  });
-
   const handleSync = () => {
     syncMutation.mutate();
   };
 
-  const handleDisconnect = () => {
-    disconnectMutation.mutate();
-  };
+  // Display name for the active store. Mirrors the StoreSwitcher
+  // logic (storeName takes precedence, falls back to the URL when
+  // the admin hasn't set a friendly name yet).
+  const activeStoreDisplayName =
+    activeStore?.storeName?.trim() || activeStore?.storeUrl || "";
 
-  // Determine the description based on connection status
-  const cardDescription = isConnected && credentialsStatus?.storeName
-    ? `Connected to: ${credentialsStatus.storeName}`
-    : "Manage your Shopify store integration";
+  // Description copy: while loading we hold the neutral text so the
+  // card doesn't flash "not configured" during initial hydration.
+  const cardDescription = storesLoading
+    ? "Loading store…"
+    : isConnected
+      ? `Connected to: ${activeStoreDisplayName}`
+      : "Manage your Shopify store integration";
 
   return (
     <div className="space-y-6">
@@ -301,17 +303,54 @@ export function ShopifyConnectionCard() {
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Multi-store hint: shown only when the user has more
+                than one accessible store, so single-store
+                deployments stay uncluttered. Reminds them this
+                panel always operates on whichever store the
+                sidebar switcher is pointing at — flipping stores
+                there re-scopes everything below. */}
+            {hasMultipleStores && (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-sm">
+                  Showing details for{" "}
+                  <span className="font-medium">{activeStoreDisplayName}</span>.
+                  To manage a different store, switch your active workspace
+                  in the top-left sidebar.
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-sm text-muted-foreground">Integration Status</p>
-                <p className="text-sm font-medium">Connected & Syncing</p>
+                <p className="text-sm text-muted-foreground">Active store</p>
+                <p
+                  className="text-sm font-medium truncate"
+                  title={activeStoreDisplayName}
+                  data-testid="active-store-name"
+                >
+                  {activeStoreDisplayName || "—"}
+                </p>
+                {activeStore?.storeUrl && (
+                  <p
+                    className="text-xs text-muted-foreground truncate"
+                    title={activeStore.storeUrl}
+                    data-testid="active-store-url"
+                  >
+                    {activeStore.storeUrl}
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Orders</p>
-                <p className="text-sm font-medium">{recentOrderData?.total ?? 0}</p>
+                <p
+                  className="text-sm font-medium"
+                  data-testid="active-store-order-total"
+                >
+                  {recentOrderData?.total ?? 0}
+                </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <Button
                 onClick={handleSync}
                 disabled={syncMutation.isPending || syncProgress?.isRunning === true}
@@ -321,17 +360,23 @@ export function ShopifyConnectionCard() {
                 {syncMutation.isPending || syncProgress?.isRunning ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    Syncing...
+                    Syncing…
                   </>
                 ) : (
                   <>
                     <RefreshCw className="h-4 w-4" />
-                    Sync Now
+                    {/* The backend's Phase 2 storeScope middleware
+                        reads the X-Active-Store-Id header attached
+                        by lib/queryClient.ts, so this button always
+                        syncs the store named in its label — the UI
+                        contract matches the request the server
+                        actually sees. */}
+                    Sync orders for {activeStoreDisplayName || "this store"}
                   </>
                 )}
               </Button>
               <p className="text-sm text-muted-foreground">
-                Paginates through your entire Shopify order history
+                Paginates through this store's entire Shopify order history
               </p>
             </div>
 
@@ -431,56 +476,26 @@ export function ShopifyConnectionCard() {
               </Alert>
             )}
 
-            {/* Disconnect Store Section */}
-            <div className="pt-4 border-t">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium">Disconnect Store</p>
-                  <p className="text-sm text-muted-foreground">
-                    Remove credentials to reconnect with fresh OAuth token
-                  </p>
-                </div>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button 
-                      variant="outline" 
-                      className="gap-2 text-destructive hover:text-destructive"
-                      data-testid="button-disconnect-store"
-                      disabled={disconnectMutation.isPending}
-                    >
-                      {disconnectMutation.isPending ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Disconnecting...
-                        </>
-                      ) : (
-                        <>
-                          <Unplug className="h-4 w-4" />
-                          Disconnect Store
-                        </>
-                      )}
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Disconnect Shopify Store?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will remove your Shopify API credentials. Your existing orders will remain in the system, but you will need to reconnect the store to sync new orders and fix any authentication issues.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction 
-                        onClick={handleDisconnect}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      >
-                        Disconnect Store
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            </div>
+            {/* Per-store disconnect is a Phase-5 follow-up. The legacy
+                DELETE /api/shopify/credentials route only operates on
+                the single-row shopify_credentials table and would do
+                nothing useful in multi-store mode — keeping it here
+                was the cause of confused "I disconnected but nothing
+                happened" reports. The future replacement
+                (DELETE /api/stores/:id) will remove the active store
+                + its user_stores rows + invalidate webhook
+                registration in a single transactional step. */}
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription className="text-sm">
+                Need to disconnect this store? Per-store disconnect lands
+                in the next release. For now, drop the row from{" "}
+                <code className="text-[11px] bg-muted px-1 py-0.5 rounded">
+                  stores
+                </code>{" "}
+                in the database to fully revoke access.
+              </AlertDescription>
+            </Alert>
           </div>
         )}
       </SettingsCard>
