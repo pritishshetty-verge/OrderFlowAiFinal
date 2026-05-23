@@ -1,4 +1,5 @@
-import { Store, Check, ChevronsUpDown } from "lucide-react";
+import { useMemo } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,171 +8,221 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useActiveStore } from "@/hooks/use-store";
+import { useActiveStore, type StoreSummary } from "@/hooks/use-store";
 import { cn } from "@/lib/utils";
-import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 // ─────────────────────────────────────────────────────────────────────
-// StoreSwitcher — sidebar header element for Phase 3 multi-store UI.
+// StoreSwitcher — premium workspace switcher for the sidebar.
 //
-// Three rendering modes, picked from the user's store membership:
+// Visual reference: the Linear / Vercel / Notion style — gradient
+// avatar tile, single-line workspace name, ChevronsUpDown affordance
+// on the right that appears only when there's more than one option.
 //
-//   1. No stores at all (e.g. a fresh non-admin account that hasn't
-//      been attached to anything yet) — render a muted "No store" tag.
-//      The user can still browse profile/settings; data routes will
-//      already be returning 403 from the storeScope middleware.
-//   2. Exactly one store — render the storeName as static text. No
-//      dropdown chevron, no clickable surface; there's nothing to
-//      switch to. The legacy single-store deployment lives here.
-//   3. Two or more stores — render a DropdownMenu of all options with
-//      a check mark next to the active one. Selecting an item calls
-//      setActiveStore(), which both writes localStorage and triggers
-//      a query-cache invalidation so every page refetches.
+// Three render modes, picked from the user's `user_stores` membership:
 //
-// The OrderFlow logo lives inside the trigger to keep visual parity
-// with the previous header (logo + "OrderFlow" wordmark). On the
-// dropdown variant we replace the wordmark with the active store
-// name so the user always sees which tenant they're operating on.
+//   1. Empty (zero stores) — muted avatar + "No store assigned". The
+//      user can still browse profile/settings; the backend's
+//      storeScope middleware will 403 every data route on its own.
+//   2. Single store — non-interactive workspace tile (avatar + name).
+//      No dropdown chevron, no hover state. The legacy single-store
+//      deployment lives here.
+//   3. Multi-store — full DropdownMenu trigger with chevron, hover
+//      state, and a check mark next to the active row.
+//
+// Avatars are derived deterministically from the store id so each
+// tenant gets a stable, unique-looking tile without needing an
+// uploaded logo. djb2-ish hash → HSL gradient.
 // ─────────────────────────────────────────────────────────────────────
+
+function storeGradient(id: string): string {
+  // Cheap, deterministic hash → hue. Spread of 40° between stops
+  // keeps the gradient readable rather than flat-looking.
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) {
+    h = ((h << 5) + h) ^ id.charCodeAt(i); // h*33 ^ char
+  }
+  const hue1 = Math.abs(h) % 360;
+  const hue2 = (hue1 + 40) % 360;
+  // Two-stop linear gradient: 70% saturation keeps it vivid without
+  // straying into neon territory; the lightness drop on the second
+  // stop adds the subtle dimensional feel of the inspiration image.
+  return `linear-gradient(135deg, hsl(${hue1} 72% 56%), hsl(${hue2} 72% 44%))`;
+}
+
+function storeInitial(store: StoreSummary): string {
+  const source = store.storeName?.trim() || store.storeUrl;
+  // Strip protocol / www / .myshopify.com noise so the initial is
+  // actually the brand letter, not "W" for "www".
+  const cleaned = source
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\.myshopify\.com.*$/i, "");
+  return (cleaned[0] || "?").toUpperCase();
+}
+
+/**
+ * Reusable square avatar tile. Used in both the trigger and inside
+ * each dropdown row so the visual rhyme is tight.
+ */
+function StoreAvatar({
+  store,
+  size = "md",
+}: {
+  store: StoreSummary;
+  size?: "sm" | "md";
+}) {
+  const gradient = useMemo(() => storeGradient(store.id), [store.id]);
+  const initial = storeInitial(store);
+  return (
+    <div
+      className={cn(
+        "shrink-0 rounded-md flex items-center justify-center",
+        "text-white font-semibold shadow-sm ring-1 ring-black/5",
+        size === "sm" ? "h-7 w-7 text-xs" : "h-8 w-8 text-sm",
+      )}
+      style={{ background: gradient }}
+      aria-hidden
+    >
+      {initial}
+    </div>
+  );
+}
 
 export function StoreSwitcher() {
   const { stores, activeStore, setActiveStore, loading, hasMultipleStores } =
     useActiveStore();
 
-  // While the initial /api/stores/me request is in flight we
-  // optimistically render the wordmark — the dropdown can finish
-  // populating in the background without flashing an empty state.
+  // ── Loading skeleton: avatar + bar so layout doesn't shift when
+  // the data lands.
   if (loading && stores.length === 0) {
     return (
       <div
-        className="flex items-center gap-3 text-[20px]"
+        className="flex items-center gap-2.5 px-1.5 py-1"
         data-testid="store-switcher-loading"
       >
-        <img
-          src={logoUrl}
-          alt="OrderFlow Logo"
-          className="h-10 w-10 rounded-md logo-spin-on-hover"
-        />
-        <div className="flex flex-col">
-          <span className="font-semibold text-[16px]">OrderFlow</span>
-        </div>
+        <div className="h-8 w-8 rounded-md bg-muted animate-pulse" />
+        <div className="h-3.5 w-24 rounded bg-muted animate-pulse" />
       </div>
     );
   }
 
-  // No memberships — render a clearly empty state so the admin sees
-  // they need to grant access in the team directory.
+  // ── Zero memberships: muted state, no avatar gradient (would
+  // suggest a real store exists). Renders cleanly inside the header.
   if (stores.length === 0) {
     return (
       <div
-        className="flex items-center gap-3 text-[20px]"
+        className="flex items-center gap-2.5 px-1.5 py-1"
         data-testid="store-switcher-empty"
       >
-        <img
-          src={logoUrl}
-          alt="OrderFlow Logo"
-          className="h-10 w-10 rounded-md"
-        />
-        <div className="flex flex-col min-w-0">
-          <span className="font-semibold text-[16px]">OrderFlow</span>
-          <span className="text-xs text-muted-foreground truncate">
-            No store assigned
-          </span>
+        <div className="h-8 w-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground text-sm font-medium">
+          ?
         </div>
+        <span className="text-sm text-muted-foreground truncate">
+          No store assigned
+        </span>
       </div>
     );
   }
 
-  const displayName = activeStore?.storeName || activeStore?.storeUrl || "Store";
+  if (!activeStore) {
+    // Edge case: stores arrived but reconciliation hasn't picked one
+    // yet. Render the loading skeleton rather than flashing nothing.
+    return (
+      <div className="flex items-center gap-2.5 px-1.5 py-1">
+        <div className="h-8 w-8 rounded-md bg-muted animate-pulse" />
+        <div className="h-3.5 w-24 rounded bg-muted animate-pulse" />
+      </div>
+    );
+  }
 
-  // Single store: static label, no dropdown affordance. We still
-  // surface the storeName so admins can see at a glance which tenant
-  // they're connected to — useful during the rollout while existing
-  // deployments are single-store-by-default.
+  const displayName =
+    activeStore.storeName?.trim() || activeStore.storeUrl;
+
+  // ── Single store: polished but non-interactive. Same avatar +
+  // name shape as the dropdown trigger so the visual identity
+  // stays consistent once a second store is added later.
   if (!hasMultipleStores) {
     return (
       <div
-        className="flex items-center gap-3 text-[20px]"
+        className="flex items-center gap-2.5 px-1.5 py-1"
         data-testid="store-switcher-single"
       >
-        <img
-          src={logoUrl}
-          alt="OrderFlow Logo"
-          className="h-10 w-10 rounded-md logo-spin-on-hover"
-        />
-        <div className="flex flex-col min-w-0">
-          <span className="font-semibold text-[16px] truncate">
-            {displayName}
-          </span>
-          <span className="text-xs text-muted-foreground truncate">
-            OrderFlow
-          </span>
-        </div>
+        <StoreAvatar store={activeStore} />
+        <span
+          className="text-[15px] font-semibold truncate text-sidebar-foreground"
+          title={displayName}
+        >
+          {displayName}
+        </span>
       </div>
     );
   }
 
-  // 2+ stores: full dropdown.
+  // ── Multi-store: full dropdown.
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex w-full items-center gap-3 rounded-md p-1.5 text-left",
-            "hover:bg-sidebar-accent/40 transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "group flex w-full items-center gap-2.5 rounded-md px-1.5 py-1",
+            "text-left transition-colors",
+            "hover:bg-sidebar-accent/60",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           )}
           data-testid="store-switcher-trigger"
         >
-          <img
-            src={logoUrl}
-            alt="OrderFlow Logo"
-            className="h-10 w-10 rounded-md"
+          <StoreAvatar store={activeStore} />
+          <span
+            className="flex-1 text-[15px] font-semibold truncate text-sidebar-foreground"
+            title={displayName}
+          >
+            {displayName}
+          </span>
+          <ChevronsUpDown
+            className="h-4 w-4 text-muted-foreground shrink-0 transition-opacity group-hover:opacity-100 opacity-70"
+            aria-hidden
           />
-          <div className="flex flex-col flex-1 min-w-0">
-            <span className="font-semibold text-[15px] truncate">
-              {displayName}
-            </span>
-            <span className="text-xs text-muted-foreground truncate">
-              {stores.length} stores · click to switch
-            </span>
-          </div>
-          <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
         side="bottom"
-        sideOffset={4}
-        className="w-[--radix-dropdown-menu-trigger-width] min-w-[14rem]"
+        sideOffset={6}
+        // Match the trigger width so the dropdown feels anchored, with
+        // a sensible floor for narrow sidebars.
+        className="w-[--radix-dropdown-menu-trigger-width] min-w-[16rem] p-1.5"
       >
-        <DropdownMenuLabel className="text-xs uppercase tracking-wide text-muted-foreground">
+        <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Switch store
         </DropdownMenuLabel>
-        <DropdownMenuSeparator />
+        <DropdownMenuSeparator className="my-1" />
         {stores.map((store) => {
-          const isActive = store.id === activeStore?.id;
+          const isActive = store.id === activeStore.id;
+          const name = store.storeName?.trim() || store.storeUrl;
           return (
             <DropdownMenuItem
               key={store.id}
               onSelect={() => setActiveStore(store.id)}
-              className="cursor-pointer"
+              className={cn(
+                "cursor-pointer rounded-md px-2 py-2 gap-2.5",
+                "focus:bg-accent data-[highlighted]:bg-accent",
+              )}
               data-testid={`store-switcher-item-${store.id}`}
             >
-              <div className="flex items-center gap-2 w-full min-w-0">
-                <Store className="h-4 w-4 text-muted-foreground shrink-0" />
-                <div className="flex flex-col flex-1 min-w-0">
-                  <span className="text-sm font-medium truncate">
-                    {store.storeName || store.storeUrl}
-                  </span>
-                  <span className="text-xs text-muted-foreground truncate">
-                    {store.storeUrl}
-                  </span>
-                </div>
-                {isActive && (
-                  <Check className="h-4 w-4 text-primary shrink-0" />
-                )}
-              </div>
+              <StoreAvatar store={store} size="sm" />
+              <span
+                className="flex-1 text-sm font-medium truncate"
+                title={name}
+              >
+                {name}
+              </span>
+              {isActive ? (
+                <Check className="h-4 w-4 text-primary shrink-0" aria-hidden />
+              ) : (
+                // Reserve the same width so rows don't shift width as
+                // the active row changes. Keeps the dropdown calm.
+                <span className="h-4 w-4 shrink-0" />
+              )}
             </DropdownMenuItem>
           );
         })}
