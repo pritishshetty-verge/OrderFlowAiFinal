@@ -3088,6 +3088,194 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // POST /api/stores — admin connects a brand-new Shopify store
+  //
+  // Phase 4: multi-store onboarding. This is the multi-store equivalent of
+  // the legacy POST /api/shopify/credentials route (which writes to the
+  // single-row `shopify_credentials` table). It:
+  //
+  //   1. Validates the request body (storeUrl + apiKey + apiSecret are
+  //      required; storeName + webhookSecret optional).
+  //   2. Rejects duplicate storeUrls before issuing the test call —
+  //      catches the "I already added Acme, why didn't it work" case
+  //      with a clear 409 instead of a Postgres unique-violation.
+  //   3. Live-tests the credentials with a one-off ShopifyClient
+  //      (client_credentials grant). A failed test still returns 200
+  //      but skips the INSERT and surfaces the error so the form can
+  //      show it. We refuse to commit creds we can't verify.
+  //   4. Encrypts the secret material and INSERTs the stores row.
+  //   5. Auto-grants the creating admin a user_stores row so the
+  //      switcher sees the new store on next /api/stores/me refresh
+  //      (admins technically have cross-store visibility but the
+  //      explicit row keeps audit trails clean).
+  //   6. If APP_URL is set, registers Shopify webhooks for this store
+  //      via the per-store factory — same idempotent path the boot
+  //      hook uses. Failures here don't block the create; the admin
+  //      can re-trigger from /api/shopify/webhooks/register-all later.
+  //
+  // Returns the safe summary shape (no encrypted blobs) plus a
+  // webhook registration report so the UI can show "3 of 4 topics
+  // registered" if there were partial failures.
+  // ============================================================================
+  app.post("/api/stores", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Only admins can connect new stores." });
+      }
+
+      // Validate input. We deliberately do NOT use
+      // insertShopifyCredentialsSchema here — that schema is for the
+      // legacy single-store table and includes fields we don't accept
+      // (e.g. is_active toggling). Inline validation keeps the
+      // contract narrow.
+      const {
+        storeName,
+        storeUrl,
+        apiKey,
+        apiSecret,
+        webhookSecret,
+      } = req.body ?? {};
+      const trimmedUrl = typeof storeUrl === "string" ? storeUrl.trim() : "";
+      if (!trimmedUrl) {
+        return res.status(400).json({ error: "storeUrl is required." });
+      }
+      if (typeof apiKey !== "string" || !apiKey.trim()) {
+        return res.status(400).json({ error: "apiKey is required." });
+      }
+      if (typeof apiSecret !== "string" || !apiSecret.trim()) {
+        return res.status(400).json({ error: "apiSecret is required." });
+      }
+      // Normalize the URL the same way the ShopifyClient does so a
+      // copy-paste from the address bar (with https:// or a trailing
+      // slash) doesn't create a second row that diverges by trivia.
+      const normalizedUrl = trimmedUrl
+        .replace(/^https?:\/\//, "")
+        .replace(/\/+$/, "")
+        .toLowerCase();
+
+      // Duplicate guard. Returns 409 with the existing store id so
+      // the UI can offer a "switch to it" CTA.
+      const [existing] = await db
+        .select({ id: stores.id, storeName: stores.storeName })
+        .from(stores)
+        .where(eq(stores.storeUrl, normalizedUrl))
+        .limit(1);
+      if (existing) {
+        return res.status(409).json({
+          error: "A store with this URL is already connected.",
+          existing,
+        });
+      }
+
+      // Test the credentials before committing them.
+      const { ShopifyClient: TempClient } = await import("./shopify");
+      const tempClient = new TempClient({
+        storeUrl: normalizedUrl,
+        apiKey: apiKey.trim(),
+        apiSecret: apiSecret.trim(),
+        useClientCredentials: true,
+      });
+
+      let shopInfo: any = null;
+      try {
+        shopInfo = await tempClient.getShopInfo();
+      } catch (testErr: any) {
+        const message = testErr?.message || "Connection test failed";
+        return res.status(400).json({
+          error: `Could not connect to ${normalizedUrl}: ${message}`,
+        });
+      }
+
+      // Persist. The displayed storeName falls back to whatever the
+      // shop returns (`shop.name`) so users don't have to type it
+      // twice — they can override later via PATCH /api/stores/:id.
+      const finalStoreName =
+        (typeof storeName === "string" && storeName.trim()) ||
+        shopInfo?.name ||
+        normalizedUrl;
+
+      const [inserted] = await db
+        .insert(stores)
+        .values({
+          storeName: finalStoreName,
+          storeUrl: normalizedUrl,
+          apiKey: encrypt(apiKey.trim()),
+          apiSecret: encrypt(apiSecret.trim()),
+          webhookSecret:
+            typeof webhookSecret === "string" && webhookSecret.trim()
+              ? encrypt(webhookSecret.trim())
+              : null,
+          isActive: true,
+          lastTestedAt: new Date(),
+          testStatus: "success",
+          testMessage: `Connected to ${shopInfo?.name || normalizedUrl}`,
+          connectedBy: requester.id,
+        })
+        .returning({
+          id: stores.id,
+          storeName: stores.storeName,
+          storeUrl: stores.storeUrl,
+          logoUrl: stores.logoUrl,
+          isActive: stores.isActive,
+          createdAt: stores.createdAt,
+        });
+
+      // Auto-grant the creating admin. Admins implicitly see every
+      // store via the storeScope middleware (isAdmin bypass), but
+      // having the user_stores row keeps a clean record of who
+      // connected what — and means a future "demote admin → agent"
+      // change doesn't silently strip them off this store.
+      await db
+        .insert(userStores)
+        .values({ userId: requester.id, storeId: inserted.id, createdBy: requester.id })
+        .onConflictDoNothing();
+
+      // Best-effort webhook registration. Failures here are non-fatal
+      // — the store is already saved, and the admin can re-trigger
+      // from the Webhook Status card. We collect the per-topic
+      // result so the UI can render it.
+      let webhookReport:
+        | { topics: Array<{ topic: string; address: string; action: string; error?: string }> }
+        | null = null;
+      const appUrl = process.env.APP_URL;
+      if (appUrl && /^https:\/\//i.test(appUrl)) {
+        try {
+          const { getShopifyClient } = await import("./shopify");
+          const client = await getShopifyClient(inserted.id);
+          webhookReport = await client.registerAllWebhooks(appUrl);
+        } catch (err: any) {
+          console.warn(
+            `[stores] webhook registration for ${inserted.id} failed:`,
+            err?.message ?? err,
+          );
+        }
+      } else {
+        console.warn(
+          `[stores] APP_URL not set or not https — skipping webhook registration for ${inserted.id}`,
+        );
+      }
+
+      res.status(201).json({
+        store: inserted,
+        shopName: shopInfo?.name ?? null,
+        webhooks: webhookReport,
+      });
+    } catch (error: any) {
+      console.error("Error in POST /api/stores:", error);
+      res.status(500).json({ error: "Failed to connect store." });
+    }
+  });
+
+  // ============================================================================
   // PATCH /api/stores/:id — admin updates a store's display metadata
   //
   // Today this only touches storeName and logoUrl — fields the team
@@ -3227,6 +3415,146 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error in PATCH /api/stores/:id:", error);
       res.status(500).json({ error: "Failed to update store." });
+    }
+  });
+
+  // ============================================================================
+  // GET  /api/users/:userId/stores  — list a user's store memberships
+  // PUT  /api/users/:userId/stores  — reconcile to { storeIds: [] }
+  //
+  // Phase 4 RBAC endpoints, used by the "Manage Access" modal in the
+  // Team Directory. Admin-only (both routes). The PUT performs a
+  // full set-reconcile rather than expecting incremental
+  // ADD/REMOVE operations: the modal renders a checkbox list, the
+  // user clicks Save, and we sync the DB to whatever's currently
+  // checked. Simpler model than incremental diffs and avoids race
+  // conditions when two admins manage the same user at once
+  // (last-write-wins on the full set).
+  //
+  // Admin-level memberships are stored too — admins implicitly see
+  // every store via the isAdmin bypass in storeScope.ts, but the
+  // explicit user_stores row keeps audit trails clean. The PUT
+  // happily accepts and removes admin memberships as well.
+  // ============================================================================
+  app.get("/api/users/:userId/stores", async (req, res) => {
+    try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester || !isAdmin(requester)) {
+        return res.status(403).json({ error: "Admin access required." });
+      }
+      const targetId = req.params.userId;
+      const target = await storage.getUser(targetId);
+      if (!target) {
+        return res.status(404).json({ error: "User not found." });
+      }
+      const rows = await db
+        .select({ storeId: userStores.storeId })
+        .from(userStores)
+        .where(eq(userStores.userId, targetId));
+      res.json({ storeIds: rows.map((r) => r.storeId) });
+    } catch (error: any) {
+      console.error("Error in GET /api/users/:userId/stores:", error);
+      res.status(500).json({ error: "Failed to load user store access." });
+    }
+  });
+
+  app.put("/api/users/:userId/stores", async (req, res) => {
+    try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester || !isAdmin(requester)) {
+        return res.status(403).json({ error: "Admin access required." });
+      }
+      const targetId = req.params.userId;
+      const target = await storage.getUser(targetId);
+      if (!target) {
+        return res.status(404).json({ error: "User not found." });
+      }
+      // Body shape: { storeIds: string[] }. Coerce to a Set for the
+      // diff so duplicate entries in the payload don't cause spurious
+      // conflict errors.
+      const requested = req.body?.storeIds;
+      if (!Array.isArray(requested) || requested.some((s) => typeof s !== "string")) {
+        return res.status(400).json({
+          error: "storeIds must be an array of store id strings.",
+        });
+      }
+      const requestedSet = new Set<string>(requested);
+
+      // Validate every requested id corresponds to a real store. We
+      // could rely on FK constraints, but the explicit check yields
+      // a clearer error (which id is invalid) without partial writes.
+      const requestedIds = Array.from(requestedSet);
+      if (requestedIds.length > 0) {
+        const existingStores = await db
+          .select({ id: stores.id })
+          .from(stores);
+        const knownIds = new Set(existingStores.map((s) => s.id));
+        const unknown = requestedIds.filter((id) => !knownIds.has(id));
+        if (unknown.length > 0) {
+          return res.status(400).json({
+            error: "Unknown store id(s) in storeIds.",
+            unknown,
+          });
+        }
+      }
+
+      // Current memberships → diff against requested set.
+      const current = await db
+        .select({ storeId: userStores.storeId })
+        .from(userStores)
+        .where(eq(userStores.userId, targetId));
+      const currentSet = new Set(current.map((r) => r.storeId));
+      const currentIds = Array.from(currentSet);
+
+      const toInsert = requestedIds.filter((id) => !currentSet.has(id));
+      const toDelete = currentIds.filter((id) => !requestedSet.has(id));
+
+      // Apply. Neon-serverless driver doesn't support multi-statement
+      // BEGIN/COMMIT over a single websocket round-trip in the same
+      // shape Postgres clients usually expect, so we do these as two
+      // independent statements. The window between insert and delete
+      // is tiny and the final state is correct even if a delete is
+      // observed mid-flight (the data plane just sees a partial
+      // grant — never an over-grant).
+      if (toInsert.length > 0) {
+        await db
+          .insert(userStores)
+          .values(
+            toInsert.map((storeId) => ({
+              userId: targetId,
+              storeId,
+              createdBy: requester.id,
+            })),
+          )
+          .onConflictDoNothing();
+      }
+      if (toDelete.length > 0) {
+        // Drizzle's `inArray` operator import isn't already pulled in
+        // up top; build the OR-chain inline.
+        await db.delete(userStores).where(
+          and(
+            eq(userStores.userId, targetId),
+            or(...toDelete.map((id) => eq(userStores.storeId, id))),
+          ),
+        );
+      }
+
+      res.json({
+        storeIds: requestedIds,
+        added: toInsert,
+        removed: toDelete,
+      });
+    } catch (error: any) {
+      console.error("Error in PUT /api/users/:userId/stores:", error);
+      res.status(500).json({ error: "Failed to update user store access." });
     }
   });
 

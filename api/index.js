@@ -9505,6 +9505,111 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to load stores." });
     }
   });
+  app2.post("/api/stores", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Only admins can connect new stores." });
+      }
+      const {
+        storeName,
+        storeUrl,
+        apiKey,
+        apiSecret,
+        webhookSecret
+      } = req.body ?? {};
+      const trimmedUrl = typeof storeUrl === "string" ? storeUrl.trim() : "";
+      if (!trimmedUrl) {
+        return res.status(400).json({ error: "storeUrl is required." });
+      }
+      if (typeof apiKey !== "string" || !apiKey.trim()) {
+        return res.status(400).json({ error: "apiKey is required." });
+      }
+      if (typeof apiSecret !== "string" || !apiSecret.trim()) {
+        return res.status(400).json({ error: "apiSecret is required." });
+      }
+      const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq3(stores.storeUrl, normalizedUrl)).limit(1);
+      if (existing) {
+        return res.status(409).json({
+          error: "A store with this URL is already connected.",
+          existing
+        });
+      }
+      const { ShopifyClient: TempClient } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const tempClient = new TempClient({
+        storeUrl: normalizedUrl,
+        apiKey: apiKey.trim(),
+        apiSecret: apiSecret.trim(),
+        useClientCredentials: true
+      });
+      let shopInfo = null;
+      try {
+        shopInfo = await tempClient.getShopInfo();
+      } catch (testErr) {
+        const message = testErr?.message || "Connection test failed";
+        return res.status(400).json({
+          error: `Could not connect to ${normalizedUrl}: ${message}`
+        });
+      }
+      const finalStoreName = typeof storeName === "string" && storeName.trim() || shopInfo?.name || normalizedUrl;
+      const [inserted] = await db.insert(stores).values({
+        storeName: finalStoreName,
+        storeUrl: normalizedUrl,
+        apiKey: encrypt(apiKey.trim()),
+        apiSecret: encrypt(apiSecret.trim()),
+        webhookSecret: typeof webhookSecret === "string" && webhookSecret.trim() ? encrypt(webhookSecret.trim()) : null,
+        isActive: true,
+        lastTestedAt: /* @__PURE__ */ new Date(),
+        testStatus: "success",
+        testMessage: `Connected to ${shopInfo?.name || normalizedUrl}`,
+        connectedBy: requester.id
+      }).returning({
+        id: stores.id,
+        storeName: stores.storeName,
+        storeUrl: stores.storeUrl,
+        logoUrl: stores.logoUrl,
+        isActive: stores.isActive,
+        createdAt: stores.createdAt
+      });
+      await db.insert(userStores).values({ userId: requester.id, storeId: inserted.id, createdBy: requester.id }).onConflictDoNothing();
+      let webhookReport = null;
+      const appUrl = process.env.APP_URL;
+      if (appUrl && /^https:\/\//i.test(appUrl)) {
+        try {
+          const { getShopifyClient: getShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+          const client = await getShopifyClient2(inserted.id);
+          webhookReport = await client.registerAllWebhooks(appUrl);
+        } catch (err) {
+          console.warn(
+            `[stores] webhook registration for ${inserted.id} failed:`,
+            err?.message ?? err
+          );
+        }
+      } else {
+        console.warn(
+          `[stores] APP_URL not set or not https \u2014 skipping webhook registration for ${inserted.id}`
+        );
+      }
+      res.status(201).json({
+        store: inserted,
+        shopName: shopInfo?.name ?? null,
+        webhooks: webhookReport
+      });
+    } catch (error) {
+      console.error("Error in POST /api/stores:", error);
+      res.status(500).json({ error: "Failed to connect store." });
+    }
+  });
   const MAX_LOGO_BYTES = 2 * 1024 * 1024;
   app2.patch("/api/stores/:id", async (req, res) => {
     try {
@@ -9582,6 +9687,94 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error in PATCH /api/stores/:id:", error);
       res.status(500).json({ error: "Failed to update store." });
+    }
+  });
+  app2.get("/api/users/:userId/stores", async (req, res) => {
+    try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester || !isAdmin(requester)) {
+        return res.status(403).json({ error: "Admin access required." });
+      }
+      const targetId = req.params.userId;
+      const target = await storage.getUser(targetId);
+      if (!target) {
+        return res.status(404).json({ error: "User not found." });
+      }
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq3(userStores.userId, targetId));
+      res.json({ storeIds: rows.map((r) => r.storeId) });
+    } catch (error) {
+      console.error("Error in GET /api/users/:userId/stores:", error);
+      res.status(500).json({ error: "Failed to load user store access." });
+    }
+  });
+  app2.put("/api/users/:userId/stores", async (req, res) => {
+    try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester || !isAdmin(requester)) {
+        return res.status(403).json({ error: "Admin access required." });
+      }
+      const targetId = req.params.userId;
+      const target = await storage.getUser(targetId);
+      if (!target) {
+        return res.status(404).json({ error: "User not found." });
+      }
+      const requested = req.body?.storeIds;
+      if (!Array.isArray(requested) || requested.some((s) => typeof s !== "string")) {
+        return res.status(400).json({
+          error: "storeIds must be an array of store id strings."
+        });
+      }
+      const requestedSet = new Set(requested);
+      const requestedIds = Array.from(requestedSet);
+      if (requestedIds.length > 0) {
+        const existingStores = await db.select({ id: stores.id }).from(stores);
+        const knownIds = new Set(existingStores.map((s) => s.id));
+        const unknown = requestedIds.filter((id) => !knownIds.has(id));
+        if (unknown.length > 0) {
+          return res.status(400).json({
+            error: "Unknown store id(s) in storeIds.",
+            unknown
+          });
+        }
+      }
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq3(userStores.userId, targetId));
+      const currentSet = new Set(current.map((r) => r.storeId));
+      const currentIds = Array.from(currentSet);
+      const toInsert = requestedIds.filter((id) => !currentSet.has(id));
+      const toDelete = currentIds.filter((id) => !requestedSet.has(id));
+      if (toInsert.length > 0) {
+        await db.insert(userStores).values(
+          toInsert.map((storeId) => ({
+            userId: targetId,
+            storeId,
+            createdBy: requester.id
+          }))
+        ).onConflictDoNothing();
+      }
+      if (toDelete.length > 0) {
+        await db.delete(userStores).where(
+          and3(
+            eq3(userStores.userId, targetId),
+            or2(...toDelete.map((id) => eq3(userStores.storeId, id)))
+          )
+        );
+      }
+      res.json({
+        storeIds: requestedIds,
+        added: toInsert,
+        removed: toDelete
+      });
+    } catch (error) {
+      console.error("Error in PUT /api/users/:userId/stores:", error);
+      res.status(500).json({ error: "Failed to update user store access." });
     }
   });
   app2.get("/api/auth/me", async (req, res) => {

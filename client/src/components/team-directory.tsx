@@ -23,11 +23,12 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store } from "lucide-react";
 import type { User, Order as BackendOrder } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ConfigurePermissionsModal } from "@/components/configure-permissions-modal";
+import { ManageStoreAccessDialog } from "@/components/manage-store-access-dialog";
 
 type HolidayState = "MUMBAI" | "DELHI" | "BENGALURU" | "HYDERABAD";
 const HOLIDAY_STATE_OPTIONS: HolidayState[] = [
@@ -122,6 +123,10 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [userToDelete, setUserToDelete] = useState<TeamMember | null>(null);
   const [userToEditExtension, setUserToEditExtension] = useState<TeamMember | null>(null);
   const [userToEditCompensation, setUserToEditCompensation] = useState<TeamMember | null>(null);
+  // Phase 4 RBAC: which user's store memberships are being edited
+  // right now. Null when the modal is closed.
+  const [userForStoreAccess, setUserForStoreAccess] =
+    useState<TeamMember | null>(null);
   const { toast } = useToast();
 
   // currentUserId hoisted to the top of the component because both the
@@ -673,6 +678,22 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 >
                   Call
                 </Button>
+                {/* Phase 4: per-user store access. Admin-only so
+                    agents can't see their own toggles. Surfaced on
+                    every role (including other admins) for audit —
+                    admins see a banner inside the modal explaining
+                    that they implicitly bypass via the role check. */}
+                {userRole === "admin" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUserForStoreAccess(member)}
+                    data-testid={`button-manage-store-access-${member.id}`}
+                    title="Manage store access"
+                  >
+                    <Store className="h-4 w-4" />
+                  </Button>
+                )}
                 {userRole === "admin" && (
                   <Button
                     variant="outline"
@@ -1041,6 +1062,26 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         onOpenChange={setPermissionsModalOpen}
         inviteId={pendingInviteId}
         inviteEmail={pendingInviteEmail}
+      />
+
+      {/* Phase 4: per-user store access modal. Driven by the
+          userForStoreAccess state above — set on Manage-Access
+          button click, cleared on close. */}
+      <ManageStoreAccessDialog
+        open={!!userForStoreAccess}
+        onOpenChange={(next) => {
+          if (!next) setUserForStoreAccess(null);
+        }}
+        user={
+          userForStoreAccess
+            ? {
+                id: userForStoreAccess.id,
+                fullName: userForStoreAccess.name,
+                email: userForStoreAccess.email,
+                role: userForStoreAccess.role,
+              }
+            : null
+        }
       />
     </div>
   );

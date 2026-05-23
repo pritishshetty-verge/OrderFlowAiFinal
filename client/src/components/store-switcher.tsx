@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { useLocation } from "wouter";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useActiveStore, type StoreSummary } from "@/hooks/use-store";
+import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -135,6 +137,15 @@ function StoreAvatar({
 export function StoreSwitcher() {
   const { stores, activeStore, setActiveStore, loading, hasMultipleStores } =
     useActiveStore();
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+  // Admins always get the dropdown — even with a single store —
+  // because they can connect another one via the "Add store" CTA at
+  // the bottom. Non-admins only get the dropdown when there's
+  // actually more than one store to choose from; otherwise the
+  // single-store static label is correct.
+  const isAdmin = user?.role === "admin";
+  const showDropdown = hasMultipleStores || (isAdmin && stores.length > 0);
 
   // ── Loading skeleton: avatar + bar so layout doesn't shift when
   // the data lands.
@@ -182,10 +193,10 @@ export function StoreSwitcher() {
   const displayName =
     activeStore.storeName?.trim() || activeStore.storeUrl;
 
-  // ── Single store: polished but non-interactive. Same avatar +
-  // name shape as the dropdown trigger so the visual identity
-  // stays consistent once a second store is added later.
-  if (!hasMultipleStores) {
+  // ── Single store + non-admin: polished but non-interactive. The
+  // chevron + dropdown only appear when there's either a real
+  // choice to make (multi-store) or an admin who could add one.
+  if (!showDropdown) {
     return (
       <div
         className="flex items-center gap-2.5 px-1.5 py-1"
@@ -270,6 +281,29 @@ export function StoreSwitcher() {
             </DropdownMenuItem>
           );
         })}
+        {/* Admin-only CTA: connect another Shopify shop. The
+            integrations page hosts the actual form. Hidden for
+            non-admins (agents/chat_support/recovery_agent) since
+            the underlying POST /api/stores is admin-gated anyway. */}
+        {isAdmin && (
+          <>
+            <DropdownMenuSeparator className="my-1" />
+            <DropdownMenuItem
+              onSelect={() => setLocation("/integrations")}
+              className={cn(
+                "cursor-pointer rounded-md px-2 py-2 gap-2.5",
+                "text-primary focus:text-primary",
+                "focus:bg-accent data-[highlighted]:bg-accent",
+              )}
+              data-testid="store-switcher-add"
+            >
+              <div className="h-7 w-7 shrink-0 rounded-md border-2 border-dashed border-muted-foreground/40 flex items-center justify-center">
+                <Plus className="h-4 w-4 text-muted-foreground" aria-hidden />
+              </div>
+              <span className="flex-1 text-sm font-medium">Add store</span>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

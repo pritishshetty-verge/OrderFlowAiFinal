@@ -25,6 +25,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ShopifyConnectionCard } from "@/components/settings-shopify-main";
+import { AddStoreDialog } from "@/components/add-store-dialog";
+import { Plus } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────
 // Integrations hub.
@@ -406,7 +408,11 @@ export default function IntegrationsPage() {
       description="Connect OrderFlow to the platforms your business runs on"
     >
       <div className="p-6 space-y-8">
-        {/* Header bar with active count */}
+        {/* Header bar with active count + Add store CTA. The CTA
+            is the multi-store onboarding entry-point: POST /api/stores
+            with credentials and the new tenant is live immediately.
+            Existing Shopify card still hosts the legacy single-store
+            flow for back-compat. */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <Badge
@@ -417,6 +423,18 @@ export default function IntegrationsPage() {
               {connectedCount} of {totalCount} connected
             </Badge>
           </div>
+          <AddStoreDialog
+            trigger={
+              <Button
+                size="sm"
+                className="gap-2"
+                data-testid="button-add-store-header"
+              >
+                <Plus className="h-4 w-4" />
+                Add Shopify store
+              </Button>
+            }
+          />
         </div>
 
         {CATEGORY_ORDER.map((category) => {
