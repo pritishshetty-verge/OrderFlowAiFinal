@@ -72,6 +72,7 @@ __export(schema_exports, {
   pincodeTiers: () => pincodeTiers,
   products: () => products,
   resources: () => resources,
+  sessions: () => sessions,
   shipments: () => shipments,
   shopifyCredentials: () => shopifyCredentials,
   shopifySyncLogs: () => shopifySyncLogs,
@@ -86,13 +87,24 @@ __export(schema_exports, {
   webhooks: () => webhooks
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
+    sessions = pgTable(
+      "session",
+      {
+        sid: varchar("sid").primaryKey(),
+        sess: json("sess").notNull(),
+        expire: timestamp("expire", { precision: 6 }).notNull()
+      },
+      (table) => ({
+        expireIdx: index("IDX_session_expire").on(table.expire)
+      })
+    );
     users = pgTable("users", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       username: text("username").notNull().unique(),
@@ -280,18 +292,24 @@ var init_schema = __esm({
       id: true,
       createdAt: true
     });
-    marketingMetrics = pgTable("marketing_metrics", {
-      date: date("date").primaryKey(),
-      // Added in Phase 1, nullable. Flipped NOT NULL + folded into the PK
-      // in a follow-up after backfill.
-      storeId: varchar("store_id").references(() => stores.id),
-      fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
-      // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
-      fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
-      fbGmv: decimal("fb_gmv", { precision: 14, scale: 2 }).notNull().default("0"),
-      fbOrders: integer("fb_orders").notNull().default(0),
-      updatedAt: timestamp("updated_at").notNull().defaultNow()
-    });
+    marketingMetrics = pgTable(
+      "marketing_metrics",
+      {
+        // No `.primaryKey()` on `date` anymore — the PK is composite,
+        // declared in the table-config block below.
+        date: date("date").notNull(),
+        storeId: varchar("store_id").notNull().references(() => stores.id),
+        fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
+        // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
+        fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
+        fbGmv: decimal("fb_gmv", { precision: 14, scale: 2 }).notNull().default("0"),
+        fbOrders: integer("fb_orders").notNull().default(0),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        pk: primaryKey({ columns: [table.date, table.storeId] })
+      })
+    );
     pincodeTiers = pgTable("pincode_tiers", {
       pincode: varchar("pincode", { length: 12 }).primaryKey(),
       city: varchar("city", { length: 128 }),
@@ -3125,8 +3143,8 @@ var init_shopify = __esm({
               `Failed to update webhook ${match.id} (${topic}): ${response2.status} ${response2.statusText} \u2014 ${body}`
             );
           }
-          const json2 = await response2.json();
-          return { action: "updated", webhook: json2.webhook };
+          const json3 = await response2.json();
+          return { action: "updated", webhook: json3.webhook };
         }
         const url = `${this.baseUrl}/webhooks.json`;
         const response = await fetch(url, {
@@ -3145,8 +3163,8 @@ var init_shopify = __esm({
             `Failed to register webhook (${topic} \u2192 ${address}): ${response.status} ${response.statusText} \u2014 ${body}`
           );
         }
-        const json = await response.json();
-        return { action: "created", webhook: json.webhook };
+        const json2 = await response.json();
+        return { action: "created", webhook: json2.webhook };
       }
       async listWebhooks() {
         const url = `${this.baseUrl}/webhooks.json`;
@@ -4816,6 +4834,15 @@ __export(meta_exports, {
   syncMetaInsights: () => syncMetaInsights
 });
 import { sql as sql4 } from "drizzle-orm";
+async function resolveLegacyStoreId() {
+  const rows = await db.select({ id: stores.id }).from(stores).orderBy(stores.createdAt).limit(1);
+  if (rows.length === 0) {
+    throw new Error(
+      "[meta] no stores row found \u2014 run server/scripts/backfill-store-id.ts first"
+    );
+  }
+  return rows[0].id;
+}
 function normalizeAccountId(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
@@ -4862,6 +4889,7 @@ async function syncMetaInsights(startDate, endDate) {
   if (accountIds.length === 0) {
     throw new Error("META_AD_ACCOUNT_IDS env var is empty");
   }
+  const storeId = await resolveLegacyStoreId();
   console.log(
     `[meta] syncing ${accountIds.length} account(s) for ${startDate} \u2192 ${endDate}`
   );
@@ -4904,6 +4932,7 @@ async function syncMetaInsights(startDate, endDate) {
     totals.fbOrders += agg.fbOrders;
     upsertRows.push({
       date: date2,
+      storeId,
       fbSpend: agg.fbSpend.toFixed(2),
       fbGmv: agg.fbGmv.toFixed(2),
       fbOrders: Math.round(agg.fbOrders),
@@ -4912,7 +4941,9 @@ async function syncMetaInsights(startDate, endDate) {
   }
   if (upsertRows.length > 0) {
     await db.insert(marketingMetrics).values(upsertRows).onConflictDoUpdate({
-      target: marketingMetrics.date,
+      // PK is composite (date, storeId) — both columns required here
+      // so drizzle generates `ON CONFLICT (date, store_id) DO UPDATE`.
+      target: [marketingMetrics.date, marketingMetrics.storeId],
       set: {
         fbSpend: sql4`excluded.fb_spend`,
         fbGmv: sql4`excluded.fb_gmv`,

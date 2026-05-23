@@ -1,7 +1,39 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// ============================================================================
+// SESSION STORE (managed by connect-pg-simple at runtime)
+// ============================================================================
+//
+// connect-pg-simple auto-creates this table on first boot (see
+// `createTableIfMissing: true` in server/index.ts). We declare it in
+// Drizzle purely so `drizzle-kit push` recognises it as a managed
+// table and doesn't propose to DROP it as schema drift — dropping it
+// would invalidate every active session in production.
+//
+// Column shapes are pinned to connect-pg-simple's canonical schema
+// (https://github.com/voxpelli/node-connect-pg-simple/blob/main/table.sql):
+//   sid     varchar      PRIMARY KEY
+//   sess    json         NOT NULL
+//   expire  timestamp(6) NOT NULL
+//   index   IDX_session_expire ON (expire)
+//
+// We deliberately use `json` (not `jsonb`) and a plain `timestamp`
+// (no withTimezone) to match the library's CREATE TABLE statement
+// byte-for-byte, so push doesn't see a type-drift either.
+export const sessions = pgTable(
+  "session",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: json("sess").notNull(),
+    expire: timestamp("expire", { precision: 6 }).notNull(),
+  },
+  (table) => ({
+    expireIdx: index("IDX_session_expire").on(table.expire),
+  }),
+);
 
 // ============================================================================
 // USERS & AUTHENTICATION
@@ -282,25 +314,31 @@ export type UserStore = typeof userStores.$inferSelect;
 // MARKETING METRICS (for Pare Phase 4 · Meta/FB ad data, aggregated per day)
 // ============================================================================
 //
-// Phase 1 caveat: `date` remains the sole PK column for now. The
-// multi-store-correct schema has a composite PK of (date, storeId),
-// but a composite PK cannot include a nullable column. Since storeId
-// is nullable until the Phase-1 backfill runs in production, we keep
-// the single-column PK + add a nullable storeId. After backfill, a
-// follow-up migration drops the date-only PK and adds the composite.
-// See server/scripts/backfill-store-id.ts for the ordering.
-export const marketingMetrics = pgTable("marketing_metrics", {
-  date: date("date").primaryKey(),
-  // Added in Phase 1, nullable. Flipped NOT NULL + folded into the PK
-  // in a follow-up after backfill.
-  storeId: varchar("store_id").references(() => stores.id),
-  fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
-  // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
-  fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
-  fbGmv: decimal("fb_gmv", { precision: 14, scale: 2 }).notNull().default("0"),
-  fbOrders: integer("fb_orders").notNull().default(0),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+// Multi-store PK: (date, storeId). A single date row can exist per
+// store, so two stores aggregating Meta spend on the same day no
+// longer collide. The Phase-1 backfill populated storeId on every
+// existing row, so the NOT NULL + composite-PK constraints below
+// apply cleanly without rejecting any existing data.
+export const marketingMetrics = pgTable(
+  "marketing_metrics",
+  {
+    // No `.primaryKey()` on `date` anymore — the PK is composite,
+    // declared in the table-config block below.
+    date: date("date").notNull(),
+    storeId: varchar("store_id")
+      .notNull()
+      .references(() => stores.id),
+    fbSpend: decimal("fb_spend", { precision: 14, scale: 2 }).notNull().default("0"),
+    // Blended ROAS = fbGmv / fbSpend. Stored null when spend = 0.
+    fbRoas: decimal("fb_roas", { precision: 10, scale: 4 }),
+    fbGmv: decimal("fb_gmv", { precision: 14, scale: 2 }).notNull().default("0"),
+    fbOrders: integer("fb_orders").notNull().default(0),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.date, table.storeId] }),
+  }),
+);
 
 export type MarketingMetric = typeof marketingMetrics.$inferSelect;
 export type InsertMarketingMetric = typeof marketingMetrics.$inferInsert;

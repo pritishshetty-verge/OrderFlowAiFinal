@@ -1,6 +1,30 @@
 import { db } from "../db";
-import { marketingMetrics, type InsertMarketingMetric } from "@shared/schema";
+import { marketingMetrics, stores, type InsertMarketingMetric } from "@shared/schema";
 import { sql } from "drizzle-orm";
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase-1 multi-store transitional helper.
+//
+// marketing_metrics now has a composite PK (date, storeId) and storeId
+// is NOT NULL. Until Phase 2 wires a request-scoped store context, the
+// Meta sync runs against the single "legacy" stores row (the one the
+// backfill created from the old shopify_credentials). We resolve it
+// lazily by reading the oldest row from `stores` — there is exactly
+// one until multi-store onboarding ships.
+// ─────────────────────────────────────────────────────────────────────
+async function resolveLegacyStoreId(): Promise<string> {
+  const rows = await db
+    .select({ id: stores.id })
+    .from(stores)
+    .orderBy(stores.createdAt)
+    .limit(1);
+  if (rows.length === 0) {
+    throw new Error(
+      "[meta] no stores row found — run server/scripts/backfill-store-id.ts first",
+    );
+  }
+  return rows[0].id;
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Meta Marketing API sync.
@@ -118,6 +142,9 @@ export async function syncMetaInsights(
   if (accountIds.length === 0) {
     throw new Error("META_AD_ACCOUNT_IDS env var is empty");
   }
+  // Resolve the legacy store row up front so the upsert below can
+  // satisfy the new composite PK (date, storeId) + NOT NULL storeId.
+  const storeId = await resolveLegacyStoreId();
 
   console.log(
     `[meta] syncing ${accountIds.length} account(s) for ${startDate} → ${endDate}`,
@@ -171,6 +198,7 @@ export async function syncMetaInsights(
     totals.fbOrders += agg.fbOrders;
     upsertRows.push({
       date,
+      storeId,
       fbSpend: agg.fbSpend.toFixed(2),
       fbGmv: agg.fbGmv.toFixed(2),
       fbOrders: Math.round(agg.fbOrders),
@@ -184,7 +212,9 @@ export async function syncMetaInsights(
       .insert(marketingMetrics)
       .values(upsertRows)
       .onConflictDoUpdate({
-        target: marketingMetrics.date,
+        // PK is composite (date, storeId) — both columns required here
+        // so drizzle generates `ON CONFLICT (date, store_id) DO UPDATE`.
+        target: [marketingMetrics.date, marketingMetrics.storeId],
         set: {
           fbSpend: sql`excluded.fb_spend`,
           fbGmv: sql`excluded.fb_gmv`,
