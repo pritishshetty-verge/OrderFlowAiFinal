@@ -20,10 +20,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ProfileDropdown } from "@/components/profile-dropdown";
+import { StoreSwitcher } from "@/components/store-switcher";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import type { User } from "@shared/schema";
-import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 type MenuItem = {
   title: string;
@@ -212,13 +212,12 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
 
   return (
     <Sidebar data-testid="sidebar-main">
-      <SidebarHeader className="border-b border-sidebar-border p-4">
-        <div className="flex items-center gap-3 text-[20px]">
-          <img src={logoUrl} alt="OrderFlowAI Logo" className="h-10 w-10 rounded-md logo-spin-on-hover" />
-          <div className="flex flex-col">
-            <span className="font-semibold text-[16px]">OrderFlow</span>
-          </div>
-        </div>
+      <SidebarHeader className="border-b border-sidebar-border p-3">
+        {/* Phase 3: the static logo + wordmark is replaced by the
+            multi-store switcher. Renders as static text for users
+            with exactly one store (the steady state during rollout)
+            and as a dropdown for admins / multi-store members. */}
+        <StoreSwitcher />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

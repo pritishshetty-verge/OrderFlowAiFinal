@@ -69,6 +69,11 @@ function writeShim(u: AuthUser | null) {
     localStorage.removeItem("userRole");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userFullName");
+    // Phase 3: clear the active store id on logout so a subsequent
+    // login by a different user doesn't inherit the previous one's
+    // store selection (or worse, send a header for a store the new
+    // user has no access to — the backend would 403).
+    localStorage.removeItem("activeStoreId");
   }
 }
 

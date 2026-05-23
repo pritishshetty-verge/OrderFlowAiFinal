@@ -2926,8 +2926,8 @@ function invalidateShopifyClient(storeId) {
 async function getLegacyStoreShopifyClient() {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { asc: asc3 } = await import("drizzle-orm");
-  const [row] = await db2.select({ id: stores2.id }).from(stores2).orderBy(asc3(stores2.createdAt)).limit(1);
+  const { asc: asc4 } = await import("drizzle-orm");
+  const [row] = await db2.select({ id: stores2.id }).from(stores2).orderBy(asc4(stores2.createdAt)).limit(1);
   if (!row) {
     return shopifyClient;
   }
@@ -6294,7 +6294,7 @@ init_db();
 init_schema();
 import { createServer } from "http";
 import crypto5 from "node:crypto";
-import { eq as eq3, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and3 } from "drizzle-orm";
+import { eq as eq3, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and3, asc as asc2 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -9462,6 +9462,37 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Login failed. Please try again." });
     }
   });
+  app2.get("/api/stores/me", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      const projection = {
+        id: stores.id,
+        storeName: stores.storeName,
+        storeUrl: stores.storeUrl,
+        isActive: stores.isActive,
+        createdAt: stores.createdAt
+      };
+      let rows;
+      if (isAdmin(user)) {
+        rows = await db.select(projection).from(stores).orderBy(asc2(stores.createdAt));
+      } else {
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq3(userStores.storeId, stores.id)).where(eq3(userStores.userId, userId)).orderBy(asc2(stores.createdAt));
+      }
+      res.json({ stores: rows });
+    } catch (error) {
+      console.error("Error in /api/stores/me:", error);
+      res.status(500).json({ error: "Failed to load stores." });
+    }
+  });
   app2.get("/api/auth/me", async (req, res) => {
     try {
       const userId = req.session?.userId;
@@ -12331,7 +12362,7 @@ init_shopify();
 // server/storeScope.ts
 init_db();
 init_schema();
-import { eq as eq4, and as and4, asc as asc2 } from "drizzle-orm";
+import { eq as eq4, and as and4, asc as asc3 } from "drizzle-orm";
 var STORE_HEADER_NAME = "x-active-store-id";
 var StoreScopeError = class extends Error {
   status;
@@ -12362,7 +12393,7 @@ async function resolveStoreScope(req) {
       }
       return { storeId: row.id, isAdmin: true, isFallback: false };
     }
-    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc2(stores.createdAt)).limit(1);
+    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc3(stores.createdAt)).limit(1);
     if (!fallback) {
       return null;
     }
@@ -12387,7 +12418,7 @@ async function resolveStoreScope(req) {
       isFallback: false
     };
   }
-  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
+  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc3(userStores.createdAt)).limit(1);
   if (!first) {
     throw new StoreScopeError(
       403,

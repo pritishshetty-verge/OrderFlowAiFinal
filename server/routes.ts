@@ -3,13 +3,13 @@ import { createServer, type Server } from "http";
 import crypto from "node:crypto";
 import { storage } from "./storage";
 import { db } from "./db";
-import { 
-  orders, leaveRequests, orderStatusHistory, teamMessages, invites, 
-  attendance, orderAssignments, calls, notifications, ndrEvents, 
+import {
+  orders, leaveRequests, orderStatusHistory, teamMessages, invites,
+  attendance, orderAssignments, calls, notifications, ndrEvents,
   courses, resources, userLessonProgress, userOnboardingProgress, users,
-  webhooks, insertWebhookSchema
+  webhooks, insertWebhookSchema, stores, userStores,
 } from "@shared/schema";
-import { eq, or, sql, desc, gte, lte, and } from "drizzle-orm";
+import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient, getShopifyClient } from "./shopify";
@@ -3010,6 +3010,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // 200 → user object (password stripped)
   // 401 → no valid session
   // ============================================================================
+  // ============================================================================
+  // GET /api/stores/me — stores the signed-in user can switch between
+  //
+  // Backs the Phase 3 store-switcher in the sidebar. Returns a small,
+  // safely-scrubbed shape (no encrypted credential blobs) so the
+  // frontend has everything it needs to render the dropdown and
+  // attach `X-Active-Store-Id` on subsequent requests.
+  //
+  // Visibility rules mirror server/storeScope.ts:
+  //   • Admins              → every row from `stores`, ordered by
+  //                            createdAt asc so the legacy single
+  //                            store stays the default.
+  //   • Non-admin users     → just the rows joined via `user_stores`
+  //                            (their explicit memberships), ordered
+  //                            the same way.
+  //
+  // Returns 401 when no session, 200 with [] when the user has zero
+  // memberships (the UI then renders a banner asking the admin to
+  // grant access — never silently fall back to a store they shouldn't
+  // see).
+  // ============================================================================
+  app.get("/api/stores/me", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const user = await storage.getUser(userId);
+      if (!user) {
+        // Stale session — same handling as /api/auth/me.
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+
+      // Common projection: the fields the frontend needs to render
+      // the switcher dropdown. We deliberately omit api_key /
+      // api_secret / access_token / webhook_secret — those are
+      // encrypted blobs the client never has any reason to see.
+      const projection = {
+        id: stores.id,
+        storeName: stores.storeName,
+        storeUrl: stores.storeUrl,
+        isActive: stores.isActive,
+        createdAt: stores.createdAt,
+      };
+
+      let rows: Array<{
+        id: string;
+        storeName: string | null;
+        storeUrl: string;
+        isActive: boolean | null;
+        createdAt: Date | null;
+      }>;
+
+      if (isAdmin(user)) {
+        rows = await db
+          .select(projection)
+          .from(stores)
+          .orderBy(asc(stores.createdAt));
+      } else {
+        rows = await db
+          .select(projection)
+          .from(stores)
+          .innerJoin(userStores, eq(userStores.storeId, stores.id))
+          .where(eq(userStores.userId, userId))
+          .orderBy(asc(stores.createdAt));
+      }
+
+      res.json({ stores: rows });
+    } catch (error: any) {
+      console.error("Error in /api/stores/me:", error);
+      res.status(500).json({ error: "Failed to load stores." });
+    }
+  });
+
   app.get("/api/auth/me", async (req, res) => {
     try {
       const userId = req.session?.userId;

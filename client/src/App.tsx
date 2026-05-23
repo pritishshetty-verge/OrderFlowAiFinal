@@ -8,6 +8,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
+import { StoreProvider } from "@/hooks/use-store";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import OverviewPage from "@/pages/analytics";
@@ -244,15 +245,22 @@ export default function App() {
               call useAuth(). It fetches /api/auth/me on mount to
               rehydrate identity from the session cookie. */}
           <AuthProvider>
-            <ScopeProvider>
-              <SidebarProvider style={style as React.CSSProperties}>
-                <div className="flex h-screen w-full">
-                  {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
-                  <Router />
-                </div>
-              </SidebarProvider>
-              <Toaster />
-            </ScopeProvider>
+            {/* StoreProvider sits inside AuthProvider so it can key
+                its /api/stores/me fetch off the authenticated user,
+                and outside ScopeProvider so the existing scope state
+                (read/write toggles, agent filters) doesn't need to
+                know about stores. */}
+            <StoreProvider>
+              <ScopeProvider>
+                <SidebarProvider style={style as React.CSSProperties}>
+                  <div className="flex h-screen w-full">
+                    {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
+                    <Router />
+                  </div>
+                </SidebarProvider>
+                <Toaster />
+              </ScopeProvider>
+            </StoreProvider>
           </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>

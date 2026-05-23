@@ -37,11 +37,14 @@ export function ProfileDropdown({ userRole, userName, userEmail, avatarImage }: 
     }
     // Client-side: clear the transitional localStorage shim so the
     // ~30 components that still read role/id from localStorage don't
-    // think the user is still signed in.
+    // think the user is still signed in. Also clear the Phase-3
+    // active store id so a different user logging in next doesn't
+    // inherit this user's store selection.
     localStorage.removeItem("userRole");
     localStorage.removeItem("userId");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userFullName");
+    localStorage.removeItem("activeStoreId");
     setLocation("/login");
   };
 
