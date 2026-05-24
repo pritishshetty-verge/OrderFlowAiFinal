@@ -187,7 +187,16 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="bg-sidebar text-sidebar-foreground w-[var(--sidebar-width)] p-0 [&>button]:hidden"
+          // hideCloseButton replaces the previous
+          // `[&>button]:hidden` arbitrary-selector hack. The
+          // selector targeted direct <button> children of
+          // SheetContent, which broke whenever another Sheet
+          // (e.g. an AddStoreDialog or OrderQuickPreview) stacked
+          // its own close button at the same coordinate — the
+          // user saw two X icons overlapping. Explicit opt-out
+          // via prop is robust to neighbour Sheets.
+          hideCloseButton
+          className="bg-sidebar text-sidebar-foreground w-[var(--sidebar-width)] p-0"
           style={
             {
               "--sidebar-width": SIDEBAR_WIDTH_MOBILE,

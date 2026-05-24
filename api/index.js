@@ -1541,8 +1541,20 @@ var init_storage = __esm({
             conditions.push(eq(orders.callStatus, filters.callStatus));
           }
         }
-        if (filters?.paymentMethod)
-          conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
+        if (filters?.paymentMethod) {
+          const pm = filters.paymentMethod.toLowerCase();
+          if (pm === "cod") {
+            conditions.push(
+              sql2`LOWER(${orders.paymentMethod}) LIKE '%cod%'`
+            );
+          } else if (pm === "prepaid") {
+            conditions.push(
+              sql2`${orders.paymentMethod} IS NOT NULL AND LOWER(${orders.paymentMethod}) NOT LIKE '%cod%'`
+            );
+          } else {
+            conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
+          }
+        }
         if (filters?.assignedTo)
           conditions.push(eq(orders.assignedTo, filters.assignedTo));
         if (filters?.agentId) {

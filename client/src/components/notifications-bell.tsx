@@ -32,28 +32,27 @@ export function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const userId = localStorage.getItem("userId");
 
-  // Fetch unread count with proper URL query params
+  // Fetch unread count. apiRequest routes through the
+  // X-Active-Store-Id interceptor (was raw fetch pre-Phase-5; the
+  // sweep missed this file).
   const { data: unreadCountData } = useQuery<{ count: number }>({
     queryKey: ["/api/notifications/unread-count", userId],
     queryFn: async () => {
-      const res = await fetch(`/api/notifications/unread-count?userId=${userId}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch unread count");
+      const res = await apiRequest(
+        "GET",
+        `/api/notifications/unread-count?userId=${userId}`,
+      );
       return res.json();
     },
     enabled: !!userId,
     refetchInterval: 30000, // Refetch every 30 seconds
   });
 
-  // Fetch notifications when popover is open with proper URL query params
+  // Fetch notifications when popover is open.
   const { data: notifications = [], isLoading } = useQuery<Notification[]>({
     queryKey: ["/api/notifications", userId],
     queryFn: async () => {
-      const res = await fetch(`/api/notifications?userId=${userId}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch notifications");
+      const res = await apiRequest("GET", `/api/notifications?userId=${userId}`);
       return res.json();
     },
     enabled: open && !!userId,
@@ -108,25 +107,25 @@ export function NotificationsBell() {
     if (!notification.isRead) {
       markAsReadMutation.mutate(notification.id);
     }
-    
-    // Close the popover first
+
+    // Close the popover first. With modal={false} on the Popover
+    // root (see render below), Radix doesn't apply the body-level
+    // `pointer-events: none` trick, so the cleanup-vs-navigation
+    // race that caused the "screen freezes" bug is structurally
+    // gone. The requestAnimationFrame defer below is belt-and-
+    // braces: it gives Radix one frame to finish its dismiss
+    // animation before the route swap mounts a new page on top of
+    // the popover's transition.
     setOpen(false);
-    
-    // Handle order-related notifications with smooth sidebar opening
-    if (notification.orderId) {
-      const isOnOrdersPage = location === "/orders" || location.startsWith("/orders?");
-      
-      if (isOnOrdersPage) {
-        // Already on orders page - update URL param to trigger sidebar (no reload)
+
+    requestAnimationFrame(() => {
+      if (notification.orderId) {
+        // Both branches did the same thing previously; collapsed.
         setLocation(`/orders?selected_order=${notification.orderId}`);
-      } else {
-        // Navigate to orders page with the order param
-        setLocation(`/orders?selected_order=${notification.orderId}`);
+      } else if (notification.actionUrl) {
+        setLocation(notification.actionUrl);
       }
-    } else if (notification.actionUrl) {
-      // Fallback to actionUrl for non-order notifications
-      setLocation(notification.actionUrl);
-    }
+    });
   };
 
   const handleMarkAllAsRead = () => {
@@ -134,7 +133,15 @@ export function NotificationsBell() {
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    // modal={false} — notification popovers are informational
+    // dropdowns, not focus-trapping modals. The Radix default
+    // (modal behaviour) applies `pointer-events: none` to siblings
+    // outside the popover layer; that style sometimes lingers when
+    // a click handler navigates immediately after closing the
+    // popover, freezing the new page. Non-modal is the correct
+    // contract for this surface and eliminates the entire class of
+    // pointer-events-leftover bugs.
+    <Popover open={open} onOpenChange={setOpen} modal={false}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"

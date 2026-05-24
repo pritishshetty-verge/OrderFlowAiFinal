@@ -206,7 +206,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // - Write protection still blocks agents from modifying unassigned orders (403 Forbidden)
   // - Resume action does NOT send scope=global, so it correctly shows only assigned orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", activeStoreId, currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
+    queryKey: ["/api/orders", activeStoreId, currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, paymentFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -244,7 +244,18 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       if (isAdmin && agentFilter !== "all") {
         params.append("agentId", agentFilter);
       }
-      
+
+      // Payment filter — server-side now. Previously this was a
+      // client-side .filter() over the current paginated page, which
+      // made "COD" return 0 results whenever page 1 happened to have
+      // no COD orders even though COD orders existed on later pages.
+      // The server uses a case-insensitive `LIKE %cod%` match so
+      // legacy gateway strings ("Cash on Delivery (COD)") match
+      // alongside the normalised "cod" rows the webhook writes.
+      if (paymentFilter !== "all") {
+        params.append("paymentMethod", paymentFilter);
+      }
+
       // Server-side search
       if (debouncedSearch.trim()) {
         params.append("search", debouncedSearch.trim());
@@ -350,19 +361,13 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     return ordersResponse.orders.map((order) => transformOrder(order));
   }, [ordersResponse, usersData]);
 
-  // Apply payment filter on top of server-filtered orders
-  // Tab filtering and search are now handled server-side
-  const filteredOrders = useMemo(() => {
-    let filtered = [...baseFilteredOrders];
-
-    // Payment method filter (client-side for current page)
-    // TODO: Consider moving this to server-side as well
-    if (paymentFilter !== "all") {
-      filtered = filtered.filter((order) => order.paymentMethod === paymentFilter);
-    }
-
-    return filtered;
-  }, [baseFilteredOrders, paymentFilter]);
+  // Payment, tab, search, sort, agent, and tag filters all run
+  // server-side now. The previous client-side payment filter
+  // returned 0 results when the current page happened to have no
+  // matching rows (since pagination cut off the rest). `filteredOrders`
+  // is now identical to `baseFilteredOrders` — kept as a named
+  // alias so downstream JSX doesn't have to change.
+  const filteredOrders = baseFilteredOrders;
 
   const isLoading = ordersLoading || usersLoading;
 

@@ -906,8 +906,30 @@ export class DbStorage implements IStorage {
         conditions.push(eq(orders.callStatus, filters.callStatus));
       }
     }
-    if (filters?.paymentMethod)
-      conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
+    // Payment method filter — case-insensitive substring match so
+    // legacy Shopify gateway strings ("Cash on Delivery (COD)",
+    // "cash on delivery") match alongside the normalised "cod" rows
+    // the order-create webhook writes. Strict eq() against "cod"
+    // missed every order that pre-dated the normalisation logic,
+    // which is what caused the "COD filter returns 0 in All Orders
+    // view" bug. Same case-insensitive pattern Pare analytics uses
+    // in server/services/analytics.ts.
+    if (filters?.paymentMethod) {
+      const pm = filters.paymentMethod.toLowerCase();
+      if (pm === "cod") {
+        conditions.push(
+          sql`LOWER(${orders.paymentMethod}) LIKE '%cod%'`,
+        );
+      } else if (pm === "prepaid") {
+        conditions.push(
+          sql`${orders.paymentMethod} IS NOT NULL AND LOWER(${orders.paymentMethod}) NOT LIKE '%cod%'`,
+        );
+      } else {
+        // Future filters (e.g. specific gateway names) fall through
+        // to exact match.
+        conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
+      }
+    }
     if (filters?.assignedTo)
       conditions.push(eq(orders.assignedTo, filters.assignedTo));
     
