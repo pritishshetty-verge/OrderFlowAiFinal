@@ -1,91 +1,170 @@
 import { Request, Response } from "express";
-import { shopifyClient } from "./shopify";
+import { verifyShopifyHmac } from "./shopify";
 import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 import { triggerWebhooks } from "./services/webhooks";
+import {
+  resolveWebhookStore,
+  type ResolvedWebhookStore,
+} from "./webhookStoreResolver";
 
-// Helper function to verify webhook authenticity
-// Supports both direct Shopify webhooks and n8n relay
-function verifyWebhookAuth(req: Request): { valid: boolean; error?: string } {
+// ─────────────────────────────────────────────────────────────────────
+// Phase 5 — Per-store Shopify webhook authentication & routing.
+//
+// The flow for every inbound webhook:
+//   1. Resolve which `stores` row sent the webhook from
+//      X-Shopify-Shop-Domain (canonical) or body fallbacks. If no
+//      match exists, 404 the webhook — Shopify retries until the
+//      admin provisions the row.
+//   2. Verify HMAC against THAT store's webhook_secret. The HMAC
+//      input is `req.rawBody` (the bytes Shopify signed), not
+//      JSON.stringify(req.body) — Express's body parser normalises
+//      whitespace/Unicode, so a re-stringified copy never byte-
+//      matches the signature and the verify silently fails.
+//   3. Return the resolved store to the handler so it can stamp
+//      `storeId` on every order/customer insert and scope its
+//      de-dup lookups by (storeId, shopify_id).
+//
+// n8n relay path is preserved: requests bearing X-Forwarded-By: n8n
+// still skip HMAC (the relay re-signs with its own envelope), but
+// they MUST still resolve to a known store via the body's shop
+// domain — otherwise we can't know which tenant to write into.
+// ─────────────────────────────────────────────────────────────────────
+
+type VerifyResult =
+  | { valid: true; resolved: ResolvedWebhookStore }
+  | { valid: false; status: number; error: string };
+
+async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
+  // ── Resolve which store sent this webhook. Needed even on the
+  // n8n path because we need the storeId to stamp on inserts.
+  const resolved = await resolveWebhookStore(req);
+  if (!resolved) {
+    console.error(
+      "[webhook] could not resolve store from request — no matching `stores` row",
+      {
+        domainHeader: req.get("X-Shopify-Shop-Domain"),
+        bodyDomain: (req.body as any)?.myshopify_domain,
+      },
+    );
+    // 404 (not 401) so Shopify retries — this is "we don't know
+    // who sent this," not "you're unauthorized."
+    return {
+      valid: false,
+      status: 404,
+      error: "Store not provisioned for this shop domain.",
+    };
+  }
+
   const forwardedBy = req.get("X-Forwarded-By");
-  
-  // If request comes from n8n relay, skip HMAC verification
   if (forwardedBy === "n8n") {
-    console.log("✓ Webhook received from n8n relay (HMAC verification skipped)");
-    return { valid: true };
+    console.log(
+      `✓ Webhook received from n8n relay for ${resolved.store.storeUrl} (HMAC verification skipped)`,
+    );
+    return { valid: true, resolved };
   }
 
-  // Direct Shopify webhook - verify HMAC
+  // Direct Shopify webhook — HMAC verify against the resolved
+  // store's secret.
   const hmac = req.get("X-Shopify-Hmac-Sha256");
-  const body = JSON.stringify(req.body);
-
   if (!hmac) {
-    console.error("Webhook verification failed: Missing HMAC header");
-    return { valid: false, error: "Unauthorized: Missing signature" };
+    console.error("[webhook] missing X-Shopify-Hmac-Sha256 header");
+    return { valid: false, status: 401, error: "Unauthorized: Missing signature" };
   }
-
-  try {
-    if (!shopifyClient.verifyWebhook(body, hmac)) {
-      console.error("Webhook verification failed: Invalid signature");
-      return { valid: false, error: "Unauthorized: Invalid signature" };
-    }
-    console.log("✓ Direct Shopify webhook verified");
-    return { valid: true };
-  } catch (verifyError: any) {
-    console.error("Webhook verification error:", verifyError.message);
-    return { valid: false, error: "Unauthorized: Webhook secret not configured" };
+  if (!resolved.webhookSecret) {
+    console.error(
+      `[webhook] store ${resolved.store.storeUrl} has no webhook_secret configured — cannot verify HMAC`,
+    );
+    return {
+      valid: false,
+      status: 401,
+      error: "Unauthorized: Webhook secret not configured for this store",
+    };
   }
+  // Use the raw request body (Buffer) captured by the verify hook
+  // in server/index.ts. JSON.stringify(req.body) does NOT byte-match
+  // Shopify's signature because the parser normalises whitespace.
+  const rawBody = req.rawBody as Buffer | undefined;
+  if (!rawBody || !Buffer.isBuffer(rawBody)) {
+    console.error("[webhook] rawBody not captured — cannot verify HMAC");
+    return {
+      valid: false,
+      status: 500,
+      error: "Server misconfiguration: raw body unavailable",
+    };
+  }
+  if (!verifyShopifyHmac(rawBody, hmac, resolved.webhookSecret)) {
+    console.error(
+      `[webhook] HMAC mismatch for ${resolved.store.storeUrl}`,
+    );
+    return { valid: false, status: 401, error: "Unauthorized: Invalid signature" };
+  }
+  console.log(
+    `✓ Direct Shopify webhook verified for ${resolved.store.storeUrl}`,
+  );
+  return { valid: true, resolved };
 }
 
 export async function handleOrderCreated(req: Request, res: Response) {
   try {
     // Verify webhook authenticity (supports both Shopify direct and n8n relay)
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    // The store this webhook belongs to. Stamped on every row this
+    // handler writes so cross-tenant queries stay scoped.
+    const { store } = verification.resolved;
 
     const shopifyOrder = req.body;
-    
+
     // Log incoming payload for debugging
     console.log("Incoming webhook payload:", JSON.stringify(shopifyOrder, null, 2));
-    
+
     // Validate required fields
     if (!shopifyOrder || !shopifyOrder.id) {
       console.error("Invalid webhook payload: missing order ID");
       console.error("Payload structure:", Object.keys(shopifyOrder || {}));
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Invalid payload: missing order ID",
         receivedKeys: Object.keys(shopifyOrder || {})
       });
     }
-    
+
     // Log webhook receipt
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/create",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder,
     });
 
-    // Check if order already exists
+    // Check if order already exists — scoped to THIS store so a
+    // coincidental shopify_order_id collision with another tenant
+    // doesn't make us drop a legitimate order.
     const existingOrder = await storage.getOrderByShopifyId(
       shopifyOrder.id.toString(),
+      store.id,
     );
     if (existingOrder) {
-      console.log(`Order ${shopifyOrder.id} already exists, skipping`);
+      console.log(
+        `Order ${shopifyOrder.id} already exists in ${store.storeUrl}, skipping`,
+      );
       return res.status(200).json({ message: "Order already exists" });
     }
 
-    // Create or update customer
+    // Create or update customer — same scoping rationale as orders.
     let customer;
     if (shopifyOrder.customer) {
       const existingCustomer = await storage.getCustomerByShopifyId(
         shopifyOrder.customer.id.toString(),
+        store.id,
       );
 
       const customerData: InsertCustomer = {
+        storeId: store.id,
         shopifyCustomerId: shopifyOrder.customer.id.toString(),
         email: shopifyOrder.customer.email || shopifyOrder.email,
         firstName: shopifyOrder.customer.first_name || null,
@@ -123,8 +202,11 @@ export async function handleOrderCreated(req: Request, res: Response) {
                       prepaidMethodsLower.includes(normalizedPaymentMethod.toLowerCase());
     const autoCallStatus = isPrepaid ? "Confirmed" : undefined;
 
-    // Create order
+    // Create order — storeId stamped from the resolved webhook
+    // origin so every downstream read (Pare, dashboard, NDR) sees
+    // it under the right tenant.
     const orderData: InsertOrder = {
+      storeId: store.id,
       shopifyOrderId: shopifyOrder.id.toString(),
       shopifyOrderNumber: shopifyOrder.order_number?.toString() || shopifyOrder.name,
       customerId: customer?.id || null,
@@ -179,10 +261,15 @@ export async function handleOrderCreated(req: Request, res: Response) {
       for (const item of shopifyOrder.line_items) {
         let imageUrl = item.image_url || null;
         
-        // Try to look up product image from local products table
+        // Try to look up product image from local products table.
+        // Scoped to this store so cross-tenant variant id reuse
+        // (private-label SKUs etc.) doesn't pull the wrong image.
         if (!imageUrl && item.variant_id) {
           try {
-            const localProduct = await storage.getProductByVariantId(item.variant_id.toString());
+            const localProduct = await storage.getProductByVariantId(
+              item.variant_id.toString(),
+              store.id,
+            );
             if (localProduct?.imageUrl) {
               imageUrl = localProduct.imageUrl;
             }
@@ -190,8 +277,9 @@ export async function handleOrderCreated(req: Request, res: Response) {
             console.log(`Could not look up product image for variant ${item.variant_id}:`, err);
           }
         }
-        
+
         items.push({
+          storeId: store.id,
           orderId: order.id,
           shopifyLineItemId: item.id?.toString() || null,
           shopifyProductId: item.product_id?.toString() || null,
@@ -211,6 +299,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
 
     // Create initial status history
     await storage.createOrderStatus({
+      storeId: store.id,
       orderId: order.id,
       status: orderData.status || "Pending",
       previousStatus: null,
@@ -255,20 +344,21 @@ export async function handleOrderCreated(req: Request, res: Response) {
 export async function handleOrderUpdated(req: Request, res: Response) {
   try {
     // Verify webhook authenticity (supports both Shopify direct and n8n relay)
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
 
     const shopifyOrder = req.body;
 
     // Log incoming payload for debugging
     console.log("Incoming order update webhook:", JSON.stringify(shopifyOrder, null, 2));
-    
+
     // Validate required fields
     if (!shopifyOrder || !shopifyOrder.id) {
       console.error("Invalid webhook payload: missing order ID");
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Invalid payload: missing order ID",
         receivedKeys: Object.keys(shopifyOrder || {})
       });
@@ -276,6 +366,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
 
     // Log webhook receipt
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/update",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder,
@@ -283,10 +374,11 @@ export async function handleOrderUpdated(req: Request, res: Response) {
 
     const existingOrder = await storage.getOrderByShopifyId(
       shopifyOrder.id.toString(),
+      store.id,
     );
 
     if (!existingOrder) {
-      console.log(`Order ${shopifyOrder.id} not found, creating new order`);
+      console.log(`Order ${shopifyOrder.id} not found in ${store.storeUrl}, creating new order`);
       return handleOrderCreated(req, res);
     }
 
@@ -363,6 +455,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
     // Create status history if status changed
     if (newStatus !== existingOrder.status) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: newStatus,
         previousStatus: existingOrder.status,
@@ -374,6 +467,7 @@ export async function handleOrderUpdated(req: Request, res: Response) {
     // Create Scalysis AI confirmation history entry
     if (isScalysisConfirmed && !alreadyConfirmed) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: "confirmed",
         previousStatus: existingOrder.callStatus || "Pending",
@@ -393,20 +487,21 @@ export async function handleOrderUpdated(req: Request, res: Response) {
 export async function handleOrderCancelled(req: Request, res: Response) {
   try {
     // Verify webhook authenticity (supports both Shopify direct and n8n relay)
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
 
     const shopifyOrder = req.body;
 
     // Log incoming payload for debugging
     console.log("Incoming order cancellation webhook:", JSON.stringify(shopifyOrder, null, 2));
-    
+
     // Validate required fields
     if (!shopifyOrder || !shopifyOrder.id) {
       console.error("Invalid webhook payload: missing order ID");
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Invalid payload: missing order ID",
         receivedKeys: Object.keys(shopifyOrder || {})
       });
@@ -414,6 +509,7 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 
     // Log webhook receipt
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/cancelled",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder,
@@ -421,10 +517,11 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 
     const existingOrder = await storage.getOrderByShopifyId(
       shopifyOrder.id.toString(),
+      store.id,
     );
 
     if (!existingOrder) {
-      console.log(`Order ${shopifyOrder.id} not found`);
+      console.log(`Order ${shopifyOrder.id} not found in ${store.storeUrl}`);
       return res.status(404).json({ error: "Order not found" });
     }
 
@@ -441,6 +538,7 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 
     // Create status history
     await storage.createOrderStatus({
+      storeId: store.id,
       orderId: existingOrder.id,
       status: "Cancelled",
       previousStatus: existingOrder.status,
@@ -479,10 +577,11 @@ export async function handleOrderCancelled(req: Request, res: Response) {
 export async function handleFulfillmentUpdate(req: Request, res: Response) {
   try {
     // Verify webhook authenticity (supports both Shopify direct and n8n relay)
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
 
     const fulfillment = req.body;
 
@@ -492,7 +591,7 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
     // Validate required fields - this is a Fulfillment object, not an Order
     if (!fulfillment || !fulfillment.order_id) {
       console.error("[Fulfillment Update] Invalid payload: missing order_id");
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Invalid payload: missing order_id",
         receivedKeys: Object.keys(fulfillment || {})
       });
@@ -500,18 +599,24 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
 
     // Log webhook receipt
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "fulfillments/update",
       shopifyOrderId: fulfillment.order_id?.toString() || null,
       payload: fulfillment,
     });
 
-    // Find the order by Shopify order ID
+    // Find the order by Shopify order ID — scoped to the resolved
+    // store so we don't update another tenant's order with the same
+    // Shopify id.
     const existingOrder = await storage.getOrderByShopifyId(
       fulfillment.order_id.toString(),
+      store.id,
     );
 
     if (!existingOrder) {
-      console.log(`[Fulfillment Update] Order not found for Shopify ID: ${fulfillment.order_id}`);
+      console.log(
+        `[Fulfillment Update] Order not found for Shopify ID ${fulfillment.order_id} in ${store.storeUrl}`,
+      );
       return res.status(200).json({ message: "Order not found, ignoring" });
     }
 
@@ -581,6 +686,7 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
     // Create status history if main status changed
     if (newOrderStatus && newOrderStatus !== existingOrder.status) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: newOrderStatus,
         previousStatus: existingOrder.status,

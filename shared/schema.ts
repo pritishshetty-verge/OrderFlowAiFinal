@@ -365,24 +365,40 @@ export const pincodeTiers = pgTable("pincode_tiers", {
 export type PincodeTier = typeof pincodeTiers.$inferSelect;
 export type InsertPincodeTier = typeof pincodeTiers.$inferInsert;
 
-export const customers = pgTable("customers", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  // Multi-store: which store this customer belongs to. Nullable in
-  // Phase 1; backfilled to the single existing store; will be flipped
-  // NOT NULL after the production backfill runs.
-  storeId: varchar("store_id").references(() => stores.id),
-  shopifyCustomerId: text("shopify_customer_id").unique(),
-  email: text("email"),
-  phone: text("phone"),
-  firstName: text("first_name"),
-  lastName: text("last_name"),
-  totalOrders: integer("total_orders").default(0),
-  totalSpent: decimal("total_spent", { precision: 12, scale: 2 }).default("0"),
-  tags: text("tags").array(),
-  metadata: jsonb("metadata"), // Additional Shopify customer data
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const customers = pgTable(
+  "customers",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Multi-store: which store this customer belongs to. Nullable in
+    // Phase 1; backfilled to the single existing store; will be flipped
+    // NOT NULL after the production backfill runs.
+    storeId: varchar("store_id").references(() => stores.id),
+    // Phase 5 (Risk #4): the legacy bare `.unique()` on this column
+    // broke as soon as a second store synced — Shopify customer ids
+    // are per-shop and the same numeric id can legitimately exist in
+    // two tenants. Relaxed to a composite UNIQUE on (storeId,
+    // shopifyCustomerId) so each store namespaces its own customers
+    // cleanly. The de-dup helpers in server/storage.ts were updated
+    // in the same commit to filter by storeId.
+    shopifyCustomerId: text("shopify_customer_id"),
+    email: text("email"),
+    phone: text("phone"),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    totalOrders: integer("total_orders").default(0),
+    totalSpent: decimal("total_spent", { precision: 12, scale: 2 }).default("0"),
+    tags: text("tags").array(),
+    metadata: jsonb("metadata"), // Additional Shopify customer data
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqStoreCustomer: unique("customers_store_shopify_customer_id_key").on(
+      table.storeId,
+      table.shopifyCustomerId,
+    ),
+  }),
+);
 
 export const insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
@@ -397,7 +413,14 @@ export const orders = pgTable("orders", {
   // Multi-store FK. Nullable in Phase 1; backfilled in production
   // before being flipped NOT NULL.
   storeId: varchar("store_id").references(() => stores.id),
-  shopifyOrderId: text("shopify_order_id").notNull().unique(),
+  // Phase 5 (Risk #4): bare `.unique()` removed because Shopify order
+  // ids are globally-monotone integers — two stores at high volume
+  // can hit the same id by coincidence, which used to crash the
+  // webhook insert with a unique_violation. Now uniqueness lives in
+  // the composite at the bottom of the table, scoped per-store. The
+  // legacy single-store de-dup helpers also took a storeId in the
+  // same commit.
+  shopifyOrderId: text("shopify_order_id").notNull(),
   shopifyOrderNumber: text("shopify_order_number").notNull(),
   customerId: varchar("customer_id").references(() => customers.id),
   customerName: text("customer_name").notNull(),
@@ -488,7 +511,16 @@ export const orders = pgTable("orders", {
   shopifyUpdatedAt: timestamp("shopify_updated_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  // Phase 5 (Risk #4): composite uniqueness so two stores never
+  // collide on a Shopify order id. The webhook handler in
+  // server/webhooks.ts now scopes its `getOrderByShopifyId` lookup
+  // by (storeId, shopifyOrderId) to match.
+  uniqStoreOrder: unique("orders_store_shopify_order_id_key").on(
+    table.storeId,
+    table.shopifyOrderId,
+  ),
+}));
 
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
@@ -529,27 +561,39 @@ export type OrderItem = typeof orderItems.$inferSelect;
 // PRODUCTS (Local Cache of Shopify Products)
 // ============================================================================
 
-export const products = pgTable("products", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  // Multi-store: catalog cache is per-store. Nullable in Phase 1.
-  // Once backfilled, the `shopifyVariantId` UNIQUE constraint should
-  // be relaxed to UNIQUE(storeId, shopifyVariantId) so different
-  // stores' catalogs can coexist — deferred to Phase 5.
-  storeId: varchar("store_id").references(() => stores.id),
-  shopifyProductId: text("shopify_product_id").notNull(),
-  shopifyVariantId: text("shopify_variant_id").notNull().unique(),
-  
-  title: text("title").notNull(),
-  variantTitle: text("variant_title"),
-  sku: text("sku"),
-  
-  imageUrl: text("image_url"),
-  
-  // Sync metadata
-  lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const products = pgTable(
+  "products",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Multi-store: catalog cache is per-store. Nullable in Phase 1.
+    // The bare `.unique()` on `shopifyVariantId` was the long-standing
+    // Phase-5 TODO: two stores sharing a private-label or dropship
+    // supplier hit identical variant ids and the second store's sync
+    // crashed with unique_violation. Composite UNIQUE below restores
+    // tenant independence; helpers in server/storage.ts now look up
+    // `(storeId, shopifyVariantId)`.
+    storeId: varchar("store_id").references(() => stores.id),
+    shopifyProductId: text("shopify_product_id").notNull(),
+    shopifyVariantId: text("shopify_variant_id").notNull(),
+
+    title: text("title").notNull(),
+    variantTitle: text("variant_title"),
+    sku: text("sku"),
+
+    imageUrl: text("image_url"),
+
+    // Sync metadata
+    lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqStoreVariant: unique("products_store_shopify_variant_id_key").on(
+      table.storeId,
+      table.shopifyVariantId,
+    ),
+  }),
+);
 
 export const insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertProduct = z.infer<typeof insertProductSchema>;

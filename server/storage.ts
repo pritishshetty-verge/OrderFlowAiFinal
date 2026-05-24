@@ -186,7 +186,7 @@ export interface IStorage {
 
   // Customers
   getCustomer(id: string): Promise<Customer | undefined>;
-  getCustomerByShopifyId(shopifyId: string): Promise<Customer | undefined>;
+  getCustomerByShopifyId(shopifyId: string, storeId: string): Promise<Customer | undefined>;
   getCustomersByShopifyIds(shopifyIds: string[]): Promise<Customer[]>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   createCustomersBatch(customers: InsertCustomer[]): Promise<Customer[]>;
@@ -194,8 +194,8 @@ export interface IStorage {
 
   // Orders
   getOrder(id: string): Promise<Order | undefined>;
-  getOrderByShopifyId(shopifyId: string): Promise<Order | undefined>;
-  getOrderByShopifyOrderNumber(orderNumber: string): Promise<Order | undefined>;
+  getOrderByShopifyId(shopifyId: string, storeId: string): Promise<Order | undefined>;
+  getOrderByShopifyOrderNumber(orderNumber: string, storeId?: string): Promise<Order | undefined>;
   getExistingShopifyOrderIds(shopifyIds: string[]): Promise<Set<string>>;
   getMaxShopifyOrderId(): Promise<string | null>;
   createOrder(order: InsertOrder): Promise<Order>;
@@ -424,7 +424,7 @@ export interface IStorage {
   // Products (Shopify Product Cache)
   upsertProduct(product: InsertProduct): Promise<Product>;
   upsertProducts(products: InsertProduct[]): Promise<Product[]>;
-  getProductByVariantId(shopifyVariantId: string): Promise<Product | undefined>;
+  getProductByVariantId(shopifyVariantId: string, storeId: string): Promise<Product | undefined>;
   getProductByProductId(shopifyProductId: string): Promise<Product | undefined>;
   listProducts(): Promise<Product[]>;
   getProductCount(): Promise<number>;
@@ -641,13 +641,27 @@ export class DbStorage implements IStorage {
     return customer;
   }
 
+  /**
+   * Look up a customer by (storeId, shopifyCustomerId). Phase 5
+   * (Risk #4): the bare-id lookup is no longer safe — two stores
+   * with overlapping Shopify customer ids would collide. Every
+   * caller now MUST supply the storeId resolved upstream (from
+   * `req.storeScope` for HTTP routes, or `resolveWebhookStore` for
+   * webhook handlers).
+   */
   async getCustomerByShopifyId(
     shopifyId: string,
+    storeId: string,
   ): Promise<Customer | undefined> {
     const [customer] = await db
       .select()
       .from(customers)
-      .where(eq(customers.shopifyCustomerId, shopifyId));
+      .where(
+        and(
+          eq(customers.shopifyCustomerId, shopifyId),
+          eq(customers.storeId, storeId),
+        ),
+      );
     return customer;
   }
 
@@ -695,19 +709,50 @@ export class DbStorage implements IStorage {
     return order;
   }
 
-  async getOrderByShopifyId(shopifyId: string): Promise<Order | undefined> {
+  /**
+   * Look up an order by (storeId, shopifyOrderId). Phase 5 (Risk #4):
+   * Shopify order ids are globally-monotone integers, so high-volume
+   * tenants WILL collide eventually. The composite UNIQUE on
+   * (storeId, shopifyOrderId) + this scoped lookup are what make
+   * multi-tenant safe.
+   */
+  async getOrderByShopifyId(
+    shopifyId: string,
+    storeId: string,
+  ): Promise<Order | undefined> {
     const [order] = await db
       .select()
       .from(orders)
-      .where(eq(orders.shopifyOrderId, shopifyId));
+      .where(
+        and(
+          eq(orders.shopifyOrderId, shopifyId),
+          eq(orders.storeId, storeId),
+        ),
+      );
     return order;
   }
 
-  async getOrderByShopifyOrderNumber(orderNumber: string): Promise<Order | undefined> {
+  /**
+   * Look up an order by Shopify's human-readable `name` field (the
+   * "#1234" you see in the Shopify admin). Accepts an optional
+   * storeId — strongly preferred. When omitted, the lookup is
+   * global and returns the most recent match by createdAt; today
+   * only the TeleCRM webhook calls it without a storeId because
+   * the CRM payload doesn't yet carry a shop hint. Tracked as
+   * Risk #2 in the multi-store audit — once IVR/TeleCRM moves to
+   * per-store credentials, that caller will pass a storeId and we
+   * can make this parameter required.
+   */
+  async getOrderByShopifyOrderNumber(
+    orderNumber: string,
+    storeId?: string,
+  ): Promise<Order | undefined> {
+    const conds = [eq(orders.shopifyOrderNumber, orderNumber)];
+    if (storeId) conds.push(eq(orders.storeId, storeId));
     const [order] = await db
       .select()
       .from(orders)
-      .where(eq(orders.shopifyOrderNumber, orderNumber))
+      .where(and(...conds))
       .orderBy(desc(orders.createdAt))
       .limit(1);
     return order;
@@ -2679,11 +2724,17 @@ export class DbStorage implements IStorage {
   // ============================================================================
 
   async upsertProduct(product: InsertProduct): Promise<Product> {
+    // Phase 5 (Risk #4): the conflict target is now the composite
+    // (storeId, shopifyVariantId) since the bare `.unique()` on
+    // shopifyVariantId was relaxed. Drizzle accepts an array here
+    // and emits `ON CONFLICT (store_id, shopify_variant_id) DO
+    // UPDATE` so two stores caching the same supplier variant id
+    // each get their own row instead of clobbering each other.
     const [result] = await db
       .insert(products)
       .values(product)
       .onConflictDoUpdate({
-        target: products.shopifyVariantId,
+        target: [products.storeId, products.shopifyVariantId],
         set: {
           shopifyProductId: product.shopifyProductId,
           title: product.title,
@@ -2709,11 +2760,26 @@ export class DbStorage implements IStorage {
     return results;
   }
 
-  async getProductByVariantId(shopifyVariantId: string): Promise<Product | undefined> {
+  /**
+   * Look up a product by (storeId, shopifyVariantId). Phase 5
+   * (Risk #4): two stores can legitimately cache the same supplier's
+   * variant id, so the lookup must be scoped. Every caller now
+   * supplies the storeId resolved upstream from `req.storeScope`
+   * (HTTP routes) or `resolveWebhookStore` (webhook handlers).
+   */
+  async getProductByVariantId(
+    shopifyVariantId: string,
+    storeId: string,
+  ): Promise<Product | undefined> {
     const [product] = await db
       .select()
       .from(products)
-      .where(eq(products.shopifyVariantId, shopifyVariantId));
+      .where(
+        and(
+          eq(products.shopifyVariantId, shopifyVariantId),
+          eq(products.storeId, storeId),
+        ),
+      );
     return product;
   }
 

@@ -2252,9 +2252,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const shopifyOrder of newOrders) {
               try {
                 let customer;
-                if (shopifyOrder.customer) {
+                if (shopifyOrder.customer && syncStoreId) {
+                  // Phase 5 (Risk #4): the customer lookup is now
+                  // scoped to the active store so two stores with
+                  // overlapping Shopify customer ids don't clobber
+                  // each other. The bulk sync runs in a request
+                  // context, so syncStoreId is always defined here
+                  // (the syncStoreId guard above kicks in only for
+                  // the no-scope edge case — left explicit for
+                  // clarity).
                   const existingCustomer = await storage.getCustomerByShopifyId(
                     shopifyOrder.customer.id.toString(),
+                    syncStoreId,
                   );
                   const customerData = {
                     shopifyCustomerId: shopifyOrder.customer.id.toString(),
@@ -2774,7 +2783,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get product by variant ID (for order item lookup)
   app.get("/api/products/variant/:variantId", async (req, res) => {
     try {
-      const product = await storage.getProductByVariantId(req.params.variantId);
+      // Phase 5 (Risk #4): scope the lookup to the active store so
+      // a variant id that happens to exist in two stores returns
+      // the row belonging to the requester's tenant. The storeScope
+      // middleware resolves req.storeScope from the
+      // X-Active-Store-Id header on every authenticated request.
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const product = await storage.getProductByVariantId(
+        req.params.variantId,
+        scope.storeId,
+      );
       if (!product) {
         return res.status(404).json({ error: "Product not found" });
       }

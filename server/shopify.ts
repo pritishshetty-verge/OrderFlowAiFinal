@@ -310,19 +310,29 @@ export class ShopifyClient {
     return allProducts;
   }
 
-  verifyWebhook(body: string, hmacHeader: string): boolean {
+  /**
+   * Verify a Shopify webhook against this client's configured
+   * webhook_secret. Accepts the raw request body as a Buffer — NOT
+   * a stringified JSON object. Shopify signs the bytes it sent, so
+   * `JSON.stringify(req.body)` (which re-encodes after Express
+   * parsed the JSON) produces a different byte sequence whenever
+   * the payload contains non-ASCII characters or whitespace
+   * variations, and the HMAC silently fails. Use `req.rawBody`
+   * (captured by the `verify` hook in server/index.ts) instead.
+   *
+   * Most call sites should prefer the standalone `verifyShopifyHmac`
+   * helper exported below — that one takes an explicit secret so
+   * webhooks can be verified against per-store keys looked up via
+   * server/webhookStoreResolver.ts. This instance method only
+   * exists for legacy callers still anchored to the singleton.
+   */
+  verifyWebhook(rawBody: Buffer, hmacHeader: string): boolean {
     if (!this.config.webhookSecret) {
       throw new Error(
         "Webhook secret not configured - refusing to process unverified webhooks",
       );
     }
-
-    const hash = crypto
-      .createHmac("sha256", this.config.webhookSecret)
-      .update(body, "utf8")
-      .digest("base64");
-
-    return hash === hmacHeader;
+    return verifyShopifyHmac(rawBody, hmacHeader, this.config.webhookSecret);
   }
 
   // ── Webhook registration ──────────────────────────────────────────
@@ -895,6 +905,48 @@ async function loadShopifyCredentials(): Promise<ShopifyConfig> {
     webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET,
     useClientCredentials: true,
   };
+}
+
+// ============================================================================
+// HMAC HELPER — usable without a ShopifyClient instance
+// ============================================================================
+//
+// Webhook handlers now resolve the active store at request time and
+// look up that store's `webhook_secret` independently of any
+// ShopifyClient instance (the client cache is keyed by storeId and
+// loaded lazily; the webhook path doesn't always need an outbound
+// client). This standalone helper lets them compute the HMAC against
+// the exact secret they just looked up, without round-tripping
+// through `getShopifyClient(...)`.
+//
+// Implementation notes:
+//   • `rawBody` MUST be the un-parsed bytes Shopify sent. Captured
+//     by the `verify` hook in server/index.ts onto `req.rawBody`.
+//     JSON.stringify(req.body) is the trap — Express's body parser
+//     normalises whitespace/Unicode, so a re-stringified copy
+//     produces a different HMAC than what Shopify signed.
+//   • `crypto.timingSafeEqual` guards against constant-time leaks
+//     even though Shopify HMAC verification isn't a high-value
+//     side-channel target — it's a one-line correctness improvement
+//     and makes future audits easier.
+//   • Returns false (not throws) on length mismatch so the route
+//     handler can return a clean 401 instead of a 500.
+export function verifyShopifyHmac(
+  rawBody: Buffer,
+  hmacHeader: string,
+  secret: string,
+): boolean {
+  if (!secret) return false;
+  if (typeof hmacHeader !== "string" || hmacHeader.length === 0) return false;
+  const computed = crypto
+    .createHmac("sha256", secret)
+    .update(rawBody)
+    .digest("base64");
+  // timingSafeEqual requires equal-length inputs.
+  const a = Buffer.from(computed, "utf8");
+  const b = Buffer.from(hmacHeader, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 // ============================================================================

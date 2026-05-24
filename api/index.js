@@ -328,32 +328,55 @@ var init_schema = __esm({
       // 'Tier 1' | 'Tier 2' | 'Tier 3' | 'Unknown'
       tier: varchar("tier", { length: 16 }).notNull()
     });
-    customers = pgTable("customers", {
-      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-      // Multi-store: which store this customer belongs to. Nullable in
-      // Phase 1; backfilled to the single existing store; will be flipped
-      // NOT NULL after the production backfill runs.
-      storeId: varchar("store_id").references(() => stores.id),
-      shopifyCustomerId: text("shopify_customer_id").unique(),
-      email: text("email"),
-      phone: text("phone"),
-      firstName: text("first_name"),
-      lastName: text("last_name"),
-      totalOrders: integer("total_orders").default(0),
-      totalSpent: decimal("total_spent", { precision: 12, scale: 2 }).default("0"),
-      tags: text("tags").array(),
-      metadata: jsonb("metadata"),
-      // Additional Shopify customer data
-      createdAt: timestamp("created_at").notNull().defaultNow(),
-      updatedAt: timestamp("updated_at").notNull().defaultNow()
-    });
+    customers = pgTable(
+      "customers",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        // Multi-store: which store this customer belongs to. Nullable in
+        // Phase 1; backfilled to the single existing store; will be flipped
+        // NOT NULL after the production backfill runs.
+        storeId: varchar("store_id").references(() => stores.id),
+        // Phase 5 (Risk #4): the legacy bare `.unique()` on this column
+        // broke as soon as a second store synced — Shopify customer ids
+        // are per-shop and the same numeric id can legitimately exist in
+        // two tenants. Relaxed to a composite UNIQUE on (storeId,
+        // shopifyCustomerId) so each store namespaces its own customers
+        // cleanly. The de-dup helpers in server/storage.ts were updated
+        // in the same commit to filter by storeId.
+        shopifyCustomerId: text("shopify_customer_id"),
+        email: text("email"),
+        phone: text("phone"),
+        firstName: text("first_name"),
+        lastName: text("last_name"),
+        totalOrders: integer("total_orders").default(0),
+        totalSpent: decimal("total_spent", { precision: 12, scale: 2 }).default("0"),
+        tags: text("tags").array(),
+        metadata: jsonb("metadata"),
+        // Additional Shopify customer data
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        uniqStoreCustomer: unique("customers_store_shopify_customer_id_key").on(
+          table.storeId,
+          table.shopifyCustomerId
+        )
+      })
+    );
     insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true, updatedAt: true });
     orders = pgTable("orders", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // Multi-store FK. Nullable in Phase 1; backfilled in production
       // before being flipped NOT NULL.
       storeId: varchar("store_id").references(() => stores.id),
-      shopifyOrderId: text("shopify_order_id").notNull().unique(),
+      // Phase 5 (Risk #4): bare `.unique()` removed because Shopify order
+      // ids are globally-monotone integers — two stores at high volume
+      // can hit the same id by coincidence, which used to crash the
+      // webhook insert with a unique_violation. Now uniqueness lives in
+      // the composite at the bottom of the table, scoped per-store. The
+      // legacy single-store de-dup helpers also took a storeId in the
+      // same commit.
+      shopifyOrderId: text("shopify_order_id").notNull(),
       shopifyOrderNumber: text("shopify_order_number").notNull(),
       customerId: varchar("customer_id").references(() => customers.id),
       customerName: text("customer_name").notNull(),
@@ -444,7 +467,16 @@ var init_schema = __esm({
       shopifyUpdatedAt: timestamp("shopify_updated_at").notNull(),
       createdAt: timestamp("created_at").notNull().defaultNow(),
       updatedAt: timestamp("updated_at").notNull().defaultNow()
-    });
+    }, (table) => ({
+      // Phase 5 (Risk #4): composite uniqueness so two stores never
+      // collide on a Shopify order id. The webhook handler in
+      // server/webhooks.ts now scopes its `getOrderByShopifyId` lookup
+      // by (storeId, shopifyOrderId) to match.
+      uniqStoreOrder: unique("orders_store_shopify_order_id_key").on(
+        table.storeId,
+        table.shopifyOrderId
+      )
+    }));
     insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
     orderItems = pgTable("order_items", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -465,24 +497,36 @@ var init_schema = __esm({
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
     insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, createdAt: true });
-    products = pgTable("products", {
-      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-      // Multi-store: catalog cache is per-store. Nullable in Phase 1.
-      // Once backfilled, the `shopifyVariantId` UNIQUE constraint should
-      // be relaxed to UNIQUE(storeId, shopifyVariantId) so different
-      // stores' catalogs can coexist — deferred to Phase 5.
-      storeId: varchar("store_id").references(() => stores.id),
-      shopifyProductId: text("shopify_product_id").notNull(),
-      shopifyVariantId: text("shopify_variant_id").notNull().unique(),
-      title: text("title").notNull(),
-      variantTitle: text("variant_title"),
-      sku: text("sku"),
-      imageUrl: text("image_url"),
-      // Sync metadata
-      lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
-      createdAt: timestamp("created_at").notNull().defaultNow(),
-      updatedAt: timestamp("updated_at").notNull().defaultNow()
-    });
+    products = pgTable(
+      "products",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        // Multi-store: catalog cache is per-store. Nullable in Phase 1.
+        // The bare `.unique()` on `shopifyVariantId` was the long-standing
+        // Phase-5 TODO: two stores sharing a private-label or dropship
+        // supplier hit identical variant ids and the second store's sync
+        // crashed with unique_violation. Composite UNIQUE below restores
+        // tenant independence; helpers in server/storage.ts now look up
+        // `(storeId, shopifyVariantId)`.
+        storeId: varchar("store_id").references(() => stores.id),
+        shopifyProductId: text("shopify_product_id").notNull(),
+        shopifyVariantId: text("shopify_variant_id").notNull(),
+        title: text("title").notNull(),
+        variantTitle: text("variant_title"),
+        sku: text("sku"),
+        imageUrl: text("image_url"),
+        // Sync metadata
+        lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        uniqStoreVariant: unique("products_store_shopify_variant_id_key").on(
+          table.storeId,
+          table.shopifyVariantId
+        )
+      })
+    );
     insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true, updatedAt: true });
     orderAssignments = pgTable("order_assignments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1331,8 +1375,21 @@ var init_storage = __esm({
         const [customer] = await db.select().from(customers).where(eq(customers.id, id));
         return customer;
       }
-      async getCustomerByShopifyId(shopifyId) {
-        const [customer] = await db.select().from(customers).where(eq(customers.shopifyCustomerId, shopifyId));
+      /**
+       * Look up a customer by (storeId, shopifyCustomerId). Phase 5
+       * (Risk #4): the bare-id lookup is no longer safe — two stores
+       * with overlapping Shopify customer ids would collide. Every
+       * caller now MUST supply the storeId resolved upstream (from
+       * `req.storeScope` for HTTP routes, or `resolveWebhookStore` for
+       * webhook handlers).
+       */
+      async getCustomerByShopifyId(shopifyId, storeId) {
+        const [customer] = await db.select().from(customers).where(
+          and(
+            eq(customers.shopifyCustomerId, shopifyId),
+            eq(customers.storeId, storeId)
+          )
+        );
         return customer;
       }
       async createCustomer(insertCustomer) {
@@ -1358,12 +1415,37 @@ var init_storage = __esm({
         const [order] = await db.select().from(orders).where(eq(orders.id, id));
         return order;
       }
-      async getOrderByShopifyId(shopifyId) {
-        const [order] = await db.select().from(orders).where(eq(orders.shopifyOrderId, shopifyId));
+      /**
+       * Look up an order by (storeId, shopifyOrderId). Phase 5 (Risk #4):
+       * Shopify order ids are globally-monotone integers, so high-volume
+       * tenants WILL collide eventually. The composite UNIQUE on
+       * (storeId, shopifyOrderId) + this scoped lookup are what make
+       * multi-tenant safe.
+       */
+      async getOrderByShopifyId(shopifyId, storeId) {
+        const [order] = await db.select().from(orders).where(
+          and(
+            eq(orders.shopifyOrderId, shopifyId),
+            eq(orders.storeId, storeId)
+          )
+        );
         return order;
       }
-      async getOrderByShopifyOrderNumber(orderNumber) {
-        const [order] = await db.select().from(orders).where(eq(orders.shopifyOrderNumber, orderNumber)).orderBy(desc(orders.createdAt)).limit(1);
+      /**
+       * Look up an order by Shopify's human-readable `name` field (the
+       * "#1234" you see in the Shopify admin). Accepts an optional
+       * storeId — strongly preferred. When omitted, the lookup is
+       * global and returns the most recent match by createdAt; today
+       * only the TeleCRM webhook calls it without a storeId because
+       * the CRM payload doesn't yet carry a shop hint. Tracked as
+       * Risk #2 in the multi-store audit — once IVR/TeleCRM moves to
+       * per-store credentials, that caller will pass a storeId and we
+       * can make this parameter required.
+       */
+      async getOrderByShopifyOrderNumber(orderNumber, storeId) {
+        const conds = [eq(orders.shopifyOrderNumber, orderNumber)];
+        if (storeId) conds.push(eq(orders.storeId, storeId));
+        const [order] = await db.select().from(orders).where(and(...conds)).orderBy(desc(orders.createdAt)).limit(1);
         return order;
       }
       async getOrderByTrackingNumber(trackingNumber) {
@@ -2523,7 +2605,7 @@ var init_storage = __esm({
       // ============================================================================
       async upsertProduct(product) {
         const [result] = await db.insert(products).values(product).onConflictDoUpdate({
-          target: products.shopifyVariantId,
+          target: [products.storeId, products.shopifyVariantId],
           set: {
             shopifyProductId: product.shopifyProductId,
             title: product.title,
@@ -2545,8 +2627,20 @@ var init_storage = __esm({
         }
         return results;
       }
-      async getProductByVariantId(shopifyVariantId) {
-        const [product] = await db.select().from(products).where(eq(products.shopifyVariantId, shopifyVariantId));
+      /**
+       * Look up a product by (storeId, shopifyVariantId). Phase 5
+       * (Risk #4): two stores can legitimately cache the same supplier's
+       * variant id, so the lookup must be scoped. Every caller now
+       * supplies the storeId resolved upstream from `req.storeScope`
+       * (HTTP routes) or `resolveWebhookStore` (webhook handlers).
+       */
+      async getProductByVariantId(shopifyVariantId, storeId) {
+        const [product] = await db.select().from(products).where(
+          and(
+            eq(products.shopifyVariantId, shopifyVariantId),
+            eq(products.storeId, storeId)
+          )
+        );
         return product;
       }
       async getProductByProductId(shopifyProductId) {
@@ -2846,7 +2940,8 @@ __export(shopify_exports, {
   getShopifyClient: () => getShopifyClient,
   invalidateShopifyClient: () => invalidateShopifyClient,
   shopifyClient: () => shopifyClient,
-  updateShopifyClient: () => updateShopifyClient
+  updateShopifyClient: () => updateShopifyClient,
+  verifyShopifyHmac: () => verifyShopifyHmac
 });
 import crypto2 from "crypto";
 async function loadShopifyCredentials() {
@@ -2879,6 +2974,15 @@ async function loadShopifyCredentials() {
     useClientCredentials: true
   };
 }
+function verifyShopifyHmac(rawBody, hmacHeader, secret) {
+  if (!secret) return false;
+  if (typeof hmacHeader !== "string" || hmacHeader.length === 0) return false;
+  const computed = crypto2.createHmac("sha256", secret).update(rawBody).digest("base64");
+  const a = Buffer.from(computed, "utf8");
+  const b = Buffer.from(hmacHeader, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto2.timingSafeEqual(a, b);
+}
 async function updateShopifyClient() {
   const config = await loadShopifyCredentials();
   const cleanDomain = config.storeUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -2893,9 +2997,9 @@ async function updateShopifyClient() {
 async function loadShopifyConfigForStore(storeId) {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { eq: eq5 } = await import("drizzle-orm");
+  const { eq: eq6 } = await import("drizzle-orm");
   const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
-  const [row] = await db2.select().from(stores2).where(eq5(stores2.id, storeId)).limit(1);
+  const [row] = await db2.select().from(stores2).where(eq6(stores2.id, storeId)).limit(1);
   if (!row) {
     throw new Error(
       `[Shopify] getShopifyClient: no stores row for id ${storeId}`
@@ -3178,14 +3282,29 @@ var init_shopify = __esm({
         }
         return allProducts;
       }
-      verifyWebhook(body, hmacHeader) {
+      /**
+       * Verify a Shopify webhook against this client's configured
+       * webhook_secret. Accepts the raw request body as a Buffer — NOT
+       * a stringified JSON object. Shopify signs the bytes it sent, so
+       * `JSON.stringify(req.body)` (which re-encodes after Express
+       * parsed the JSON) produces a different byte sequence whenever
+       * the payload contains non-ASCII characters or whitespace
+       * variations, and the HMAC silently fails. Use `req.rawBody`
+       * (captured by the `verify` hook in server/index.ts) instead.
+       *
+       * Most call sites should prefer the standalone `verifyShopifyHmac`
+       * helper exported below — that one takes an explicit secret so
+       * webhooks can be verified against per-store keys looked up via
+       * server/webhookStoreResolver.ts. This instance method only
+       * exists for legacy callers still anchored to the singleton.
+       */
+      verifyWebhook(rawBody, hmacHeader) {
         if (!this.config.webhookSecret) {
           throw new Error(
             "Webhook secret not configured - refusing to process unverified webhooks"
           );
         }
-        const hash = crypto2.createHmac("sha256", this.config.webhookSecret).update(body, "utf8").digest("base64");
-        return hash === hmacHeader;
+        return verifyShopifyHmac(rawBody, hmacHeader, this.config.webhookSecret);
       }
       // ── Webhook registration ──────────────────────────────────────────
       // Idempotent by design so it's safe to call on every server boot:
@@ -6305,7 +6424,7 @@ init_db();
 init_schema();
 import { createServer } from "http";
 import crypto5 from "node:crypto";
-import { eq as eq3, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and3, asc as asc2 } from "drizzle-orm";
+import { eq as eq5, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -6564,37 +6683,123 @@ function extractFulfillmentTracking(fulfillments) {
   };
 }
 
+// server/webhookStoreResolver.ts
+init_db();
+init_schema();
+init_encryption();
+import { eq as eq3 } from "drizzle-orm";
+async function resolveWebhookStore(req) {
+  const candidate = pickShopDomainCandidate(req);
+  if (!candidate) return null;
+  const normalized = normalizeShopDomain(candidate);
+  const [row] = await db.select({
+    id: stores.id,
+    storeName: stores.storeName,
+    storeUrl: stores.storeUrl,
+    webhookSecret: stores.webhookSecret
+  }).from(stores).where(eq3(stores.storeUrl, normalized)).limit(1);
+  if (!row) return null;
+  return {
+    store: row,
+    webhookSecret: row.webhookSecret ? safeDecrypt(row.webhookSecret) : null
+  };
+}
+function pickShopDomainCandidate(req) {
+  const headerVal = req.get("X-Shopify-Shop-Domain");
+  if (headerVal && headerVal.trim().length > 0) return headerVal;
+  const body = req.body ?? {};
+  if (typeof body.myshopify_domain === "string" && body.myshopify_domain.trim()) {
+    return body.myshopify_domain;
+  }
+  if (typeof body.order_status_url === "string") {
+    const m = body.order_status_url.match(
+      /^https?:\/\/([^/]+\.myshopify\.com)/i
+    );
+    if (m) return m[1];
+  }
+  return null;
+}
+function normalizeShopDomain(raw) {
+  return raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "").toLowerCase();
+}
+function safeDecrypt(blob) {
+  try {
+    return decrypt(blob);
+  } catch (err) {
+    console.warn(
+      "[webhook-resolver] failed to decrypt webhook_secret:",
+      err.message
+    );
+    return null;
+  }
+}
+
 // server/webhooks.ts
-function verifyWebhookAuth(req) {
+async function verifyWebhookAuth(req) {
+  const resolved = await resolveWebhookStore(req);
+  if (!resolved) {
+    console.error(
+      "[webhook] could not resolve store from request \u2014 no matching `stores` row",
+      {
+        domainHeader: req.get("X-Shopify-Shop-Domain"),
+        bodyDomain: req.body?.myshopify_domain
+      }
+    );
+    return {
+      valid: false,
+      status: 404,
+      error: "Store not provisioned for this shop domain."
+    };
+  }
   const forwardedBy = req.get("X-Forwarded-By");
   if (forwardedBy === "n8n") {
-    console.log("\u2713 Webhook received from n8n relay (HMAC verification skipped)");
-    return { valid: true };
+    console.log(
+      `\u2713 Webhook received from n8n relay for ${resolved.store.storeUrl} (HMAC verification skipped)`
+    );
+    return { valid: true, resolved };
   }
   const hmac = req.get("X-Shopify-Hmac-Sha256");
-  const body = JSON.stringify(req.body);
   if (!hmac) {
-    console.error("Webhook verification failed: Missing HMAC header");
-    return { valid: false, error: "Unauthorized: Missing signature" };
+    console.error("[webhook] missing X-Shopify-Hmac-Sha256 header");
+    return { valid: false, status: 401, error: "Unauthorized: Missing signature" };
   }
-  try {
-    if (!shopifyClient.verifyWebhook(body, hmac)) {
-      console.error("Webhook verification failed: Invalid signature");
-      return { valid: false, error: "Unauthorized: Invalid signature" };
-    }
-    console.log("\u2713 Direct Shopify webhook verified");
-    return { valid: true };
-  } catch (verifyError) {
-    console.error("Webhook verification error:", verifyError.message);
-    return { valid: false, error: "Unauthorized: Webhook secret not configured" };
+  if (!resolved.webhookSecret) {
+    console.error(
+      `[webhook] store ${resolved.store.storeUrl} has no webhook_secret configured \u2014 cannot verify HMAC`
+    );
+    return {
+      valid: false,
+      status: 401,
+      error: "Unauthorized: Webhook secret not configured for this store"
+    };
   }
+  const rawBody = req.rawBody;
+  if (!rawBody || !Buffer.isBuffer(rawBody)) {
+    console.error("[webhook] rawBody not captured \u2014 cannot verify HMAC");
+    return {
+      valid: false,
+      status: 500,
+      error: "Server misconfiguration: raw body unavailable"
+    };
+  }
+  if (!verifyShopifyHmac(rawBody, hmac, resolved.webhookSecret)) {
+    console.error(
+      `[webhook] HMAC mismatch for ${resolved.store.storeUrl}`
+    );
+    return { valid: false, status: 401, error: "Unauthorized: Invalid signature" };
+  }
+  console.log(
+    `\u2713 Direct Shopify webhook verified for ${resolved.store.storeUrl}`
+  );
+  return { valid: true, resolved };
 }
 async function handleOrderCreated(req, res) {
   try {
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
     const shopifyOrder = req.body;
     console.log("Incoming webhook payload:", JSON.stringify(shopifyOrder, null, 2));
     if (!shopifyOrder || !shopifyOrder.id) {
@@ -6606,23 +6811,29 @@ async function handleOrderCreated(req, res) {
       });
     }
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/create",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder
     });
     const existingOrder = await storage.getOrderByShopifyId(
-      shopifyOrder.id.toString()
+      shopifyOrder.id.toString(),
+      store.id
     );
     if (existingOrder) {
-      console.log(`Order ${shopifyOrder.id} already exists, skipping`);
+      console.log(
+        `Order ${shopifyOrder.id} already exists in ${store.storeUrl}, skipping`
+      );
       return res.status(200).json({ message: "Order already exists" });
     }
     let customer;
     if (shopifyOrder.customer) {
       const existingCustomer = await storage.getCustomerByShopifyId(
-        shopifyOrder.customer.id.toString()
+        shopifyOrder.customer.id.toString(),
+        store.id
       );
       const customerData = {
+        storeId: store.id,
         shopifyCustomerId: shopifyOrder.customer.id.toString(),
         email: shopifyOrder.customer.email || shopifyOrder.email,
         firstName: shopifyOrder.customer.first_name || null,
@@ -6645,6 +6856,7 @@ async function handleOrderCreated(req, res) {
     const isPrepaid = shopifyOrder.financial_status === "paid" && prepaidMethodsLower.includes(normalizedPaymentMethod.toLowerCase());
     const autoCallStatus = isPrepaid ? "Confirmed" : void 0;
     const orderData = {
+      storeId: store.id,
       shopifyOrderId: shopifyOrder.id.toString(),
       shopifyOrderNumber: shopifyOrder.order_number?.toString() || shopifyOrder.name,
       customerId: customer?.id || null,
@@ -6696,7 +6908,10 @@ async function handleOrderCreated(req, res) {
         let imageUrl = item.image_url || null;
         if (!imageUrl && item.variant_id) {
           try {
-            const localProduct = await storage.getProductByVariantId(item.variant_id.toString());
+            const localProduct = await storage.getProductByVariantId(
+              item.variant_id.toString(),
+              store.id
+            );
             if (localProduct?.imageUrl) {
               imageUrl = localProduct.imageUrl;
             }
@@ -6705,6 +6920,7 @@ async function handleOrderCreated(req, res) {
           }
         }
         items.push({
+          storeId: store.id,
           orderId: order.id,
           shopifyLineItemId: item.id?.toString() || null,
           shopifyProductId: item.product_id?.toString() || null,
@@ -6721,6 +6937,7 @@ async function handleOrderCreated(req, res) {
       await storage.createOrderItems(items);
     }
     await storage.createOrderStatus({
+      storeId: store.id,
       orderId: order.id,
       status: orderData.status || "Pending",
       previousStatus: null,
@@ -6757,10 +6974,11 @@ async function handleOrderCreated(req, res) {
 }
 async function handleOrderUpdated(req, res) {
   try {
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
     const shopifyOrder = req.body;
     console.log("Incoming order update webhook:", JSON.stringify(shopifyOrder, null, 2));
     if (!shopifyOrder || !shopifyOrder.id) {
@@ -6771,15 +6989,17 @@ async function handleOrderUpdated(req, res) {
       });
     }
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/update",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder
     });
     const existingOrder = await storage.getOrderByShopifyId(
-      shopifyOrder.id.toString()
+      shopifyOrder.id.toString(),
+      store.id
     );
     if (!existingOrder) {
-      console.log(`Order ${shopifyOrder.id} not found, creating new order`);
+      console.log(`Order ${shopifyOrder.id} not found in ${store.storeUrl}, creating new order`);
       return handleOrderCreated(req, res);
     }
     if (shopifyOrder.customer && existingOrder.customerId) {
@@ -6837,6 +7057,7 @@ async function handleOrderUpdated(req, res) {
     await storage.updateOrder(existingOrder.id, orderData);
     if (newStatus !== existingOrder.status) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: newStatus,
         previousStatus: existingOrder.status,
@@ -6846,6 +7067,7 @@ async function handleOrderUpdated(req, res) {
     }
     if (isScalysisConfirmed && !alreadyConfirmed) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: "confirmed",
         previousStatus: existingOrder.callStatus || "Pending",
@@ -6862,10 +7084,11 @@ async function handleOrderUpdated(req, res) {
 }
 async function handleOrderCancelled(req, res) {
   try {
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
     const shopifyOrder = req.body;
     console.log("Incoming order cancellation webhook:", JSON.stringify(shopifyOrder, null, 2));
     if (!shopifyOrder || !shopifyOrder.id) {
@@ -6876,21 +7099,24 @@ async function handleOrderCancelled(req, res) {
       });
     }
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "orders/cancelled",
       shopifyOrderId: shopifyOrder.id?.toString() || null,
       payload: shopifyOrder
     });
     const existingOrder = await storage.getOrderByShopifyId(
-      shopifyOrder.id.toString()
+      shopifyOrder.id.toString(),
+      store.id
     );
     if (!existingOrder) {
-      console.log(`Order ${shopifyOrder.id} not found`);
+      console.log(`Order ${shopifyOrder.id} not found in ${store.storeUrl}`);
       return res.status(404).json({ error: "Order not found" });
     }
     await storage.updateOrder(existingOrder.id, {
       status: "Cancelled"
     });
     await storage.createOrderStatus({
+      storeId: store.id,
       orderId: existingOrder.id,
       status: "Cancelled",
       previousStatus: existingOrder.status,
@@ -6906,10 +7132,11 @@ async function handleOrderCancelled(req, res) {
 }
 async function handleFulfillmentUpdate(req, res) {
   try {
-    const verification = verifyWebhookAuth(req);
+    const verification = await verifyWebhookAuth(req);
     if (!verification.valid) {
-      return res.status(401).json({ error: verification.error });
+      return res.status(verification.status).json({ error: verification.error });
     }
+    const { store } = verification.resolved;
     const fulfillment = req.body;
     console.log("[Fulfillment Update] Incoming webhook:", JSON.stringify(fulfillment, null, 2));
     if (!fulfillment || !fulfillment.order_id) {
@@ -6920,15 +7147,19 @@ async function handleFulfillmentUpdate(req, res) {
       });
     }
     await storage.createWebhookLog({
+      storeId: store.id,
       topic: "fulfillments/update",
       shopifyOrderId: fulfillment.order_id?.toString() || null,
       payload: fulfillment
     });
     const existingOrder = await storage.getOrderByShopifyId(
-      fulfillment.order_id.toString()
+      fulfillment.order_id.toString(),
+      store.id
     );
     if (!existingOrder) {
-      console.log(`[Fulfillment Update] Order not found for Shopify ID: ${fulfillment.order_id}`);
+      console.log(
+        `[Fulfillment Update] Order not found for Shopify ID ${fulfillment.order_id} in ${store.storeUrl}`
+      );
       return res.status(200).json({ message: "Order not found, ignoring" });
     }
     const shopifyShipmentStatus = fulfillment.shipment_status || null;
@@ -6975,6 +7206,7 @@ async function handleFulfillmentUpdate(req, res) {
     await storage.updateOrder(existingOrder.id, updateData);
     if (newOrderStatus && newOrderStatus !== existingOrder.status) {
       await storage.createOrderStatus({
+        storeId: store.id,
         orderId: existingOrder.id,
         status: newOrderStatus,
         previousStatus: existingOrder.status,
@@ -6988,6 +7220,166 @@ async function handleFulfillmentUpdate(req, res) {
     console.error("[Fulfillment Update] Error processing webhook:", error);
     res.status(500).json({ error: "Internal server error" });
   }
+}
+
+// server/storeScope.ts
+init_db();
+init_schema();
+import { eq as eq4, and as and3, asc as asc2 } from "drizzle-orm";
+
+// server/permissions.ts
+function isFullControlAdmin(user) {
+  return user.role === "admin" && user.adminType === "full_control";
+}
+function isAdmin(user) {
+  return user.role === "admin";
+}
+function isAgent(user) {
+  return user.role === "agent";
+}
+function getUserPermissions(user) {
+  if (!user.permissions) {
+    return {};
+  }
+  return user.permissions;
+}
+function hasPermission(user, category, permission) {
+  if (isAgent(user)) {
+    return false;
+  }
+  if (isFullControlAdmin(user)) {
+    return true;
+  }
+  const permissions = getUserPermissions(user);
+  const categoryPerms = permissions[category];
+  if (!categoryPerms || typeof categoryPerms !== "object") {
+    return false;
+  }
+  return categoryPerms[permission] === true;
+}
+function canAssignOrders(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "assignOrders"));
+}
+function canBulkAssignOrders(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "bulkAssign"));
+}
+function canTriggerAutoAssignment(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "triggerAutoAssignment"));
+}
+function canEditProfiles(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "editProfiles"));
+}
+function canAssignExtensions(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "assignExtensions"));
+}
+function canManageShopify(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "settings", "manageShopify"));
+}
+function canInviteTeamMembers(user) {
+  return isAdmin(user);
+}
+function canInviteAdmins(user) {
+  return isFullControlAdmin(user);
+}
+
+// server/storeScope.ts
+var STORE_HEADER_NAME = "x-active-store-id";
+var StoreScopeError = class extends Error {
+  status;
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+    this.name = "StoreScopeError";
+  }
+};
+async function resolveStoreScope(req) {
+  const sessionUserId = req.session?.userId;
+  if (!sessionUserId) {
+    return null;
+  }
+  const [user] = await db.select().from(users).where(eq4(users.id, sessionUserId)).limit(1);
+  if (!user) {
+    return null;
+  }
+  const requestedHeader = readHeader(req);
+  if (isAdmin(user)) {
+    if (requestedHeader) {
+      const [row] = await db.select({ id: stores.id }).from(stores).where(eq4(stores.id, requestedHeader)).limit(1);
+      if (!row) {
+        throw new StoreScopeError(
+          404,
+          `Store ${requestedHeader} not found`
+        );
+      }
+      return { storeId: row.id, isAdmin: true, isFallback: false };
+    }
+    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc2(stores.createdAt)).limit(1);
+    if (!fallback) {
+      return null;
+    }
+    return { storeId: fallback.id, isAdmin: true, isFallback: true };
+  }
+  if (requestedHeader) {
+    const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
+      and3(
+        eq4(userStores.userId, user.id),
+        eq4(userStores.storeId, requestedHeader)
+      )
+    ).limit(1);
+    if (!membership) {
+      throw new StoreScopeError(
+        403,
+        "You do not have access to this store"
+      );
+    }
+    return {
+      storeId: membership.storeId,
+      isAdmin: false,
+      isFallback: false
+    };
+  }
+  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
+  if (!first) {
+    throw new StoreScopeError(
+      403,
+      "Your account is not attached to any store. Ask an administrator to grant access."
+    );
+  }
+  return { storeId: first.storeId, isAdmin: false, isFallback: true };
+}
+async function attachStoreScope(req, _res, next) {
+  if (req.path.startsWith("/api/webhooks/")) {
+    return next();
+  }
+  try {
+    const scope = await resolveStoreScope(req);
+    if (scope) req.storeScope = scope;
+    next();
+  } catch (err) {
+    if (err instanceof StoreScopeError) {
+      req.storeScopeError = err;
+      return next();
+    }
+    next(err);
+  }
+}
+function requireStoreScope(req, res) {
+  const stashed = req.storeScopeError;
+  if (stashed) {
+    res.status(stashed.status).json({ error: stashed.message });
+    return null;
+  }
+  if (!req.storeScope) {
+    res.status(401).json({ error: "Authentication required" });
+    return null;
+  }
+  return req.storeScope;
+}
+function readHeader(req) {
+  const raw = req.headers[STORE_HEADER_NAME];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 // server/routes.ts
@@ -7478,63 +7870,6 @@ async function verifyPassword(plaintext, stored) {
 // server/routes.ts
 import fs4 from "fs";
 import path3 from "path";
-
-// server/permissions.ts
-function isFullControlAdmin(user) {
-  return user.role === "admin" && user.adminType === "full_control";
-}
-function isAdmin(user) {
-  return user.role === "admin";
-}
-function isAgent(user) {
-  return user.role === "agent";
-}
-function getUserPermissions(user) {
-  if (!user.permissions) {
-    return {};
-  }
-  return user.permissions;
-}
-function hasPermission(user, category, permission) {
-  if (isAgent(user)) {
-    return false;
-  }
-  if (isFullControlAdmin(user)) {
-    return true;
-  }
-  const permissions = getUserPermissions(user);
-  const categoryPerms = permissions[category];
-  if (!categoryPerms || typeof categoryPerms !== "object") {
-    return false;
-  }
-  return categoryPerms[permission] === true;
-}
-function canAssignOrders(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "assignOrders"));
-}
-function canBulkAssignOrders(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "bulkAssign"));
-}
-function canTriggerAutoAssignment(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "triggerAutoAssignment"));
-}
-function canEditProfiles(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "editProfiles"));
-}
-function canAssignExtensions(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "assignExtensions"));
-}
-function canManageShopify(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "settings", "manageShopify"));
-}
-function canInviteTeamMembers(user) {
-  return isAdmin(user);
-}
-function canInviteAdmins(user) {
-  return isFullControlAdmin(user);
-}
-
-// server/routes.ts
 function normalizeFastrrPayload(raw) {
   const payload = raw?.data || raw?.checkout || raw || {};
   const pick = (...keys) => {
@@ -8758,7 +9093,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and3(eq3(webhooks.eventType, "order.created"), eq3(webhooks.isActive, true))
+        and4(eq5(webhooks.eventType, "order.created"), eq5(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -8962,9 +9297,10 @@ async function registerRoutes(app2) {
             for (const shopifyOrder of newOrders) {
               try {
                 let customer;
-                if (shopifyOrder.customer) {
+                if (shopifyOrder.customer && syncStoreId) {
                   const existingCustomer = await storage.getCustomerByShopifyId(
-                    shopifyOrder.customer.id.toString()
+                    shopifyOrder.customer.id.toString(),
+                    syncStoreId
                   );
                   const customerData = {
                     shopifyCustomerId: shopifyOrder.customer.id.toString(),
@@ -9359,7 +9695,12 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/products/variant/:variantId", async (req, res) => {
     try {
-      const product = await storage.getProductByVariantId(req.params.variantId);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const product = await storage.getProductByVariantId(
+        req.params.variantId,
+        scope.storeId
+      );
       if (!product) {
         return res.status(404).json({ error: "Product not found" });
       }
@@ -9495,9 +9836,9 @@ async function registerRoutes(app2) {
       };
       let rows;
       if (isAdmin(user)) {
-        rows = await db.select(projection).from(stores).orderBy(asc2(stores.createdAt));
+        rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq3(userStores.storeId, stores.id)).where(eq3(userStores.userId, userId)).orderBy(asc2(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq5(userStores.storeId, stores.id)).where(eq5(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -9538,7 +9879,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq3(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq5(stores.storeUrl, normalizedUrl)).limit(1);
       if (existing) {
         return res.status(409).json({
           error: "A store with this URL is already connected.",
@@ -9627,7 +9968,7 @@ async function registerRoutes(app2) {
         return res.status(403).json({ error: "Only admins can update store details." });
       }
       const storeId = req.params.id;
-      const [existing] = await db.select().from(stores).where(eq3(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq5(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -9672,7 +10013,7 @@ async function registerRoutes(app2) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
       }
-      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq3(stores.id, storeId)).returning({
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq5(stores.id, storeId)).returning({
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
@@ -9704,7 +10045,7 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq3(userStores.userId, targetId));
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
@@ -9745,7 +10086,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq3(userStores.userId, targetId));
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, targetId));
       const currentSet = new Set(current.map((r) => r.storeId));
       const currentIds = Array.from(currentSet);
       const toInsert = requestedIds.filter((id) => !currentSet.has(id));
@@ -9761,9 +10102,9 @@ async function registerRoutes(app2) {
       }
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
-          and3(
-            eq3(userStores.userId, targetId),
-            or2(...toDelete.map((id) => eq3(userStores.storeId, id)))
+          and4(
+            eq5(userStores.userId, targetId),
+            or2(...toDelete.map((id) => eq5(userStores.storeId, id)))
           )
         );
       }
@@ -10053,40 +10394,40 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "User not found" });
       }
       console.log(`Starting cleanup for user ${userId} (${user.email})`);
-      await db.update(orders).set({ assignedTo: null }).where(eq3(orders.assignedTo, userId));
-      await db.update(orders).set({ confirmedBy: null }).where(eq3(orders.confirmedBy, userId));
-      await db.update(orders).set({ cancelledBy: null }).where(eq3(orders.cancelledBy, userId));
+      await db.update(orders).set({ assignedTo: null }).where(eq5(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq5(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq5(orders.cancelledBy, userId));
       console.log("  - Orders unassigned");
       await db.delete(orderAssignments).where(
-        or2(eq3(orderAssignments.userId, userId), eq3(orderAssignments.assignedBy, userId))
+        or2(eq5(orderAssignments.userId, userId), eq5(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
       await db.delete(teamMessages).where(
-        or2(eq3(teamMessages.fromUserId, userId), eq3(teamMessages.toUserId, userId))
+        or2(eq5(teamMessages.fromUserId, userId), eq5(teamMessages.toUserId, userId))
       );
       console.log("  - Team messages deleted");
-      await db.delete(leaveRequests).where(eq3(leaveRequests.userId, userId));
-      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq3(leaveRequests.reviewedBy, userId));
+      await db.delete(leaveRequests).where(eq5(leaveRequests.userId, userId));
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq5(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
-      await db.delete(notifications).where(eq3(notifications.userId, userId));
+      await db.delete(notifications).where(eq5(notifications.userId, userId));
       console.log("  - Notifications deleted");
-      await db.delete(attendance).where(eq3(attendance.userId, userId));
+      await db.delete(attendance).where(eq5(attendance.userId, userId));
       console.log("  - Attendance records deleted");
-      await db.delete(calls).where(eq3(calls.agentId, userId));
+      await db.delete(calls).where(eq5(calls.agentId, userId));
       console.log("  - Call records deleted");
-      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq3(orderStatusHistory.changedBy, userId));
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq5(orderStatusHistory.changedBy, userId));
       console.log("  - Order status history updated");
-      await db.update(invites).set({ invitedBy: null }).where(eq3(invites.invitedBy, userId));
+      await db.update(invites).set({ invitedBy: null }).where(eq5(invites.invitedBy, userId));
       console.log("  - Invites updated");
-      await db.update(ndrEvents).set({ actionBy: null }).where(eq3(ndrEvents.actionBy, userId));
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq5(ndrEvents.actionBy, userId));
       console.log("  - NDR events updated");
-      await db.update(courses).set({ authorId: null }).where(eq3(courses.authorId, userId));
+      await db.update(courses).set({ authorId: null }).where(eq5(courses.authorId, userId));
       console.log("  - Courses updated");
-      await db.update(resources).set({ authorId: null }).where(eq3(resources.authorId, userId));
+      await db.update(resources).set({ authorId: null }).where(eq5(resources.authorId, userId));
       console.log("  - Resources updated");
-      await db.delete(userLessonProgress).where(eq3(userLessonProgress.userId, userId));
+      await db.delete(userLessonProgress).where(eq5(userLessonProgress.userId, userId));
       console.log("  - User lesson progress deleted");
-      await db.delete(userOnboardingProgress).where(eq3(userOnboardingProgress.userId, userId));
+      await db.delete(userOnboardingProgress).where(eq5(userOnboardingProgress.userId, userId));
       console.log("  - User onboarding progress deleted");
       await storage.deleteUser(userId);
       console.log(`User ${userId} deleted successfully`);
@@ -10572,7 +10913,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.startBreak(attendance2.id);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq3(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq5(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error starting break:", error);
@@ -10597,7 +10938,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.endBreak(activeBreak.id, now);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq3(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq5(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error ending break:", error);
@@ -12337,7 +12678,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt,
         fulfillmentStatus: orders.fulfillmentStatus
-      }).from(orders).where(and3(...conditions)) : await db.select({
+      }).from(orders).where(and4(...conditions)) : await db.select({
         id: orders.id,
         status: orders.status,
         shipmentStatus: orders.shipmentStatus,
@@ -12498,7 +12839,7 @@ async function registerRoutes(app2) {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
-      await db.delete(webhooks).where(eq3(webhooks.id, id));
+      await db.delete(webhooks).where(eq5(webhooks.id, id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting webhook:", error);
@@ -12642,99 +12983,6 @@ function serveStatic(app2) {
 init_storage();
 init_db();
 init_shopify();
-
-// server/storeScope.ts
-init_db();
-init_schema();
-import { eq as eq4, and as and4, asc as asc3 } from "drizzle-orm";
-var STORE_HEADER_NAME = "x-active-store-id";
-var StoreScopeError = class extends Error {
-  status;
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-    this.name = "StoreScopeError";
-  }
-};
-async function resolveStoreScope(req) {
-  const sessionUserId = req.session?.userId;
-  if (!sessionUserId) {
-    return null;
-  }
-  const [user] = await db.select().from(users).where(eq4(users.id, sessionUserId)).limit(1);
-  if (!user) {
-    return null;
-  }
-  const requestedHeader = readHeader(req);
-  if (isAdmin(user)) {
-    if (requestedHeader) {
-      const [row] = await db.select({ id: stores.id }).from(stores).where(eq4(stores.id, requestedHeader)).limit(1);
-      if (!row) {
-        throw new StoreScopeError(
-          404,
-          `Store ${requestedHeader} not found`
-        );
-      }
-      return { storeId: row.id, isAdmin: true, isFallback: false };
-    }
-    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc3(stores.createdAt)).limit(1);
-    if (!fallback) {
-      return null;
-    }
-    return { storeId: fallback.id, isAdmin: true, isFallback: true };
-  }
-  if (requestedHeader) {
-    const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
-      and4(
-        eq4(userStores.userId, user.id),
-        eq4(userStores.storeId, requestedHeader)
-      )
-    ).limit(1);
-    if (!membership) {
-      throw new StoreScopeError(
-        403,
-        "You do not have access to this store"
-      );
-    }
-    return {
-      storeId: membership.storeId,
-      isAdmin: false,
-      isFallback: false
-    };
-  }
-  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc3(userStores.createdAt)).limit(1);
-  if (!first) {
-    throw new StoreScopeError(
-      403,
-      "Your account is not attached to any store. Ask an administrator to grant access."
-    );
-  }
-  return { storeId: first.storeId, isAdmin: false, isFallback: true };
-}
-async function attachStoreScope(req, _res, next) {
-  if (req.path.startsWith("/api/webhooks/")) {
-    return next();
-  }
-  try {
-    const scope = await resolveStoreScope(req);
-    if (scope) req.storeScope = scope;
-    next();
-  } catch (err) {
-    if (err instanceof StoreScopeError) {
-      req.storeScopeError = err;
-      return next();
-    }
-    next(err);
-  }
-}
-function readHeader(req) {
-  const raw = req.headers[STORE_HEADER_NAME];
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-// server/index.ts
 var NEON_WS_FINGERPRINT = "Cannot set property message of #<ErrorEvent>";
 process.on("uncaughtException", (err) => {
   if (err?.message?.includes(NEON_WS_FINGERPRINT)) {
