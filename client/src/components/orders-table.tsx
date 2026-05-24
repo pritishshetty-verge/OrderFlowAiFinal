@@ -18,7 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Phone, UserPlus, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Phone, UserPlus, UserMinus, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -185,10 +185,34 @@ export function OrdersTable({
     }
     return orders.slice(startIndex, endIndex);
   }, [orders, startIndex, endIndex, isControlled]);
+
+  // Subset of the current page that can actually be bulk-assigned.
+  // Already-assigned orders are excluded so the Select-All checkbox
+  // doesn't silently sweep up rows whose ownership the admin
+  // probably doesn't intend to overwrite. The header checkbox,
+  // `someSelected` indeterminate state, and handleSelectAll all
+  // derive from this filtered list. If the admin DOES want to
+  // re-assign a specific assigned row, they can still tick it
+  // individually via the per-row checkbox (handleSelectOrder
+  // doesn't gate on assignedTo).
+  const unassignedPaginatedOrders = useMemo(
+    () => paginatedOrders.filter((o) => !o.assignedTo),
+    [paginatedOrders],
+  );
   
   // Selection state based on current page only
-  const allSelected = paginatedOrders.length > 0 && paginatedOrders.every(order => selectedOrders.has(order.id));
-  const someSelected = paginatedOrders.some(order => selectedOrders.has(order.id)) && !allSelected;
+  // "All selected" and the indeterminate "some selected" now key
+  // off the unassigned subset, not the full page. If there are
+  // no unassigned rows on this page (everything already has an
+  // agent), the header checkbox is effectively disabled — clicking
+  // it does nothing because handleSelectAll iterates over an
+  // empty list.
+  const allSelected =
+    unassignedPaginatedOrders.length > 0 &&
+    unassignedPaginatedOrders.every((order) => selectedOrders.has(order.id));
+  const someSelected =
+    unassignedPaginatedOrders.some((order) => selectedOrders.has(order.id)) &&
+    !allSelected;
 
   // Reset to first page when orders change (only for uncontrolled mode)
   useEffect(() => {
@@ -343,6 +367,48 @@ export function OrdersTable({
     },
   });
 
+  // Mutation to unassign an order (admin/manager only)
+  const unassignOrderMutation = useMutation({
+    mutationFn: async ({ orderId }: { orderId: string }) => {
+      if (!currentUserId) {
+        throw new Error("User not authenticated");
+      }
+      const res = await apiRequest("POST", `/api/orders/${orderId}/assign`, {
+        userId: null,
+        assignedBy: currentUserId,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      toast({
+        title: "Order unassigned",
+        description: "The order is now available for reassignment.",
+      });
+    },
+    onError: (error: any) => {
+      let errorMessage = "Failed to unassign order. Please try again.";
+      if (error?.message) {
+        try {
+          const match = error.message.match(/\d+: ({.*})/);
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            errorMessage = parsed.error || parsed.message || errorMessage;
+          } else {
+            errorMessage = error.message;
+          }
+        } catch {
+          errorMessage = error.message;
+        }
+      }
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mutation to schedule followup
   const followupOrderMutation = useMutation({
     mutationFn: async ({ orderId, followupAt, notes }: { orderId: string; followupAt: Date; notes?: string }) => {
@@ -410,12 +476,18 @@ export function OrdersTable({
 
   const handleSelectAll = () => {
     const newSelected = new Set(selectedOrders);
+    // Operate ONLY on the unassigned subset of this page. The
+    // previous implementation iterated `paginatedOrders` and
+    // unwittingly added already-assigned rows to the selection,
+    // which then got re-assigned to whichever agent the admin
+    // picked from the bulk dialog — surprising UX (audit Bug #3a).
     if (allSelected) {
-      // Deselect all orders on current page
-      paginatedOrders.forEach(order => newSelected.delete(order.id));
+      // Toggle off: drop the unassigned rows from the selection
+      // set. Any individually-ticked assigned rows the admin had
+      // selected via per-row checkboxes stay intact.
+      unassignedPaginatedOrders.forEach((order) => newSelected.delete(order.id));
     } else {
-      // Select all orders on current page
-      paginatedOrders.forEach(order => newSelected.add(order.id));
+      unassignedPaginatedOrders.forEach((order) => newSelected.add(order.id));
     }
     setSelectedOrders(newSelected);
   };
@@ -653,17 +725,45 @@ export function OrdersTable({
                     </Button>
                   )}
                   {userRole !== "agent" && !order.assignedTo && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAssignOrder?.(order);
-                      }}
-                      data-testid={`button-assign-${order.id}`}
-                    >
-                      <UserPlus className="h-4 w-4" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAssignOrder?.(order);
+                          }}
+                          data-testid={`button-assign-${order.id}`}
+                        >
+                          <UserPlus className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Assign order</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {userRole !== "agent" && order.assignedTo && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            unassignOrderMutation.mutate({ orderId: order.id });
+                          }}
+                          disabled={unassignOrderMutation.isPending}
+                          data-testid={`button-unassign-${order.id}`}
+                        >
+                          {unassignOrderMutation.isPending && unassignOrderMutation.variables?.orderId === order.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <UserMinus className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Unassign order</TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
               </TableCell>

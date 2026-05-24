@@ -1475,8 +1475,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { userId, assignedBy, note } = req.body;
 
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required" });
+      // Body contract:
+      //   • userId: string  → assign / re-assign to that agent
+      //   • userId: null    → unassign (explicit null only — `undefined`
+      //                       or missing field is still a 400 because
+      //                       we want "I forgot to send it" to be loud)
+      //   • userId: missing → 400
+      //
+      // The explicit-null check uses `=== null` so a missing key
+      // (undefined) still fails the validation guard below.
+      const isUnassign = userId === null;
+      if (!isUnassign && (typeof userId !== "string" || userId.length === 0)) {
+        return res.status(400).json({
+          error: "userId is required (string to assign, explicit null to unassign).",
+        });
       }
 
       if (!assignedBy) {
@@ -1491,6 +1503,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!canAssignOrders(currentUser)) {
         return res.status(403).json({ error: "You don't have permission to assign orders" });
+      }
+
+      // Unassign path: skip the assignmentEngine entirely — that
+      // expects a target agent + writes order_assignments history.
+      // Unassign is just "clear the current owner on the order
+      // row." Forward-only history stays history; we don't add a
+      // synthetic "unassigned" row to order_assignments today.
+      if (isUnassign) {
+        const order = await storage.assignOrder(req.params.id, null);
+        if (!order) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        return res.json({ order, action: "unassigned" });
       }
 
       // Update order assignment

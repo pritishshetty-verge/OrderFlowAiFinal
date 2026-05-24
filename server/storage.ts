@@ -255,7 +255,7 @@ export interface IStorage {
     tags: string[] | null;
     lineItems: string | null;
   }>>;
-  assignOrder(orderId: string, userId: string): Promise<Order | undefined>;
+  assignOrder(orderId: string, userId: string | null): Promise<Order | undefined>;
   
   // Call Status Actions
   confirmOrder(orderId: string, userId: string, notes?: string): Promise<Order | undefined>;
@@ -1221,20 +1221,27 @@ export class DbStorage implements IStorage {
     }));
   }
 
-  async assignOrder(orderId: string, userId: string): Promise<Order | undefined> {
+  async assignOrder(orderId: string, userId: string | null): Promise<Order | undefined> {
     // Get current order to check status
     const currentOrder = await this.getOrder(orderId);
     if (!currentOrder) return undefined;
 
-    // Only update status to 'assigned' if currently 'pending'
-    // This prevents regression for confirmed/shipped orders
+    // Two modes:
+    //   • userId is a string → assign (or re-assign) to that user.
+    //     Status transitions to 'assigned' if currently 'pending'.
+    //   • userId is null     → unassign. Clears both assignedTo
+    //     and assignedAt. Status is NOT bumped back to 'pending'
+    //     here — that's a higher-level workflow decision (an
+    //     already-confirmed order that gets unassigned doesn't
+    //     regress to pending). The route layer can choose to
+    //     bump status separately if needed.
     const updateData: any = {
       assignedTo: userId,
-      assignedAt: new Date(),
+      assignedAt: userId === null ? null : new Date(),
       updatedAt: new Date(),
     };
-    
-    if (currentOrder.status === 'pending') {
+
+    if (userId !== null && currentOrder.status === 'pending') {
       updateData.status = 'assigned';
     }
 

@@ -95,7 +95,11 @@ const adminMenuItems: MenuItem[] = [
       {
         // Coming-soon: NDR webhooks land cleanly, but the
         // reattempt-action + bulk-rescue UX is still in design.
-        title: "NDR Management",
+        // Title shortened from "NDR Management" → "NDR" since the
+        // sub-menu already sits inside the Orders parent, so the
+        // disambiguation is implicit. Tighter copy, fits cleanly
+        // alongside the Soon badge without truncation.
+        title: "NDR",
         url: "/ndr",
         icon: AlertTriangle,
         comingSoon: true,
@@ -336,13 +340,39 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                                         unclickable. The Soon badge anchors
                                         to the right of the row. */}
                                     {subItem.comingSoon ? (
+                                      // `min-h-7` matches
+                                      // SidebarMenuSubButton's
+                                      // default row height so the
+                                      // disabled row aligns
+                                      // vertically with live links.
+                                      // `min-w-0` on the title +
+                                      // `truncate` are the load-
+                                      // bearing pair: in a flex
+                                      // layout, items with `flex-1`
+                                      // default to min-width: auto
+                                      // which forces the title's
+                                      // intrinsic width as a floor.
+                                      // Long titles like "NDR
+                                      // Management" then wrapped
+                                      // to two lines (audit Bug #1).
+                                      // With min-w-0, the title is
+                                      // free to shrink; with
+                                      // truncate it ellipsises
+                                      // instead of wrapping. Native
+                                      // browser tooltip via `title`
+                                      // preserves the full text.
                                       <span
-                                        className="flex items-center gap-2 w-full cursor-not-allowed opacity-70"
+                                        className="flex items-center gap-2 w-full min-h-7 cursor-not-allowed opacity-70"
                                         aria-disabled="true"
                                       >
-                                        <subItem.icon className="h-4 w-4" />
-                                        <span className="flex-1">{subItem.title}</span>
-                                        <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-4">
+                                        <subItem.icon className="h-4 w-4 shrink-0" />
+                                        <span
+                                          className="flex-1 min-w-0 truncate"
+                                          title={subItem.title}
+                                        >
+                                          {subItem.title}
+                                        </span>
+                                        <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0 h-4">
                                           Soon
                                         </Badge>
                                       </span>
@@ -384,13 +414,23 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                             visually so the user knows it's intentionally
                             disabled, not broken. */}
                         {item.comingSoon ? (
+                          // Mirror the sub-item branch: min-h-7
+                          // to match live-link row height,
+                          // min-w-0 + truncate on the title so it
+                          // ellipsises rather than wrapping when
+                          // the Badge consumes right-side space.
                           <span
-                            className="flex items-center gap-2 w-full"
+                            className="flex items-center gap-2 w-full min-h-7"
                             aria-disabled="true"
                           >
-                            <item.icon className="h-4 w-4" />
-                            <span className="flex-1">{item.title}</span>
-                            <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-4">
+                            <item.icon className="h-4 w-4 shrink-0" />
+                            <span
+                              className="flex-1 min-w-0 truncate"
+                              title={item.title}
+                            >
+                              {item.title}
+                            </span>
+                            <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0 h-4">
                               Soon
                             </Badge>
                           </span>

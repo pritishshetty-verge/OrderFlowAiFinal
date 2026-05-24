@@ -696,12 +696,19 @@ export function OrderQuickPreview({
                 >
                   <ChevronRight className="h-4 w-4" />
                 </Button>
-                <Separator orientation="vertical" className="h-5 mx-1" />
+                {/* Separator removed (audit Bug #2). It used to
+                    divide the nav cluster from the Radix auto-X in
+                    the corner; with hideCloseButton in place, the
+                    custom close is the only thing right of the
+                    next-chevron, so the separator read as a
+                    standalone vertical line floating next to the
+                    close button. The parent's `gap-1` already
+                    provides 4px between the chevron and close. */}
                 <Button
                   variant="ghost"
                   size="icon"
                   onClick={() => onOpenChange(false)}
-                  className="h-7 w-7"
+                  className="h-7 w-7 ml-1"
                   data-testid="button-close-preview"
                 >
                   <X className="h-4 w-4" />

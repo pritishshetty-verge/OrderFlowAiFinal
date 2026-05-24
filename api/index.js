@@ -1754,10 +1754,10 @@ var init_storage = __esm({
         if (!currentOrder) return void 0;
         const updateData = {
           assignedTo: userId,
-          assignedAt: /* @__PURE__ */ new Date(),
+          assignedAt: userId === null ? null : /* @__PURE__ */ new Date(),
           updatedAt: /* @__PURE__ */ new Date()
         };
-        if (currentOrder.status === "pending") {
+        if (userId !== null && currentOrder.status === "pending") {
           updateData.status = "assigned";
         }
         const [order] = await db.update(orders).set(updateData).where(eq(orders.id, orderId)).returning();
@@ -8941,8 +8941,11 @@ async function registerRoutes(app2) {
   app2.post("/api/orders/:id/assign", async (req, res) => {
     try {
       const { userId, assignedBy, note } = req.body;
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required" });
+      const isUnassign = userId === null;
+      if (!isUnassign && (typeof userId !== "string" || userId.length === 0)) {
+        return res.status(400).json({
+          error: "userId is required (string to assign, explicit null to unassign)."
+        });
       }
       if (!assignedBy) {
         return res.status(400).json({ error: "assignedBy is required" });
@@ -8953,6 +8956,13 @@ async function registerRoutes(app2) {
       }
       if (!canAssignOrders(currentUser)) {
         return res.status(403).json({ error: "You don't have permission to assign orders" });
+      }
+      if (isUnassign) {
+        const order2 = await storage.assignOrder(req.params.id, null);
+        if (!order2) {
+          return res.status(404).json({ error: "Order not found" });
+        }
+        return res.json({ order: order2, action: "unassigned" });
       }
       const order = await storage.assignOrder(req.params.id, userId);
       if (!order) {
