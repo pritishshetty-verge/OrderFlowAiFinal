@@ -2704,7 +2704,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get all distinct payment methods from orders (for auto-detect feature)
   app.get("/api/orders/payment-methods", async (req, res) => {
     try {
-      const methods = await storage.getDistinctPaymentMethods();
+      // Per-store: the Payment Mapping settings card only suggests
+      // gateway names that actually show up in THIS store's order
+      // history, so admins don't see OLB's gateways when configuring
+      // Glow & Me's prepaid mapping.
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const methods = await storage.getDistinctPaymentMethods(scope.storeId);
       res.json({ methods });
     } catch (error: any) {
       console.error("Error fetching payment methods:", error);
@@ -2715,7 +2721,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get configured prepaid payment methods
   app.get("/api/settings/payments", async (req, res) => {
     try {
-      const methods = await storage.getPrepaidPaymentMethods();
+      // Per-store: each tenant owns its own prepaid_payment_methods
+      // row in app_settings (composite PK on storeId, key).
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const methods = await storage.getPrepaidPaymentMethods(scope.storeId);
       res.json({ prepaidMethods: methods });
     } catch (error: any) {
       console.error("Error fetching payment settings:", error);
@@ -2726,17 +2736,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update prepaid payment methods configuration
   app.post("/api/settings/payments", async (req, res) => {
     try {
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
       const { prepaidMethods } = req.body;
-      
+
       if (!Array.isArray(prepaidMethods)) {
         return res.status(400).json({ error: "prepaidMethods must be an array" });
       }
 
-      const setting = await storage.setAppSetting('prepaid_payment_methods', prepaidMethods);
-      res.json({ 
-        success: true, 
+      const setting = await storage.setAppSetting(
+        scope.storeId,
+        "prepaid_payment_methods",
+        prepaidMethods,
+      );
+      res.json({
+        success: true,
         prepaidMethods: setting.value,
-        message: "Payment settings updated successfully" 
+        message: "Payment settings updated successfully",
       });
     } catch (error: any) {
       console.error("Error updating payment settings:", error);
@@ -2750,31 +2766,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Sync products from Shopify to local database
   app.post("/api/admin/sync-products", async (req, res) => {
-    try {
-      const credentials = await storage.getShopifyCredentials();
-      
-      if (!credentials) {
-        return res.status(400).json({ error: "Shopify credentials not configured" });
-      }
-
-      // Use Client Credentials Grant flow
-      const decryptedClientId = decrypt(credentials.apiKey);
-      const decryptedClientSecret = decrypt(credentials.apiSecret);
-
-      // Create a new ShopifyClient instance using Client Credentials
-      const { ShopifyClient } = await import("./shopify");
-      const client = new ShopifyClient({
-        storeUrl: credentials.storeUrl,
-        apiKey: decryptedClientId,
-        apiSecret: decryptedClientSecret,
-        useClientCredentials: true,
+    // Phase 5 (Risk #1+2): the product sync must run against the
+    // active store, not the legacy `shopify_credentials` row. Until
+    // this fix, every sync hit OLB's shop — when OLB went into a
+    // frozen/paused subscription state, Shopify returned 402
+    // Payment Required and the UI surfaced "Failed to sync
+    // products" with no indication of which store was actually
+    // being targeted.
+    const syncStoreId = req.storeScope?.storeId;
+    if (!syncStoreId) {
+      return res.status(400).json({
+        error: "Active store scope is required to sync products.",
       });
+    }
+    try {
+      const { getShopifyClient } = await import("./shopify");
+      const client = await getShopifyClient(syncStoreId);
 
-      console.log("Starting Shopify product sync...");
-      
+      console.log(`[product-sync] storeId=${syncStoreId} starting`);
+
       // Fetch all products from Shopify
       const shopifyProducts = await client.fetchAllProducts();
-      console.log(`Fetched ${shopifyProducts.length} products from Shopify`);
+      console.log(
+        `[product-sync] storeId=${syncStoreId} fetched ${shopifyProducts.length} products`,
+      );
 
       // Transform and upsert each product variant
       let syncedCount = 0;
@@ -2787,7 +2802,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Find variant-specific image or fall back to product image
           const variantImageId = variant.image_id;
           let variantImage = productImage;
-          
+
           if (variantImageId && product.images) {
             const matchingImage = product.images.find((img: any) => img.id === variantImageId);
             if (matchingImage) {
@@ -2796,6 +2811,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           await storage.upsertProduct({
+            // storeId stamped so the composite UNIQUE
+            // (storeId, shopifyVariantId) namespaces correctly —
+            // two stores sharing supplier variant ids each get
+            // their own row instead of clobbering each other.
+            storeId: syncStoreId,
             shopifyProductId: String(product.id),
             shopifyVariantId: String(variant.id),
             title: product.title,
@@ -2804,13 +2824,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
             imageUrl: variantImage,
             lastSyncedAt: new Date(),
           });
-          
+
           variantCount++;
         }
         syncedCount++;
       }
 
-      console.log(`Synced ${syncedCount} products with ${variantCount} variants`);
+      console.log(
+        `[product-sync] storeId=${syncStoreId} done: ${syncedCount} products / ${variantCount} variants`,
+      );
 
       res.json({
         success: true,
@@ -2819,20 +2841,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         variantsCount: variantCount,
       });
     } catch (error: any) {
-      console.error("Error syncing products:", error);
-      res.status(500).json({ 
-        error: "Failed to sync products", 
-        details: error.message 
+      const message: string = error?.message ?? String(error);
+      console.error(
+        `[product-sync] storeId=${syncStoreId} FAILED: ${message}`,
+      );
+      // Translate Shopify's 402 into a clear, actionable response so
+      // the UI can tell the admin "your store's subscription is
+      // paused" instead of the generic "Failed to sync products."
+      // The legacy ShopifyClient bubbles the HTTP status text into
+      // the message; we pattern-match on it.
+      if (/Payment Required \(402\)/i.test(message) || /\b402\b/.test(message)) {
+        return res.status(402).json({
+          error: "Shopify subscription paused for this store",
+          details:
+            "Shopify returned 402 Payment Required. Reactivate the store's subscription in the Shopify admin and retry.",
+        });
+      }
+      res.status(500).json({
+        error: "Failed to sync products",
+        details: message,
       });
     }
   });
 
-  // Get product sync status
+  // Get product sync status — scoped to the active store so the
+  // Settings card shows counts for whichever tenant the switcher
+  // is on.
   app.get("/api/admin/products/status", async (req, res) => {
     try {
-      const count = await storage.getProductCount();
-      const lastSync = await storage.getLastProductSync();
-      
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const count = await storage.getProductCount(scope.storeId);
+      const lastSync = await storage.getLastProductSync(scope.storeId);
+
       res.json({
         productCount: count,
         lastSyncedAt: lastSync,

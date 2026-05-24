@@ -90,6 +90,7 @@ import {
   userOnboardingProgress,
   products,
   appSettings,
+  stores,
   abandonedCheckouts,
   type AppSetting,
   inboundWebhookLogs,
@@ -427,14 +428,14 @@ export interface IStorage {
   getProductByVariantId(shopifyVariantId: string, storeId: string): Promise<Product | undefined>;
   getProductByProductId(shopifyProductId: string): Promise<Product | undefined>;
   listProducts(): Promise<Product[]>;
-  getProductCount(): Promise<number>;
-  getLastProductSync(): Promise<Date | null>;
+  getProductCount(storeId: string): Promise<number>;
+  getLastProductSync(storeId: string): Promise<Date | null>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
-  
+
   // Payment Methods
-  getDistinctPaymentMethods(): Promise<string[]>;
+  getDistinctPaymentMethods(storeId: string): Promise<string[]>;
 
   // Dashboard Metrics
   getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date, storeId?: string): Promise<{
@@ -2844,17 +2845,25 @@ export class DbStorage implements IStorage {
       .orderBy(asc(products.title));
   }
 
-  async getProductCount(): Promise<number> {
+  /**
+   * Phase 5 (Risk #2): both helpers now require a storeId so the
+   * Settings → Product Catalog card displays counts for the active
+   * store rather than the global catalog. Routes pass
+   * `req.storeScope?.storeId` from the storeScope middleware.
+   */
+  async getProductCount(storeId: string): Promise<number> {
     const [result] = await db
       .select({ count: count() })
-      .from(products);
+      .from(products)
+      .where(eq(products.storeId, storeId));
     return result?.count || 0;
   }
 
-  async getLastProductSync(): Promise<Date | null> {
+  async getLastProductSync(storeId: string): Promise<Date | null> {
     const [product] = await db
       .select({ lastSyncedAt: products.lastSyncedAt })
       .from(products)
+      .where(eq(products.storeId, storeId))
       .orderBy(desc(products.lastSyncedAt))
       .limit(1);
     return product?.lastSyncedAt || null;
@@ -3177,39 +3186,63 @@ export class DbStorage implements IStorage {
   // APP SETTINGS METHODS
   // ============================================================================
 
-  async getAppSetting(key: string): Promise<AppSetting | undefined> {
+  /**
+   * Phase 5 (Risk #3): all three helpers now require a storeId.
+   * The `app_settings` table's PK is composite (storeId, key), so a
+   * lookup without storeId is ambiguous and a write without storeId
+   * would silently target the wrong tenant. Every caller resolves
+   * the storeId from `req.storeScope?.storeId` (HTTP routes) or
+   * `resolveWebhookStore` (webhook handlers).
+   */
+  async getAppSetting(
+    storeId: string,
+    key: string,
+  ): Promise<AppSetting | undefined> {
     const [setting] = await db
       .select()
       .from(appSettings)
-      .where(eq(appSettings.key, key));
+      .where(
+        and(eq(appSettings.storeId, storeId), eq(appSettings.key, key)),
+      );
     return setting;
   }
 
-  async setAppSetting(key: string, value: unknown): Promise<AppSetting> {
+  async setAppSetting(
+    storeId: string,
+    key: string,
+    value: unknown,
+  ): Promise<AppSetting> {
     const [setting] = await db
       .insert(appSettings)
-      .values({ key, value, updatedAt: new Date() })
+      .values({ storeId, key, value, updatedAt: new Date() })
       .onConflictDoUpdate({
-        target: appSettings.key,
+        // Composite PK target so the upsert keys off (store_id, key)
+        // rather than the legacy single-column target.
+        target: [appSettings.storeId, appSettings.key],
         set: { value, updatedAt: new Date() },
       })
       .returning();
     return setting;
   }
 
-  async getPrepaidPaymentMethods(): Promise<string[]> {
-    const setting = await this.getAppSetting('prepaid_payment_methods');
+  async getPrepaidPaymentMethods(storeId: string): Promise<string[]> {
+    const setting = await this.getAppSetting(storeId, "prepaid_payment_methods");
     if (!setting || !Array.isArray(setting.value)) {
       return [];
     }
     return setting.value as string[];
   }
 
-  async getDistinctPaymentMethods(): Promise<string[]> {
+  async getDistinctPaymentMethods(storeId: string): Promise<string[]> {
+    // Phase 5 (Risk #2): scope the distinct sweep to the active store
+    // so the Payment Mapping settings card only suggests gateway names
+    // that actually appear in THIS store's order history.
     const results = await db
       .selectDistinct({ paymentMethod: orders.paymentMethod })
       .from(orders)
-      .where(isNotNull(orders.paymentMethod));
+      .where(
+        and(eq(orders.storeId, storeId), isNotNull(orders.paymentMethod)),
+      );
     return results
       .map(r => r.paymentMethod)
       .filter((m): m is string => m !== null && m !== '');
@@ -3224,12 +3257,30 @@ export class DbStorage implements IStorage {
       .filter((t): t is string => t !== null && t !== '');
   }
 
+  /**
+   * Boot-time seed: every connected store should have a default
+   * prepaid_payment_methods mapping so the order-create webhook
+   * can auto-confirm prepaid orders out of the box. Iterates over
+   * `stores` so newly-connected tenants pick up the default on
+   * the next server boot without manual intervention.
+   */
   async seedDefaultSettings(): Promise<void> {
-    const existing = await this.getAppSetting('prepaid_payment_methods');
-    if (!existing) {
-      console.log('Seeding default prepaid_payment_methods setting...');
-      await this.setAppSetting('prepaid_payment_methods', ['PayU', 'Cards, UPI, NB by PayU India']);
-      console.log('Default prepaid_payment_methods seeded successfully');
+    const allStores = await db.select({ id: stores.id }).from(stores);
+    if (allStores.length === 0) {
+      // Server starting before any store is provisioned (very first
+      // boot). The first POST /api/stores will provision a row and
+      // the next seed pass on a subsequent boot will catch up.
+      return;
+    }
+    for (const s of allStores) {
+      const existing = await this.getAppSetting(s.id, "prepaid_payment_methods");
+      if (!existing) {
+        console.log(`Seeding prepaid_payment_methods for store ${s.id}…`);
+        await this.setAppSetting(s.id, "prepaid_payment_methods", [
+          "PayU",
+          "Cards, UPI, NB by PayU India",
+        ]);
+      }
     }
   }
 

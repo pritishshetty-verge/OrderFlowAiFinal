@@ -1323,14 +1323,34 @@ export type InsertNdrEvent = z.infer<typeof insertNdrEventSchema>;
 export type NdrEvent = typeof ndrEvents.$inferSelect;
 
 // ============================================================================
-// APP SETTINGS (Global Configuration)
+// APP SETTINGS (Per-Store Configuration)
 // ============================================================================
-
-export const appSettings = pgTable("app_settings", {
-  key: text("key").primaryKey(),
-  value: jsonb("value").notNull(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+//
+// Phase 5 (Risk #3): the legacy schema used a single global key as
+// the PK, which meant changes admins made on Glow & Me silently
+// overwrote OLB's settings (and vice versa). The composite PK
+// (store_id, key) namespaces each setting per tenant, with a
+// matching migration that fans existing OLB rows out to every
+// connected store so newly-added stores inherit OLB's defaults.
+//
+// Storage helpers in server/storage.ts (getAppSetting,
+// setAppSetting, getPrepaidPaymentMethods) all require a storeId
+// argument now. Webhook handlers resolve the store first then
+// look up settings under THAT store's scope.
+export const appSettings = pgTable(
+  "app_settings",
+  {
+    storeId: varchar("store_id").notNull().references(() => stores.id, {
+      onDelete: "cascade",
+    }),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.storeId, table.key] }),
+  }),
+);
 
 export const insertAppSettingSchema = createInsertSchema(appSettings);
 

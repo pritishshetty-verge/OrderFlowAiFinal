@@ -1074,11 +1074,20 @@ var init_schema = __esm({
       createdAt: true,
       updatedAt: true
     });
-    appSettings = pgTable("app_settings", {
-      key: text("key").primaryKey(),
-      value: jsonb("value").notNull(),
-      updatedAt: timestamp("updated_at").notNull().defaultNow()
-    });
+    appSettings = pgTable(
+      "app_settings",
+      {
+        storeId: varchar("store_id").notNull().references(() => stores.id, {
+          onDelete: "cascade"
+        }),
+        key: text("key").notNull(),
+        value: jsonb("value").notNull(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        pk: primaryKey({ columns: [table.storeId, table.key] })
+      })
+    );
     insertAppSettingSchema = createInsertSchema(appSettings);
     abandonedCheckouts = pgTable("abandoned_checkouts", {
       id: serial("id").primaryKey(),
@@ -2692,12 +2701,18 @@ var init_storage = __esm({
       async listProducts() {
         return await db.select().from(products).orderBy(asc(products.title));
       }
-      async getProductCount() {
-        const [result] = await db.select({ count: count() }).from(products);
+      /**
+       * Phase 5 (Risk #2): both helpers now require a storeId so the
+       * Settings → Product Catalog card displays counts for the active
+       * store rather than the global catalog. Routes pass
+       * `req.storeScope?.storeId` from the storeScope middleware.
+       */
+      async getProductCount(storeId) {
+        const [result] = await db.select({ count: count() }).from(products).where(eq(products.storeId, storeId));
         return result?.count || 0;
       }
-      async getLastProductSync() {
-        const [product] = await db.select({ lastSyncedAt: products.lastSyncedAt }).from(products).orderBy(desc(products.lastSyncedAt)).limit(1);
+      async getLastProductSync(storeId) {
+        const [product] = await db.select({ lastSyncedAt: products.lastSyncedAt }).from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.lastSyncedAt)).limit(1);
         return product?.lastSyncedAt || null;
       }
       // ============================================================================
@@ -2879,26 +2894,40 @@ var init_storage = __esm({
       // ============================================================================
       // APP SETTINGS METHODS
       // ============================================================================
-      async getAppSetting(key) {
-        const [setting] = await db.select().from(appSettings).where(eq(appSettings.key, key));
+      /**
+       * Phase 5 (Risk #3): all three helpers now require a storeId.
+       * The `app_settings` table's PK is composite (storeId, key), so a
+       * lookup without storeId is ambiguous and a write without storeId
+       * would silently target the wrong tenant. Every caller resolves
+       * the storeId from `req.storeScope?.storeId` (HTTP routes) or
+       * `resolveWebhookStore` (webhook handlers).
+       */
+      async getAppSetting(storeId, key) {
+        const [setting] = await db.select().from(appSettings).where(
+          and(eq(appSettings.storeId, storeId), eq(appSettings.key, key))
+        );
         return setting;
       }
-      async setAppSetting(key, value) {
-        const [setting] = await db.insert(appSettings).values({ key, value, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-          target: appSettings.key,
+      async setAppSetting(storeId, key, value) {
+        const [setting] = await db.insert(appSettings).values({ storeId, key, value, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+          // Composite PK target so the upsert keys off (store_id, key)
+          // rather than the legacy single-column target.
+          target: [appSettings.storeId, appSettings.key],
           set: { value, updatedAt: /* @__PURE__ */ new Date() }
         }).returning();
         return setting;
       }
-      async getPrepaidPaymentMethods() {
-        const setting = await this.getAppSetting("prepaid_payment_methods");
+      async getPrepaidPaymentMethods(storeId) {
+        const setting = await this.getAppSetting(storeId, "prepaid_payment_methods");
         if (!setting || !Array.isArray(setting.value)) {
           return [];
         }
         return setting.value;
       }
-      async getDistinctPaymentMethods() {
-        const results = await db.selectDistinct({ paymentMethod: orders.paymentMethod }).from(orders).where(isNotNull(orders.paymentMethod));
+      async getDistinctPaymentMethods(storeId) {
+        const results = await db.selectDistinct({ paymentMethod: orders.paymentMethod }).from(orders).where(
+          and(eq(orders.storeId, storeId), isNotNull(orders.paymentMethod))
+        );
         return results.map((r) => r.paymentMethod).filter((m) => m !== null && m !== "");
       }
       async getDistinctTags() {
@@ -2907,12 +2936,27 @@ var init_storage = __esm({
         );
         return result.rows.map((r) => r.tag).filter((t) => t !== null && t !== "");
       }
+      /**
+       * Boot-time seed: every connected store should have a default
+       * prepaid_payment_methods mapping so the order-create webhook
+       * can auto-confirm prepaid orders out of the box. Iterates over
+       * `stores` so newly-connected tenants pick up the default on
+       * the next server boot without manual intervention.
+       */
       async seedDefaultSettings() {
-        const existing = await this.getAppSetting("prepaid_payment_methods");
-        if (!existing) {
-          console.log("Seeding default prepaid_payment_methods setting...");
-          await this.setAppSetting("prepaid_payment_methods", ["PayU", "Cards, UPI, NB by PayU India"]);
-          console.log("Default prepaid_payment_methods seeded successfully");
+        const allStores = await db.select({ id: stores.id }).from(stores);
+        if (allStores.length === 0) {
+          return;
+        }
+        for (const s of allStores) {
+          const existing = await this.getAppSetting(s.id, "prepaid_payment_methods");
+          if (!existing) {
+            console.log(`Seeding prepaid_payment_methods for store ${s.id}\u2026`);
+            await this.setAppSetting(s.id, "prepaid_payment_methods", [
+              "PayU",
+              "Cards, UPI, NB by PayU India"
+            ]);
+          }
         }
       }
       async createAbandonedCheckout(data) {
@@ -6924,7 +6968,7 @@ async function handleOrderCreated(req, res) {
     const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
     const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
     const tags = shopifyOrder.tags ? shopifyOrder.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0) : [];
-    const prepaidMethods = await storage.getPrepaidPaymentMethods();
+    const prepaidMethods = await storage.getPrepaidPaymentMethods(store.id);
     const prepaidMethodsLower = prepaidMethods.map((m) => m.toLowerCase());
     const isPrepaid = shopifyOrder.financial_status === "paid" && prepaidMethodsLower.includes(normalizedPaymentMethod.toLowerCase());
     const autoCallStatus = isPrepaid ? "Confirmed" : void 0;
@@ -9697,7 +9741,9 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/orders/payment-methods", async (req, res) => {
     try {
-      const methods = await storage.getDistinctPaymentMethods();
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const methods = await storage.getDistinctPaymentMethods(scope.storeId);
       res.json({ methods });
     } catch (error) {
       console.error("Error fetching payment methods:", error);
@@ -9706,7 +9752,9 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/settings/payments", async (req, res) => {
     try {
-      const methods = await storage.getPrepaidPaymentMethods();
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const methods = await storage.getPrepaidPaymentMethods(scope.storeId);
       res.json({ prepaidMethods: methods });
     } catch (error) {
       console.error("Error fetching payment settings:", error);
@@ -9715,11 +9763,17 @@ async function registerRoutes(app2) {
   });
   app2.post("/api/settings/payments", async (req, res) => {
     try {
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
       const { prepaidMethods } = req.body;
       if (!Array.isArray(prepaidMethods)) {
         return res.status(400).json({ error: "prepaidMethods must be an array" });
       }
-      const setting = await storage.setAppSetting("prepaid_payment_methods", prepaidMethods);
+      const setting = await storage.setAppSetting(
+        scope.storeId,
+        "prepaid_payment_methods",
+        prepaidMethods
+      );
       res.json({
         success: true,
         prepaidMethods: setting.value,
@@ -9731,23 +9785,20 @@ async function registerRoutes(app2) {
     }
   });
   app2.post("/api/admin/sync-products", async (req, res) => {
-    try {
-      const credentials = await storage.getShopifyCredentials();
-      if (!credentials) {
-        return res.status(400).json({ error: "Shopify credentials not configured" });
-      }
-      const decryptedClientId = decrypt(credentials.apiKey);
-      const decryptedClientSecret = decrypt(credentials.apiSecret);
-      const { ShopifyClient: ShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const client = new ShopifyClient2({
-        storeUrl: credentials.storeUrl,
-        apiKey: decryptedClientId,
-        apiSecret: decryptedClientSecret,
-        useClientCredentials: true
+    const syncStoreId = req.storeScope?.storeId;
+    if (!syncStoreId) {
+      return res.status(400).json({
+        error: "Active store scope is required to sync products."
       });
-      console.log("Starting Shopify product sync...");
+    }
+    try {
+      const { getShopifyClient: getShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const client = await getShopifyClient2(syncStoreId);
+      console.log(`[product-sync] storeId=${syncStoreId} starting`);
       const shopifyProducts = await client.fetchAllProducts();
-      console.log(`Fetched ${shopifyProducts.length} products from Shopify`);
+      console.log(
+        `[product-sync] storeId=${syncStoreId} fetched ${shopifyProducts.length} products`
+      );
       let syncedCount = 0;
       let variantCount = 0;
       for (const product of shopifyProducts) {
@@ -9762,6 +9813,11 @@ async function registerRoutes(app2) {
             }
           }
           await storage.upsertProduct({
+            // storeId stamped so the composite UNIQUE
+            // (storeId, shopifyVariantId) namespaces correctly —
+            // two stores sharing supplier variant ids each get
+            // their own row instead of clobbering each other.
+            storeId: syncStoreId,
             shopifyProductId: String(product.id),
             shopifyVariantId: String(variant.id),
             title: product.title,
@@ -9774,7 +9830,9 @@ async function registerRoutes(app2) {
         }
         syncedCount++;
       }
-      console.log(`Synced ${syncedCount} products with ${variantCount} variants`);
+      console.log(
+        `[product-sync] storeId=${syncStoreId} done: ${syncedCount} products / ${variantCount} variants`
+      );
       res.json({
         success: true,
         message: `Synced ${syncedCount} products with ${variantCount} variants`,
@@ -9782,17 +9840,28 @@ async function registerRoutes(app2) {
         variantsCount: variantCount
       });
     } catch (error) {
-      console.error("Error syncing products:", error);
+      const message = error?.message ?? String(error);
+      console.error(
+        `[product-sync] storeId=${syncStoreId} FAILED: ${message}`
+      );
+      if (/Payment Required \(402\)/i.test(message) || /\b402\b/.test(message)) {
+        return res.status(402).json({
+          error: "Shopify subscription paused for this store",
+          details: "Shopify returned 402 Payment Required. Reactivate the store's subscription in the Shopify admin and retry."
+        });
+      }
       res.status(500).json({
         error: "Failed to sync products",
-        details: error.message
+        details: message
       });
     }
   });
   app2.get("/api/admin/products/status", async (req, res) => {
     try {
-      const count2 = await storage.getProductCount();
-      const lastSync = await storage.getLastProductSync();
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const count2 = await storage.getProductCount(scope.storeId);
+      const lastSync = await storage.getLastProductSync(scope.storeId);
       res.json({
         productCount: count2,
         lastSyncedAt: lastSync

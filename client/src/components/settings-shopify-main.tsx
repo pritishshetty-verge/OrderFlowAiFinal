@@ -791,9 +791,15 @@ interface ProductSyncResult {
 
 export function ProductCatalogSync() {
   const { toast } = useToast();
+  // Active store from the switcher. Without this in the queryKey
+  // React Query would serve the previous tenant's product count
+  // cache when the admin flips stores; without the `enabled` gate
+  // the very first tick after login fires before scope resolves.
+  const { activeStoreId, activeStore } = useActiveStore();
 
   const { data: syncStatus, isLoading } = useQuery<ProductSyncStatus>({
-    queryKey: ["/api/admin/products/status"],
+    queryKey: ["/api/admin/products/status", activeStoreId],
+    enabled: !!activeStoreId,
     refetchInterval: 60000,
   });
 
@@ -803,16 +809,29 @@ export function ProductCatalogSync() {
       return response.json() as Promise<ProductSyncResult>;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/products/status"] });
+      // Invalidate this store's products/status entry specifically.
+      // The mutation's apiRequest already attaches X-Active-Store-Id,
+      // so the backend syncs the right tenant.
+      queryClient.invalidateQueries({
+        queryKey: ["/api/admin/products/status", activeStoreId],
+      });
       toast({
         title: "Products Synced",
         description: `Successfully synced ${data.productsCount} products with ${data.variantsCount} variants from Shopify.`,
       });
     },
     onError: (error: Error) => {
+      // Surface 402 specifically — the backend translates Shopify's
+      // "Payment Required" into a clearer error so we can tell the
+      // admin which store's subscription needs to be reactivated
+      // instead of the generic "Failed to sync products."
+      const message = error.message || "Failed to sync products from Shopify.";
+      const isPaused = /402/.test(message) || /subscription paused/i.test(message);
       toast({
-        title: "Sync Failed",
-        description: error.message || "Failed to sync products from Shopify.",
+        title: isPaused ? "Shopify subscription paused" : "Sync Failed",
+        description: isPaused
+          ? `Reactivate ${activeStore?.storeName ?? "this store"}'s subscription in Shopify and retry.`
+          : message,
         variant: "destructive",
       });
     },
@@ -904,16 +923,23 @@ interface PaymentSettingsResponse {
 
 export function PaymentMappingSettings() {
   const { toast } = useToast();
+  // Active store key on both queries below so flipping tenants
+  // re-fetches each store's own prepaid-mapping config instead of
+  // serving the previously-loaded store's list. Gated with
+  // `enabled` so we never request without a resolved scope.
+  const { activeStoreId } = useActiveStore();
   const [prepaidMethods, setPrepaidMethods] = useState<string[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
   const initializedRef = useRef(false);
 
   const { data: detectedData, isLoading: isLoadingDetected } = useQuery<PaymentMethodsResponse>({
-    queryKey: ["/api/orders/payment-methods"],
+    queryKey: ["/api/orders/payment-methods", activeStoreId],
+    enabled: !!activeStoreId,
   });
 
   const { data: savedData, isLoading: isLoadingSaved } = useQuery<PaymentSettingsResponse>({
-    queryKey: ["/api/settings/payments"],
+    queryKey: ["/api/settings/payments", activeStoreId],
+    enabled: !!activeStoreId,
   });
 
   // Initialize from saved data using useEffect

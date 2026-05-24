@@ -196,7 +196,9 @@ export async function handleOrderCreated(req: Request, res: Response) {
     // Auto-confirm prepaid orders - they skip the call verification queue
     // CRITICAL FIX: Only auto-confirm if payment method is in the prepaid list
     // This prevents COD orders that become "paid" after delivery from being auto-confirmed
-    const prepaidMethods = await storage.getPrepaidPaymentMethods();
+    // Per-store: pull this store's prepaid_payment_methods setting
+    // so auto-confirmation thresholds don't leak across tenants.
+    const prepaidMethods = await storage.getPrepaidPaymentMethods(store.id);
     const prepaidMethodsLower = prepaidMethods.map(m => m.toLowerCase());
     const isPrepaid = shopifyOrder.financial_status === "paid" && 
                       prepaidMethodsLower.includes(normalizedPaymentMethod.toLowerCase());
