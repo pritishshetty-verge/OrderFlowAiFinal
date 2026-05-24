@@ -56,7 +56,18 @@ function transformOrder(order: BackendOrderWithUser): Order {
     shippingPincode: order.shippingPincode || undefined,
     items: order.itemsSummary || "",
     total: parseFloat(order.totalPrice),
-    paymentMethod: order.paymentMethod === "cod" ? "cod" : "prepaid",
+    // Case-insensitive substring match so legacy gateway strings
+    // ("Cash on Delivery (COD)", "COD", "cash_on_delivery", and any
+    // future merchant-configured gateway containing "cod") all map
+    // to the COD badge — not just the exact normalised "cod" value
+    // the order-create webhook writes. Strict equality was the
+    // smoking gun behind "unassigned COD orders display as Prepaid
+    // after assignment" (audit Bug #2): historical-sync rows store
+    // raw Shopify gateway names that never matched. Same predicate
+    // shape the backend filter uses (LOWER(payment_method) LIKE '%cod%').
+    paymentMethod: (order.paymentMethod ?? "").toLowerCase().includes("cod")
+      ? "cod"
+      : "prepaid",
     financialStatus: order.financialStatus,
     status: order.status as Order["status"],
     callStatus: order.callStatus as Order["callStatus"],

@@ -179,10 +179,19 @@ export async function handleOrderCreated(req: Request, res: Response) {
       }
     }
 
-    // Detect and normalize payment method
+    // Detect and normalize payment method.
+    //
+    // The previous two-string exact-match missed every merchant
+    // gateway whose name wasn't exactly "Cash on Delivery" /
+    // "Cash on Delivery (COD)" — e.g. "COD", "cash_on_delivery",
+    // "Razorpay - COD". Those landed in the DB as raw gateway
+    // strings, then the frontend's strict-equality transform
+    // mis-labeled them as Prepaid (audit Bug #2). Case-insensitive
+    // substring match catches every COD variant a merchant might
+    // configure. Same predicate shape the backend filter + the
+    // frontend transform now use, so all three layers agree.
     const rawPaymentMethod = shopifyOrder.payment_gateway_names?.[0] || "Unknown";
-    const isCOD = rawPaymentMethod.toLowerCase() === "cash on delivery (cod)" || 
-                  rawPaymentMethod.toLowerCase() === "cash on delivery";
+    const isCOD = rawPaymentMethod.toLowerCase().includes("cod");
     const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
 
     // Extract shipment status and tracking info from fulfillments

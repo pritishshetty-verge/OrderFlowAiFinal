@@ -7023,7 +7023,7 @@ async function handleOrderCreated(req, res) {
       }
     }
     const rawPaymentMethod = shopifyOrder.payment_gateway_names?.[0] || "Unknown";
-    const isCOD = rawPaymentMethod.toLowerCase() === "cash on delivery (cod)" || rawPaymentMethod.toLowerCase() === "cash on delivery";
+    const isCOD = rawPaymentMethod.toLowerCase().includes("cod");
     const normalizedPaymentMethod = isCOD ? "cod" : rawPaymentMethod;
     const fulfillmentTracking = extractFulfillmentTracking(shopifyOrder.fulfillments);
     const tags = shopifyOrder.tags ? shopifyOrder.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0) : [];

@@ -24,6 +24,8 @@ import { useState, useMemo, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { BulkActionsBar } from "@/components/bulk-actions-bar";
+import { BulkAssignDialog } from "@/components/bulk-assign-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   Select,
@@ -154,6 +156,10 @@ export function OrdersTable({
 }: OrdersTableProps) {
   const { toast } = useToast();
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  // Bulk assignment surface — opens the dialog with whichever rows
+  // are currently in the selection set. The dialog itself drives
+  // the mutation; this state just gates its visibility.
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [callingOrderId, setCallingOrderId] = useState<string | null>(null);
   const [cooldownOrders, setCooldownOrders] = useState<Set<string>>(new Set());
   
@@ -721,6 +727,31 @@ export function OrdersTable({
           </div>
         </div>
       </div>
+
+      {/* Bulk actions bar — Linear/Stripe-style floating contextual
+          surface. Visible only when selectedOrders.size > 0. Admin
+          and manager roles get bulk-assign; plain agents don't see
+          the bar at all because the per-row checkboxes are
+          themselves admin/manager affordances (an agent shouldn't
+          be re-assigning to themselves). */}
+      {userRole !== "agent" && (
+        <BulkActionsBar
+          count={selectedOrders.size}
+          onAssign={() => setBulkAssignOpen(true)}
+          onClear={() => setSelectedOrders(new Set())}
+        />
+      )}
+
+      {/* Dialog hosts the agent picker + note + the actual mutation.
+          On success it invalidates ["/api/orders"] internally — we
+          just clear the selection Set on the parent side so the
+          bar disappears and the checked rows un-tick. */}
+      <BulkAssignDialog
+        open={bulkAssignOpen}
+        onOpenChange={setBulkAssignOpen}
+        orderIds={Array.from(selectedOrders)}
+        onSuccess={() => setSelectedOrders(new Set())}
+      />
     </div>
   );
 }

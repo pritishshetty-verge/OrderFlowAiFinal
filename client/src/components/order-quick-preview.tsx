@@ -647,7 +647,17 @@ export function OrderQuickPreview({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[500px] sm:w-[600px] p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4 flex flex-col">
+      {/* hideCloseButton suppresses Radix's auto-injected close X
+          in the top-right corner. The slide-over has its own
+          custom close button inside the header row (right next to
+          the pagination + tabs), which is the intentional
+          dismissal affordance. Pre-fix, both Xs rendered and
+          overlapped at top-4 right-4 — that's the "double X"
+          screenshot. */}
+      <SheetContent
+        hideCloseButton
+        className="w-[500px] sm:w-[600px] p-0 my-4 mr-4 rounded-l-xl shadow-2xl !h-auto max-h-[calc(100vh-2rem)] inset-y-auto top-4 bottom-4 flex flex-col"
+      >
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
           {/* STICKY HEADER */}
           <div className="flex-shrink-0 border-b bg-card rounded-tl-xl">

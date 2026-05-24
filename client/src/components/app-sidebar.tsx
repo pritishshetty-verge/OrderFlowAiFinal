@@ -82,19 +82,33 @@ const adminMenuItems: MenuItem[] = [
         icon: List,
       },
       {
+        // Coming-soon: page exists but the underlying fulfillment
+        // pipeline (Shiprocket / Delhivery courier-selection +
+        // bulk-ship flow) isn't merchant-ready for multi-store yet.
+        // Renders the "Soon" badge and is non-clickable until the
+        // backend ships. See app-sidebar's sub-item renderer.
         title: "Fulfil",
         url: "/fulfil",
         icon: PackageCheck,
+        comingSoon: true,
       },
       {
+        // Coming-soon: NDR webhooks land cleanly, but the
+        // reattempt-action + bulk-rescue UX is still in design.
         title: "NDR Management",
         url: "/ndr",
         icon: AlertTriangle,
+        comingSoon: true,
       },
       {
+        // Coming-soon: call logging exists per-order, but the
+        // global call-logs surface needs the per-store IVR
+        // credential flow (Risk #2 / Phase 6 in the multi-store
+        // audit) before it can be enabled for tenants.
         title: "Call Logs",
         url: "/call-logs",
         icon: Phone,
+        comingSoon: true,
       },
       {
         // Abandoned Carts is operational territory for admins and
