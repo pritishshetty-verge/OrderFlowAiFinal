@@ -437,7 +437,7 @@ export interface IStorage {
   getDistinctPaymentMethods(): Promise<string[]>;
 
   // Dashboard Metrics
-  getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date): Promise<{
+  getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date, storeId?: string): Promise<{
     assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
@@ -449,7 +449,7 @@ export interface IStorage {
   }>;
 
   // Hourly Activity for Dashboard Chart
-  getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date, timezone?: string): Promise<Array<{
+  getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date, timezone?: string, storeId?: string): Promise<Array<{
     hour: string;
     confirmed: number;
     cancelled: number;
@@ -2864,7 +2864,26 @@ export class DbStorage implements IStorage {
   // DASHBOARD METRICS
   // ============================================================================
 
-  async getDashboardMetrics(userId?: string, startDate?: Date, endDate?: Date): Promise<{
+  /**
+   * Dashboard metrics aggregator. Each sub-query below filters by
+   * `storeId` (when supplied) so the Overview tab shows numbers
+   * scoped to the active store rather than cross-tenant totals.
+   * The `storeId` arrives from the route handler via
+   * `req.storeScope?.storeId`, which is resolved upstream by the
+   * `attachStoreScope` middleware reading the `X-Active-Store-Id`
+   * header attached by the frontend's apiRequest interceptor.
+   *
+   * Why storeId is optional in the signature: the (rare) callers
+   * without a request context (e.g. background metric jobs we may
+   * add later) can omit it and get cross-store numbers. The route
+   * handler always supplies it today.
+   */
+  async getDashboardMetrics(
+    userId?: string,
+    startDate?: Date,
+    endDate?: Date,
+    storeId?: string,
+  ): Promise<{
     assignedOrders: number;
     confirmedOrders: number;
     cancelledOrders: number;
@@ -2894,6 +2913,9 @@ export class DbStorage implements IStorage {
     
     // Part A: Get order IDs assigned to agent within date range
     const assignmentConditions = [];
+    if (storeId) {
+      assignmentConditions.push(eq(orderAssignments.storeId, storeId));
+    }
     if (userId) {
       assignmentConditions.push(eq(orderAssignments.userId, userId));
     }
@@ -2903,18 +2925,19 @@ export class DbStorage implements IStorage {
     if (endDate) {
       assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
-    
+
     const assignedOrderIds = await db
       .selectDistinct({ orderId: orderAssignments.orderId })
       .from(orderAssignments)
       .where(assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined);
-    
+
     // Part B: Get order IDs confirmed by agent within date range (even if assigned earlier)
     const confirmedInRangeConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+    if (storeId) confirmedInRangeConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) confirmedInRangeConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
-    
+
     const confirmedOrderIds = await db
       .selectDistinct({ orderId: orderStatusHistory.orderId })
       .from(orderStatusHistory)
@@ -2930,6 +2953,7 @@ export class DbStorage implements IStorage {
 
     // Query 2: Confirmed Orders (LOWER(status) = 'confirmed' in history within date range)
     const confirmedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+    if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedConditions.push(buildAttributionCondition(userId));
@@ -2942,6 +2966,7 @@ export class DbStorage implements IStorage {
 
     // Query 3: Cancelled Orders (LOWER(status) = 'cancelled' in history within date range)
     const cancelledConditions = [sql`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
+    if (storeId) cancelledConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) cancelledConditions.push(buildAttributionCondition(userId));
@@ -2955,6 +2980,7 @@ export class DbStorage implements IStorage {
     // Query 4: Fulfilled/Shipped Orders (HISTORY ONLY - fulfilled_at column is empty)
     // Uses LOWER(status) IN ('shipped', 'fulfilled') from order_status_history
     const shippedConditions = [sql`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
+    if (storeId) shippedConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) shippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) shippedConditions.push(buildAttributionCondition(userId));
@@ -2967,6 +2993,7 @@ export class DbStorage implements IStorage {
 
     // Query 5: Delivered Orders (history-only, orders table doesn't have delivered_at)
     const deliveredConditions = [sql`LOWER(${orderStatusHistory.status}) = 'delivered'`];
+    if (storeId) deliveredConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) deliveredConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) deliveredConditions.push(buildAttributionCondition(userId));
@@ -2986,6 +3013,7 @@ export class DbStorage implements IStorage {
     // New: status IN ('rto_initiated', 'rto_delivered')
     const rtoStatusCondition = sql`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
     const rtoConditions = [rtoStatusCondition];
+    if (storeId) rtoConditions.push(eq(orders.storeId, storeId));
     if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
     if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
     if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
@@ -2998,6 +3026,7 @@ export class DbStorage implements IStorage {
 
     // Query 7: Follow-up Queue (current call_status = 'Follow Up', live state)
     const followUpConditions = [eq(orders.callStatus, 'Follow Up')];
+    if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
     if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
 
     const [followUpResult] = await db
@@ -3011,6 +3040,7 @@ export class DbStorage implements IStorage {
       sql`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
       sql`${orderStatusHistory.changedBy} IS NULL`,
     ];
+    if (storeId) aiConfirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
 
@@ -3035,7 +3065,18 @@ export class DbStorage implements IStorage {
   // HOURLY ACTIVITY CHART
   // ============================================================================
 
-  async getHourlyActivity(userId?: string, startDate?: Date, endDate?: Date, timezone?: string): Promise<Array<{
+  /**
+   * Hourly activity chart aggregator. Scoped to the active store
+   * via the optional storeId so multi-store dashboards don't blend
+   * confirmations across tenants.
+   */
+  async getHourlyActivity(
+    userId?: string,
+    startDate?: Date,
+    endDate?: Date,
+    timezone?: string,
+    storeId?: string,
+  ): Promise<Array<{
     hour: string;
     confirmed: number;
     cancelled: number;
@@ -3056,10 +3097,11 @@ export class DbStorage implements IStorage {
     // Get individual records with timestamps for JavaScript timezone conversion
     // This avoids complex SQL timezone math that breaks with parameterized queries
     const conditions = [];
+    if (storeId) conditions.push(eq(orderStatusHistory.storeId, storeId));
     if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) conditions.push(buildAttributionCondition(userId));
-    
+
     // Only count confirmed, cancelled, and follow_up status changes
     conditions.push(sql`LOWER(${orderStatusHistory.status}) IN ('confirmed', 'cancelled', 'follow up', 'follow_up')`);
 

@@ -14,6 +14,8 @@ import {
   Legend,
 } from "recharts";
 import { startOfDay, endOfDay, format, setHours, setMinutes, setSeconds } from "date-fns";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 
 interface HourlyData {
   hour: string;
@@ -45,19 +47,34 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   const effectiveStartDate = dateRange.startDate ?? startOfDay(new Date());
   const effectiveEndDate = dateRange.endDate ?? endOfDay(new Date());
 
+  // Active store key + apiRequest interceptor combine to scope the
+  // chart to the current tenant. Switching stores forces a refetch
+  // through the queryKey dependency.
+  const { activeStoreId } = useActiveStore();
+
   const { data: hourlyData, isLoading } = useQuery<HourlyActivityResponse>({
-    queryKey: ["/api/dashboard/hourly-activity", metricsUserId, effectiveStartDate.toISOString(), effectiveEndDate.toISOString(), userTimezone],
+    queryKey: [
+      "/api/dashboard/hourly-activity",
+      activeStoreId,
+      metricsUserId,
+      effectiveStartDate.toISOString(),
+      effectiveEndDate.toISOString(),
+      userTimezone,
+    ],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricsUserId) params.append("userId", metricsUserId);
       params.append("startDate", effectiveStartDate.toISOString());
       params.append("endDate", effectiveEndDate.toISOString());
       params.append("timezone", userTimezone);
-      
-      const res = await fetch(`/api/dashboard/hourly-activity?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch hourly activity");
+
+      const res = await apiRequest(
+        "GET",
+        `/api/dashboard/hourly-activity?${params.toString()}`,
+      );
       return res.json();
     },
+    enabled: !!activeStoreId,
     refetchInterval: 60000,
   });
 

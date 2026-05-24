@@ -29,6 +29,7 @@ import { Download, Play, Pause, Phone, ChevronLeft, ChevronRight, Sparkles, Load
 import { format, formatDistanceToNow } from "date-fns";
 import { useState, useRef } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 import { useToast } from "@/hooks/use-toast";
 
 interface CallWithDetails {
@@ -279,8 +280,10 @@ export default function CallLogsPage() {
   const userRole = localStorage.getItem("userRole") || "agent";
   const isAdmin = userRole === "admin";
 
+  const { activeStoreId } = useActiveStore();
+
   const { data, isLoading } = useQuery<CallsResponse>({
-    queryKey: ['/api/admin/calls', page, limit, userId, userRole],
+    queryKey: ['/api/admin/calls', activeStoreId, page, limit, userId, userRole],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: page.toString(),
@@ -288,10 +291,10 @@ export default function CallLogsPage() {
         userId,
         userRole,
       });
-      const response = await fetch(`/api/admin/calls?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch calls");
+      const response = await apiRequest("GET", `/api/admin/calls?${params}`);
       return response.json();
     },
+    enabled: !!activeStoreId,
   });
 
   if (isLoading) {

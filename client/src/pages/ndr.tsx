@@ -38,6 +38,8 @@ import { queryClient } from "@/lib/queryClient";
 import { PageLayout } from "@/components/page-layout";
 import { NdrFilter } from "@/components/ndr-filter";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 
 interface NdrEvent {
   id: string;
@@ -350,31 +352,34 @@ export default function NDRPage() {
   
   // SECURITY: Get current user ID from localStorage for authorization
   const localStorageUserId = localStorage.getItem("userId");
+  // Phase 5: NDR + OFD lists are scoped to the active store via the
+  // X-Active-Store-Id header that apiRequest attaches. The queryKey
+  // carries activeStoreId so switching stores triggers a clean
+  // refetch instead of serving stale per-store cache entries.
+  const { activeStoreId } = useActiveStore();
 
   // Fetch NDR events - pass currentUserId for authorization
   const { data: ndrData, isLoading: ndrLoading } = useQuery<{ events: NdrEvent[]; total: number }>({
-    queryKey: ["/api/ndr", { currentUserId: localStorageUserId }],
+    queryKey: ["/api/ndr", activeStoreId, { currentUserId: localStorageUserId }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (localStorageUserId) params.set("currentUserId", localStorageUserId);
-      const response = await fetch(`/api/ndr?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch NDR events");
+      const response = await apiRequest("GET", `/api/ndr?${params}`);
       return response.json();
     },
-    enabled: !!localStorageUserId,
+    enabled: !!localStorageUserId && !!activeStoreId,
   });
 
   // Fetch OFD orders - pass currentUserId for authorization
   const { data: ofdData, isLoading: ofdLoading } = useQuery<{ orders: OfdOrder[]; total: number }>({
-    queryKey: ["/api/orders/ofd", { currentUserId: localStorageUserId }],
+    queryKey: ["/api/orders/ofd", activeStoreId, { currentUserId: localStorageUserId }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (localStorageUserId) params.set("currentUserId", localStorageUserId);
-      const response = await fetch(`/api/orders/ofd?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch OFD orders");
+      const response = await apiRequest("GET", `/api/orders/ofd?${params}`);
       return response.json();
     },
-    enabled: !!localStorageUserId,
+    enabled: !!localStorageUserId && !!activeStoreId,
   });
 
   const ndrEvents = ndrData?.events || [];

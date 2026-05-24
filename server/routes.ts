@@ -1001,7 +1001,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
       
-      const metrics = await storage.getDashboardMetrics(userId, parsedStartDate, parsedEndDate);
+      // Active store scope from the storeScope middleware. The
+      // /api/dashboard/metrics dashboard had been blending numbers
+      // across tenants until this commit — getDashboardMetrics now
+      // filters each sub-query by storeId so the Overview cards
+      // show only the active store's data.
+      const metrics = await storage.getDashboardMetrics(
+        userId,
+        parsedStartDate,
+        parsedEndDate,
+        req.storeScope?.storeId,
+      );
       res.json(metrics);
     } catch (error) {
       console.error("Error fetching dashboard metrics:", error);
@@ -1028,7 +1038,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
       
-      const data = await storage.getHourlyActivity(userId, parsedStartDate, parsedEndDate, timezone);
+      const data = await storage.getHourlyActivity(
+        userId,
+        parsedStartDate,
+        parsedEndDate,
+        timezone,
+        req.storeScope?.storeId,
+      );
       res.json({ data });
     } catch (error) {
       console.error("Error fetching hourly activity:", error);
@@ -7026,39 +7042,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? new Date(endDate) 
         : null;
       
-      // Build query conditions
+      // Build query conditions. Phase 5: scope by active store so
+      // RTO Insights doesn't bleed between tenants. Date filter and
+      // store filter compose into a single WHERE; both are
+      // collapsed into the same conditions array so the SELECT
+      // always carries the active-store predicate when present.
       const conditions = [];
+      if (req.storeScope?.storeId) {
+        conditions.push(eq(orders.storeId, req.storeScope.storeId));
+      }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte(orders.createdAt, startDateParsed));
       }
       if (endDateParsed && !isNaN(endDateParsed.getTime())) {
         conditions.push(lte(orders.createdAt, endDateParsed));
       }
-      
-      // Query orders (with optional date filter)
+
+      // Query orders (with optional date + store filter)
+      const baseSelect = db.select({
+        id: orders.id,
+        status: orders.status,
+        shipmentStatus: orders.shipmentStatus,
+        totalPrice: orders.totalPrice,
+        shippingCity: orders.shippingCity,
+        courierName: orders.courierName,
+        assignedTo: orders.assignedTo,
+        createdAt: orders.createdAt,
+        fulfillmentStatus: orders.fulfillmentStatus,
+      }).from(orders);
       const allOrders = conditions.length > 0
-        ? await db.select({
-            id: orders.id,
-            status: orders.status,
-            shipmentStatus: orders.shipmentStatus,
-            totalPrice: orders.totalPrice,
-            shippingCity: orders.shippingCity,
-            courierName: orders.courierName,
-            assignedTo: orders.assignedTo,
-            createdAt: orders.createdAt,
-            fulfillmentStatus: orders.fulfillmentStatus,
-          }).from(orders).where(and(...conditions))
-        : await db.select({
-            id: orders.id,
-            status: orders.status,
-            shipmentStatus: orders.shipmentStatus,
-            totalPrice: orders.totalPrice,
-            shippingCity: orders.shippingCity,
-            courierName: orders.courierName,
-            assignedTo: orders.assignedTo,
-            createdAt: orders.createdAt,
-            fulfillmentStatus: orders.fulfillmentStatus,
-          }).from(orders);
+        ? await baseSelect.where(and(...conditions))
+        : await baseSelect;
 
       // Filter for shipped orders (has tracking info or fulfillment status indicates shipped)
       const shippedOrders = allOrders.filter(o => 

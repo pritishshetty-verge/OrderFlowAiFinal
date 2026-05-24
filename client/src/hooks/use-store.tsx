@@ -158,10 +158,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         credentials: "include",
       });
       if (!res.ok) {
-        // 401 means the session expired between the AuthProvider's
-        // bootstrap and this fetch. Return an empty list rather than
-        // throwing — the user is about to be bounced to /login anyway.
-        if (res.status === 401) return { stores: [] };
+        // Audit Bug #3 fix: a transient 401 here (session-row
+        // momentarily un-deserialisable between two parallel
+        // requests, or a cold-start race against connect-pg-simple)
+        // USED to short-circuit to `{ stores: [] }`. That made the
+        // reconciliation effect below conclude "user has no
+        // memberships" and wipe localStorage, which on the next
+        // successful fetch caused the active store to fall back to
+        // the oldest stores row.
+        //
+        // The correct behaviour is to surface the failure as a
+        // query error. TanStack Query keeps `data` as `undefined`
+        // when the queryFn throws, and the reconciliation bails
+        // out on `data === undefined`, so localStorage stays
+        // intact. AuthProvider catches its own 401 on
+        // /api/auth/me and handles the redirect to /login if the
+        // session is genuinely dead — the two responsibilities
+        // are now cleanly separated.
         throw new Error(
           `Failed to load stores: ${res.status} ${res.statusText}`,
         );
@@ -170,6 +183,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 min — store membership rarely changes mid-session
+    // One transient retry covers the session-row race on cold
+    // start without paying multiple round-trips when the session
+    // really has expired (AuthProvider will redirect to /login
+    // before any further retries matter).
+    retry: 1,
   });
 
   const stores = useMemo(() => data?.stores ?? [], [data]);

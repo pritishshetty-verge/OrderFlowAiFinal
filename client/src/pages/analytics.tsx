@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 import { PageLayout } from "@/components/page-layout";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { DateRangeSelector } from "@/components/date-range-selector";
@@ -64,7 +66,12 @@ export default function AnalyticsPage() {
   const userEmail = localStorage.getItem("userEmail");
   const userId = localStorage.getItem("userId");
   const userRole = localStorage.getItem("userRole");
-  
+  // Active store from the sidebar switcher. Every analytics query
+  // below keys on this so switching tenants instantly re-fetches
+  // the dashboard with the right scope (instead of serving the
+  // previous store's cached numbers until the 30s tick).
+  const { activeStoreId } = useActiveStore();
+
   const [dateRange, setDateRange] = useState<{ startDate: Date | null; endDate: Date | null }>(() => ({
     startDate: null,
     endDate: null,
@@ -78,31 +85,42 @@ export default function AnalyticsPage() {
   const metricsUserId = userRole === "agent" ? userId : undefined;
   
   const { data: metrics, isLoading: metricsLoading } = useQuery<DashboardMetrics>({
-    queryKey: ["/api/dashboard/metrics", metricsUserId, dateRange.startDate?.toISOString() || "all", dateRange.endDate?.toISOString() || "all"],
+    queryKey: [
+      "/api/dashboard/metrics",
+      activeStoreId,
+      metricsUserId,
+      dateRange.startDate?.toISOString() || "all",
+      dateRange.endDate?.toISOString() || "all",
+    ],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (metricsUserId) params.append("userId", metricsUserId);
       if (dateRange.startDate) params.append("startDate", dateRange.startDate.toISOString());
       if (dateRange.endDate) params.append("endDate", dateRange.endDate.toISOString());
-      
-      const res = await fetch(`/api/dashboard/metrics?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch metrics");
+
+      const res = await apiRequest("GET", `/api/dashboard/metrics?${params.toString()}`);
       return res.json();
     },
+    enabled: !!activeStoreId,
     refetchInterval: 30000,
   });
 
   const { data: rtoInsights, isLoading: rtoLoading } = useQuery<RTOInsights>({
-    queryKey: ["/api/analytics/rto-insights", dateRange.startDate?.toISOString() || "all", dateRange.endDate?.toISOString() || "all"],
+    queryKey: [
+      "/api/analytics/rto-insights",
+      activeStoreId,
+      dateRange.startDate?.toISOString() || "all",
+      dateRange.endDate?.toISOString() || "all",
+    ],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (dateRange.startDate) params.append("startDate", dateRange.startDate.toISOString());
       if (dateRange.endDate) params.append("endDate", dateRange.endDate.toISOString());
-      
-      const res = await fetch(`/api/analytics/rto-insights?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch RTO insights");
+
+      const res = await apiRequest("GET", `/api/analytics/rto-insights?${params.toString()}`);
       return res.json();
     },
+    enabled: !!activeStoreId,
     refetchInterval: 60000,
   });
 

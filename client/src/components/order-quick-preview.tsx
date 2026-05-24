@@ -20,6 +20,7 @@ import type { Order } from "@/components/orders-table";
 import type { Order as BackendOrder, OrderItem as BackendOrderItem, OrderStatusHistory } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 import { useToast } from "@/hooks/use-toast";
 import { CancelOrderModal } from "@/components/cancel-order-modal";
 import { FollowupOrderModal } from "@/components/followup-order-modal";
@@ -115,7 +116,11 @@ export function OrderQuickPreview({
 
   // SECURITY: Get userId for server-side authorization on all order queries
   const authUserId = localStorage.getItem("userId");
-  
+  // Active store scope: gates every preview query so the modal
+  // never shows another tenant's order even if the parent passes
+  // an id from a stale list.
+  const { activeStoreId } = useActiveStore();
+
   // SAFE GLOBAL VIEW: Build query params with scope for read permissions
   // When scope='global', agents can read any order's details (but not modify)
   const buildParams = () => {
@@ -124,48 +129,58 @@ export function OrderQuickPreview({
     if (scope) params.append("scope", scope);
     return params;
   };
-  
+
+  const previewEnabled = open && !!order?.id && !!authUserId && !!activeStoreId;
+
   const { data: orderDetails, isLoading: orderLoading } = useQuery<BackendOrder>({
-    queryKey: ["/api/orders", order?.id, authUserId, scope],
+    queryKey: ["/api/orders", activeStoreId, order?.id, authUserId, scope],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/${order?.id}?${buildParams().toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch order");
+      const res = await apiRequest(
+        "GET",
+        `/api/orders/${order?.id}?${buildParams().toString()}`,
+      );
       return res.json();
     },
-    enabled: open && !!order?.id && !!authUserId,
+    enabled: previewEnabled,
   });
 
   const { data: orderItems = [], isLoading: itemsLoading } = useQuery<BackendOrderItem[]>({
-    queryKey: ["/api/orders", order?.id, "items", authUserId, scope],
+    queryKey: ["/api/orders", activeStoreId, order?.id, "items", authUserId, scope],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/${order?.id}/items?${buildParams().toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch items");
+      const res = await apiRequest(
+        "GET",
+        `/api/orders/${order?.id}/items?${buildParams().toString()}`,
+      );
       return res.json();
     },
-    enabled: open && !!order?.id && !!authUserId,
+    enabled: previewEnabled,
   });
 
   const { data: orderHistory = [], isLoading: historyLoading } = useQuery<OrderStatusHistory[]>({
-    queryKey: ["/api/orders", order?.id, "history", authUserId, scope],
+    queryKey: ["/api/orders", activeStoreId, order?.id, "history", authUserId, scope],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/${order?.id}/history?${buildParams().toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch history");
+      const res = await apiRequest(
+        "GET",
+        `/api/orders/${order?.id}/history?${buildParams().toString()}`,
+      );
       return res.json();
     },
-    enabled: open && !!order?.id && !!authUserId,
+    enabled: previewEnabled,
   });
 
   const { data: shipmentData, isLoading: shipmentLoading } = useQuery<{
     shipment?: any;
     ndrEvents?: any[];
   }>({
-    queryKey: ["/api/orders", order?.id, "shipment", authUserId, scope],
+    queryKey: ["/api/orders", activeStoreId, order?.id, "shipment", authUserId, scope],
     queryFn: async () => {
-      const res = await fetch(`/api/orders/${order?.id}/shipment?${buildParams().toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch shipment");
+      const res = await apiRequest(
+        "GET",
+        `/api/orders/${order?.id}/shipment?${buildParams().toString()}`,
+      );
       return res.json();
     },
-    enabled: open && !!order?.id && !!authUserId,
+    enabled: previewEnabled,
   });
 
   // Unified tracking abstraction: prioritize Shiprocket data, fallback to order tracking fields

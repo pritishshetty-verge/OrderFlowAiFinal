@@ -28,6 +28,8 @@ import { FulfilFilter } from "@/components/fulfil-filter";
 import { PaymentBadge } from "@/components/payment-badge";
 import type { Order as BackendOrder } from "@shared/schema";
 import type { Order } from "@/components/orders-table";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
 
 export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
@@ -43,27 +45,30 @@ export default function FulfilPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
+  // Active store scope keys the query so a switch invalidates
+  // the Confirmed-orders cache instantly. apiRequest threads
+  // X-Active-Store-Id so the backend filters server-side.
+  const { activeStoreId } = useActiveStore();
+
   // Fetch confirmed orders with server-side filtering
   const { data: ordersResponse, isLoading } = useQuery<{ orders: BackendOrder[]; total: number }>({
-    queryKey: ["/api/orders", "Confirmed", currentPage, pageSize, agentFilter],
+    queryKey: ["/api/orders", activeStoreId, "Confirmed", currentPage, pageSize, agentFilter],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: pageSize.toString(),
         callStatus: "Confirmed",
       });
-      
+
       // Add agent filter if set
       if (agentFilter !== "all") {
         params.append("agentId", agentFilter);
       }
-      
-      const res = await fetch(`/api/orders?${params.toString()}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch orders");
+
+      const res = await apiRequest("GET", `/api/orders?${params.toString()}`);
       return res.json();
     },
+    enabled: !!activeStoreId,
   });
 
   // Fetch users for agent filter

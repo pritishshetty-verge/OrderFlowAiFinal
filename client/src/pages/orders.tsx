@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useScope } from "@/contexts/scope-context";
+import { useActiveStore } from "@/hooks/use-store";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Extended backend order type with joined user data from API
@@ -170,6 +171,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
 
   // Get current user's ID from localStorage for agent filtering
   const localStorageUserId = localStorage.getItem("userId");
+  // Active store from the sidebar switcher. Every order-related
+  // query below is keyed by this id and gated by `enabled` so we
+  // never fetch with no scope; the helper in lib/queryClient.ts
+  // already attaches X-Active-Store-Id when present.
+  const { activeStoreId } = useActiveStore();
   
   // Map activeTab to API callStatus parameter for server-side filtering
   const tabToCallStatus: Record<string, string | undefined> = {
@@ -192,7 +198,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // - Write protection still blocks agents from modifying unassigned orders (403 Forbidden)
   // - Resume action does NOT send scope=global, so it correctly shows only assigned orders
   const { data: ordersResponse, isLoading: ordersLoading } = useQuery<OrdersApiResponse>({
-    queryKey: ["/api/orders", currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
+    queryKey: ["/api/orders", activeStoreId, currentPage, pageSize, activeTab, callStatusFilter, agentFilter, tagFilter, isAdmin, localStorageUserId, isGlobalView, debouncedSearch, sortOrder],
     queryFn: async () => {
       const params = new URLSearchParams({
         page: currentPage.toString(),
@@ -244,15 +250,21 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         params.append("tag", tagFilter);
       }
       
-      const res = await fetch(`/api/orders?${params.toString()}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch orders");
+      // apiRequest routes through lib/queryClient's interceptor,
+      // which attaches X-Active-Store-Id from localStorage. The
+      // server's storeScope middleware reads that header and the
+      // /api/orders route filters by it — without this, the
+      // backend's fallback ("first user_stores row") served OLB's
+      // data regardless of which store the switcher pointed at.
+      const res = await apiRequest("GET", `/api/orders?${params.toString()}`);
       return res.json();
     },
-    // SECURITY: Don't run query until we have user context loaded
-    // This prevents race condition where query runs before localStorageUserId is available
-    enabled: !!localStorageUserId,
+    // SECURITY: Don't run query until we have both user context AND
+    // an active store resolved. The activeStoreId gate prevents a
+    // first-tick fetch with no scope (which would 401-or-fallback
+    // depending on the request stage) from racing the StoreProvider's
+    // boot. Once both are settled, all reads carry the right header.
+    enabled: !!localStorageUserId && !!activeStoreId,
     refetchInterval: 30000, // Auto-refresh every 30 seconds for real-time webhook updates
   });
   
@@ -267,7 +279,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   }
   
   const { data: agentStats } = useQuery<AgentStats>({
-    queryKey: ["/api/orders/agent-stats", localStorageUserId],
+    queryKey: ["/api/orders/agent-stats", activeStoreId, localStorageUserId],
     queryFn: async () => {
       // Fetch orders with agent's userId to get their personal stats
       // SECURITY: Include currentUserId for server-side authorization
@@ -277,15 +289,12 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         assignedTo: localStorageUserId || "",
         currentUserId: localStorageUserId || "",
       });
-      
-      const res = await fetch(`/api/orders?${params.toString()}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch agent stats");
+
+      const res = await apiRequest("GET", `/api/orders?${params.toString()}`);
       const data = await res.json();
       return data.stats;
     },
-    enabled: !isAdmin && !!localStorageUserId, // Only for agents
+    enabled: !isAdmin && !!localStorageUserId && !!activeStoreId, // Only for agents, only with store scope
     refetchInterval: 30000,
   });
 
@@ -363,15 +372,18 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // Fetch the specific order when needed (handles pagination case)
   // SECURITY: Pass currentUserId for server-side authorization
   const { data: fetchedOrder } = useQuery<BackendOrderWithUser>({
-    queryKey: ["/api/orders", urlOrderId, localStorageUserId],
+    queryKey: ["/api/orders", activeStoreId, urlOrderId, localStorageUserId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (localStorageUserId) params.append("currentUserId", localStorageUserId);
-      const res = await fetch(`/api/orders/${urlOrderId}?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch order");
+      const res = await apiRequest("GET", `/api/orders/${urlOrderId}?${params.toString()}`);
       return res.json();
     },
-    enabled: !!urlOrderId && !!localStorageUserId && !baseFilteredOrders.find((o: Order) => o.id === urlOrderId),
+    enabled:
+      !!urlOrderId &&
+      !!localStorageUserId &&
+      !!activeStoreId &&
+      !baseFilteredOrders.find((o: Order) => o.id === urlOrderId),
   });
 
   // Open sidebar when we have the order (either from current page or fetched)
@@ -504,14 +516,15 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         params.append("tag", tagFilter);
       }
 
-      // Trigger download
-      const response = await fetch(`/api/orders/export?${params.toString()}`, {
-        credentials: "include",
-      });
-
-      if (!response.ok) {
-        throw new Error("Export failed");
-      }
+      // Trigger download. apiRequest returns the raw Response so we
+      // can pull the Content-Disposition header and blob() the body
+      // directly — same shape as the previous raw fetch, just with
+      // the X-Active-Store-Id header attached so the server scopes
+      // the CSV to whichever store the switcher is on.
+      const response = await apiRequest(
+        "GET",
+        `/api/orders/export?${params.toString()}`,
+      );
 
       // Get filename from Content-Disposition header or generate one
       const contentDisposition = response.headers.get("Content-Disposition");

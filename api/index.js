@@ -2703,7 +2703,21 @@ var init_storage = __esm({
       // ============================================================================
       // DASHBOARD METRICS
       // ============================================================================
-      async getDashboardMetrics(userId, startDate, endDate) {
+      /**
+       * Dashboard metrics aggregator. Each sub-query below filters by
+       * `storeId` (when supplied) so the Overview tab shows numbers
+       * scoped to the active store rather than cross-tenant totals.
+       * The `storeId` arrives from the route handler via
+       * `req.storeScope?.storeId`, which is resolved upstream by the
+       * `attachStoreScope` middleware reading the `X-Active-Store-Id`
+       * header attached by the frontend's apiRequest interceptor.
+       *
+       * Why storeId is optional in the signature: the (rare) callers
+       * without a request context (e.g. background metric jobs we may
+       * add later) can omit it and get cross-store numbers. The route
+       * handler always supplies it today.
+       */
+      async getDashboardMetrics(userId, startDate, endDate, storeId) {
         const buildAttributionCondition = (userIdParam) => or(
           eq(orderStatusHistory.changedBy, userIdParam),
           and(
@@ -2712,6 +2726,9 @@ var init_storage = __esm({
           )
         );
         const assignmentConditions = [];
+        if (storeId) {
+          assignmentConditions.push(eq(orderAssignments.storeId, storeId));
+        }
         if (userId) {
           assignmentConditions.push(eq(orderAssignments.userId, userId));
         }
@@ -2723,6 +2740,7 @@ var init_storage = __esm({
         }
         const assignedOrderIds = await db.selectDistinct({ orderId: orderAssignments.orderId }).from(orderAssignments).where(assignmentConditions.length > 0 ? and(...assignmentConditions) : void 0);
         const confirmedInRangeConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+        if (storeId) confirmedInRangeConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedInRangeConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
@@ -2733,38 +2751,45 @@ var init_storage = __esm({
         ]);
         const assignedCount = allAssignedIds.size;
         const confirmedConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+        if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedConditions.push(buildAttributionCondition(userId));
         const [confirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedConditions));
         const cancelledConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
+        if (storeId) cancelledConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) cancelledConditions.push(buildAttributionCondition(userId));
         const [cancelledResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...cancelledConditions));
         const shippedConditions = [sql2`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
+        if (storeId) shippedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) shippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) shippedConditions.push(buildAttributionCondition(userId));
         const [shippedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...shippedConditions));
         const deliveredConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'delivered'`];
+        if (storeId) deliveredConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) deliveredConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) deliveredConditions.push(buildAttributionCondition(userId));
         const [deliveredResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...deliveredConditions));
         const rtoStatusCondition = sql2`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
         const rtoConditions = [rtoStatusCondition];
+        if (storeId) rtoConditions.push(eq(orders.storeId, storeId));
         if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
         if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
         if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
         const [rtoResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...rtoConditions));
         const followUpConditions = [eq(orders.callStatus, "Follow Up")];
+        if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
         if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
         const [followUpResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...followUpConditions));
         const aiConfirmedConditions = [
           sql2`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
           sql2`${orderStatusHistory.changedBy} IS NULL`
         ];
+        if (storeId) aiConfirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         const [aiConfirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).where(and(...aiConfirmedConditions));
@@ -2782,7 +2807,12 @@ var init_storage = __esm({
       // ============================================================================
       // HOURLY ACTIVITY CHART
       // ============================================================================
-      async getHourlyActivity(userId, startDate, endDate, timezone) {
+      /**
+       * Hourly activity chart aggregator. Scoped to the active store
+       * via the optional storeId so multi-store dashboards don't blend
+       * confirmations across tenants.
+       */
+      async getHourlyActivity(userId, startDate, endDate, timezone, storeId) {
         const safeTimezone = timezone || "UTC";
         const buildAttributionCondition = (userIdParam) => or(
           eq(orderStatusHistory.changedBy, userIdParam),
@@ -2792,6 +2822,7 @@ var init_storage = __esm({
           )
         );
         const conditions = [];
+        if (storeId) conditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) conditions.push(buildAttributionCondition(userId));
@@ -8481,7 +8512,12 @@ async function registerRoutes(app2) {
         const d = new Date(endDate);
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
-      const metrics = await storage.getDashboardMetrics(userId, parsedStartDate, parsedEndDate);
+      const metrics = await storage.getDashboardMetrics(
+        userId,
+        parsedStartDate,
+        parsedEndDate,
+        req.storeScope?.storeId
+      );
       res.json(metrics);
     } catch (error) {
       console.error("Error fetching dashboard metrics:", error);
@@ -8503,7 +8539,13 @@ async function registerRoutes(app2) {
         const d = new Date(endDate);
         if (!Number.isNaN(d.getTime())) parsedEndDate = d;
       }
-      const data = await storage.getHourlyActivity(userId, parsedStartDate, parsedEndDate, timezone);
+      const data = await storage.getHourlyActivity(
+        userId,
+        parsedStartDate,
+        parsedEndDate,
+        timezone,
+        req.storeScope?.storeId
+      );
       res.json({ data });
     } catch (error) {
       console.error("Error fetching hourly activity:", error);
@@ -12729,23 +12771,16 @@ async function registerRoutes(app2) {
       const startDateParsed = startDate && typeof startDate === "string" && startDate.trim() ? new Date(startDate) : null;
       const endDateParsed = endDate && typeof endDate === "string" && endDate.trim() ? new Date(endDate) : null;
       const conditions = [];
+      if (req.storeScope?.storeId) {
+        conditions.push(eq5(orders.storeId, req.storeScope.storeId));
+      }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte2(orders.createdAt, startDateParsed));
       }
       if (endDateParsed && !isNaN(endDateParsed.getTime())) {
         conditions.push(lte2(orders.createdAt, endDateParsed));
       }
-      const allOrders = conditions.length > 0 ? await db.select({
-        id: orders.id,
-        status: orders.status,
-        shipmentStatus: orders.shipmentStatus,
-        totalPrice: orders.totalPrice,
-        shippingCity: orders.shippingCity,
-        courierName: orders.courierName,
-        assignedTo: orders.assignedTo,
-        createdAt: orders.createdAt,
-        fulfillmentStatus: orders.fulfillmentStatus
-      }).from(orders).where(and4(...conditions)) : await db.select({
+      const baseSelect = db.select({
         id: orders.id,
         status: orders.status,
         shipmentStatus: orders.shipmentStatus,
@@ -12756,6 +12791,7 @@ async function registerRoutes(app2) {
         createdAt: orders.createdAt,
         fulfillmentStatus: orders.fulfillmentStatus
       }).from(orders);
+      const allOrders = conditions.length > 0 ? await baseSelect.where(and4(...conditions)) : await baseSelect;
       const shippedOrders = allOrders.filter(
         (o) => o.fulfillmentStatus === "fulfilled" || o.fulfillmentStatus === "partial" || o.shipmentStatus
       );
