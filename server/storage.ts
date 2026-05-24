@@ -187,7 +187,7 @@ export interface IStorage {
   // Customers
   getCustomer(id: string): Promise<Customer | undefined>;
   getCustomerByShopifyId(shopifyId: string, storeId: string): Promise<Customer | undefined>;
-  getCustomersByShopifyIds(shopifyIds: string[]): Promise<Customer[]>;
+  getCustomersByShopifyIds(shopifyIds: string[], storeId: string): Promise<Customer[]>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   createCustomersBatch(customers: InsertCustomer[]): Promise<Customer[]>;
   updateCustomer(id: string, data: Partial<InsertCustomer>): Promise<Customer | undefined>;
@@ -196,8 +196,8 @@ export interface IStorage {
   getOrder(id: string): Promise<Order | undefined>;
   getOrderByShopifyId(shopifyId: string, storeId: string): Promise<Order | undefined>;
   getOrderByShopifyOrderNumber(orderNumber: string, storeId?: string): Promise<Order | undefined>;
-  getExistingShopifyOrderIds(shopifyIds: string[]): Promise<Set<string>>;
-  getMaxShopifyOrderId(): Promise<string | null>;
+  getExistingShopifyOrderIds(shopifyIds: string[], storeId: string): Promise<Set<string>>;
+  getMaxShopifyOrderId(storeId: string): Promise<string | null>;
   createOrder(order: InsertOrder): Promise<Order>;
   createOrdersBatch(orders: InsertOrder[]): Promise<Order[]>;
   updateOrder(id: string, data: Partial<InsertOrder>): Promise<Order | undefined>;
@@ -673,12 +673,27 @@ export class DbStorage implements IStorage {
     return customer;
   }
 
-  async getCustomersByShopifyIds(shopifyIds: string[]): Promise<Customer[]> {
+  /**
+   * Batched customer lookup, scoped to a single store. Used by the
+   * historical sync's batch path. Phase 5 (Risk #4): without the
+   * storeId predicate, a shopify_customer_id that exists in two
+   * tenants would resolve ambiguously and the later sync would
+   * link a new order to the wrong tenant's customer row.
+   */
+  async getCustomersByShopifyIds(
+    shopifyIds: string[],
+    storeId: string,
+  ): Promise<Customer[]> {
     if (shopifyIds.length === 0) return [];
     return await db
       .select()
       .from(customers)
-      .where(inArray(customers.shopifyCustomerId, shopifyIds));
+      .where(
+        and(
+          eq(customers.storeId, storeId),
+          inArray(customers.shopifyCustomerId, shopifyIds),
+        ),
+      );
   }
 
   async createCustomersBatch(
@@ -776,14 +791,28 @@ export class DbStorage implements IStorage {
     return await db.insert(orders).values(insertOrders).returning();
   }
 
+  /**
+   * Returns the subset of `shopifyIds` already present in this store's
+   * orders. Required storeId — Phase 5 (Risk #4) made
+   * `shopify_order_id` no longer globally unique, so the historical
+   * sync needs per-store dedup or it will treat a coincidentally-
+   * matching id from another tenant as "already imported" and skip
+   * a real new order.
+   */
   async getExistingShopifyOrderIds(
     shopifyIds: string[],
+    storeId: string,
   ): Promise<Set<string>> {
     if (shopifyIds.length === 0) return new Set();
     const rows = await db
       .select({ shopifyOrderId: orders.shopifyOrderId })
       .from(orders)
-      .where(inArray(orders.shopifyOrderId, shopifyIds));
+      .where(
+        and(
+          eq(orders.storeId, storeId),
+          inArray(orders.shopifyOrderId, shopifyIds),
+        ),
+      );
     return new Set(
       rows
         .map((r) => r.shopifyOrderId)
@@ -791,12 +820,29 @@ export class DbStorage implements IStorage {
     );
   }
 
-  async getMaxShopifyOrderId(): Promise<string | null> {
+  /**
+   * Highest `shopify_order_id` already imported FOR THIS STORE. The
+   * historical sync uses this as the `since_id` cursor so each store
+   * resumes from its own high-water mark.
+   *
+   * Why required storeId: without it, calling Sync on a brand-new
+   * store with zero local rows returned the OLDER store's max id
+   * (Shopify ids are globally-monotonic integers shared across all
+   * tenants), making the next Shopify page fetch ask for orders
+   * `id > <very-large-number>`. The new store's orders all sit below
+   * that bound and the sync returned 0 orders — the bug the user
+   * reported on Glow & Me. Per-store cursor closes the trap.
+   */
+  async getMaxShopifyOrderId(storeId: string): Promise<string | null> {
     // Shopify order IDs are numeric but stored as text. Cast to BIGINT for
     // proper ordering (otherwise lexicographic comparison picks "999…" over
     // "1000…").
     const rows = await db.execute<{ max_id: string | null }>(
-      sql`SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id FROM ${orders}`,
+      sql`
+        SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id
+        FROM ${orders}
+        WHERE ${orders.storeId} = ${storeId}
+      `,
     );
     const first = (rows as any).rows?.[0] ?? (rows as any)[0];
     return first?.max_id ?? null;

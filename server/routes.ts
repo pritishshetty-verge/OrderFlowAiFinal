@@ -1927,18 +1927,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Cursor — when `since_id` is set, Shopify returns orders with
       // `id > sinceId` in ascending id order.
       //
-      // Smart resume: if the caller didn't pass an explicit cursor, pick
-      // up from the highest shopify_order_id already in our DB. This means
-      // clicking "Sync Now" after a prior partial import continues from
-      // where we stopped, instead of re-walking history from "0".
+      // ────────────────────────────────────────────────────────────────
+      // Active store scope — resolved upstream by the storeScope
+      // middleware from the X-Active-Store-Id header. The entire
+      // historical sync below is now per-store: cursor, dedup,
+      // inserts. This is the fix for "Sync Orders for Glow & Me
+      // returns 0 orders" — previously the cursor `since_id`
+      // came from the unscoped max(shopify_order_id), which was
+      // always OLB's max, so Shopify's REST returned nothing for
+      // any newer store.
+      //
+      // We require a resolved store scope here. Without it (e.g.
+      // a stale session with no membership) we'd fall back to the
+      // legacy global cursor + insert into NULL storeId, which is
+      // what created the bug in the first place. 400 instead.
+      // ────────────────────────────────────────────────────────────────
+      const syncStoreId = req.storeScope?.storeId;
+      if (!syncStoreId) {
+        return res.status(400).json({
+          error: "Active store scope is required to run a historical sync.",
+        });
+      }
+
+      // Smart resume: if the caller didn't pass an explicit cursor,
+      // pick up from the highest shopify_order_id already in our DB
+      // FOR THIS STORE. After Phase 5 (Risk #4) shopify_order_id is
+      // no longer globally unique — order ids are globally-monotone
+      // integers, so the legacy unscoped max was always OLB's, which
+      // made every new store's sync start past Shopify's latest id
+      // and return 0 orders. Per-store cursor closes the trap.
       let sinceId: string;
       if (req.body.sinceId) {
         sinceId = String(req.body.sinceId);
       } else {
-        const maxLocal = await storage.getMaxShopifyOrderId();
+        const maxLocal = await storage.getMaxShopifyOrderId(syncStoreId);
         sinceId = maxLocal ?? "0";
       }
-      console.log(`[shopify-sync] starting with sinceId=${sinceId}`);
+      console.log(
+        `[shopify-sync] storeId=${syncStoreId} starting with sinceId=${sinceId}`,
+      );
 
       // Safety cap: 500 pages × 250 = 125,000 orders. Prevents a runaway
       // loop if Shopify ever returns a full page indefinitely.
@@ -1950,11 +1977,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // not the env-var fallback. updateShopifyClient() is still
       // invoked alongside so the legacy `shopifyClient` singleton
       // stays warm for any non-store-aware caller in the same boot.
-      const { getShopifyClient, getLegacyStoreShopifyClient, updateShopifyClient } = await import("./shopify");
-      const syncStoreId = req.storeScope?.storeId;
-      const client = syncStoreId
-        ? await getShopifyClient(syncStoreId)
-        : await getLegacyStoreShopifyClient();
+      const { getShopifyClient, updateShopifyClient } = await import("./shopify");
+      const client = await getShopifyClient(syncStoreId);
       void updateShopifyClient().catch(() => {});
 
       // ────────────────────────────────────────────────────────────────
@@ -2013,6 +2037,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       // Build an order insert record from a Shopify order payload.
+      // The closure captures `syncStoreId` so every order produced
+      // here is stamped with the resolved active store — required
+      // so downstream reads (Pare, dashboards, NDR) see the row
+      // under the right tenant.
       const buildOrderInsert = (
         shopifyOrder: any,
         customerId: string | null,
@@ -2021,6 +2049,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           shopifyOrder.fulfillments,
         );
         return {
+          storeId: syncStoreId,
           shopifyOrderId: shopifyOrder.id.toString(),
           shopifyOrderNumber:
             shopifyOrder.order_number?.toString() || shopifyOrder.name,
@@ -2106,8 +2135,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 250 sequential SELECTs. Anything already imported is skipped.
         // ──────────────────────────────────────────────────────────────
         const pageShopifyIds = orders.map((o: any) => o.id.toString());
+        // Dedup scoped to syncStoreId — required after Phase 5
+        // composite-uniques, otherwise an id that happens to exist
+        // in another tenant's history gets falsely flagged as
+        // "already imported" and the real new order is skipped.
         const alreadyImported =
-          await storage.getExistingShopifyOrderIds(pageShopifyIds);
+          await storage.getExistingShopifyOrderIds(pageShopifyIds, syncStoreId);
         const newOrders = orders.filter(
           (o: any) => !alreadyImported.has(o.id.toString()),
         );
@@ -2128,7 +2161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ),
             );
             const existingCustomers =
-              await storage.getCustomersByShopifyIds(uniqueShopifyCustomerIds);
+              await storage.getCustomersByShopifyIds(uniqueShopifyCustomerIds, syncStoreId);
             const customerByShopifyId = new Map(
               existingCustomers.map((c) => [c.shopifyCustomerId!, c] as const),
             );
@@ -2141,6 +2174,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (seenCustomer.has(sid) || customerByShopifyId.has(sid)) continue;
               seenCustomer.add(sid);
               customersToInsert.push({
+                // Stamp storeId on every bulk-inserted row so the
+                // composite UNIQUE (storeId, shopifyCustomerId)
+                // namespaces correctly and downstream tenant reads
+                // see the customer under the right scope.
+                storeId: syncStoreId,
                 shopifyCustomerId: sid,
                 email: o.customer.email || o.email || null,
                 firstName: o.customer.first_name || null,
@@ -2183,6 +2221,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (!dbOrder) continue;
               for (const item of o.line_items || []) {
                 orderItemInserts.push({
+                  // Denormalised storeId on order_items keeps catalog
+                  // and analytics queries from having to join orders
+                  // just to filter by tenant.
+                  storeId: syncStoreId,
                   orderId: dbOrder.id,
                   shopifyLineItemId: item.id?.toString() || null,
                   shopifyProductId: item.product_id?.toString() || null,
@@ -2207,6 +2249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Order status history: one INSERT for the whole page.
             // ──────────────────────────────────────────────────────────
             const statusInserts = insertedOrders.map((o) => ({
+              storeId: syncStoreId,
               orderId: o.id,
               status: o.status,
               previousStatus: null,
@@ -2252,20 +2295,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             for (const shopifyOrder of newOrders) {
               try {
                 let customer;
-                if (shopifyOrder.customer && syncStoreId) {
-                  // Phase 5 (Risk #4): the customer lookup is now
-                  // scoped to the active store so two stores with
-                  // overlapping Shopify customer ids don't clobber
-                  // each other. The bulk sync runs in a request
-                  // context, so syncStoreId is always defined here
-                  // (the syncStoreId guard above kicks in only for
-                  // the no-scope edge case — left explicit for
-                  // clarity).
+                if (shopifyOrder.customer) {
+                  // Customer lookup scoped to the active store —
+                  // syncStoreId is guaranteed defined by the early
+                  // 400 at the top of this route, so two stores
+                  // with overlapping Shopify customer ids don't
+                  // clobber each other on lookup.
                   const existingCustomer = await storage.getCustomerByShopifyId(
                     shopifyOrder.customer.id.toString(),
                     syncStoreId,
                   );
                   const customerData = {
+                    // Per-order fallback path needs the same storeId
+                    // stamping as the bulk path above — without it
+                    // the customer row would land with storeId=NULL
+                    // and never appear in any tenant's dashboard.
+                    storeId: syncStoreId,
                     shopifyCustomerId: shopifyOrder.customer.id.toString(),
                     email:
                       shopifyOrder.customer.email || shopifyOrder.email || null,
@@ -2290,6 +2335,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
                 if (shopifyOrder.line_items?.length > 0) {
                   const items = shopifyOrder.line_items.map((item: any) => ({
+                    storeId: syncStoreId,
                     orderId: order.id,
                     shopifyLineItemId: item.id?.toString() || null,
                     shopifyProductId: item.product_id?.toString() || null,
@@ -2308,6 +2354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 }
 
                 await storage.createOrderStatus({
+                  storeId: syncStoreId,
                   orderId: order.id,
                   status: orderData.status,
                   previousStatus: null,

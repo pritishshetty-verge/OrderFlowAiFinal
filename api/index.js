@@ -1396,9 +1396,21 @@ var init_storage = __esm({
         const [customer] = await db.insert(customers).values(insertCustomer).returning();
         return customer;
       }
-      async getCustomersByShopifyIds(shopifyIds) {
+      /**
+       * Batched customer lookup, scoped to a single store. Used by the
+       * historical sync's batch path. Phase 5 (Risk #4): without the
+       * storeId predicate, a shopify_customer_id that exists in two
+       * tenants would resolve ambiguously and the later sync would
+       * link a new order to the wrong tenant's customer row.
+       */
+      async getCustomersByShopifyIds(shopifyIds, storeId) {
         if (shopifyIds.length === 0) return [];
-        return await db.select().from(customers).where(inArray(customers.shopifyCustomerId, shopifyIds));
+        return await db.select().from(customers).where(
+          and(
+            eq(customers.storeId, storeId),
+            inArray(customers.shopifyCustomerId, shopifyIds)
+          )
+        );
       }
       async createCustomersBatch(insertCustomers) {
         if (insertCustomers.length === 0) return [];
@@ -1460,16 +1472,46 @@ var init_storage = __esm({
         if (insertOrders.length === 0) return [];
         return await db.insert(orders).values(insertOrders).returning();
       }
-      async getExistingShopifyOrderIds(shopifyIds) {
+      /**
+       * Returns the subset of `shopifyIds` already present in this store's
+       * orders. Required storeId — Phase 5 (Risk #4) made
+       * `shopify_order_id` no longer globally unique, so the historical
+       * sync needs per-store dedup or it will treat a coincidentally-
+       * matching id from another tenant as "already imported" and skip
+       * a real new order.
+       */
+      async getExistingShopifyOrderIds(shopifyIds, storeId) {
         if (shopifyIds.length === 0) return /* @__PURE__ */ new Set();
-        const rows = await db.select({ shopifyOrderId: orders.shopifyOrderId }).from(orders).where(inArray(orders.shopifyOrderId, shopifyIds));
+        const rows = await db.select({ shopifyOrderId: orders.shopifyOrderId }).from(orders).where(
+          and(
+            eq(orders.storeId, storeId),
+            inArray(orders.shopifyOrderId, shopifyIds)
+          )
+        );
         return new Set(
           rows.map((r) => r.shopifyOrderId).filter((v) => v !== null && v !== void 0)
         );
       }
-      async getMaxShopifyOrderId() {
+      /**
+       * Highest `shopify_order_id` already imported FOR THIS STORE. The
+       * historical sync uses this as the `since_id` cursor so each store
+       * resumes from its own high-water mark.
+       *
+       * Why required storeId: without it, calling Sync on a brand-new
+       * store with zero local rows returned the OLDER store's max id
+       * (Shopify ids are globally-monotonic integers shared across all
+       * tenants), making the next Shopify page fetch ask for orders
+       * `id > <very-large-number>`. The new store's orders all sit below
+       * that bound and the sync returned 0 orders — the bug the user
+       * reported on Glow & Me. Per-store cursor closes the trap.
+       */
+      async getMaxShopifyOrderId(storeId) {
         const rows = await db.execute(
-          sql2`SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id FROM ${orders}`
+          sql2`
+        SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id
+        FROM ${orders}
+        WHERE ${orders.storeId} = ${storeId}
+      `
         );
         const first = rows.rows?.[0] ?? rows[0];
         return first?.max_id ?? null;
@@ -9068,18 +9110,25 @@ async function registerRoutes(app2) {
     try {
       const rawLimit = parseInt(String(req.body.limit ?? 250), 10);
       const pageLimit = Math.min(Math.max(isNaN(rawLimit) ? 250 : rawLimit, 1), 250);
+      const syncStoreId = req.storeScope?.storeId;
+      if (!syncStoreId) {
+        return res.status(400).json({
+          error: "Active store scope is required to run a historical sync."
+        });
+      }
       let sinceId;
       if (req.body.sinceId) {
         sinceId = String(req.body.sinceId);
       } else {
-        const maxLocal = await storage.getMaxShopifyOrderId();
+        const maxLocal = await storage.getMaxShopifyOrderId(syncStoreId);
         sinceId = maxLocal ?? "0";
       }
-      console.log(`[shopify-sync] starting with sinceId=${sinceId}`);
+      console.log(
+        `[shopify-sync] storeId=${syncStoreId} starting with sinceId=${sinceId}`
+      );
       const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
-      const { getShopifyClient: getShopifyClient2, getLegacyStoreShopifyClient: getLegacyStoreShopifyClient2, updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const syncStoreId = req.storeScope?.storeId;
-      const client = syncStoreId ? await getShopifyClient2(syncStoreId) : await getLegacyStoreShopifyClient2();
+      const { getShopifyClient: getShopifyClient2, updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const client = await getShopifyClient2(syncStoreId);
       void updateShopifyClient2().catch(() => {
       });
       const allProducts = await storage.listProducts();
@@ -9123,6 +9172,7 @@ async function registerRoutes(app2) {
           shopifyOrder.fulfillments
         );
         return {
+          storeId: syncStoreId,
           shopifyOrderId: shopifyOrder.id.toString(),
           shopifyOrderNumber: shopifyOrder.order_number?.toString() || shopifyOrder.name,
           customerId,
@@ -9190,7 +9240,7 @@ async function registerRoutes(app2) {
         );
         if (orders2.length === 0) break;
         const pageShopifyIds = orders2.map((o) => o.id.toString());
-        const alreadyImported = await storage.getExistingShopifyOrderIds(pageShopifyIds);
+        const alreadyImported = await storage.getExistingShopifyOrderIds(pageShopifyIds, syncStoreId);
         const newOrders = orders2.filter(
           (o) => !alreadyImported.has(o.id.toString())
         );
@@ -9204,7 +9254,7 @@ async function registerRoutes(app2) {
                 newOrders.filter((o) => o.customer?.id).map((o) => o.customer.id.toString())
               )
             );
-            const existingCustomers = await storage.getCustomersByShopifyIds(uniqueShopifyCustomerIds);
+            const existingCustomers = await storage.getCustomersByShopifyIds(uniqueShopifyCustomerIds, syncStoreId);
             const customerByShopifyId = new Map(
               existingCustomers.map((c) => [c.shopifyCustomerId, c])
             );
@@ -9216,6 +9266,11 @@ async function registerRoutes(app2) {
               if (seenCustomer.has(sid) || customerByShopifyId.has(sid)) continue;
               seenCustomer.add(sid);
               customersToInsert.push({
+                // Stamp storeId on every bulk-inserted row so the
+                // composite UNIQUE (storeId, shopifyCustomerId)
+                // namespaces correctly and downstream tenant reads
+                // see the customer under the right scope.
+                storeId: syncStoreId,
                 shopifyCustomerId: sid,
                 email: o.customer.email || o.email || null,
                 firstName: o.customer.first_name || null,
@@ -9245,6 +9300,10 @@ async function registerRoutes(app2) {
               if (!dbOrder) continue;
               for (const item of o.line_items || []) {
                 orderItemInserts.push({
+                  // Denormalised storeId on order_items keeps catalog
+                  // and analytics queries from having to join orders
+                  // just to filter by tenant.
+                  storeId: syncStoreId,
                   orderId: dbOrder.id,
                   shopifyLineItemId: item.id?.toString() || null,
                   shopifyProductId: item.product_id?.toString() || null,
@@ -9263,6 +9322,7 @@ async function registerRoutes(app2) {
               await storage.createOrderItems(orderItemInserts);
             }
             const statusInserts = insertedOrders.map((o) => ({
+              storeId: syncStoreId,
               orderId: o.id,
               status: o.status,
               previousStatus: null,
@@ -9297,12 +9357,17 @@ async function registerRoutes(app2) {
             for (const shopifyOrder of newOrders) {
               try {
                 let customer;
-                if (shopifyOrder.customer && syncStoreId) {
+                if (shopifyOrder.customer) {
                   const existingCustomer = await storage.getCustomerByShopifyId(
                     shopifyOrder.customer.id.toString(),
                     syncStoreId
                   );
                   const customerData = {
+                    // Per-order fallback path needs the same storeId
+                    // stamping as the bulk path above — without it
+                    // the customer row would land with storeId=NULL
+                    // and never appear in any tenant's dashboard.
+                    storeId: syncStoreId,
                     shopifyCustomerId: shopifyOrder.customer.id.toString(),
                     email: shopifyOrder.customer.email || shopifyOrder.email || null,
                     firstName: shopifyOrder.customer.first_name || null,
@@ -9321,6 +9386,7 @@ async function registerRoutes(app2) {
                 const order = await storage.createOrder(orderData);
                 if (shopifyOrder.line_items?.length > 0) {
                   const items = shopifyOrder.line_items.map((item) => ({
+                    storeId: syncStoreId,
                     orderId: order.id,
                     shopifyLineItemId: item.id?.toString() || null,
                     shopifyProductId: item.product_id?.toString() || null,
@@ -9336,6 +9402,7 @@ async function registerRoutes(app2) {
                   await storage.createOrderItems(items);
                 }
                 await storage.createOrderStatus({
+                  storeId: syncStoreId,
                   orderId: order.id,
                   status: orderData.status,
                   previousStatus: null,
