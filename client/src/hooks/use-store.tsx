@@ -12,31 +12,40 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 
 // ─────────────────────────────────────────────────────────────────────
-// useActiveStore — Phase 3 multi-store frontend state.
+// useActiveStore — multi-store frontend state.
 //
-// On mount (or whenever the signed-in user changes), the provider
-// fetches GET /api/stores/me — the list of stores the current user
-// has access to. The active store id is persisted to localStorage
-// under `activeStoreId`, which the fetch interceptor in
-// client/src/lib/queryClient.ts reads on every outbound request.
+// Source of truth flow:
 //
-// Resolution order for the initial active store:
+//   AuthProvider     /api/auth/me        →  user, isAuthenticated
+//   StoreProvider    /api/stores/me      →  stores[]
+//   localStorage     "activeStoreId"     →  cross-reload persistence
+//   In-memory state  activeStoreId       →  React-reactive copy
+//
+// The provider's job is to keep all four aligned through the boot
+// sequence and across user-driven switches without ever flashing the
+// wrong store. The original implementation had a race condition: the
+// reconciliation effect would fire during the loading window between
+// `isAuthenticated = true` and `/api/stores/me` resolving, see
+// `stores = []`, and incorrectly clear the persisted id — falling
+// back to `stores[0]` once the fetch settled (i.e. always the legacy
+// OLB store). That's been replaced with a deterministic single-shot
+// reconciliation, gated on the query actually having returned data
+// (`data !== undefined`), with a `useRef` guard so subsequent
+// invalidations don't clobber user-driven switches.
+//
+// Resolution order on first arrival:
 //   1. localStorage.activeStoreId — but only if it still appears in
 //      the user's list (defends against a stale entry pointing at a
 //      store the admin has since revoked).
-//   2. The first store in the list, returned in createdAt order so
-//      the legacy store stays the default for existing users.
-//   3. null — when the user genuinely has no stores attached. The
-//      switcher renders an empty/blocked state in that case.
+//   2. The first store in the list (oldest createdAt) so existing
+//      single-store deployments default to the legacy store.
+//   3. null — when the user genuinely has zero memberships.
 //
-// Switching stores does two things:
-//   a. Writes the new id into localStorage and updates the React
-//      state so consumers re-render with the right name.
-//   b. Calls queryClient.invalidateQueries({ queryKey: ['/api'] }) so
-//      the next render of any page (Overview, Orders, NDR, etc.)
-//      kicks off a fresh fetch that includes the updated header.
-//      We deliberately scope the invalidation to /api keys so we
-//      don't nuke client-only queries (e.g. cached file uploads).
+// Switching stores does three things:
+//   a. Writes the new id into localStorage.
+//   b. Updates React state so consumers re-render.
+//   c. Calls queryClient.invalidateQueries() on every /api key so the
+//      next render of any page fetches with the new header.
 // ─────────────────────────────────────────────────────────────────────
 
 export interface StoreSummary {
@@ -65,8 +74,26 @@ interface StoreContextValue {
   activeStoreId: string | null;
   /** The full store object for activeStoreId, for display convenience. */
   activeStore: StoreSummary | null;
-  /** True while the initial fetch is in flight. */
+  /**
+   * Legacy "the stores-me query is in flight" flag. Prefer `bootLoading`
+   * for new code — it also covers the auth bootstrap window so consumers
+   * never see a false "no stores" state between auth-success and the
+   * first stores-me response.
+   */
   loading: boolean;
+  /**
+   * Authoritative "we don't know yet" flag. True while either:
+   *   • AuthProvider is still rehydrating from /api/auth/me, or
+   *   • Auth is settled to a logged-in user but /api/stores/me hasn't
+   *     returned its first response yet.
+   *
+   * Components that gate skeletons vs empty-states (e.g. StoreSwitcher)
+   * MUST use this flag, not `loading`. Using `loading` alone lets the
+   * "No store assigned" branch render briefly while auth is still
+   * loading, because the query is disabled during that window and
+   * `loading` is consequently `false`.
+   */
+  bootLoading: boolean;
   /** True iff the user has more than one accessible store. */
   hasMultipleStores: boolean;
   /**
@@ -105,9 +132,13 @@ function writePersistedStoreId(id: string | null): void {
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
 
+  // Initial state seeded from localStorage so a refresh on the same
+  // tenant keeps the right id during the brief auth-loading window —
+  // the StoreSwitcher reads activeStoreId immediately to size the
+  // skeleton appropriately.
   const [activeStoreId, setActiveStoreIdState] = useState<string | null>(
     readPersistedStoreId,
   );
@@ -143,46 +174,91 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const stores = useMemo(() => data?.stores ?? [], [data]);
 
-  // Reconcile the persisted id with the fetched list. Runs whenever
-  // either changes. Three cases:
-  //   • persisted id is in the list  → use it (idempotent)
-  //   • persisted id is missing      → fall back to the first store
-  //   • the list is empty            → clear the persisted id so the
-  //                                     header is dropped on next fetch
+  // ── Reconciliation, deterministic edition ─────────────────────────
+  //
+  // The previous implementation depended on `activeStoreId` (which
+  // re-triggered on every switch) AND treated `stores.length === 0`
+  // as "the user has no memberships," conflating it with the loading
+  // window. That caused localStorage to be wiped during boot.
+  //
+  // New rules:
+  //   • Gate on `data` (the raw query result). If data is undefined,
+  //     we're still loading — do absolutely nothing.
+  //   • Reset the ref guard whenever the user changes (login /
+  //     logout). Each authenticated session reconciles exactly once
+  //     on first arrival.
+  //   • On every subsequent fetch (e.g. after Manage Access changed
+  //     the user's membership server-side), we re-validate the
+  //     persisted id and fall back if it's been revoked. We do NOT
+  //     reset state to localStorage on every refetch — the only
+  //     legitimate state mutation after the first reconciliation is
+  //     `setActiveStore`.
+  const hasReconciledRef = useRef(false);
+
+  // Reset the reconciliation guard when the authenticated user
+  // identity changes. Otherwise a logout → login as a different
+  // account would skip reconciliation and inherit the previous
+  // user's activeStoreId state.
   useEffect(() => {
-    if (!isAuthenticated) {
-      // Don't touch localStorage on logout flicker; the logout flow
-      // does the explicit clear. Just keep the in-memory state in
-      // sync with what's actually persisted.
-      setActiveStoreIdState(readPersistedStoreId());
+    hasReconciledRef.current = false;
+  }, [user?.id, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    // Wait until the query has actually resolved. While `data` is
+    // undefined the query is in flight (or disabled); either way we
+    // have no authoritative list to reconcile against and must not
+    // touch localStorage.
+    if (data === undefined) return;
+
+    const fetched = data.stores;
+    if (fetched.length === 0) {
+      // Authenticated, fetch settled, user truly has no memberships.
+      // Drop the persisted id so the header doesn't carry a stale
+      // value. We do this on every fetch (not just the first) so a
+      // revoked-all-access scenario clears cleanly.
+      if (readPersistedStoreId() !== null) writePersistedStoreId(null);
+      if (activeStoreId !== null) setActiveStoreIdState(null);
+      hasReconciledRef.current = true;
       return;
     }
-    if (stores.length === 0) {
-      // Authenticated but no stores attached. Clear so the header
-      // doesn't carry a stale id.
-      if (activeStoreId !== null) {
-        writePersistedStoreId(null);
-        setActiveStoreIdState(null);
+
+    const persisted = readPersistedStoreId();
+    const persistedStillValid =
+      !!persisted && fetched.some((s) => s.id === persisted);
+
+    if (persistedStillValid) {
+      // Steady state.
+      //
+      // First arrival per session: align in-memory state to the
+      // persisted value. This handles the case where useState's
+      // lazy initializer read localStorage before stores arrived
+      // and we want to make sure the activeStore object resolves
+      // correctly downstream.
+      //
+      // Subsequent arrivals (refetch after invalidateQueries): do
+      // NOTHING. The user-driven switch already updated state +
+      // localStorage; the refetch should not override that.
+      if (!hasReconciledRef.current) {
+        if (activeStoreId !== persisted) setActiveStoreIdState(persisted);
+        hasReconciledRef.current = true;
       }
       return;
     }
-    const persisted = readPersistedStoreId();
-    const persistedStillValid =
-      !!persisted && stores.some((s) => s.id === persisted);
-    if (persistedStillValid) {
-      // The state may have been read before stores arrived; align it.
-      if (activeStoreId !== persisted) setActiveStoreIdState(persisted);
-      return;
-    }
-    const fallback = stores[0].id;
+
+    // Persisted id is missing or stale (admin revoked access to
+    // that store, or this is the user's first session). Fall back
+    // to the oldest store the user can see and persist it.
+    const fallback = fetched[0].id;
     writePersistedStoreId(fallback);
     setActiveStoreIdState(fallback);
-  }, [isAuthenticated, stores, activeStoreId]);
-
-  // Track whether the user-driven switcher was the one that changed
-  // the id. We don't want to invalidate queries on the initial
-  // hydration — only on actual switches.
-  const isInitialMount = useRef(true);
+    hasReconciledRef.current = true;
+    // We intentionally don't include `activeStoreId` here — that's
+    // exactly the feedback loop the old code suffered from. Reads of
+    // activeStoreId inside this effect are deliberately stale; the
+    // ref guard guarantees idempotency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, data]);
 
   const setActiveStore = useCallback(
     (storeId: string) => {
@@ -205,13 +281,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [activeStoreId, queryClient],
   );
 
-  useEffect(() => {
-    // Mark the first run done after both the initial localStorage
-    // read AND the first fetch have settled. Future setActiveStore
-    // calls will then always be treated as switches.
-    isInitialMount.current = false;
-  }, []);
-
   const refresh = useCallback(async () => {
     await refetch();
   }, [refetch]);
@@ -221,17 +290,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [stores, activeStoreId],
   );
 
+  // The authoritative "still booting" flag. Combines the two windows
+  // that the old code didn't span:
+  //   1. Auth in flight (AuthProvider hasn't rehydrated yet)
+  //   2. Auth settled to a logged-in user, but /api/stores/me hasn't
+  //      returned its first payload (`data === undefined`).
+  // Once either is no longer true, consumers can treat the state as
+  // fully settled and render real content (or the empty state).
+  const bootLoading =
+    authLoading || (isAuthenticated && data === undefined);
+
   const value = useMemo<StoreContextValue>(
     () => ({
       stores,
       activeStoreId,
       activeStore,
       loading: isLoading,
+      bootLoading,
       hasMultipleStores: stores.length > 1,
       setActiveStore,
       refresh,
     }),
-    [stores, activeStoreId, activeStore, isLoading, setActiveStore, refresh],
+    [
+      stores,
+      activeStoreId,
+      activeStore,
+      isLoading,
+      bootLoading,
+      setActiveStore,
+      refresh,
+    ],
   );
 
   return (

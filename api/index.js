@@ -7097,7 +7097,7 @@ function enumerateDays(startDate, endDate) {
 }
 async function getPareMetrics(dateRange) {
   const { startDate, endDate, storeId } = dateRange;
-  const storeFilter = storeId ? sql3`AND store_id = ${storeId}` : sql3``;
+  const storeFilter = storeId ? sql3`AND ${orders}.store_id = ${storeId}` : sql3``;
   const mmStoreFilter = storeId ? sql3`AND mm.store_id = ${storeId}` : sql3``;
   const query = sql3`
     SELECT

@@ -135,8 +135,13 @@ function StoreAvatar({
 }
 
 export function StoreSwitcher() {
-  const { stores, activeStore, setActiveStore, loading, hasMultipleStores } =
-    useActiveStore();
+  const {
+    stores,
+    activeStore,
+    setActiveStore,
+    bootLoading,
+    hasMultipleStores,
+  } = useActiveStore();
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   // Admins always get the dropdown — even with a single store —
@@ -147,22 +152,40 @@ export function StoreSwitcher() {
   const isAdmin = user?.role === "admin";
   const showDropdown = hasMultipleStores || (isAdmin && stores.length > 0);
 
-  // ── Loading skeleton: avatar + bar so layout doesn't shift when
+  // ── Boot skeleton ────────────────────────────────────────────────
+  //
+  // `bootLoading` covers both the AuthProvider rehydration window AND
+  // the /api/stores/me first-fetch window. Using it (instead of
+  // useQuery's local `isLoading`) prevents the brief "No store
+  // assigned" flash users were seeing right after login — see audit
+  // bug #2.
+  //
+  // Premium polish: name skeleton sized to ~8rem so it matches a
+  // realistic workspace name length, with a tiny secondary bar for
+  // the visual cadence of a two-row workspace header even though we
+  // only render one line of real text. Eliminates layout shift when
   // the data lands.
-  if (loading && stores.length === 0) {
+  if (bootLoading) {
     return (
       <div
         className="flex items-center gap-2.5 px-1.5 py-1"
         data-testid="store-switcher-loading"
+        aria-busy="true"
       >
         <div className="h-8 w-8 rounded-md bg-muted animate-pulse" />
-        <div className="h-3.5 w-24 rounded bg-muted animate-pulse" />
+        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="h-3.5 w-32 rounded bg-muted animate-pulse" />
+          <div className="h-2 w-20 rounded bg-muted/60 animate-pulse" />
+        </div>
       </div>
     );
   }
 
-  // ── Zero memberships: muted state, no avatar gradient (would
-  // suggest a real store exists). Renders cleanly inside the header.
+  // ── Zero memberships ─────────────────────────────────────────────
+  //
+  // Reached only after boot has fully settled and the user truly has
+  // no user_stores rows. Pre-bootLoading this branch used to fire
+  // during the loading window — fixed by gating on bootLoading above.
   if (stores.length === 0) {
     return (
       <div
@@ -181,11 +204,15 @@ export function StoreSwitcher() {
 
   if (!activeStore) {
     // Edge case: stores arrived but reconciliation hasn't picked one
-    // yet. Render the loading skeleton rather than flashing nothing.
+    // yet (one render tick). Render the same boot skeleton so the
+    // sidebar header height is stable.
     return (
       <div className="flex items-center gap-2.5 px-1.5 py-1">
         <div className="h-8 w-8 rounded-md bg-muted animate-pulse" />
-        <div className="h-3.5 w-24 rounded bg-muted animate-pulse" />
+        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+          <div className="h-3.5 w-32 rounded bg-muted animate-pulse" />
+          <div className="h-2 w-20 rounded bg-muted/60 animate-pulse" />
+        </div>
       </div>
     );
   }

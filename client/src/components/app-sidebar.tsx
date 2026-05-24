@@ -22,7 +22,7 @@ import {
 import { ProfileDropdown } from "@/components/profile-dropdown";
 import { StoreSwitcher } from "@/components/store-switcher";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import type { User } from "@shared/schema";
 
 type MenuItem = {
@@ -260,10 +260,18 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                                         : "text-muted-foreground"
                                     }`}
                                   >
-                                    <a href={subItem.url}>
+                                    {/* Wouter Link intercepts the click
+                                        and triggers SPA navigation instead
+                                        of a hard reload. Hard reloads
+                                        re-mount StoreProvider, which used
+                                        to race the /api/stores/me fetch
+                                        and revert the active store to
+                                        the legacy default — see audit
+                                        bug #1. */}
+                                    <Link href={subItem.url}>
                                       <subItem.icon className="h-4 w-4" />
                                       <span>{subItem.title}</span>
-                                    </a>
+                                    </Link>
                                   </SidebarMenuSubButton>
                                 </SidebarMenuSubItem>
                               );
@@ -281,10 +289,17 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                             : "text-muted-foreground"
                         }`}
                       >
-                        <a href={item.url}>
+                        {/* SPA navigation — see comment on the sub-menu
+                            Link above. Replaces <a href> to avoid the
+                            full-page reload that re-mounts the provider
+                            tree. Non-null assertion matches the
+                            adjacent isPathActive(item.url!) check —
+                            this branch only runs for leaf items that
+                            carry a url. */}
+                        <Link href={item.url!}>
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>
-                        </a>
+                        </Link>
                       </SidebarMenuButton>
                     )}
                   </SidebarMenuItem>

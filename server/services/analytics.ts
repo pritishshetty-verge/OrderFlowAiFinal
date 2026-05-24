@@ -188,8 +188,16 @@ export async function getPareMetrics(
   // GROUP BY, FILTER predicates, and JOINs are otherwise unchanged.
   // We also restrict the marketing_metrics join the same way so a
   // store's ad spend doesn't bleed across the rest of the funnel.
+  //
+  // ⚠ Bug fix: the orders table-name MUST be qualified here. After the
+  // Phase-1 schema change both `orders` AND `marketing_metrics` carry
+  // a `store_id` column, and both are in scope inside the WHERE clause
+  // via the LEFT JOIN below. An unqualified `store_id = …` predicate
+  // makes Postgres throw `column reference "store_id" is ambiguous`,
+  // which surfaced as the 500 on the Pare dashboard. `${orders}.store_id`
+  // expands to the schema-qualified table name and resolves cleanly.
   const storeFilter = storeId
-    ? sql`AND store_id = ${storeId}`
+    ? sql`AND ${orders}.store_id = ${storeId}`
     : sql``;
   const mmStoreFilter = storeId
     ? sql`AND mm.store_id = ${storeId}`
