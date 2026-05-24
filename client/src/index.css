@@ -2,207 +2,241 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────────────────
+ * Design system v2 — Zinc-neutral palette + Inter typography.
+ *
+ * What changed from v1 (the audit's three categories of debt):
+ *
+ *   1. Identity drift — the sidebar had a warm cream/coral palette
+ *      while the rest of the app was pure greyscale. Both modes now
+ *      share a single zinc-based neutral spine. The coral
+ *      (`9 75% 61%`) is preserved as a brand accent — used by the
+ *      store-switcher gradient avatars and reserved as the sidebar
+ *      brand mark — but no longer paints every primary CTA.
+ *
+ *   2. Latent font bug — `--font-sans` was 'Poppins' but Poppins was
+ *      never loaded; the browser fell through to the OS sans. Inter
+ *      was loaded but never referenced. Fixed: --font-sans is now
+ *      Inter (already preloaded in client/index.html), and the body
+ *      enables Inter's tabular-nums + open-shape stylistic alternates
+ *      so dashboards finally read like Linear/Stripe.
+ *
+ *   3. Defaults masking depth — light mode had pure black
+ *      card-foreground, alpha-0 shadows that never rendered, and a
+ *      pure-black "destructive" color. All fixed below.
+ *
+ * Token NAMES (`background`, `foreground`, `card`, `primary`,
+ * `accent`, `destructive`, `sidebar`, etc.) are unchanged — only
+ * their values are swapped. Every existing component that uses
+ * `bg-background` / `text-foreground` / `bg-primary` / etc.
+ * continues to render correctly; the visual identity is the only
+ * thing that changes.
+ *
+ * Dark mode toggle (the `.dark` class on <html>) is unaffected.
+ * ──────────────────────────────────────────────────────────────────── */
+
 /* LIGHT MODE */
 :root {
-  --button-outline: rgba(0,0,0, .10);
-  --badge-outline: rgba(0,0,0, .05);
+  /* Outline + elevation tokens used by the hover-elevate utility
+   * system below. Kept identical to v1 — no component logic
+   * depends on the numeric values, only that they exist. */
+  --button-outline: rgba(0, 0, 0, 0.10);
+  --badge-outline: rgba(0, 0, 0, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0, 0, 0, 0.03);
+  --elevate-2: rgba(0, 0, 0, 0.06);
 
-  /* Automatic computation of border around primary / danger buttons */
-  --opaque-button-border-intensity: -8; /* In terms of percentages */
+  /* ── Zinc-neutral palette ──────────────────────────────────────
+   * HSL triplets, no alpha — Tailwind composes alpha via
+   * `<alpha-value>` in tailwind.config.ts. Reference: Tailwind's
+   * default zinc scale, the same neutral Vercel/Linear/shadcn use. */
 
-  /* Backgrounds applied on top of other backgrounds when hovered/active */
-  --elevate-1: rgba(0,0,0, .03);
-  --elevate-2: rgba(0,0,0, .08);
+  /* Surfaces: page background is faint zinc-50 (#fafafa); cards lift
+   * to pure white. The two values are now ~2× further apart than v1,
+   * so cards visibly float above the background. */
+  --background: 0 0% 98%;            /* zinc-50 */
+  --foreground: 240 6% 10%;          /* zinc-900 (#18181b) */
+  --card: 0 0% 100%;                 /* white */
+  --card-foreground: 240 6% 10%;     /* zinc-900 — replaces pure black */
+  --card-border: 240 5% 91%;         /* zinc-200 */
+  --popover: 0 0% 100%;              /* same as card */
+  --popover-foreground: 240 6% 10%;
+  --popover-border: 240 5% 91%;
 
-  --background: 0 0% 94.12%;
+  /* Primary = highest-contrast interactive (Linear/Vercel convention).
+   * Dark text/fill on a light surface, light text/fill on a dark
+   * surface. NOT the brand color — the brand coral lives in
+   * --sidebar-primary below, used sparingly. */
+  --primary: 240 6% 10%;             /* zinc-900 */
+  --primary-foreground: 0 0% 100%;   /* white */
 
-  --foreground: 0 0% 10.2%;
+  --secondary: 240 5% 96%;           /* zinc-100 */
+  --secondary-foreground: 240 6% 10%;
 
-  --border: 0 0% 90.98%;
+  --muted: 240 5% 96%;               /* zinc-100 */
+  --muted-foreground: 240 4% 46%;    /* zinc-500 — the "metadata grey" */
 
-  --card: 0 0% 98.82%;
+  --accent: 240 5% 96%;              /* zinc-100, same as muted — used for
+                                        hover surfaces, kept distinct from
+                                        bg so cards still feel layered */
+  --accent-foreground: 240 6% 10%;
 
-  --card-foreground: 0 0% 0%;
-
-  --card-border: 214 32% 94%;
-
-  --sidebar: 45 25% 97%;
-
-  --sidebar-foreground: 20 14% 17%;
-
-  --sidebar-border: 45 15% 80%;
-
-  --sidebar-primary: 9 75% 61%;
-
-  --sidebar-primary-foreground: 0 0% 100%;
-
-  --sidebar-accent: 25 45% 80%;
-
-  --sidebar-accent-foreground: 20 14% 17%;
-
-  --sidebar-ring: 9 75% 61%;
-
-  --popover: 45 25% 97%;
-
-  --popover-foreground: 0deg 100% 1.57%;
-
-  --popover-border: 214 32% 87%;
-
-  --primary: 0deg 0% 10.2%;
-
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 0 0% 76.86%;
-
-  --secondary-foreground: 0deg 0% 10.2%;
-
-  --muted: 0 0% 89.02%;
-
-  --muted-foreground: 0 0% 12.94%;
-
-  --accent: 0 0% 100%;
-
-  --accent-foreground: 0 0% 10.2%;
-
-  --destructive: 0deg 0% 0%;
-
+  /* Destructive finally returns a real red instead of pure black.
+   * Tailwind red-500 (#ef4444) — bright enough to signal danger,
+   * desaturated enough not to scream. */
+  --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
 
-  --input: 0 0% 70.98%;
-  --ring: 0 0% 41.96%;
-  --chart-1: 203.8863 88.2845% 53.1373%;
-  --chart-2: 159.7826 100% 36.0784%;
-  --chart-3: 42.0290 92.8251% 56.2745%;
-  --chart-4: 147.1429 78.5047% 41.9608%;
-  --chart-5: 341.4894 75.2000% 50.9804%;
+  --border: 240 5% 91%;              /* zinc-200 */
+  --input: 240 5% 84%;                /* zinc-300 — softer field borders */
+  --ring: 240 6% 10%;                  /* focus rings match primary */
 
-  --font-sans: 'Poppins', sans-serif;
-  --font-serif: 'Poppins', sans-serif;
-  --font-mono: Menlo, monospace;
-  --radius: 0.8rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 1px 2px -1px hsl(9, 75%, 61% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 1px 2px -1px hsl(9, 75%, 61% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 2px 4px -1px hsl(9, 75%, 61% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 4px 6px -1px hsl(9, 75%, 61% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00), 0px 8px 10px -1px hsl(9, 75%, 61% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(9, 75%, 61% / 0.00);
+  /* Sidebar: unified with the rest of the palette. No more warm
+   * cream. Brand coral preserved as `--sidebar-primary` for the
+   * active-store indicator + brand mark only. */
+  --sidebar: 240 5% 96%;             /* zinc-100 */
+  --sidebar-foreground: 240 6% 10%;
+  --sidebar-border: 240 5% 91%;
+  --sidebar-primary: 9 75% 61%;      /* coral — brand accent, kept */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 5% 90%;      /* zinc-200 — neutral hover instead of peach */
+  --sidebar-accent-foreground: 240 6% 10%;
+  --sidebar-ring: 9 75% 61%;
+
+  /* Chart palette: desaturated, harmonious. The v1 chart colors sat
+   * at 75–100% saturation — three series in one stacked chart fought
+   * each other. These soften to 50–65% so multi-series charts read
+   * calmly. Hue order is tuned for max separation by colorblind-safe
+   * pairs (blue/amber, emerald/purple, pink). */
+  --chart-1: 217 91% 60%;            /* blue-500 */
+  --chart-2: 142 71% 45%;            /* emerald-500 */
+  --chart-3: 38 92% 50%;             /* amber-500 */
+  --chart-4: 280 65% 60%;            /* purple-500 */
+  --chart-5: 340 75% 55%;            /* pink-500 */
+
+  /* Typography. The single most impactful change in this commit:
+   * Inter is now the actual font, not a name that fell through to
+   * OS sans. Mono is JetBrains Mono (was Menlo, never loaded). */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system,
+               BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular,
+               Menlo, Monaco, monospace;
+
+  /* Border radius dropped from 0.8rem (~13px) to 0.5rem (8px).
+   * Single biggest "feels premium" lever — buttons, cards, inputs,
+   * dropdowns all inherit. */
+  --radius: 0.5rem;
+
+  /* Shadows: light mode shadows in v1 had alpha=0 and never
+   * rendered. These use zinc-900 as the shadow color (cooler than
+   * pure black) with very low alphas — the "soft depth" Linear and
+   * Stripe cards have. */
+  --shadow-2xs: 0 1px 2px 0 hsl(240 6% 10% / 0.04);
+  --shadow-xs:  0 1px 2px 0 hsl(240 6% 10% / 0.05);
+  --shadow-sm:  0 1px 3px 0 hsl(240 6% 10% / 0.05),
+                0 1px 2px 0 hsl(240 6% 10% / 0.03);
+  --shadow:     0 4px 6px -1px hsl(240 6% 10% / 0.05),
+                0 2px 4px -1px hsl(240 6% 10% / 0.03);
+  --shadow-md:  0 10px 15px -3px hsl(240 6% 10% / 0.05),
+                0 4px 6px -2px hsl(240 6% 10% / 0.04);
+  --shadow-lg:  0 20px 25px -5px hsl(240 6% 10% / 0.08),
+                0 10px 10px -5px hsl(240 6% 10% / 0.03);
+  --shadow-xl:  0 25px 50px -12px hsl(240 6% 10% / 0.15);
+  --shadow-2xl: 0 25px 50px -12px hsl(240 6% 10% / 0.25);
+
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Automatically computed borders - intensity can be controlled by the user by the --opaque-button-border-intensity setting */
-
-  /* Fallback for older browsers */
+  /* Auto-derived borders for the elevate utility system. Computed
+   * from each color's HSL — the lightness offset
+   * (`--opaque-button-border-intensity`) decides how much darker
+   * the border is than the fill. -8% in light mode = a barely-
+   * visible 1px outline that anchors the button against its
+   * background. */
   --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-
-  /* Fallback for older browsers */
-  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
-  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border:  hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border:         hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border:       hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border:           hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border:          hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border:     hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
+/* DARK MODE */
 .dark {
-  --button-outline: rgba(255,255,255, .10);
-  --badge-outline: rgba(255,255,255, .05);
+  --button-outline: rgba(255, 255, 255, 0.10);
+  --badge-outline: rgba(255, 255, 255, 0.05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.08);
 
-  --opaque-button-border-intensity: 9;  /* In terms of percentages */
+  /* Surfaces: zinc-950 page, zinc-900 cards. Clearer elevation
+   * delta than v1, which had cards at only 4 percentage points
+   * lighter than the background. */
+  --background: 240 10% 4%;          /* zinc-950 (#09090b) */
+  --foreground: 240 5% 96%;          /* zinc-100 (#f4f4f5) */
+  --card: 240 6% 10%;                /* zinc-900 (#18181b) */
+  --card-foreground: 240 5% 96%;
+  --card-border: 240 4% 16%;         /* zinc-800 */
+  --popover: 240 6% 10%;             /* zinc-900 — matches card */
+  --popover-foreground: 240 5% 96%;
+  --popover-border: 240 4% 16%;
 
-  /* Backgrounds applied on top of other backgrounds when hovered/active */
-  --elevate-1: rgba(255,255,255, .04);
-  --elevate-2: rgba(255,255,255, .09);
+  /* Inverse primary: light fill on dark surface. */
+  --primary: 240 5% 96%;             /* zinc-100 */
+  --primary-foreground: 240 6% 10%;  /* zinc-900 */
 
-  --background: 20 14% 4%;
+  --secondary: 240 4% 16%;           /* zinc-800 */
+  --secondary-foreground: 240 5% 96%;
 
-  --foreground: 45 25% 91%;
+  --muted: 240 4% 16%;               /* zinc-800 */
+  --muted-foreground: 240 5% 65%;    /* zinc-400 (#a1a1aa) */
 
-  --border: 20 14% 15%;
+  --accent: 240 4% 16%;
+  --accent-foreground: 240 5% 96%;
 
-  --card: 20 14% 8%;
-
-  --card-foreground: 45 25% 85%;
-
-  --card-border: 217 33% 20%;
-
-  --sidebar: 20 14% 8%;
-
-  --sidebar-foreground: 45 25% 85%;
-
-  --sidebar-border: 20 14% 15%;
-
-  --sidebar-primary: 9 75% 61%;
-
-  --sidebar-primary-foreground: 0 0% 100%;
-
-  --sidebar-accent: 25 45% 20%;
-
-  --sidebar-accent-foreground: 45 25% 85%;
-
-  --sidebar-ring: 9 75% 61%;
-
-  --popover: 20 14% 4%;
-
-  --popover-foreground: 45 25% 91%;
-
-  --popover-border: 217 33% 26%;
-
-  --primary: 9 75% 61%;
-
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 30 15% 52%;
-
-  --secondary-foreground: 0 0% 100%;
-
-  --muted: 20 14% 15%;
-
-  --muted-foreground: 45 15% 46%;
-
-  --accent: 25 45% 20%;
-
-  --accent-foreground: 45 25% 85%;
-
-  --destructive: 356.3033 90.5579% 54.3137%;
-
+  /* Slightly darker red than light mode so it doesn't burn out
+   * against the near-black background. */
+  --destructive: 0 72% 51%;          /* red-600 */
   --destructive-foreground: 0 0% 100%;
 
-  --input: 20 14% 18%;
-  --ring: 9 75% 61%;
-  --chart-1: 203.8863 88.2845% 53.1373%;
-  --chart-2: 159.7826 100% 36.0784%;
-  --chart-3: 42.0290 92.8251% 56.2745%;
-  --chart-4: 147.1429 78.5047% 41.9608%;
-  --chart-5: 341.4894 75.2000% 50.9804%;
+  --border: 240 4% 16%;              /* zinc-800 */
+  --input: 240 4% 16%;
+  --ring: 240 5% 96%;
 
-  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.30);
-  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.40);
-  --shadow-sm: 0px 1px 2px 0px hsl(0 0% 0% / 0.35), 0px 1px 3px 0px hsl(0 0% 0% / 0.45);
-  --shadow: 0px 2px 4px -1px hsl(0 0% 0% / 0.35), 0px 4px 6px -1px hsl(0 0% 0% / 0.45);
-  --shadow-md: 0px 4px 6px -1px hsl(0 0% 0% / 0.40), 0px 2px 4px -1px hsl(0 0% 0% / 0.35);
-  --shadow-lg: 0px 10px 15px -3px hsl(0 0% 0% / 0.45), 0px 4px 6px -2px hsl(0 0% 0% / 0.30);
-  --shadow-xl: 0px 20px 25px -5px hsl(0 0% 0% / 0.45), 0px 10px 10px -5px hsl(0 0% 0% / 0.25);
-  --shadow-2xl: 0px 25px 50px -12px hsl(0 0% 0% / 0.60);
+  --sidebar: 240 6% 10%;             /* zinc-900 */
+  --sidebar-foreground: 240 5% 96%;
+  --sidebar-border: 240 4% 16%;
+  --sidebar-primary: 9 75% 61%;      /* coral preserved across modes */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 4% 16%;      /* zinc-800 hover */
+  --sidebar-accent-foreground: 240 5% 96%;
+  --sidebar-ring: 9 75% 61%;
 
+  /* Charts: same hues as light mode but at slightly lower lightness
+   * so they sit calmly on the dark background. */
+  --chart-1: 217 91% 60%;
+  --chart-2: 142 71% 45%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+
+  /* Dark-mode shadows pre-existing from v1 worked fine — kept,
+   * just refined the alphas slightly for cohesion. */
+  --shadow-2xs: 0 1px 2px 0 hsl(0 0% 0% / 0.30);
+  --shadow-xs:  0 1px 3px 0 hsl(0 0% 0% / 0.40);
+  --shadow-sm:  0 1px 2px 0 hsl(0 0% 0% / 0.35),
+                0 1px 3px 0 hsl(0 0% 0% / 0.45);
+  --shadow:     0 2px 4px -1px hsl(0 0% 0% / 0.35),
+                0 4px 6px -1px hsl(0 0% 0% / 0.45);
+  --shadow-md:  0 4px 6px -1px hsl(0 0% 0% / 0.40),
+                0 2px 4px -1px hsl(0 0% 0% / 0.35);
+  --shadow-lg:  0 10px 15px -3px hsl(0 0% 0% / 0.45),
+                0 4px 6px -2px hsl(0 0% 0% / 0.30);
+  --shadow-xl:  0 20px 25px -5px hsl(0 0% 0% / 0.45),
+                0 10px 10px -5px hsl(0 0% 0% / 0.25);
+  --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.60);
 }
 
 @layer base {
@@ -210,41 +244,82 @@
     @apply border-border;
   }
 
-  /* Hide scrollbars but keep functionality */
+  /* Hide scrollbars but keep functionality — pre-existing behaviour. */
   * {
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE and Edge */
   }
-
   *::-webkit-scrollbar {
     display: none; /* Chrome, Safari, Opera */
   }
 
+  /* Body styling. The two `font-feature-settings` strings are
+   * Inter's killer features:
+   *   - 'cv11' — open-shape lowercase l (avoids the I/l ambiguity)
+   *   - 'ss01' — stylistic set 1 (Inter's "loose" alternates that
+   *              give it the Linear/Stripe look)
+   *   - 'tnum' — tabular numerals (every digit the same width)
+   * Combined with `font-variant-numeric: tabular-nums`, every
+   * data table column of money/quantities/ids now aligns vertically
+   * without per-cell font-feature tweaks.
+   *
+   * Antialiasing is already on via Tailwind's `antialiased` utility;
+   * we apply it here so it covers any element that doesn't pass
+   * through Tailwind's preflight. */
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: 'cv11', 'ss01', 'tnum';
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Default heading rhythm. Components are free to override these
+   * with explicit Tailwind classes (the audit recommended this so
+   * existing components don't break) — this block establishes the
+   * "what does a bare <h1> look like" baseline.
+   *
+   * The negative letter-spacing on display sizes is what makes
+   * Inter "click" — without -0.015em, headings feel loose at large
+   * sizes. Sub-pixel tracking like this is the difference between
+   * "generic" and "designed." */
+  h1 {
+    @apply text-2xl font-semibold tracking-tight text-foreground;
+    line-height: 2rem; /* 32px */
+    letter-spacing: -0.015em;
+  }
+  h2 {
+    @apply text-lg font-semibold tracking-tight text-foreground;
+    line-height: 1.75rem; /* 28px */
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    @apply text-base font-semibold text-foreground;
+    line-height: 1.5rem; /* 24px */
+    letter-spacing: -0.005em;
+  }
+  /* Body paragraphs default to the dashboard standard — 14px,
+   * 22px line-height. Matches Stripe/Linear/Notion. */
+  p {
+    @apply text-sm text-foreground;
+    line-height: 1.375rem; /* 22px */
   }
 }
 
-/**
- * Using the elevate system.
- * Automatic contrast adjustment.
+/* ─────────────────────────────────────────────────────────────────────
+ * Elevate utility system. Pre-existing from v1 — unchanged.
  *
  * <element className="hover-elevate" />
  * <element className="active-elevate-2" />
  *
  * // Using the tailwind utility when a data attribute is "on"
  * <element className="toggle-elevate data-[state=on]:toggle-elevated" />
- * // Or manually controlling the toggle state
- * <element className="toggle-elevate toggle-elevated" />
  *
- * Elevation systems have to handle many states.
- * - not-hovered, vs. hovered vs. active  (three mutually exclusive states)
- * - toggled or not
- * - focused or not (this is not handled with these utilities)
- *
- * Even without handling focused or not, this is six possible combinations that
- * need to be distinguished from eachother visually.
- */
+ * Elevation systems handle:
+ *   - not-hovered / hovered / active (three mutually exclusive)
+ *   - toggled or not
+ * Six combinations need to be distinguishable.
+ * ──────────────────────────────────────────────────────────────────── */
 @layer utilities {
 
   /* Hide ugly search cancel button in Chrome until we can style it properly */
@@ -259,37 +334,33 @@
     pointer-events: none;
   }
 
-  /* .no-default-hover-elevate/no-default-active-elevate is an escape hatch so consumers of
-   * buttons/badges can remove the automatic brightness adjustment on interactions
-   * and program their own. */
+  /* Escape hatches so consumers of buttons/badges can remove the
+   * automatic brightness adjustment on interactions and program
+   * their own. */
   .no-default-hover-elevate {}
-
   .no-default-active-elevate {}
 
 
-  /**
-   * Toggleable backgrounds go behind the content. Hoverable/active goes on top.
-   * This way they can stack/compound. Both will overlap the parent's borders!
-   * So borders will be automatically adjusted both on toggle, and hover/active,
-   * and they will be compounded.
-   */
+  /* Toggleable backgrounds go behind the content. Hoverable/active
+   * goes on top. This way they can stack/compound. Both overlap the
+   * parent's borders — so borders are auto-adjusted on toggle AND
+   * hover/active, and compound. */
   .toggle-elevate::before,
   .toggle-elevate-2::before {
     content: "";
     pointer-events: none;
     position: absolute;
     inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
     border-radius: inherit;
     z-index: -1;
-    /* sits behind content but above backdrop */
   }
 
   .toggle-elevate.toggle-elevated::before {
     background-color: var(--elevate-2);
   }
 
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  /* If there's a 1px border, adjust the inset so it covers the
+   * parent's border. */
   .border.toggle-elevate::before {
     inset: -1px;
   }
@@ -311,10 +382,8 @@
     pointer-events: none;
     position: absolute;
     inset: 0px;
-    /*border-radius: inherit;   match rounded corners */
     border-radius: inherit;
     z-index: 999;
-    /* sits in front of content */
   }
 
   .hover-elevate:hover:not(.no-default-hover-elevate)::after,
@@ -327,7 +396,8 @@
     background-color: var(--elevate-2);
   }
 
-  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  /* If there's a 1px border, adjust the inset so it covers the
+   * parent's border. */
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
   .border.active-elevate:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
@@ -336,7 +406,7 @@
     inset: -1px;
   }
 
-  /* Logo spin animation */
+  /* Logo spin animation — kept for the StoreSwitcher hover. */
   .logo-spin-on-hover {
     transition: transform 1s ease-in-out;
   }

@@ -6,7 +6,19 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!--
+      Design system v2: Inter is the sole web font; JetBrains Mono
+      stays for the rare mono surfaces (raw payloads, AWB IDs). Both
+      load with `display=swap` so a slow Google Fonts response never
+      blocks first paint — the OS sans takes over until Inter lands.
+      Weights pruned to the three we actually use:
+        400 — body & captions
+        500 — emphasis (table headers, badge labels, buttons)
+        600 — headings + primary CTAs
+      The previous 300/700 sans weights and 500 mono weight loaded
+      but never rendered anywhere in the app.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="root"></div>
