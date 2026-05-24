@@ -6739,7 +6739,8 @@ var OrderAssignmentEngine = class {
       userId: agentId,
       assignedBy: null,
       // System auto-assignment
-      note: "Auto-assigned via round-robin algorithm"
+      note: "Auto-assigned via round-robin algorithm",
+      storeId: order.storeId ?? void 0
     });
     console.log(`\u2705 Order ${order.shopifyOrderNumber} assigned to agent ${agentId}`);
     return true;
@@ -6752,7 +6753,7 @@ var OrderAssignmentEngine = class {
    * @param assignedBy - Admin user ID who made the assignment
    * @param note - Optional note about the assignment
    */
-  async manualAssignOrder(orderId, agentId, assignedBy, note) {
+  async manualAssignOrder(orderId, agentId, assignedBy, note, storeId) {
     const agent = await this.storage.getUser(agentId);
     if (!agent) {
       throw new Error("Agent not found");
@@ -6769,7 +6770,8 @@ var OrderAssignmentEngine = class {
       orderId,
       userId: agentId,
       assignedBy,
-      note: note || "Manually assigned by admin"
+      note: note || "Manually assigned by admin",
+      storeId: storeId ?? void 0
     });
     console.log(`\u2705 Order ${orderId} manually assigned to ${agent.fullName} by ${assignedBy}`);
   }
@@ -8972,7 +8974,8 @@ async function registerRoutes(app2) {
         orderId: req.params.id,
         userId,
         assignedBy: assignedBy || null,
-        note: note || null
+        note: note || null,
+        storeId: req.storeScope?.storeId ?? void 0
       });
       res.json(order);
     } catch (error) {
@@ -9082,7 +9085,8 @@ async function registerRoutes(app2) {
         req.params.id,
         agentId,
         assignedBy,
-        note
+        note,
+        req.storeScope?.storeId
       );
       const order = await storage.getOrder(req.params.id);
       res.json({ success: true, order });
@@ -9111,7 +9115,7 @@ async function registerRoutes(app2) {
       const results = [];
       for (const orderId of orderIds) {
         try {
-          await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note);
+          await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note, req.storeScope?.storeId);
           results.push({ orderId, success: true });
         } catch (error) {
           results.push({ orderId, success: false, error: error.message });

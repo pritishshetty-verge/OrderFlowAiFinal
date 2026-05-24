@@ -1525,12 +1525,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Create assignment history record
+      // Create assignment history record — include storeId so the
+      // dashboard metrics query (which filters order_assignments by
+      // storeId) correctly counts this agent's assigned orders.
       await storage.createOrderAssignment({
         orderId: req.params.id,
         userId,
         assignedBy: assignedBy || null,
         note: note || null,
+        storeId: req.storeScope?.storeId ?? undefined,
       });
 
       res.json(order);
@@ -1687,7 +1690,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         req.params.id,
         agentId,
         assignedBy,
-        note
+        note,
+        req.storeScope?.storeId,
       );
 
       const order = await storage.getOrder(req.params.id);
@@ -1726,7 +1730,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const orderId of orderIds) {
         try {
-          await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note);
+          await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note, req.storeScope?.storeId);
           results.push({ orderId, success: true });
         } catch (error: any) {
           results.push({ orderId, success: false, error: error.message });

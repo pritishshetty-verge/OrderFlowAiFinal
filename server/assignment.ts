@@ -137,12 +137,14 @@ export class OrderAssignmentEngine {
       status: "assigned",
     });
 
-    // Log the assignment
+    // Log the assignment — include storeId so dashboard metrics can
+    // filter by store without cross-tenant bleed.
     await this.storage.createOrderAssignment({
       orderId,
       userId: agentId,
       assignedBy: null, // System auto-assignment
       note: "Auto-assigned via round-robin algorithm",
+      storeId: order.storeId ?? undefined,
     });
 
     console.log(`✅ Order ${order.shopifyOrderNumber} assigned to agent ${agentId}`);
@@ -161,7 +163,8 @@ export class OrderAssignmentEngine {
     orderId: string,
     agentId: string,
     assignedBy: string,
-    note?: string
+    note?: string,
+    storeId?: string,
   ): Promise<void> {
     // Verify agent exists and is eligible
     const agent = await this.storage.getUser(agentId);
@@ -180,12 +183,14 @@ export class OrderAssignmentEngine {
       status: "assigned",
     });
 
-    // Log the assignment
+    // Log the assignment — storeId passed from the route so dashboard
+    // metrics can filter by store without cross-tenant bleed.
     await this.storage.createOrderAssignment({
       orderId,
       userId: agentId,
       assignedBy,
       note: note || "Manually assigned by admin",
+      storeId: storeId ?? undefined,
     });
 
     console.log(`✅ Order ${orderId} manually assigned to ${agent.fullName} by ${assignedBy}`);
