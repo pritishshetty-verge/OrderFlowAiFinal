@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle, Store } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { StoreSummary } from "@/hooks/use-store";
@@ -211,12 +212,13 @@ export function ManageStoreAccessDialog({
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
         ) : stores.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-6 text-center space-y-1">
-            <p className="text-sm font-medium">No stores connected yet</p>
-            <p className="text-xs text-muted-foreground">
-              Add a Shopify store from the Integrations page first.
-            </p>
-          </div>
+          <EmptyState
+            icon={Store}
+            title="No stores connected yet"
+            description="Connect a Shopify store from the Integrations page before granting access to teammates."
+            size="sm"
+            testId="empty-stores-for-access"
+          />
         ) : (
           <div className="space-y-1 max-h-[50vh] overflow-y-auto">
             {stores.map((store) => {

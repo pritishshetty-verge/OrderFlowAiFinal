@@ -23,6 +23,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useState, useMemo, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import {
   Select,
@@ -456,55 +457,95 @@ export function OrdersTable({
     setSelectedOrders(new Set());
   };
 
+  // Outer container: kept the border to anchor the data region
+  // (one cage at the page level is correct — it's the nested
+  // boxes we removed elsewhere). Header surface is now bg-muted
+  // instead of bg-card so the header→body distinction comes
+  // from background contrast, not the prior `shadow-sm` hack.
   return (
     <div className="rounded-lg border bg-card">
       <div className="relative">
         <Table>
-          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
-            <TableRow>
-              <TableHead className="w-[50px] bg-card">
+          {/* Tighter header height + uppercase tracking-wide labels.
+              Matches the Linear/Stripe density target — column
+              headers read as "what column" not "more content." */}
+          <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
+            <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
+              {/* Checkbox column: minimum width so the cell doesn't
+                  collapse when its content is hidden. Real visibility
+                  is controlled by `.group-hover` on each row below. */}
+              <TableHead className="w-[44px]">
                 <Checkbox
                   checked={allSelected}
                   onCheckedChange={handleSelectAll}
                   aria-label="Select all orders"
                   data-testid="checkbox-select-all"
+                  className="opacity-100"
                 />
               </TableHead>
-              <TableHead className="w-[120px] bg-card">Order ID</TableHead>
-              <TableHead className="bg-card">Customer</TableHead>
-              {showAgentColumn && <TableHead className="bg-card">Agent</TableHead>}
-              <TableHead className="bg-card">Tags</TableHead>
-              <TableHead className="bg-card">Items</TableHead>
-              <TableHead className="text-right bg-card">Total</TableHead>
-              <TableHead className="bg-card">Payment</TableHead>
-              <TableHead className="bg-card">Date</TableHead>
-              <TableHead className="bg-card">Call Status</TableHead>
-              <TableHead className="text-right bg-card">Actions</TableHead>
+              <TableHead className="w-[110px]">Order ID</TableHead>
+              <TableHead>Customer</TableHead>
+              {showAgentColumn && <TableHead>Agent</TableHead>}
+              <TableHead>Tags</TableHead>
+              <TableHead>Items</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead>Payment</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead>Call Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {paginatedOrders.map((order) => (
-              <TableRow
-                key={order.id}
-                className="hover-elevate cursor-pointer"
-                onClick={() => onViewDetails?.(order)}
-                data-testid={`row-order-${order.id}`}
-              >
+          <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px]">
+            {paginatedOrders.map((order) => {
+              // Per-row "selected" state powers two visual hints:
+              //   • The checkbox stays visible (not just hover-only)
+              //     so the user can see what they've already picked.
+              //   • The row stays in the highlighted state via the
+              //     hover-elevate utility (it's a CSS-only pattern
+              //     so we set a data attribute the hover-elevate
+              //     watches).
+              const isSelected = selectedOrders.has(order.id);
+              return (
+                <TableRow
+                  key={order.id}
+                  // `group` enables the checkbox to react to
+                  // group-hover on the row (Tailwind v3 pattern).
+                  // Density target: 36px row height (h-9 implied
+                  // by td padding above). Was ~52px in v1.
+                  className="group hover-elevate cursor-pointer"
+                  onClick={() => onViewDetails?.(order)}
+                  data-testid={`row-order-${order.id}`}
+                  data-selected={isSelected}
+                >
+              {/* Checkbox cell: hidden until row hover OR when the
+                  row is already selected. Matches Linear/Stripe
+                  pattern — checkboxes are a power-user affordance,
+                  not always-on chrome. */}
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <Checkbox
-                  checked={selectedOrders.has(order.id)}
+                  checked={isSelected}
                   onCheckedChange={() => handleSelectOrder(order.id)}
                   aria-label={`Select order ${order.shopifyOrderId}`}
                   data-testid={`checkbox-order-${order.id}`}
+                  className={cn(
+                    "transition-opacity",
+                    isSelected
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                  )}
                 />
               </TableCell>
-              <TableCell className="font-mono text-xs font-medium">
-                #{order.shopifyOrderId}
+              {/* Order ID: mono + tabular-nums for stable column
+                  alignment regardless of digit count. The leading
+                  `#` is muted so the numeric portion reads first. */}
+              <TableCell className="font-mono tabular-nums text-xs font-medium text-muted-foreground">
+                <span className="text-muted-foreground/70">#</span>
+                <span className="text-foreground">{order.shopifyOrderId}</span>
               </TableCell>
               <TableCell>
-                <div className="flex flex-col">
-                  <span className="font-medium text-sm">{order.customerName}</span>
-                  <span className="text-xs text-muted-foreground font-mono">
+                <div className="flex flex-col leading-tight">
+                  <span className="font-medium text-foreground">{order.customerName}</span>
+                  <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
                     {order.customerPhone}
                   </span>
                 </div>
@@ -560,7 +601,12 @@ export function OrdersTable({
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <OrderItemsSummary orderId={order.id} fallbackSummary={order.items} />
               </TableCell>
-              <TableCell className="text-right font-medium">
+              {/* Total: tabular-nums forces every digit to occupy
+                  the same width so a column of varied amounts
+                  (₹890 / ₹1,250 / ₹12,400) aligns on the rupee
+                  symbol. The single biggest "looks pro" signal on a
+                  data table. */}
+              <TableCell className="text-right font-medium tabular-nums">
                 ₹{order.total.toLocaleString("en-IN")}
               </TableCell>
               <TableCell>
@@ -616,7 +662,8 @@ export function OrdersTable({
                 </div>
               </TableCell>
             </TableRow>
-          ))}
+              );
+            })}
         </TableBody>
         </Table>
       </div>

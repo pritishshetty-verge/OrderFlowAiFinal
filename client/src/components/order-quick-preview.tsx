@@ -15,6 +15,7 @@ import {
   ChevronLeft, ChevronRight, Clock, XCircle, MapPin, User, History, FileText
 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { EmptyState } from "@/components/empty-state";
 import { useState, useEffect, useCallback } from "react";
 import type { Order } from "@/components/orders-table";
 import type { Order as BackendOrder, OrderItem as BackendOrderItem, OrderStatusHistory } from "@shared/schema";
@@ -1223,10 +1224,13 @@ export function OrderQuickPreview({
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <History className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground">No history yet</p>
-                </div>
+                <EmptyState
+                  icon={History}
+                  title="No history yet"
+                  description="Status changes for this order will show up here."
+                  size="sm"
+                  testId="empty-order-history"
+                />
               )}
             </div>
 
@@ -1235,11 +1239,13 @@ export function OrderQuickPreview({
             {/* Call Logs Placeholder */}
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-3">Call Logs</p>
-              <div className="text-center py-6 rounded-lg border border-dashed">
-                <Phone className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No call recordings available</p>
-                <p className="text-xs text-muted-foreground mt-1">Call logs will appear here after customer verification calls</p>
-              </div>
+              <EmptyState
+                icon={Phone}
+                title="No call recordings yet"
+                description="Recordings will appear here after customer verification calls."
+                size="sm"
+                testId="empty-order-calls"
+              />
             </div>
           </TabsContent>
 

@@ -10,6 +10,14 @@ import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Package } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/empty-state";
+import { TableBodySkeleton } from "@/components/skeletons";
+import {
+  Table,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useScope } from "@/contexts/scope-context";
@@ -669,22 +677,50 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             isExporting={isExporting}
           />
 
-          {/* Loading state - only affects table content, not filter bar */}
-          {/* Show skeleton until data is actually available to prevent empty-state flash */}
+          {/* Loading state — shape-accurate skeleton that mirrors
+              the real orders table (same 11 columns + ~8 rows). The
+              transition from skeleton → loaded is a content swap,
+              not a layout reflow, so the page never "jumps." */}
           {(isLoading || !ordersResponse) ? (
-            <Skeleton className="h-96 w-full" data-testid="skeleton-table" />
+            <div className="rounded-lg border bg-card" data-testid="skeleton-table">
+              <Table>
+                <TableHeader className="bg-muted/40">
+                  <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
+                    <TableHead className="w-[44px]"></TableHead>
+                    <TableHead className="w-[110px]">Order ID</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Agent</TableHead>
+                    <TableHead>Tags</TableHead>
+                    <TableHead>Items</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>Payment</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Call Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBodySkeleton columns={11} rows={8} />
+              </Table>
+            </div>
           ) : filteredOrders.length === 0 ? (
             <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Package className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-lg font-medium">No orders found</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {baseFilteredOrders.length === 0
-                    ? userRole === "agent" 
-                      ? "No orders have been assigned to you yet"
-                      : "No orders have been synced from Shopify yet"
-                    : "Try adjusting your filters or search query"}
-                </p>
+              <CardContent className="p-0">
+                <EmptyState
+                  icon={Package}
+                  title={
+                    baseFilteredOrders.length === 0
+                      ? userRole === "agent"
+                        ? "No orders assigned to you yet"
+                        : "No orders synced from Shopify yet"
+                      : "No orders match your filters"
+                  }
+                  description={
+                    baseFilteredOrders.length === 0
+                      ? "Once Shopify webhooks fire (or the historical sync finishes), new orders will show up here in real time."
+                      : "Try widening your date range, clearing the search, or switching the call-status filter."
+                  }
+                  testId="empty-orders"
+                />
               </CardContent>
             </Card>
           ) : (

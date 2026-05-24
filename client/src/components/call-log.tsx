@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Phone, Clock, User, Download, ExternalLink } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
+import { EmptyState } from "@/components/empty-state";
 import type { Call } from "@shared/schema";
 
 interface CallWithAgent extends Call {
@@ -60,10 +61,13 @@ export function CallLog({ orderId }: CallLogProps) {
 
   if (!calls || calls.length === 0) {
     return (
-      <div className="text-center py-8 text-muted-foreground">
-        <Phone className="w-12 h-12 mx-auto mb-3 opacity-50" />
-        <p className="text-sm">No call history available</p>
-      </div>
+      <EmptyState
+        icon={Phone}
+        title="No call history yet"
+        description="Calls placed from the order panel will be logged here with recordings + duration."
+        size="sm"
+        testId="empty-call-log"
+      />
     );
   }
 

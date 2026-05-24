@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
 import { PageLayout } from "@/components/page-layout";
+import { ChartTooltip } from "@/components/chart-tooltip";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { DateRangeSelector } from "@/components/date-range-selector";
 import { AttendanceCalendar } from "@/components/attendance-calendar";
@@ -268,13 +269,11 @@ export default function AnalyticsPage() {
                           tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                           width={100}
                         />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: 'hsl(var(--card))',
-                            border: '1px solid hsl(var(--border))',
-                            borderRadius: '6px'
-                          }}
-                        />
+                        {/* Shared tooltip: tabular-nums, popover
+                            surface, zinc-tinted border. Replaces the
+                            inline contentStyle blocks that were
+                            duplicated across the three RTO charts. */}
+                        <Tooltip content={<ChartTooltip format="number" />} />
                         <Bar dataKey="count" fill={COLORS.danger} radius={[0, 4, 4, 0]} name="RTO Count" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -317,13 +316,11 @@ export default function AnalyticsPage() {
                           tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
                           width={100}
                         />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: 'hsl(var(--card))',
-                            border: '1px solid hsl(var(--border))',
-                            borderRadius: '6px'
-                          }}
-                        />
+                        {/* Shared tooltip: tabular-nums, popover
+                            surface, zinc-tinted border. Replaces the
+                            inline contentStyle blocks that were
+                            duplicated across the three RTO charts. */}
+                        <Tooltip content={<ChartTooltip format="number" />} />
                         <Bar dataKey="count" fill={COLORS.warning} radius={[0, 4, 4, 0]} name="RTO Count" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -368,13 +365,15 @@ export default function AnalyticsPage() {
                             <Cell key={`cell-${index}`} fill={courierColors[index % courierColors.length]} />
                           ))}
                         </Pie>
+                        {/* Pie tooltip with custom suffix — ChartTooltip's
+                            formatValue lets us inject the "RTOs" label
+                            while keeping tabular-nums + zinc styling. */}
                         <Tooltip
-                          contentStyle={{
-                            backgroundColor: 'hsl(var(--card))',
-                            border: '1px solid hsl(var(--border))',
-                            borderRadius: '6px'
-                          }}
-                          formatter={(value: number) => [`${value} RTOs`, 'Count']}
+                          content={
+                            <ChartTooltip
+                              formatValue={(v) => `${v.toLocaleString("en-IN")} RTOs`}
+                            />
+                          }
                         />
                         <Legend />
                       </PieChart>
