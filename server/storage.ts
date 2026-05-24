@@ -267,6 +267,7 @@ export interface IStorage {
   createOrderItem(item: InsertOrderItem): Promise<OrderItem>;
   createOrderItems(items: InsertOrderItem[]): Promise<OrderItem[]>;
   updateOrderItemImage(itemId: string, imageUrl: string): Promise<OrderItem | undefined>;
+  backfillOrderItemImages(storeId: string): Promise<{ updated: number; missingVariantsInCatalog: number }>;
 
   // Order Assignments
   getOrderAssignments(orderId: string): Promise<OrderAssignment[]>;
@@ -1302,6 +1303,66 @@ export class DbStorage implements IStorage {
       .where(eq(orderItems.id, itemId))
       .returning();
     return item;
+  }
+
+  /**
+   * Retroactively populate `order_items.image_url` for orders that
+   * were imported BEFORE the product catalog was synced (so the
+   * webhook/sync-time variant lookup returned no match and left
+   * image_url NULL).
+   *
+   * Implementation: one atomic SQL UPDATE with a JOIN onto products
+   * for the active store. Touches only rows where (a) image_url is
+   * currently NULL, (b) we have a shopify_variant_id, and (c) the
+   * products catalog has a matching row WITH an image_url. No N+1,
+   * no transaction window where rows are partially updated.
+   *
+   * Returns the rows we managed to fix and a count of variants that
+   * appear in order_items but are absent from the products catalog
+   * (so the admin knows to re-sync products if it's non-zero).
+   */
+  async backfillOrderItemImages(
+    storeId: string,
+  ): Promise<{ updated: number; missingVariantsInCatalog: number }> {
+    // Single UPDATE … FROM products. Drizzle's `.update()` doesn't
+    // natively support multi-table updates, so we drop to `sql` and
+    // use `db.execute` — keeps the whole thing as one round-trip.
+    const updateResult: any = await db.execute(sql`
+      WITH updated AS (
+        UPDATE order_items oi
+        SET    image_url = p.image_url
+        FROM   products p
+        WHERE  oi.store_id           = ${storeId}
+          AND  p.store_id            = ${storeId}
+          AND  oi.shopify_variant_id = p.shopify_variant_id
+          AND  oi.image_url IS NULL
+          AND  p.image_url IS NOT NULL
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int4 AS n FROM updated
+    `);
+    const updated =
+      ((updateResult as any).rows ?? updateResult)[0]?.n ?? 0;
+
+    // Diagnostic count: variants that appear in this store's
+    // order_items but DON'T have a catalog row. Surfaces "you need
+    // to re-sync products" without forcing the admin to query the DB.
+    const missingResult: any = await db.execute(sql`
+      SELECT COUNT(DISTINCT oi.shopify_variant_id)::int4 AS n
+      FROM   order_items oi
+      WHERE  oi.store_id = ${storeId}
+        AND  oi.image_url IS NULL
+        AND  oi.shopify_variant_id IS NOT NULL
+        AND  NOT EXISTS (
+          SELECT 1 FROM products p
+          WHERE p.store_id            = oi.store_id
+            AND p.shopify_variant_id  = oi.shopify_variant_id
+        )
+    `);
+    const missingVariantsInCatalog =
+      ((missingResult as any).rows ?? missingResult)[0]?.n ?? 0;
+
+    return { updated, missingVariantsInCatalog };
   }
 
   // ============================================================================

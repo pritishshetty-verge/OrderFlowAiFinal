@@ -583,12 +583,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ── Admin: force re-registration of Shopify webhooks ──────────────
   // Reuses the same idempotent path as the boot-time hook. Safe to
   // call repeatedly — topics already registered at the same address
-  // report back as "unchanged". Use this when APP_URL rotates (ngrok
-  // reboot) or when a connection to Shopify was lost at boot.
-  // NOTE: No session guard here — matches the current app-wide auth
-  // posture (see TODO at ~L2479). Tighten when JWT/session auth lands.
+  // report back as "unchanged".
+  //
+  // Phase 5 hardening:
+  //   • Requires a session (was previously unauthenticated — the
+  //     stale TODO that said "tighten when JWT/session auth lands"
+  //     pre-dates Phase 0's session middleware).
+  //   • Requires admin role.
+  //   • Requires an active store scope. The legacy implementation
+  //     used the env-var-derived `shopifyClient` singleton and so
+  //     would register webhooks against OLB regardless of which
+  //     store the admin was viewing — exactly the same defect we
+  //     fixed for /api/admin/sync-products. Now uses
+  //     getShopifyClient(scope.storeId) and reports the storeId on
+  //     the response so the UI toast is unambiguous.
   app.post("/api/shopify/webhooks/register-all", async (req, res) => {
     try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res
+          .status(403)
+          .json({ error: "Admin role required to register webhooks." });
+      }
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+
       const overrideUrl = typeof req.body?.appUrl === "string" ? req.body.appUrl : undefined;
       const appUrl = overrideUrl || process.env.APP_URL;
       if (!appUrl) {
@@ -604,10 +631,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           hint: "Shopify requires HTTPS for webhook endpoints.",
         });
       }
-      const { shopifyClient } = await import("./shopify");
-      const result = await shopifyClient.registerAllWebhooks(appUrl);
+      const { getShopifyClient } = await import("./shopify");
+      const client = await getShopifyClient(scope.storeId);
+      const result = await client.registerAllWebhooks(appUrl);
       const failed = result.topics.filter((t) => t.action === "failed");
       res.status(failed.length > 0 ? 207 : 200).json({
+        storeId: scope.storeId,
         appUrl,
         topics: result.topics,
         summary: {
@@ -2860,6 +2889,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({
         error: "Failed to sync products",
         details: message,
+      });
+    }
+  });
+
+  // ── Admin: retroactive order-item image backfill ────────────────
+  //
+  // After a store has been historically synced and THEN the product
+  // catalog is synced, the order_items rows from the historical
+  // sync are stuck with image_url=NULL because the per-variant
+  // image lookup ran while the products table was empty for that
+  // store. This route fixes them in one atomic UPDATE.
+  //
+  // Idempotent: re-running matches nothing because every fixable
+  // row is no longer NULL.
+  //
+  // Returns:
+  //   updated                    — number of order_items rows just patched
+  //   missingVariantsInCatalog   — variants that still have NULL images
+  //                                because no products row exists for
+  //                                them (admin should re-sync products
+  //                                if this is non-zero).
+  app.post("/api/admin/backfill-order-item-images", async (req, res) => {
+    try {
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const result = await storage.backfillOrderItemImages(scope.storeId);
+      console.log(
+        `[image-backfill] storeId=${scope.storeId} updated=${result.updated} missingInCatalog=${result.missingVariantsInCatalog}`,
+      );
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("Error backfilling order-item images:", error);
+      res.status(500).json({
+        error: "Failed to backfill images",
+        details: error?.message,
       });
     }
   });

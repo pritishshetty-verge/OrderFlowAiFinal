@@ -1803,6 +1803,53 @@ var init_storage = __esm({
         const [item] = await db.update(orderItems).set({ imageUrl }).where(eq(orderItems.id, itemId)).returning();
         return item;
       }
+      /**
+       * Retroactively populate `order_items.image_url` for orders that
+       * were imported BEFORE the product catalog was synced (so the
+       * webhook/sync-time variant lookup returned no match and left
+       * image_url NULL).
+       *
+       * Implementation: one atomic SQL UPDATE with a JOIN onto products
+       * for the active store. Touches only rows where (a) image_url is
+       * currently NULL, (b) we have a shopify_variant_id, and (c) the
+       * products catalog has a matching row WITH an image_url. No N+1,
+       * no transaction window where rows are partially updated.
+       *
+       * Returns the rows we managed to fix and a count of variants that
+       * appear in order_items but are absent from the products catalog
+       * (so the admin knows to re-sync products if it's non-zero).
+       */
+      async backfillOrderItemImages(storeId) {
+        const updateResult = await db.execute(sql2`
+      WITH updated AS (
+        UPDATE order_items oi
+        SET    image_url = p.image_url
+        FROM   products p
+        WHERE  oi.store_id           = ${storeId}
+          AND  p.store_id            = ${storeId}
+          AND  oi.shopify_variant_id = p.shopify_variant_id
+          AND  oi.image_url IS NULL
+          AND  p.image_url IS NOT NULL
+        RETURNING 1
+      )
+      SELECT COUNT(*)::int4 AS n FROM updated
+    `);
+        const updated = (updateResult.rows ?? updateResult)[0]?.n ?? 0;
+        const missingResult = await db.execute(sql2`
+      SELECT COUNT(DISTINCT oi.shopify_variant_id)::int4 AS n
+      FROM   order_items oi
+      WHERE  oi.store_id = ${storeId}
+        AND  oi.image_url IS NULL
+        AND  oi.shopify_variant_id IS NOT NULL
+        AND  NOT EXISTS (
+          SELECT 1 FROM products p
+          WHERE p.store_id            = oi.store_id
+            AND p.shopify_variant_id  = oi.shopify_variant_id
+        )
+    `);
+        const missingVariantsInCatalog = (missingResult.rows ?? missingResult)[0]?.n ?? 0;
+        return { updated, missingVariantsInCatalog };
+      }
       // ============================================================================
       // ORDER ASSIGNMENTS
       // ============================================================================
@@ -8237,6 +8284,21 @@ async function registerRoutes(app2) {
   app2.post("/api/webhooks/fulfillments/update", handleFulfillmentUpdate);
   app2.post("/api/shopify/webhooks/register-all", async (req, res) => {
     try {
+      const sessionUserId = req.session?.userId;
+      if (!sessionUserId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Admin role required to register webhooks." });
+      }
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
       const overrideUrl = typeof req.body?.appUrl === "string" ? req.body.appUrl : void 0;
       const appUrl = overrideUrl || process.env.APP_URL;
       if (!appUrl) {
@@ -8252,10 +8314,12 @@ async function registerRoutes(app2) {
           hint: "Shopify requires HTTPS for webhook endpoints."
         });
       }
-      const { shopifyClient: shopifyClient3 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const result = await shopifyClient3.registerAllWebhooks(appUrl);
+      const { getShopifyClient: getShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const client = await getShopifyClient2(scope.storeId);
+      const result = await client.registerAllWebhooks(appUrl);
       const failed = result.topics.filter((t) => t.action === "failed");
       res.status(failed.length > 0 ? 207 : 200).json({
+        storeId: scope.storeId,
         appUrl,
         topics: result.topics,
         summary: {
@@ -9853,6 +9917,23 @@ async function registerRoutes(app2) {
       res.status(500).json({
         error: "Failed to sync products",
         details: message
+      });
+    }
+  });
+  app2.post("/api/admin/backfill-order-item-images", async (req, res) => {
+    try {
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const result = await storage.backfillOrderItemImages(scope.storeId);
+      console.log(
+        `[image-backfill] storeId=${scope.storeId} updated=${result.updated} missingInCatalog=${result.missingVariantsInCatalog}`
+      );
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error("Error backfilling order-item images:", error);
+      res.status(500).json({
+        error: "Failed to backfill images",
+        details: error?.message
       });
     }
   });

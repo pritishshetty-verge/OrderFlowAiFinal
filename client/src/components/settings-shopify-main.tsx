@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info, ImageIcon } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -799,6 +799,15 @@ export function ProductCatalogSync() {
 
   const { data: syncStatus, isLoading } = useQuery<ProductSyncStatus>({
     queryKey: ["/api/admin/products/status", activeStoreId],
+    // Explicit queryFn — the default getQueryFn in lib/queryClient.ts
+    // builds the URL by joining the queryKey with "/", which would
+    // produce `/api/admin/products/status/<storeId>` and 404. Using
+    // apiRequest keeps the URL clean and still attaches
+    // X-Active-Store-Id from the interceptor.
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/products/status");
+      return res.json();
+    },
     enabled: !!activeStoreId,
     refetchInterval: 60000,
   });
@@ -832,6 +841,50 @@ export function ProductCatalogSync() {
         description: isPaused
           ? `Reactivate ${activeStore?.storeName ?? "this store"}'s subscription in Shopify and retry.`
           : message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Retroactive image backfill: patches order_items rows whose
+  // image_url is still NULL by joining them against the (now-synced)
+  // products table for this store. Idempotent — safe to run any
+  // time, and the second run reports 0 updates if there's nothing
+  // left to fix. Reports `missingVariantsInCatalog` so admins know
+  // when to re-sync products before retrying.
+  const backfillMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest(
+        "POST",
+        "/api/admin/backfill-order-item-images",
+        {},
+      );
+      return response.json() as Promise<{
+        success: boolean;
+        updated: number;
+        missingVariantsInCatalog: number;
+      }>;
+    },
+    onSuccess: (data) => {
+      // Refresh any order-detail caches so the slide-over preview
+      // pulls the new image without a hard refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      const note =
+        data.missingVariantsInCatalog > 0
+          ? ` (${data.missingVariantsInCatalog} variant${data.missingVariantsInCatalog === 1 ? "" : "s"} still missing from the catalog — run Sync Products and retry.)`
+          : "";
+      toast({
+        title: data.updated > 0 ? "Images backfilled" : "Nothing to backfill",
+        description:
+          data.updated > 0
+            ? `Patched ${data.updated} order item${data.updated === 1 ? "" : "s"} with catalog images.${note}`
+            : `No order items needed image patching.${note}`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Backfill failed",
+        description: error.message || "Could not patch order item images.",
         variant: "destructive",
       });
     },
@@ -874,7 +927,7 @@ export function ProductCatalogSync() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <Button
               onClick={() => syncMutation.mutate()}
               disabled={syncMutation.isPending}
@@ -893,8 +946,40 @@ export function ProductCatalogSync() {
                 </>
               )}
             </Button>
+            {/* Backfill button: patches historical order_items that
+                were imported before the catalog sync (image_url
+                left NULL at insert time). Disabled when there's no
+                catalog yet — that path is "Sync Products first". */}
+            <Button
+              variant="outline"
+              onClick={() => backfillMutation.mutate()}
+              disabled={
+                backfillMutation.isPending ||
+                syncMutation.isPending ||
+                !syncStatus?.productCount
+              }
+              data-testid="button-backfill-images"
+              className="gap-2"
+              title={
+                !syncStatus?.productCount
+                  ? "Sync products first so there's a catalog to backfill from."
+                  : "Patch missing images on historical order items."
+              }
+            >
+              {backfillMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Backfilling…
+                </>
+              ) : (
+                <>
+                  <ImageIcon className="h-4 w-4" />
+                  Backfill missing images
+                </>
+              )}
+            </Button>
             <p className="text-sm text-muted-foreground">
-              Import product images for order visualization
+              Sync imports product images; backfill patches old orders.
             </p>
           </div>
 
@@ -934,11 +1019,23 @@ export function PaymentMappingSettings() {
 
   const { data: detectedData, isLoading: isLoadingDetected } = useQuery<PaymentMethodsResponse>({
     queryKey: ["/api/orders/payment-methods", activeStoreId],
+    // See comment in ProductCatalogSync — the default getQueryFn
+    // would join the queryKey into `/api/orders/payment-methods/<id>`
+    // which 404s. Explicit queryFn fixes the URL while keeping the
+    // store id in the cache key for per-store refetches.
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/orders/payment-methods");
+      return res.json();
+    },
     enabled: !!activeStoreId,
   });
 
   const { data: savedData, isLoading: isLoadingSaved } = useQuery<PaymentSettingsResponse>({
     queryKey: ["/api/settings/payments", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/settings/payments");
+      return res.json();
+    },
     enabled: !!activeStoreId,
   });
 
