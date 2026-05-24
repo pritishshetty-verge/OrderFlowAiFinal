@@ -666,6 +666,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
             onSearch={handleSearch}
             searchValue={searchQuery}
             onPaymentChange={handlePaymentChange}
+            paymentValue={paymentFilter}
             onClearFilters={handleClearFilters}
             isAdmin={isAdmin}
             agents={agentsData || []}

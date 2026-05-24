@@ -21,21 +21,44 @@ import {
 } from "@/components/ui/collapsible";
 import { ProfileDropdown } from "@/components/profile-dropdown";
 import { StoreSwitcher } from "@/components/store-switcher";
+import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
+import { cn } from "@/lib/utils";
 import type { User } from "@shared/schema";
+
+type UserRole = "admin" | "agent" | "recovery_agent" | "chat_support";
 
 type MenuItem = {
   title: string;
   url?: string;
   icon: React.ComponentType<{ className?: string }>;
   items?: SubMenuItem[];
+  /**
+   * When true, the menu item renders a "Soon" badge and is not
+   * clickable. Use for in-flight modules so users see the surface
+   * exists without being able to navigate into half-built screens.
+   */
+  comingSoon?: boolean;
+  /**
+   * Visibility allowlist. When set, only users with one of these
+   * roles see the item. Undefined = visible to anyone whose role
+   * matches the menu array this item lives in (the role-specific
+   * arrays below already segment by role; this prop is for
+   * exceptions like Abandoned Carts in the admin tree where we
+   * want admins + recovery_agents only, NOT plain agents).
+   */
+  allowedRoles?: UserRole[];
 };
 
 type SubMenuItem = {
   title: string;
   url: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** See MenuItem.comingSoon. */
+  comingSoon?: boolean;
+  /** See MenuItem.allowedRoles. */
+  allowedRoles?: UserRole[];
 };
 
 const adminMenuItems: MenuItem[] = [
@@ -74,9 +97,15 @@ const adminMenuItems: MenuItem[] = [
         icon: Phone,
       },
       {
+        // Abandoned Carts is operational territory for admins and
+        // recovery agents. Plain "agent" role sees the rest of the
+        // Orders subtree but not this — they don't action cart
+        // recovery flows. The runtime filter below uses
+        // `allowedRoles` to enforce this without forking the menu.
         title: "Abandoned Carts",
         url: "/abandoned-carts",
         icon: ShoppingCart,
+        allowedRoles: ["admin", "recovery_agent"],
       },
     ],
   },
@@ -194,11 +223,34 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
     "/payroll",
     "/api-logs",
   ]);
-  const menuItems = isAdmin
+  // Helper: enforce a per-item allowlist when the item declares one.
+  // Items without `allowedRoles` are visible to whoever the menu
+  // array already says they're visible to (the v1 contract).
+  const passesRoleAllowlist = (item: {
+    allowedRoles?: UserRole[];
+  }): boolean => !item.allowedRoles || item.allowedRoles.includes(userRole as UserRole);
+
+  const menuItems = (isAdmin
     ? baseMenuItems
     : baseMenuItems.filter(
         (item) => !(item.url && ADMIN_ONLY_URLS.has(item.url)),
-      );
+      )
+  )
+    // Drop items the active user role isn't allowed to see (e.g.
+    // plain agents lose the Abandoned Carts sub-link via
+    // `allowedRoles: ['admin', 'recovery_agent']`).
+    .filter(passesRoleAllowlist)
+    // Sub-menus need the same allowlist applied to their children
+    // — otherwise an Orders parent that survives the top-level
+    // filter would still render a forbidden sub-link.
+    .map((item) =>
+      item.items
+        ? {
+            ...item,
+            items: item.items.filter(passesRoleAllowlist),
+          }
+        : item,
+    );
 
   const isPathActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -262,16 +314,30 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                                   >
                                     {/* Wouter Link intercepts the click
                                         and triggers SPA navigation instead
-                                        of a hard reload. Hard reloads
-                                        re-mount StoreProvider, which used
-                                        to race the /api/stores/me fetch
-                                        and revert the active store to
-                                        the legacy default — see audit
-                                        bug #1. */}
-                                    <Link href={subItem.url}>
-                                      <subItem.icon className="h-4 w-4" />
-                                      <span>{subItem.title}</span>
-                                    </Link>
+                                        of a hard reload (see audit bug #1
+                                        from the multi-store refactor).
+                                        When comingSoon is true, swap the
+                                        Link for a non-interactive <span>
+                                        so the row is visible but
+                                        unclickable. The Soon badge anchors
+                                        to the right of the row. */}
+                                    {subItem.comingSoon ? (
+                                      <span
+                                        className="flex items-center gap-2 w-full cursor-not-allowed opacity-70"
+                                        aria-disabled="true"
+                                      >
+                                        <subItem.icon className="h-4 w-4" />
+                                        <span className="flex-1">{subItem.title}</span>
+                                        <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-4">
+                                          Soon
+                                        </Badge>
+                                      </span>
+                                    ) : (
+                                      <Link href={subItem.url}>
+                                        <subItem.icon className="h-4 w-4" />
+                                        <span>{subItem.title}</span>
+                                      </Link>
+                                    )}
                                   </SidebarMenuSubButton>
                                 </SidebarMenuSubItem>
                               );
@@ -280,26 +346,46 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                         </CollapsibleContent>
                       </>
                     ) : (
-                      <SidebarMenuButton 
-                        asChild 
+                      <SidebarMenuButton
+                        asChild
                         data-testid={`link-${item.title.toLowerCase()}`}
-                        className={`hover:bg-sidebar-accent/50 ${
-                          isPathActive(item.url!) 
-                            ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
-                            : "text-muted-foreground"
-                        }`}
+                        className={cn(
+                          "hover:bg-sidebar-accent/50",
+                          // Coming-soon items lose the path-active
+                          // chrome (they have no path to be active
+                          // at) and gain a muted, non-interactive
+                          // look. The asChild render below replaces
+                          // the Link with a <span> so the row stays
+                          // unclickable.
+                          item.comingSoon
+                            ? "cursor-not-allowed opacity-70"
+                            : isPathActive(item.url!)
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                              : "text-muted-foreground",
+                        )}
                       >
-                        {/* SPA navigation — see comment on the sub-menu
-                            Link above. Replaces <a href> to avoid the
-                            full-page reload that re-mounts the provider
-                            tree. Non-null assertion matches the
-                            adjacent isPathActive(item.url!) check —
-                            this branch only runs for leaf items that
-                            carry a url. */}
-                        <Link href={item.url!}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
+                        {/* SPA navigation via wouter's Link for live
+                            items; <span> placeholder for items still
+                            in build. The Soon badge anchors the row
+                            visually so the user knows it's intentionally
+                            disabled, not broken. */}
+                        {item.comingSoon ? (
+                          <span
+                            className="flex items-center gap-2 w-full"
+                            aria-disabled="true"
+                          >
+                            <item.icon className="h-4 w-4" />
+                            <span className="flex-1">{item.title}</span>
+                            <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0 h-4">
+                              Soon
+                            </Badge>
+                          </span>
+                        ) : (
+                          <Link href={item.url!}>
+                            <item.icon className="h-4 w-4" />
+                            <span>{item.title}</span>
+                          </Link>
+                        )}
                       </SidebarMenuButton>
                     )}
                   </SidebarMenuItem>
