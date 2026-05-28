@@ -1572,8 +1572,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update order
       const order = await storage.updateOrder(req.params.id, { status });
 
-      // Create status history
+      // Create status history — stamp storeId from the order so the
+      // store-scoped dashboard metrics count this change correctly.
       await storage.createOrderStatus({
+        storeId: existingOrder.storeId ?? undefined,
         orderId: req.params.id,
         status,
         previousStatus: existingOrder.status,
@@ -1796,8 +1798,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Create order status history entry
+      // Create order status history entry — storeId from the order
+      // so the store-scoped dashboard "Confirmed" card counts it.
       await storage.createOrderStatus({
+        storeId: order.storeId ?? undefined,
         orderId: req.params.id,
         status: 'confirmed',
         changedBy: userId,
@@ -1887,8 +1891,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // STEP 4: Create order status history entry
+      // STEP 4: Create order status history entry — storeId from the
+      // order so the store-scoped dashboard "Cancelled" card counts it.
       await storage.createOrderStatus({
+        storeId: order.storeId ?? undefined,
         orderId: req.params.id,
         status: 'cancelled',
         changedBy: userId,
@@ -1929,8 +1935,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Create order status history entry
+      // Create order status history entry — storeId from the order so
+      // the store-scoped dashboard "Follow-up" card counts it.
       await storage.createOrderStatus({
+        storeId: order.storeId ?? undefined,
         orderId: req.params.id,
         status: 'followup_scheduled',
         changedBy: userId,

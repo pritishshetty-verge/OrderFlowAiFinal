@@ -9002,6 +9002,7 @@ async function registerRoutes(app2) {
       }
       const order = await storage.updateOrder(req.params.id, { status });
       await storage.createOrderStatus({
+        storeId: existingOrder.storeId ?? void 0,
         orderId: req.params.id,
         status,
         previousStatus: existingOrder.status,
@@ -9152,6 +9153,7 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "Order not found" });
       }
       await storage.createOrderStatus({
+        storeId: order.storeId ?? void 0,
         orderId: req.params.id,
         status: "confirmed",
         changedBy: userId,
@@ -9215,6 +9217,7 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "Order not found" });
       }
       await storage.createOrderStatus({
+        storeId: order.storeId ?? void 0,
         orderId: req.params.id,
         status: "cancelled",
         changedBy: userId,
@@ -9244,6 +9247,7 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "Order not found" });
       }
       await storage.createOrderStatus({
+        storeId: order.storeId ?? void 0,
         orderId: req.params.id,
         status: "followup_scheduled",
         changedBy: userId,
