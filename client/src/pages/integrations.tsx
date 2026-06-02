@@ -625,12 +625,20 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
     if (didBootstrap) return;
     if (configQuery.data) {
       if (configQuery.data.hasToken) {
-        setStep("accounts");
         const existing = configQuery.data.adAccountsConfig?.[0];
         if (existing) {
           setSelectedAdAccountId(existing.adAccountId);
           setSyncAll(existing.syncAll);
           setSelectedCampaignIds(new Set(existing.linkedCampaignIds));
+        }
+        // Land users on Review when a config already exists so they
+        // see the summary/manage view; otherwise step them through
+        // Accounts → Campaigns. Token-only setups still resume at
+        // Accounts to finish the wizard.
+        if ((configQuery.data.adAccountsConfig ?? []).length > 0) {
+          setStep("review");
+        } else {
+          setStep("accounts");
         }
       }
       setDidBootstrap(true);
@@ -712,12 +720,12 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
     onSuccess: () => {
       toast({
         title: "Meta Ads connected",
-        description: "Your ad account and campaigns are linked.",
+        description: "Pulling the last 30 days of data — this can take a minute.",
       });
       queryClient.invalidateQueries({
         queryKey: ["/api/meta/config", activeStoreId],
       });
-      onClose();
+      syncHistoricalMutation.mutate();
     },
     onError: (err: Error) => {
       toast({
@@ -725,6 +733,35 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
         description: err.message,
         variant: "destructive",
       });
+    },
+  });
+
+  const syncHistoricalMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/meta/sync", { days: 30 });
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Historical sync complete",
+        description: "30 days of Meta data are now on your dashboard.",
+      });
+      // Refresh anything the dashboard reads off marketing_metrics.
+      queryClient.invalidateQueries({ queryKey: ["/api/analytics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Configuration saved, but sync failed",
+        description:
+          err.message +
+          " — you can retry the sync from Pare once the issue is resolved.",
+        variant: "destructive",
+      });
+      // Still close the sheet — the config DID save; only the
+      // backfill failed, which the user can re-trigger later.
+      onClose();
     },
   });
 
@@ -752,6 +789,9 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
       return next;
     });
   };
+
+  const saving =
+    saveConfigMutation.isPending || syncHistoricalMutation.isPending;
 
   // ── Render ───────────────────────────────────────────────────────
   if (!activeStoreId) {
@@ -1048,22 +1088,22 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
             <Button
               variant="outline"
               onClick={() => setStep("campaigns")}
+              disabled={saving}
               data-testid="button-meta-back"
             >
               <ChevronLeft className="mr-2 h-4 w-4" />
               Back
             </Button>
             <Button
-              onClick={() => saveConfigMutation.mutate()}
-              disabled={
-                saveConfigMutation.isPending || !selectedAdAccountId
-              }
               data-testid="button-meta-save-config"
+              onClick={() => saveConfigMutation.mutate()}
+              disabled={saving || !selectedAdAccountId}
+              className="gap-2"
             >
-              {saveConfigMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Save configuration
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {saving
+                ? "Saving & syncing historical data (30 days)…"
+                : "Save configuration"}
             </Button>
           </div>
         </div>
