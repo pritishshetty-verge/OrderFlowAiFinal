@@ -269,6 +269,8 @@ var init_schema = __esm({
       apiSecret: text("api_secret"),
       accessToken: text("access_token"),
       webhookSecret: text("webhook_secret"),
+      metaAccessToken: text("meta_access_token"),
+      metaAdAccountsConfig: jsonb("meta_ad_accounts_config").$type(),
       isActive: boolean("is_active").notNull().default(true),
       lastTestedAt: timestamp("last_tested_at"),
       testStatus: text("test_status"),
@@ -3173,9 +3175,9 @@ async function updateShopifyClient() {
 async function loadShopifyConfigForStore(storeId) {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { eq: eq6 } = await import("drizzle-orm");
+  const { eq: eq7 } = await import("drizzle-orm");
   const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
-  const [row] = await db2.select().from(stores2).where(eq6(stores2.id, storeId)).limit(1);
+  const [row] = await db2.select().from(stores2).where(eq7(stores2.id, storeId)).limit(1);
   if (!row) {
     throw new Error(
       `[Shopify] getShopifyClient: no stores row for id ${storeId}`
@@ -5210,34 +5212,17 @@ var meta_exports = {};
 __export(meta_exports, {
   syncMetaInsights: () => syncMetaInsights
 });
-import { sql as sql4 } from "drizzle-orm";
-async function resolveLegacyStoreId() {
-  const rows = await db.select({ id: stores.id }).from(stores).orderBy(stores.createdAt).limit(1);
-  if (rows.length === 0) {
-    throw new Error(
-      "[meta] no stores row found \u2014 run server/scripts/backfill-store-id.ts first"
-    );
-  }
-  return rows[0].id;
-}
-function normalizeAccountId(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) return trimmed;
-  return trimmed.startsWith("act_") ? trimmed : `act_${trimmed}`;
-}
-function readAccountIds() {
-  const raw = process.env.META_AD_ACCOUNT_IDS ?? "";
-  return raw.split(",").map((s) => normalizeAccountId(s)).filter((s) => s.length > 0);
-}
+import { eq as eq5, sql as sql4 } from "drizzle-orm";
 function sumAction(list, type = PURCHASE_ACTION_TYPE) {
   if (!list) return 0;
   const row = list.find((a) => a.action_type === type);
   return row ? Number(row.value) || 0 : 0;
 }
-async function fetchAccountInsights(accountId, accessToken, startDate, endDate) {
+async function fetchAccountCampaignInsights(accountId, accessToken, startDate, endDate) {
   const params = new URLSearchParams({
+    level: "campaign",
     time_increment: "1",
-    fields: "spend,actions,action_values",
+    fields: "campaign_id,spend,actions,action_values",
     time_range: JSON.stringify({ since: startDate, until: endDate }),
     limit: "500"
   });
@@ -5257,34 +5242,59 @@ async function fetchAccountInsights(accountId, accessToken, startDate, endDate) 
   }
   return rows;
 }
-async function syncMetaInsights(startDate, endDate) {
-  const accessToken = process.env.META_ACCESS_TOKEN;
+async function syncMetaInsights(storeId, startDate, endDate) {
+  const [storeRow] = await db.select({
+    id: stores.id,
+    metaAccessToken: stores.metaAccessToken,
+    metaAdAccountsConfig: stores.metaAdAccountsConfig
+  }).from(stores).where(eq5(stores.id, storeId)).limit(1);
+  if (!storeRow) {
+    throw new Error(`Store not found: ${storeId}`);
+  }
+  if (!storeRow.metaAccessToken) {
+    throw new Error("Meta token not configured for this store");
+  }
+  const accessToken = decrypt(storeRow.metaAccessToken);
   if (!accessToken) {
-    throw new Error("META_ACCESS_TOKEN env var is not set");
+    throw new Error("Meta token failed to decrypt for this store");
   }
-  const accountIds = readAccountIds();
-  if (accountIds.length === 0) {
-    throw new Error("META_AD_ACCOUNT_IDS env var is empty");
+  const config = Array.isArray(
+    storeRow.metaAdAccountsConfig
+  ) ? storeRow.metaAdAccountsConfig : [];
+  if (config.length === 0) {
+    throw new Error("No Meta ad accounts linked for this store");
   }
-  const storeId = await resolveLegacyStoreId();
   console.log(
-    `[meta] syncing ${accountIds.length} account(s) for ${startDate} \u2192 ${endDate}`
+    `[meta] store=${storeId} syncing ${config.length} account(s) for ${startDate} \u2192 ${endDate}`
   );
   const perAccount = await Promise.all(
-    accountIds.map(async (id) => {
+    config.map(async (entry) => {
       try {
-        const rows = await fetchAccountInsights(
-          id,
+        const rows = await fetchAccountCampaignInsights(
+          entry.adAccountId,
           accessToken,
           startDate,
           endDate
         );
-        console.log(`[meta] ${id}: ${rows.length} day-rows`);
-        return { id, rows, error: null };
+        const filtered = entry.syncAll ? rows : rows.filter(
+          (r) => r.campaign_id != null && entry.linkedCampaignIds.includes(r.campaign_id)
+        );
+        console.log(
+          `[meta] ${entry.adAccountId}: ${rows.length} campaign-day rows fetched, ${filtered.length} after link filter`
+        );
+        return {
+          id: entry.adAccountId,
+          rows: filtered,
+          error: null
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[meta] ${id} failed: ${message}`);
-        return { id, rows: [], error: message };
+        console.warn(`[meta] ${entry.adAccountId} failed: ${message}`);
+        return {
+          id: entry.adAccountId,
+          rows: [],
+          error: message
+        };
       }
     })
   );
@@ -5318,8 +5328,6 @@ async function syncMetaInsights(startDate, endDate) {
   }
   if (upsertRows.length > 0) {
     await db.insert(marketingMetrics).values(upsertRows).onConflictDoUpdate({
-      // PK is composite (date, storeId) — both columns required here
-      // so drizzle generates `ON CONFLICT (date, store_id) DO UPDATE`.
       target: [marketingMetrics.date, marketingMetrics.storeId],
       set: {
         fbSpend: sql4`excluded.fb_spend`,
@@ -5332,10 +5340,11 @@ async function syncMetaInsights(startDate, endDate) {
   }
   const accountErrors = perAccount.filter((a) => a.error).map((a) => ({ accountId: a.id, message: a.error }));
   return {
+    storeId,
     startDate,
     endDate,
-    accountsAttempted: accountIds.length,
-    accountsSucceeded: accountIds.length - accountErrors.length,
+    accountsAttempted: config.length,
+    accountsSucceeded: config.length - accountErrors.length,
     accountErrors,
     daysUpserted: upsertRows.length,
     totals
@@ -5347,6 +5356,7 @@ var init_meta = __esm({
     "use strict";
     init_db();
     init_schema();
+    init_encryption();
     META_API_VERSION = "v19.0";
     META_API_HOST = "https://graph.facebook.com";
     PURCHASE_ACTION_TYPE = "purchase";
@@ -6600,7 +6610,7 @@ init_db();
 init_schema();
 import { createServer } from "http";
 import crypto5 from "node:crypto";
-import { eq as eq5, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
+import { eq as eq6, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -9266,17 +9276,168 @@ async function registerRoutes(app2) {
   });
   app2.post("/api/meta/sync", async (req, res) => {
     try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
       const { syncMetaInsights: syncMetaInsights2 } = await Promise.resolve().then(() => (init_meta(), meta_exports));
-      const days = Math.max(1, Math.min(Number(req.body?.days) || 30, 365));
-      const end = /* @__PURE__ */ new Date();
-      const start = new Date(end.getTime() - (days - 1) * 864e5);
-      const startDate = start.toISOString().slice(0, 10);
-      const endDate = end.toISOString().slice(0, 10);
-      const result = await syncMetaInsights2(startDate, endDate);
+      let startDate;
+      let endDate;
+      if (req.body?.startDate && req.body?.endDate) {
+        startDate = String(req.body.startDate);
+        endDate = String(req.body.endDate);
+      } else {
+        const days = Math.max(1, Math.min(Number(req.body?.days) || 30, 365));
+        const end = /* @__PURE__ */ new Date();
+        const start = new Date(end.getTime() - (days - 1) * 864e5);
+        startDate = start.toISOString().slice(0, 10);
+        endDate = end.toISOString().slice(0, 10);
+      }
+      const result = await syncMetaInsights2(storeId, startDate, endDate);
       res.json(result);
     } catch (err) {
       console.error("Error syncing Meta insights:", err);
       res.status(500).json({ error: err?.message || "Failed to sync Meta insights" });
+    }
+  });
+  app2.get("/api/meta/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [store] = await db.select({
+        metaAccessToken: stores.metaAccessToken,
+        metaAdAccountsConfig: stores.metaAdAccountsConfig
+      }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      res.json({
+        hasToken: !!store.metaAccessToken,
+        adAccountsConfig: store.metaAdAccountsConfig ?? []
+      });
+    } catch (err) {
+      console.error("Error in GET /api/meta/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to load Meta config" });
+    }
+  });
+  app2.put("/api/meta/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [existing] = await db.select().from(stores).where(eq6(stores.id, storeId)).limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      const patch = {};
+      const { accessToken, adAccountsConfig } = req.body ?? {};
+      if (typeof accessToken === "string" && accessToken.trim().length > 0) {
+        patch.metaAccessToken = encrypt(accessToken.trim());
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "adAccountsConfig")) {
+        if (!Array.isArray(adAccountsConfig)) {
+          return res.status(400).json({ error: "adAccountsConfig must be an array." });
+        }
+        for (const entry of adAccountsConfig) {
+          if (!entry || typeof entry !== "object" || typeof entry.adAccountId !== "string" || !Array.isArray(entry.linkedCampaignIds) || typeof entry.syncAll !== "boolean") {
+            return res.status(400).json({
+              error: "Each adAccountsConfig entry needs { adAccountId, linkedCampaignIds[], syncAll }."
+            });
+          }
+        }
+        patch.metaAdAccountsConfig = adAccountsConfig;
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "Nothing to update. Provide accessToken and/or adAccountsConfig." });
+      }
+      patch.updatedAt = /* @__PURE__ */ new Date();
+      await db.update(stores).set(patch).where(eq6(stores.id, storeId));
+      const [updated] = await db.select({
+        metaAccessToken: stores.metaAccessToken,
+        metaAdAccountsConfig: stores.metaAdAccountsConfig
+      }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      res.json({
+        hasToken: !!updated?.metaAccessToken,
+        adAccountsConfig: updated?.metaAdAccountsConfig ?? []
+      });
+    } catch (err) {
+      console.error("Error in PUT /api/meta/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Meta config" });
+    }
+  });
+  app2.get("/api/meta/ad-accounts", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (!store.metaAccessToken) {
+        return res.status(400).json({ error: "No Meta access token configured for this store." });
+      }
+      const token = decrypt(store.metaAccessToken);
+      const url = "https://graph.facebook.com/v19.0/me/adaccounts?fields=id,name,account_status,currency,business_name&limit=200";
+      const response = await axios3.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        validateStatus: () => true
+      });
+      if (response.status >= 400) {
+        const upstream = response.data?.error?.message || `Meta API error (status ${response.status})`;
+        return res.status(502).json({ error: upstream });
+      }
+      res.json({ adAccounts: response.data?.data ?? [] });
+    } catch (err) {
+      console.error("Error in GET /api/meta/ad-accounts:", err);
+      res.status(502).json({ error: err?.message || "Failed to fetch ad accounts" });
+    }
+  });
+  app2.get("/api/meta/campaigns", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const adAccountId = String(req.query.adAccountId ?? "").trim();
+      if (!adAccountId) {
+        return res.status(400).json({ error: "adAccountId query param is required." });
+      }
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (!store.metaAccessToken) {
+        return res.status(400).json({ error: "No Meta access token configured for this store." });
+      }
+      const token = decrypt(store.metaAccessToken);
+      const MAX_CAMPAIGNS = 1e3;
+      const campaigns = [];
+      let nextUrl = `https://graph.facebook.com/v19.0/${encodeURIComponent(adAccountId)}/campaigns?fields=id,name,status,objective,effective_status&limit=500`;
+      while (nextUrl && campaigns.length < MAX_CAMPAIGNS) {
+        const response = await axios3.get(nextUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true
+        });
+        if (response.status >= 400) {
+          const upstream = response.data?.error?.message || `Meta API error (status ${response.status})`;
+          return res.status(502).json({ error: upstream });
+        }
+        const batch = response.data?.data ?? [];
+        for (const c of batch) {
+          if (campaigns.length >= MAX_CAMPAIGNS) break;
+          campaigns.push(c);
+        }
+        nextUrl = response.data?.paging?.next ?? null;
+      }
+      res.json({ campaigns });
+    } catch (err) {
+      console.error("Error in GET /api/meta/campaigns:", err);
+      res.status(502).json({ error: err?.message || "Failed to fetch campaigns" });
     }
   });
   app2.post("/api/shopify/sync", async (req, res) => {
@@ -9322,7 +9483,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and4(eq5(webhooks.eventType, "order.created"), eq5(webhooks.isActive, true))
+        and4(eq6(webhooks.eventType, "order.created"), eq6(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -10127,7 +10288,7 @@ async function registerRoutes(app2) {
       if (isAdmin(user)) {
         rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq5(userStores.storeId, stores.id)).where(eq5(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq6(userStores.storeId, stores.id)).where(eq6(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -10168,7 +10329,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq5(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq6(stores.storeUrl, normalizedUrl)).limit(1);
       if (existing) {
         return res.status(409).json({
           error: "A store with this URL is already connected.",
@@ -10257,7 +10418,7 @@ async function registerRoutes(app2) {
         return res.status(403).json({ error: "Only admins can update store details." });
       }
       const storeId = req.params.id;
-      const [existing] = await db.select().from(stores).where(eq5(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq6(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10302,7 +10463,7 @@ async function registerRoutes(app2) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
       }
-      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq5(stores.id, storeId)).returning({
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq6(stores.id, storeId)).returning({
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
@@ -10334,7 +10495,7 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, targetId));
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq6(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
@@ -10375,7 +10536,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, targetId));
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq6(userStores.userId, targetId));
       const currentSet = new Set(current.map((r) => r.storeId));
       const currentIds = Array.from(currentSet);
       const toInsert = requestedIds.filter((id) => !currentSet.has(id));
@@ -10392,8 +10553,8 @@ async function registerRoutes(app2) {
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
           and4(
-            eq5(userStores.userId, targetId),
-            or2(...toDelete.map((id) => eq5(userStores.storeId, id)))
+            eq6(userStores.userId, targetId),
+            or2(...toDelete.map((id) => eq6(userStores.storeId, id)))
           )
         );
       }
@@ -10683,40 +10844,40 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "User not found" });
       }
       console.log(`Starting cleanup for user ${userId} (${user.email})`);
-      await db.update(orders).set({ assignedTo: null }).where(eq5(orders.assignedTo, userId));
-      await db.update(orders).set({ confirmedBy: null }).where(eq5(orders.confirmedBy, userId));
-      await db.update(orders).set({ cancelledBy: null }).where(eq5(orders.cancelledBy, userId));
+      await db.update(orders).set({ assignedTo: null }).where(eq6(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq6(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq6(orders.cancelledBy, userId));
       console.log("  - Orders unassigned");
       await db.delete(orderAssignments).where(
-        or2(eq5(orderAssignments.userId, userId), eq5(orderAssignments.assignedBy, userId))
+        or2(eq6(orderAssignments.userId, userId), eq6(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
       await db.delete(teamMessages).where(
-        or2(eq5(teamMessages.fromUserId, userId), eq5(teamMessages.toUserId, userId))
+        or2(eq6(teamMessages.fromUserId, userId), eq6(teamMessages.toUserId, userId))
       );
       console.log("  - Team messages deleted");
-      await db.delete(leaveRequests).where(eq5(leaveRequests.userId, userId));
-      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq5(leaveRequests.reviewedBy, userId));
+      await db.delete(leaveRequests).where(eq6(leaveRequests.userId, userId));
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq6(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
-      await db.delete(notifications).where(eq5(notifications.userId, userId));
+      await db.delete(notifications).where(eq6(notifications.userId, userId));
       console.log("  - Notifications deleted");
-      await db.delete(attendance).where(eq5(attendance.userId, userId));
+      await db.delete(attendance).where(eq6(attendance.userId, userId));
       console.log("  - Attendance records deleted");
-      await db.delete(calls).where(eq5(calls.agentId, userId));
+      await db.delete(calls).where(eq6(calls.agentId, userId));
       console.log("  - Call records deleted");
-      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq5(orderStatusHistory.changedBy, userId));
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq6(orderStatusHistory.changedBy, userId));
       console.log("  - Order status history updated");
-      await db.update(invites).set({ invitedBy: null }).where(eq5(invites.invitedBy, userId));
+      await db.update(invites).set({ invitedBy: null }).where(eq6(invites.invitedBy, userId));
       console.log("  - Invites updated");
-      await db.update(ndrEvents).set({ actionBy: null }).where(eq5(ndrEvents.actionBy, userId));
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq6(ndrEvents.actionBy, userId));
       console.log("  - NDR events updated");
-      await db.update(courses).set({ authorId: null }).where(eq5(courses.authorId, userId));
+      await db.update(courses).set({ authorId: null }).where(eq6(courses.authorId, userId));
       console.log("  - Courses updated");
-      await db.update(resources).set({ authorId: null }).where(eq5(resources.authorId, userId));
+      await db.update(resources).set({ authorId: null }).where(eq6(resources.authorId, userId));
       console.log("  - Resources updated");
-      await db.delete(userLessonProgress).where(eq5(userLessonProgress.userId, userId));
+      await db.delete(userLessonProgress).where(eq6(userLessonProgress.userId, userId));
       console.log("  - User lesson progress deleted");
-      await db.delete(userOnboardingProgress).where(eq5(userOnboardingProgress.userId, userId));
+      await db.delete(userOnboardingProgress).where(eq6(userOnboardingProgress.userId, userId));
       console.log("  - User onboarding progress deleted");
       await storage.deleteUser(userId);
       console.log(`User ${userId} deleted successfully`);
@@ -11202,7 +11363,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.startBreak(attendance2.id);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq5(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq6(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error starting break:", error);
@@ -11227,7 +11388,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.endBreak(activeBreak.id, now);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq5(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq6(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error ending break:", error);
@@ -12952,7 +13113,7 @@ async function registerRoutes(app2) {
       const endDateParsed = endDate && typeof endDate === "string" && endDate.trim() ? new Date(endDate) : null;
       const conditions = [];
       if (req.storeScope?.storeId) {
-        conditions.push(eq5(orders.storeId, req.storeScope.storeId));
+        conditions.push(eq6(orders.storeId, req.storeScope.storeId));
       }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte2(orders.createdAt, startDateParsed));
@@ -13122,7 +13283,7 @@ async function registerRoutes(app2) {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
-      await db.delete(webhooks).where(eq5(webhooks.id, id));
+      await db.delete(webhooks).where(eq6(webhooks.id, id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting webhook:", error);

@@ -239,6 +239,12 @@ export type Invite = typeof invites.$inferSelect;
 // Migration path forward (Phase 4/5): the read-paths flip over to
 // stores → getShopifyClient(storeId) factory; shopify_credentials gets
 // deprecated and eventually dropped.
+export type MetaAdAccountConfig = {
+  adAccountId: string;
+  linkedCampaignIds: string[];
+  syncAll: boolean;
+};
+
 export const stores = pgTable("stores", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   // Display name fetched from Shopify on connect.
@@ -265,6 +271,8 @@ export const stores = pgTable("stores", {
   apiSecret: text("api_secret"),
   accessToken: text("access_token"),
   webhookSecret: text("webhook_secret"),
+  metaAccessToken: text("meta_access_token"),
+  metaAdAccountsConfig: jsonb("meta_ad_accounts_config").$type<MetaAdAccountConfig[]>(),
   isActive: boolean("is_active").notNull().default(true),
   lastTestedAt: timestamp("last_tested_at"),
   testStatus: text("test_status"), // success | failed

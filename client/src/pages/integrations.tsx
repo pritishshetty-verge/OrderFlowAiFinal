@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Redirect } from "wouter";
 import {
   Truck,
@@ -6,6 +6,9 @@ import {
   Webhook,
   MessageCircle,
   ShoppingBag,
+  Loader2,
+  ChevronLeft,
+  Check,
   type LucideIcon,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
@@ -17,6 +20,11 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Sheet,
   SheetContent,
@@ -27,6 +35,10 @@ import {
 import { ShopifyConnectionCard } from "@/components/settings-shopify-main";
 import { AddStoreDialog } from "@/components/add-store-dialog";
 import { Plus } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
+import { useToast } from "@/hooks/use-toast";
 
 // ─────────────────────────────────────────────────────────────────────
 // Integrations hub.
@@ -375,6 +387,13 @@ export default function IntegrationsPage() {
     if (activeIntegration.id === "shopify") {
       return <ShopifyConnectionCard />;
     }
+    if (activeIntegration.id === "meta-ads") {
+      return (
+        <MetaConnectionCard
+          onClose={() => setActiveIntegration(null)}
+        />
+      );
+    }
     return (
       <div className="rounded-lg border border-dashed p-6 text-center space-y-2">
         <p className="text-sm font-medium">Configuration coming soon</p>
@@ -495,5 +514,560 @@ export default function IntegrationsPage() {
         </SheetContent>
       </Sheet>
     </PageLayout>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MetaConnectionCard — multi-step Meta Ads onboarding wizard rendered
+// inside the integrations Sheet. Steps: credentials → accounts →
+// campaigns → review. The server keeps the access token encrypted and
+// scoped to the currently active store; the client never sees the raw
+// token after it's saved.
+// ─────────────────────────────────────────────────────────────────────
+
+type MetaStep = "credentials" | "accounts" | "campaigns" | "review";
+
+type MetaAdAccountConfig = {
+  adAccountId: string;
+  linkedCampaignIds: string[];
+  syncAll: boolean;
+};
+
+type MetaConfigResponse = {
+  hasToken: boolean;
+  adAccountsConfig: MetaAdAccountConfig[];
+};
+
+type MetaAdAccount = {
+  id: string;
+  name: string;
+  account_status?: number;
+  currency?: string;
+  business_name?: string;
+};
+
+type MetaCampaign = {
+  id: string;
+  name: string;
+  status?: string;
+  objective?: string;
+  effective_status?: string;
+};
+
+interface MetaConnectionCardProps {
+  onClose: () => void;
+}
+
+function MetaStepHeader({ step }: { step: MetaStep }) {
+  const labels: { id: MetaStep; n: number; label: string }[] = [
+    { id: "credentials", n: 1, label: "Credentials" },
+    { id: "accounts", n: 2, label: "Accounts" },
+    { id: "campaigns", n: 3, label: "Campaigns" },
+    { id: "review", n: 4, label: "Review" },
+  ];
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-xs">
+      {labels.map((s, idx) => {
+        const active = s.id === step;
+        return (
+          <div key={s.id} className="flex items-center gap-2">
+            <span
+              className={
+                active
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground"
+              }
+            >
+              {s.n} {s.label}
+            </span>
+            {idx < labels.length - 1 && (
+              <span className="text-muted-foreground">·</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
+  const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [step, setStep] = useState<MetaStep>("credentials");
+  const [tokenInput, setTokenInput] = useState("");
+  const [selectedAdAccountId, setSelectedAdAccountId] = useState<string | null>(
+    null,
+  );
+  const [syncAll, setSyncAll] = useState(true);
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [campaignSearch, setCampaignSearch] = useState("");
+  const [didBootstrap, setDidBootstrap] = useState(false);
+
+  // ── Queries ──────────────────────────────────────────────────────
+  const configQuery = useQuery<MetaConfigResponse>({
+    queryKey: ["/api/meta/config", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/meta/config");
+      return (await res.json()) as MetaConfigResponse;
+    },
+    enabled: !!activeStoreId,
+  });
+
+  // Bootstrap: if a token is already configured, skip past step 1 the
+  // first time the query resolves. Don't keep forcing the step after
+  // that — the user may navigate back to "credentials" to rotate the
+  // token.
+  useEffect(() => {
+    if (didBootstrap) return;
+    if (configQuery.data) {
+      if (configQuery.data.hasToken) {
+        setStep("accounts");
+        const existing = configQuery.data.adAccountsConfig?.[0];
+        if (existing) {
+          setSelectedAdAccountId(existing.adAccountId);
+          setSyncAll(existing.syncAll);
+          setSelectedCampaignIds(new Set(existing.linkedCampaignIds));
+        }
+      }
+      setDidBootstrap(true);
+    }
+  }, [configQuery.data, didBootstrap]);
+
+  const hasToken = !!configQuery.data?.hasToken;
+
+  const adAccountsQuery = useQuery<{ adAccounts: MetaAdAccount[] }>({
+    queryKey: ["/api/meta/ad-accounts", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/meta/ad-accounts");
+      return (await res.json()) as { adAccounts: MetaAdAccount[] };
+    },
+    enabled:
+      !!activeStoreId &&
+      hasToken &&
+      (step === "accounts" || step === "campaigns" || step === "review"),
+  });
+
+  const campaignsQuery = useQuery<{ campaigns: MetaCampaign[] }>({
+    queryKey: ["/api/meta/campaigns", activeStoreId, selectedAdAccountId],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/meta/campaigns?adAccountId=${encodeURIComponent(
+          selectedAdAccountId ?? "",
+        )}`,
+      );
+      return (await res.json()) as { campaigns: MetaCampaign[] };
+    },
+    enabled:
+      !!activeStoreId &&
+      !!selectedAdAccountId &&
+      (step === "campaigns" || step === "review"),
+  });
+
+  // ── Mutations ────────────────────────────────────────────────────
+  const saveTokenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", "/api/meta/config", {
+        accessToken: tokenInput,
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Token saved",
+        description: "Your Meta access token is securely stored.",
+      });
+      setTokenInput("");
+      setStep("accounts");
+      queryClient.invalidateQueries({
+        queryKey: ["/api/meta/config", activeStoreId],
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not save token",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const saveConfigMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedAdAccountId) throw new Error("No ad account selected");
+      const cfg: MetaAdAccountConfig = {
+        adAccountId: selectedAdAccountId,
+        linkedCampaignIds: syncAll ? [] : Array.from(selectedCampaignIds),
+        syncAll,
+      };
+      const res = await apiRequest("PUT", "/api/meta/config", {
+        adAccountsConfig: [cfg],
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Meta Ads connected",
+        description: "Your ad account and campaigns are linked.",
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/meta/config", activeStoreId],
+      });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not save configuration",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  const selectedAdAccount = useMemo(
+    () =>
+      adAccountsQuery.data?.adAccounts.find(
+        (a) => a.id === selectedAdAccountId,
+      ) ?? null,
+    [adAccountsQuery.data, selectedAdAccountId],
+  );
+
+  const filteredCampaigns = useMemo(() => {
+    const all = campaignsQuery.data?.campaigns ?? [];
+    if (!campaignSearch.trim()) return all;
+    const q = campaignSearch.trim().toLowerCase();
+    return all.filter((c) => c.name.toLowerCase().includes(q));
+  }, [campaignsQuery.data, campaignSearch]);
+
+  const toggleCampaign = (id: string) => {
+    setSelectedCampaignIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // ── Render ───────────────────────────────────────────────────────
+  if (!activeStoreId) {
+    return (
+      <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground text-center">
+        Select an active store to configure Meta Ads.
+      </div>
+    );
+  }
+
+  if (configQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <MetaStepHeader step={step} />
+
+      {step === "credentials" && (
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">Connect Meta Business</h3>
+            <p className="text-xs text-muted-foreground">
+              Paste a System User access token from Meta Business Manager.
+              We'll store it encrypted and never expose it back to the
+              browser.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="meta-token">System User Access Token</Label>
+            <Input
+              id="meta-token"
+              type="password"
+              autoComplete="off"
+              placeholder="EAAB..."
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              data-testid="input-meta-token"
+            />
+          </div>
+          <div className="flex justify-end">
+            <Button
+              onClick={() => saveTokenMutation.mutate()}
+              disabled={
+                !tokenInput.trim() || saveTokenMutation.isPending
+              }
+              data-testid="button-meta-save-token"
+            >
+              {saveTokenMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Save & Continue
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === "accounts" && (
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">Choose an ad account</h3>
+            <p className="text-xs text-muted-foreground">
+              Pick the Meta ad account you want to attribute spend from.
+            </p>
+          </div>
+          {adAccountsQuery.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : adAccountsQuery.isError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+              {(adAccountsQuery.error as Error)?.message ??
+                "Could not load ad accounts."}
+            </div>
+          ) : (
+            <div
+              className="space-y-2"
+              data-testid="list-meta-ad-accounts"
+            >
+              {(adAccountsQuery.data?.adAccounts ?? []).map((acc) => {
+                const isSel = selectedAdAccountId === acc.id;
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => setSelectedAdAccountId(acc.id)}
+                    className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                      isSel
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {acc.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {acc.id}
+                          {acc.currency ? ` · ${acc.currency}` : ""}
+                          {acc.business_name
+                            ? ` · ${acc.business_name}`
+                            : ""}
+                        </div>
+                      </div>
+                      {isSel && (
+                        <Check className="h-4 w-4 text-primary flex-shrink-0" />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+              {(adAccountsQuery.data?.adAccounts ?? []).length === 0 && (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground text-center">
+                  No ad accounts visible to this token.
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setStep("credentials")}
+              data-testid="button-meta-back"
+            >
+              <ChevronLeft className="mr-2 h-4 w-4" />
+              Edit token
+            </Button>
+            <Button
+              onClick={() => setStep("campaigns")}
+              disabled={!selectedAdAccountId}
+              data-testid="button-meta-continue"
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === "campaigns" && (
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">Pick campaigns to track</h3>
+            <p className="text-xs text-muted-foreground">
+              Link specific campaigns, or sync every campaign in this
+              account automatically.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor="meta-sync-all" className="text-sm">
+                Link all campaigns automatically
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                New campaigns added in Meta will be picked up on the next
+                sync.
+              </p>
+            </div>
+            <Switch
+              id="meta-sync-all"
+              checked={syncAll}
+              onCheckedChange={setSyncAll}
+              data-testid="switch-meta-sync-all"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Input
+              placeholder="Search campaigns…"
+              value={campaignSearch}
+              onChange={(e) => setCampaignSearch(e.target.value)}
+              disabled={syncAll}
+              data-testid="input-meta-campaign-search"
+            />
+            {campaignsQuery.isLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : campaignsQuery.isError ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                {(campaignsQuery.error as Error)?.message ??
+                  "Could not load campaigns."}
+              </div>
+            ) : (
+              <div
+                className={`rounded-lg border divide-y max-h-80 overflow-y-auto ${
+                  syncAll ? "opacity-60" : ""
+                }`}
+                data-testid="list-meta-campaigns"
+              >
+                {syncAll && (
+                  <div className="p-3 text-xs text-muted-foreground">
+                    All current and future campaigns will be synced.
+                  </div>
+                )}
+                {filteredCampaigns.map((c) => {
+                  const checked = selectedCampaignIds.has(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-start gap-3 p-3 cursor-pointer hover:bg-muted/30"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleCampaign(c.id)}
+                        disabled={syncAll}
+                        className="mt-0.5"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium truncate">
+                          {c.name}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {c.objective ?? "—"}
+                          {c.status ? ` · ${c.status}` : ""}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+                {!syncAll && filteredCampaigns.length === 0 && (
+                  <div className="p-3 text-xs text-muted-foreground text-center">
+                    No campaigns match your search.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setStep("accounts")}
+              data-testid="button-meta-back"
+            >
+              <ChevronLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+            <Button
+              onClick={() => setStep("review")}
+              disabled={!syncAll && selectedCampaignIds.size === 0}
+              data-testid="button-meta-continue"
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === "review" && (
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">Review & save</h3>
+            <p className="text-xs text-muted-foreground">
+              Confirm the configuration before we start syncing.
+            </p>
+          </div>
+          <div className="rounded-lg border divide-y">
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">
+                Ad account
+              </span>
+              <span className="text-sm font-medium">
+                {selectedAdAccount?.name ?? selectedAdAccountId ?? "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">
+                Sync all campaigns
+              </span>
+              <Badge variant="outline">{syncAll ? "Yes" : "No"}</Badge>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">
+                Linked campaigns
+              </span>
+              <span className="text-sm font-medium">
+                {syncAll
+                  ? "All campaigns"
+                  : `${selectedCampaignIds.size} selected`}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setStep("campaigns")}
+              data-testid="button-meta-back"
+            >
+              <ChevronLeft className="mr-2 h-4 w-4" />
+              Back
+            </Button>
+            <Button
+              onClick={() => saveConfigMutation.mutate()}
+              disabled={
+                saveConfigMutation.isPending || !selectedAdAccountId
+              }
+              data-testid="button-meta-save-config"
+            >
+              {saveConfigMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Save configuration
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

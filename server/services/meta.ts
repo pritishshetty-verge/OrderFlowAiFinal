@@ -1,46 +1,27 @@
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { marketingMetrics, stores, type InsertMarketingMetric } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import {
+  marketingMetrics,
+  stores,
+  type InsertMarketingMetric,
+  type MetaAdAccountConfig,
+} from "@shared/schema";
+import { decrypt } from "../encryption";
 
 // ─────────────────────────────────────────────────────────────────────
-// Phase-1 multi-store transitional helper.
+// Meta Marketing API sync — per-store, campaign-level.
 //
-// marketing_metrics now has a composite PK (date, storeId) and storeId
-// is NOT NULL. Until Phase 2 wires a request-scoped store context, the
-// Meta sync runs against the single "legacy" stores row (the one the
-// backfill created from the old shopify_credentials). We resolve it
-// lazily by reading the oldest row from `stores` — there is exactly
-// one until multi-store onboarding ships.
-// ─────────────────────────────────────────────────────────────────────
-async function resolveLegacyStoreId(): Promise<string> {
-  const rows = await db
-    .select({ id: stores.id })
-    .from(stores)
-    .orderBy(stores.createdAt)
-    .limit(1);
-  if (rows.length === 0) {
-    throw new Error(
-      "[meta] no stores row found — run server/scripts/backfill-store-id.ts first",
-    );
-  }
-  return rows[0].id;
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Meta Marketing API sync.
+// Token + linked-account config live on the `stores` row (encrypted token
+// via server/encryption.ts; jsonb config). Each entry in
+// stores.metaAdAccountsConfig pins one ad account and either pulls every
+// campaign (`syncAll=true`) or a curated subset
+// (`linkedCampaignIds: string[]`). We fetch insights at the campaign
+// breakdown level so multiple stores can sit on the same ad account
+// without their numbers blending.
 //
-// Fetches daily insights (spend, purchases, purchase value) per ad
-// account, merges them across accounts by date, then upserts into
-// marketing_metrics so Pare Phase 4 can surface blended FB metrics.
-//
-// Auth: Bearer token via META_ACCESS_TOKEN env var.
-// Accounts: comma-separated list in META_AD_ACCOUNT_IDS. Each ID may
-//   or may not include the `act_` prefix — we normalize below.
-//
-// Action attribution: we use the canonical `purchase` action type
-// (aggregate of all purchase events tracked by the pixel, regardless
-// of surface). If you need a stricter attribution (e.g. only
-// `offsite_conversion.fb_pixel_purchase`), swap the constant below.
+// Two stores sharing one ad account is now safe: each store reads ONLY
+// the campaigns it linked, aggregated under its own storeId on
+// marketing_metrics (composite PK date+storeId).
 // ─────────────────────────────────────────────────────────────────────
 
 const META_API_VERSION = "v19.0";
@@ -51,6 +32,7 @@ type MetaAction = { action_type: string; value: string };
 type MetaInsightRow = {
   date_start: string; // YYYY-MM-DD
   date_stop: string;
+  campaign_id?: string;
   spend?: string;
   actions?: MetaAction[];
   action_values?: MetaAction[];
@@ -62,6 +44,7 @@ type MetaInsightsResponse = {
 };
 
 export type MetaSyncResult = {
+  storeId: string;
   startDate: string;
   endDate: string;
   accountsAttempted: number;
@@ -70,20 +53,6 @@ export type MetaSyncResult = {
   daysUpserted: number;
   totals: { fbSpend: number; fbGmv: number; fbOrders: number };
 };
-
-function normalizeAccountId(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return trimmed;
-  return trimmed.startsWith("act_") ? trimmed : `act_${trimmed}`;
-}
-
-function readAccountIds(): string[] {
-  const raw = process.env.META_AD_ACCOUNT_IDS ?? "";
-  return raw
-    .split(",")
-    .map((s) => normalizeAccountId(s))
-    .filter((s) => s.length > 0);
-}
 
 function sumAction(
   list: MetaAction[] | undefined,
@@ -94,19 +63,19 @@ function sumAction(
   return row ? Number(row.value) || 0 : 0;
 }
 
-// Fetch all pages of insights for one ad account. Meta returns up to
-// 25 rows per page by default; for a 30-day window with
-// time_increment=1 that fits in one page, but we follow `paging.next`
-// defensively in case limits change.
-async function fetchAccountInsights(
+// Fetch all pages of insights for one ad account at the campaign
+// breakdown level. Meta caps `limit` and pages via `paging.next`; we
+// follow until exhausted.
+async function fetchAccountCampaignInsights(
   accountId: string,
   accessToken: string,
   startDate: string,
   endDate: string,
 ): Promise<MetaInsightRow[]> {
   const params = new URLSearchParams({
+    level: "campaign",
     time_increment: "1",
-    fields: "spend,actions,action_values",
+    fields: "campaign_id,spend,actions,action_values",
     time_range: JSON.stringify({ since: startDate, until: endDate }),
     limit: "500",
   });
@@ -128,52 +97,95 @@ async function fetchAccountInsights(
   return rows;
 }
 
-// Run the full sync. `startDate` / `endDate` are YYYY-MM-DD strings.
-// Returns a summary with per-account errors surfaced for ops visibility.
+/**
+ * Run the per-store Meta sync. Reads encrypted token + linked-account
+ * config from the `stores` row, fetches campaign-level insights for
+ * each linked account, filters by the store's `linkedCampaignIds`
+ * (unless `syncAll`), and upserts daily totals into marketing_metrics.
+ *
+ * `startDate` / `endDate` are YYYY-MM-DD strings.
+ */
 export async function syncMetaInsights(
+  storeId: string,
   startDate: string,
   endDate: string,
 ): Promise<MetaSyncResult> {
-  const accessToken = process.env.META_ACCESS_TOKEN;
+  // ── Resolve token + config from the store row. ───────────────────
+  const [storeRow] = await db
+    .select({
+      id: stores.id,
+      metaAccessToken: stores.metaAccessToken,
+      metaAdAccountsConfig: stores.metaAdAccountsConfig,
+    })
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+
+  if (!storeRow) {
+    throw new Error(`Store not found: ${storeId}`);
+  }
+  if (!storeRow.metaAccessToken) {
+    throw new Error("Meta token not configured for this store");
+  }
+  const accessToken = decrypt(storeRow.metaAccessToken);
   if (!accessToken) {
-    throw new Error("META_ACCESS_TOKEN env var is not set");
+    throw new Error("Meta token failed to decrypt for this store");
   }
-  const accountIds = readAccountIds();
-  if (accountIds.length === 0) {
-    throw new Error("META_AD_ACCOUNT_IDS env var is empty");
+
+  const config: MetaAdAccountConfig[] = Array.isArray(
+    storeRow.metaAdAccountsConfig,
+  )
+    ? (storeRow.metaAdAccountsConfig as MetaAdAccountConfig[])
+    : [];
+  if (config.length === 0) {
+    throw new Error("No Meta ad accounts linked for this store");
   }
-  // Resolve the legacy store row up front so the upsert below can
-  // satisfy the new composite PK (date, storeId) + NOT NULL storeId.
-  const storeId = await resolveLegacyStoreId();
 
   console.log(
-    `[meta] syncing ${accountIds.length} account(s) for ${startDate} → ${endDate}`,
+    `[meta] store=${storeId} syncing ${config.length} account(s) for ${startDate} → ${endDate}`,
   );
 
-  // Concurrent fan-out per the user's spec (Promise.all). Each account
-  // is wrapped in a try/catch so one bad account doesn't abort the
-  // entire sync — the Promise.all still completes and we surface
-  // per-account errors in the result summary.
+  // ── Concurrent fan-out per account. Each account is wrapped in a
+  // try/catch so one bad account doesn't abort the rest; per-account
+  // errors are surfaced in the result summary. ─────────────────────
   const perAccount = await Promise.all(
-    accountIds.map(async (id) => {
+    config.map(async (entry) => {
       try {
-        const rows = await fetchAccountInsights(
-          id,
+        const rows = await fetchAccountCampaignInsights(
+          entry.adAccountId,
           accessToken,
           startDate,
           endDate,
         );
-        console.log(`[meta] ${id}: ${rows.length} day-rows`);
-        return { id, rows, error: null as string | null };
+        // Apply per-account linkedCampaignIds filter unless syncAll.
+        const filtered = entry.syncAll
+          ? rows
+          : rows.filter(
+              (r) =>
+                r.campaign_id != null &&
+                entry.linkedCampaignIds.includes(r.campaign_id),
+            );
+        console.log(
+          `[meta] ${entry.adAccountId}: ${rows.length} campaign-day rows fetched, ${filtered.length} after link filter`,
+        );
+        return {
+          id: entry.adAccountId,
+          rows: filtered,
+          error: null as string | null,
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`[meta] ${id} failed: ${message}`);
-        return { id, rows: [] as MetaInsightRow[], error: message };
+        console.warn(`[meta] ${entry.adAccountId} failed: ${message}`);
+        return {
+          id: entry.adAccountId,
+          rows: [] as MetaInsightRow[],
+          error: message,
+        };
       }
     }),
   );
 
-  // ── Merge across accounts, keyed by date_start. ────────────────
+  // ── Merge matching campaign-day rows across accounts, keyed by date. ──
   type Agg = { fbSpend: number; fbGmv: number; fbOrders: number };
   const byDate = new Map<string, Agg>();
   for (const acct of perAccount) {
@@ -212,8 +224,6 @@ export async function syncMetaInsights(
       .insert(marketingMetrics)
       .values(upsertRows)
       .onConflictDoUpdate({
-        // PK is composite (date, storeId) — both columns required here
-        // so drizzle generates `ON CONFLICT (date, store_id) DO UPDATE`.
         target: [marketingMetrics.date, marketingMetrics.storeId],
         set: {
           fbSpend: sql`excluded.fb_spend`,
@@ -230,10 +240,11 @@ export async function syncMetaInsights(
     .map((a) => ({ accountId: a.id, message: a.error as string }));
 
   return {
+    storeId,
     startDate,
     endDate,
-    accountsAttempted: accountIds.length,
-    accountsSucceeded: accountIds.length - accountErrors.length,
+    accountsAttempted: config.length,
+    accountsSucceeded: config.length - accountErrors.length,
     accountErrors,
     daysUpserted: upsertRows.length,
     totals,

@@ -8,6 +8,7 @@ import {
   attendance, orderAssignments, calls, notifications, ndrEvents,
   courses, resources, userLessonProgress, userOnboardingProgress, users,
   webhooks, insertWebhookSchema, stores, userStores,
+  type MetaAdAccountConfig,
 } from "@shared/schema";
 import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
@@ -1973,21 +1974,256 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Fetches daily spend + purchases across all configured ad accounts and
   // upserts into marketing_metrics. Intended to be triggered manually or via
   // a scheduled cron — NOT on every page load.
+  //
+  // All Meta routes below are strictly per-store: they require an active
+  // store scope (req.storeScope?.storeId) and read/write only that store's
+  // row in `stores`. Per-store isolation matches how marketing_metrics is
+  // keyed (storeId, date) downstream in services/analytics.ts.
   app.post("/api/meta/sync", async (req, res) => {
     try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
       const { syncMetaInsights } = await import("./services/meta");
-      const days = Math.max(1, Math.min(Number(req.body?.days) || 30, 365));
-      const end = new Date();
-      const start = new Date(end.getTime() - (days - 1) * 864e5);
-      const startDate = start.toISOString().slice(0, 10);
-      const endDate = end.toISOString().slice(0, 10);
-      const result = await syncMetaInsights(startDate, endDate);
+
+      // Allow either { days } (default 30) or explicit { startDate, endDate }
+      // (YYYY-MM-DD). When both are provided, explicit dates win.
+      let startDate: string;
+      let endDate: string;
+      if (req.body?.startDate && req.body?.endDate) {
+        startDate = String(req.body.startDate);
+        endDate = String(req.body.endDate);
+      } else {
+        const days = Math.max(1, Math.min(Number(req.body?.days) || 30, 365));
+        const end = new Date();
+        const start = new Date(end.getTime() - (days - 1) * 864e5);
+        startDate = start.toISOString().slice(0, 10);
+        endDate = end.toISOString().slice(0, 10);
+      }
+
+      const result = await syncMetaInsights(storeId, startDate, endDate);
       res.json(result);
     } catch (err: any) {
       console.error("Error syncing Meta insights:", err);
       res
         .status(500)
         .json({ error: err?.message || "Failed to sync Meta insights" });
+    }
+  });
+
+  // GET /api/meta/config — report whether a token is configured for the
+  // active store and return the ad-account/campaign linkage. The raw
+  // access token is NEVER sent to the client; we only expose a boolean.
+  app.get("/api/meta/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [store] = await db
+        .select({
+          metaAccessToken: stores.metaAccessToken,
+          metaAdAccountsConfig: stores.metaAdAccountsConfig,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      res.json({
+        hasToken: !!store.metaAccessToken,
+        adAccountsConfig: store.metaAdAccountsConfig ?? [],
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/meta/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to load Meta config" });
+    }
+  });
+
+  // PUT /api/meta/config — partial update.
+  //   - accessToken: when a non-empty string is supplied, encrypt() and
+  //     persist; when omitted/empty, leave the existing token untouched.
+  //   - adAccountsConfig: when provided (even []), always replace.
+  // Mirrors how PATCH /api/stores/:id persists rows: db.update(stores)
+  // with a built-up patch object so untouched columns aren't clobbered.
+  app.put("/api/meta/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+
+      const patch: {
+        metaAccessToken?: string;
+        metaAdAccountsConfig?: MetaAdAccountConfig[];
+        updatedAt?: Date;
+      } = {};
+
+      const { accessToken, adAccountsConfig } = req.body ?? {};
+
+      if (typeof accessToken === "string" && accessToken.trim().length > 0) {
+        patch.metaAccessToken = encrypt(accessToken.trim());
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "adAccountsConfig")) {
+        if (!Array.isArray(adAccountsConfig)) {
+          return res
+            .status(400)
+            .json({ error: "adAccountsConfig must be an array." });
+        }
+        // Lightweight validation — each entry must match the JSON shape
+        // documented in shared/schema.ts (MetaAdAccountConfig).
+        for (const entry of adAccountsConfig) {
+          if (
+            !entry ||
+            typeof entry !== "object" ||
+            typeof entry.adAccountId !== "string" ||
+            !Array.isArray(entry.linkedCampaignIds) ||
+            typeof entry.syncAll !== "boolean"
+          ) {
+            return res.status(400).json({
+              error:
+                "Each adAccountsConfig entry needs { adAccountId, linkedCampaignIds[], syncAll }.",
+            });
+          }
+        }
+        patch.metaAdAccountsConfig = adAccountsConfig as MetaAdAccountConfig[];
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Nothing to update. Provide accessToken and/or adAccountsConfig." });
+      }
+      patch.updatedAt = new Date();
+
+      await db.update(stores).set(patch).where(eq(stores.id, storeId));
+
+      // Re-read just the fields the GET shape needs so the client and the
+      // server stay in lockstep without leaking the token.
+      const [updated] = await db
+        .select({
+          metaAccessToken: stores.metaAccessToken,
+          metaAdAccountsConfig: stores.metaAdAccountsConfig,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+
+      res.json({
+        hasToken: !!updated?.metaAccessToken,
+        adAccountsConfig: updated?.metaAdAccountsConfig ?? [],
+      });
+    } catch (err: any) {
+      console.error("Error in PUT /api/meta/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Meta config" });
+    }
+  });
+
+  // GET /api/meta/ad-accounts — server-side proxy to Meta's Graph API
+  // /me/adaccounts using the store's decrypted token. We proxy (vs
+  // letting the browser talk to Meta directly) so the access token
+  // never leaves the server.
+  app.get("/api/meta/ad-accounts", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [store] = await db
+        .select({ metaAccessToken: stores.metaAccessToken })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (!store.metaAccessToken) {
+        return res.status(400).json({ error: "No Meta access token configured for this store." });
+      }
+      const token = decrypt(store.metaAccessToken);
+
+      const url =
+        "https://graph.facebook.com/v19.0/me/adaccounts?fields=id,name,account_status,currency,business_name&limit=200";
+      const response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        validateStatus: () => true,
+      });
+      if (response.status >= 400) {
+        const upstream = response.data?.error?.message || `Meta API error (status ${response.status})`;
+        return res.status(502).json({ error: upstream });
+      }
+      res.json({ adAccounts: response.data?.data ?? [] });
+    } catch (err: any) {
+      console.error("Error in GET /api/meta/ad-accounts:", err);
+      res.status(502).json({ error: err?.message || "Failed to fetch ad accounts" });
+    }
+  });
+
+  // GET /api/meta/campaigns?adAccountId=act_xxx — proxy to
+  // /{adAccountId}/campaigns. Follows Meta's paging.next cursor up to a
+  // 1000-campaign safety cap so we don't loop forever on a malformed
+  // response.
+  app.get("/api/meta/campaigns", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const adAccountId = String(req.query.adAccountId ?? "").trim();
+      if (!adAccountId) {
+        return res.status(400).json({ error: "adAccountId query param is required." });
+      }
+      const [store] = await db
+        .select({ metaAccessToken: stores.metaAccessToken })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (!store.metaAccessToken) {
+        return res.status(400).json({ error: "No Meta access token configured for this store." });
+      }
+      const token = decrypt(store.metaAccessToken);
+
+      const MAX_CAMPAIGNS = 1000;
+      const campaigns: any[] = [];
+      let nextUrl: string | null =
+        `https://graph.facebook.com/v19.0/${encodeURIComponent(adAccountId)}/campaigns?fields=id,name,status,objective,effective_status&limit=500`;
+
+      while (nextUrl && campaigns.length < MAX_CAMPAIGNS) {
+        const response: any = await axios.get(nextUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          validateStatus: () => true,
+        });
+        if (response.status >= 400) {
+          const upstream = response.data?.error?.message || `Meta API error (status ${response.status})`;
+          return res.status(502).json({ error: upstream });
+        }
+        const batch = response.data?.data ?? [];
+        for (const c of batch) {
+          if (campaigns.length >= MAX_CAMPAIGNS) break;
+          campaigns.push(c);
+        }
+        nextUrl = response.data?.paging?.next ?? null;
+      }
+
+      res.json({ campaigns });
+    } catch (err: any) {
+      console.error("Error in GET /api/meta/campaigns:", err);
+      res.status(502).json({ error: err?.message || "Failed to fetch campaigns" });
     }
   });
 
