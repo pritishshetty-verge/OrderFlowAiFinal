@@ -793,6 +793,29 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
   const saving =
     saveConfigMutation.isPending || syncHistoricalMutation.isPending;
 
+  // ── Manage-vs-Save mode ─────────────────────────────────────────
+  // Step 4 (Review) is dual-purpose: it's the final step of a fresh
+  // setup AND the manage view when a user reopens the sheet on an
+  // already-configured store. Distinguish by comparing local form
+  // state against the saved config — no extra flag needed because
+  // bootstrap already pre-populated the form from savedConfig, so a
+  // freshly-mounted Review view is non-dirty by construction.
+  const savedConfig = configQuery.data?.adAccountsConfig?.[0] ?? null;
+  const isDirty = useMemo(() => {
+    if (!savedConfig) return true; // nothing saved → always treat as setup
+    if (selectedAdAccountId !== savedConfig.adAccountId) return true;
+    if (syncAll !== savedConfig.syncAll) return true;
+    if (!syncAll) {
+      const savedSet = new Set(savedConfig.linkedCampaignIds);
+      if (savedSet.size !== selectedCampaignIds.size) return true;
+      for (const id of Array.from(selectedCampaignIds)) {
+        if (!savedSet.has(id)) return true;
+      }
+    }
+    return false;
+  }, [savedConfig, selectedAdAccountId, syncAll, selectedCampaignIds]);
+  const isManageView = step === "review" && !isDirty && !!savedConfig;
+
   // ── Render ───────────────────────────────────────────────────────
   if (!activeStoreId) {
     return (
@@ -1053,10 +1076,22 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
       {step === "review" && (
         <div className="space-y-4">
           <div className="space-y-1">
-            <h3 className="text-sm font-semibold">Review & save</h3>
-            <p className="text-xs text-muted-foreground">
-              Confirm the configuration before we start syncing.
-            </p>
+            {isManageView ? (
+              <>
+                <h3 className="text-sm font-semibold">Active configuration</h3>
+                <p className="text-xs text-muted-foreground">
+                  Your Meta Ads connection is live and syncing. Use the
+                  actions below to refresh data or change what's linked.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-sm font-semibold">Review &amp; save</h3>
+                <p className="text-xs text-muted-foreground">
+                  Confirm the configuration before we start syncing.
+                </p>
+              </>
+            )}
           </div>
           <div className="rounded-lg border divide-y">
             <div className="flex items-center justify-between p-3">
@@ -1084,28 +1119,54 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
               </span>
             </div>
           </div>
-          <div className="flex items-center justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setStep("campaigns")}
-              disabled={saving}
-              data-testid="button-meta-back"
-            >
-              <ChevronLeft className="mr-2 h-4 w-4" />
-              Back
-            </Button>
-            <Button
-              data-testid="button-meta-save-config"
-              onClick={() => saveConfigMutation.mutate()}
-              disabled={saving || !selectedAdAccountId}
-              className="gap-2"
-            >
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {saving
-                ? "Saving & syncing historical data (30 days)…"
-                : "Save configuration"}
-            </Button>
-          </div>
+          {isManageView ? (
+            <div className="flex items-center justify-between">
+              <Button
+                variant="outline"
+                onClick={() => syncHistoricalMutation.mutate()}
+                disabled={saving}
+                className="gap-2"
+                data-testid="button-meta-sync-now"
+              >
+                {syncHistoricalMutation.isPending && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                {syncHistoricalMutation.isPending
+                  ? "Syncing…"
+                  : "Sync data now (30 days)"}
+              </Button>
+              <Button
+                onClick={() => setStep("accounts")}
+                disabled={saving}
+                data-testid="button-meta-edit-setup"
+              >
+                Edit setup
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <Button
+                variant="outline"
+                onClick={() => setStep("campaigns")}
+                disabled={saving}
+                data-testid="button-meta-back"
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" />
+                Back
+              </Button>
+              <Button
+                data-testid="button-meta-save-config"
+                onClick={() => saveConfigMutation.mutate()}
+                disabled={saving || !selectedAdAccountId}
+                className="gap-2"
+              >
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {saving
+                  ? "Saving & syncing historical data (30 days)…"
+                  : "Save configuration"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
