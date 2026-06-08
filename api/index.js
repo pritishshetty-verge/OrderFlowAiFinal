@@ -1918,6 +1918,9 @@ var init_storage = __esm({
         }
         return await db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
       }
+      async deleteLeaveRequest(id) {
+        await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
+      }
       // ============================================================================
       // TEAM MESSAGES
       // ============================================================================
@@ -12722,6 +12725,19 @@ async function registerRoutes(app2) {
       }
       console.error("Error updating leave request:", error);
       res.status(500).json({ error: "Failed to update leave request" });
+    }
+  });
+  app2.delete("/api/leave-requests/:id", async (req, res) => {
+    try {
+      const request = await storage.getLeaveRequest(req.params.id);
+      if (!request) {
+        return res.status(404).json({ error: "Leave request not found" });
+      }
+      await storage.deleteLeaveRequest(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting leave request:", error);
+      res.status(500).json({ error: "Failed to delete leave request" });
     }
   });
   app2.get("/api/messages/:userId/:otherUserId", async (req, res) => {

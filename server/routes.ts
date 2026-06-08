@@ -6898,6 +6898,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.delete("/api/leave-requests/:id", async (req, res) => {
+    try {
+      const request = await storage.getLeaveRequest(req.params.id);
+      if (!request) {
+        return res.status(404).json({ error: "Leave request not found" });
+      }
+      await storage.deleteLeaveRequest(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error deleting leave request:", error);
+      res.status(500).json({ error: "Failed to delete leave request" });
+    }
+  });
+
   // ============================================================================
   // TEAM MESSAGES API
   // ============================================================================

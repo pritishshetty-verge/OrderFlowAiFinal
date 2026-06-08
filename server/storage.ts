@@ -284,6 +284,7 @@ export interface IStorage {
   createLeaveRequest(request: InsertLeaveRequest): Promise<LeaveRequest>;
   updateLeaveRequest(id: string, data: Partial<InsertLeaveRequest>): Promise<LeaveRequest | undefined>;
   listLeaveRequests(filters?: { userId?: string; status?: string }): Promise<LeaveRequest[]>;
+  deleteLeaveRequest(id: string): Promise<void>;
 
   // Team Messages
   getConversation(user1Id: string, user2Id: string): Promise<TeamMessage[]>;
@@ -1512,6 +1513,10 @@ export class DbStorage implements IStorage {
       .select()
       .from(leaveRequests)
       .orderBy(desc(leaveRequests.createdAt));
+  }
+
+  async deleteLeaveRequest(id: string): Promise<void> {
+    await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
   }
 
   // ============================================================================

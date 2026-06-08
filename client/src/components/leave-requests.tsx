@@ -36,7 +36,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { format } from "date-fns";
-import { CalendarIcon, Plus, Check, X } from "lucide-react";
+import { CalendarIcon, Plus, Check, X, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -69,6 +69,7 @@ interface LeaveRequestsProps {
 
 export function LeaveRequests({ userRole }: LeaveRequestsProps) {
   const [open, setOpen] = useState(false);
+  const [deleteRequestId, setDeleteRequestId] = useState<string | null>(null);
   const { toast } = useToast();
   const currentUserId = localStorage.getItem("userId");
 
@@ -204,6 +205,29 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
 
   const handleReject = (id: string) => {
     rejectMutation.mutate(id);
+  };
+
+  // Delete leave request mutation (admin only)
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/leave-requests/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] });
+      toast({ title: "Request Deleted", description: "Leave request has been deleted." });
+      setDeleteRequestId(null);
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete request. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDelete = (id: string) => {
+    deleteMutation.mutate(id);
   };
 
   const getStatusVariant = (status: DisplayLeaveRequest["status"]) => {
@@ -444,28 +468,72 @@ export function LeaveRequests({ userRole }: LeaveRequestsProps) {
                     {request.type} Leave
                   </CardDescription>
                 </div>
-                {canManageRequests && request.status === "pending" && (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleApprove(request.id)}
-                      disabled={approveMutation.isPending}
-                      data-testid={`button-approve-${request.id}`}
-                    >
-                      <Check className="h-4 w-4 mr-1" />
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleReject(request.id)}
-                      disabled={rejectMutation.isPending}
-                      data-testid={`button-reject-${request.id}`}
-                    >
-                      <X className="h-4 w-4 mr-1" />
-                      Reject
-                    </Button>
+                {((canManageRequests && request.status === "pending") || userRole === "admin") && (
+                  <div className="flex gap-2 items-center">
+                    {canManageRequests && request.status === "pending" && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleApprove(request.id)}
+                          disabled={approveMutation.isPending}
+                          data-testid={`button-approve-${request.id}`}
+                        >
+                          <Check className="h-4 w-4 mr-1" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleReject(request.id)}
+                          disabled={rejectMutation.isPending}
+                          data-testid={`button-reject-${request.id}`}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Reject
+                        </Button>
+                      </>
+                    )}
+                    {userRole === "admin" && (
+                      <Dialog
+                        open={deleteRequestId === request.id}
+                        onOpenChange={(v) => !v && setDeleteRequestId(null)}
+                      >
+                        <DialogTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => setDeleteRequestId(request.id)}
+                            data-testid={`button-delete-${request.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Delete Leave Request</DialogTitle>
+                            <DialogDescription>
+                              Are you sure you want to permanently delete this leave request for{" "}
+                              <strong>{request.employeeName}</strong>? This action cannot be undone.
+                            </DialogDescription>
+                          </DialogHeader>
+                          <DialogFooter>
+                            <Button variant="outline" onClick={() => setDeleteRequestId(null)}>
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={() => handleDelete(request.id)}
+                              disabled={deleteMutation.isPending}
+                              data-testid={`button-delete-confirm-${request.id}`}
+                            >
+                              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+                            </Button>
+                          </DialogFooter>
+                        </DialogContent>
+                      </Dialog>
+                    )}
                   </div>
                 )}
               </div>
