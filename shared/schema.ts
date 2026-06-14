@@ -620,14 +620,31 @@ export const catalogProducts = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     storeId: varchar("store_id").references(() => stores.id),
     shopifyProductId: text("shopify_product_id").notNull(),
+
+    // ── Shopify-native fields (overwritten on every sync, never by the user) ──
     title: text("title").notNull(),
     imageUrl: text("image_url"),
     status: text("status").notNull().default("active"),
     totalInventory: integer("total_inventory").notNull().default(0),
     price: text("price"),
+    compareAtPrice: text("compare_at_price"),
     productType: text("product_type"),
     vendor: text("vendor"),
     variantCount: integer("variant_count").notNull().default(1),
+    sku: text("sku"),
+    barcode: text("barcode"),
+    weight: decimal("weight", { precision: 10, scale: 3 }),
+    weightUnit: text("weight_unit"),
+
+    // ── ERP financial fields (user-editable, NEVER touched by the sync engine) ──
+    cogs: decimal("cogs", { precision: 12, scale: 2 }),
+    packagingCost: decimal("packaging_cost", { precision: 12, scale: 2 }),
+    gstRate: decimal("gst_rate", { precision: 5, scale: 2 }),
+    hsnCode: text("hsn_code"),
+    dimensionLength: decimal("dimension_length", { precision: 8, scale: 2 }),
+    dimensionWidth: decimal("dimension_width", { precision: 8, scale: 2 }),
+    dimensionHeight: decimal("dimension_height", { precision: 8, scale: 2 }),
+
     lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),

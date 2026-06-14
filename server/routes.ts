@@ -3138,6 +3138,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .filter((p: number) => !isNaN(p));
         const minPrice = prices.length > 0 ? Math.min(...prices).toFixed(2) : null;
 
+        // First variant drives SKU / barcode / weight for the product row.
+        const firstVariant = variants[0] as any | undefined;
+        const compareAtPrices = variants
+          .map((v: any) => parseFloat(v.compare_at_price))
+          .filter((p: number) => !isNaN(p) && p > 0);
+        const minCompareAt =
+          compareAtPrices.length > 0
+            ? Math.min(...compareAtPrices).toFixed(2)
+            : null;
+
         await storage.upsertCatalogProduct({
           storeId: syncStoreId,
           shopifyProductId: String(product.id),
@@ -3146,9 +3156,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: product.status || "active",
           totalInventory,
           price: minPrice,
+          compareAtPrice: minCompareAt,
           productType: product.product_type || null,
           vendor: product.vendor || null,
           variantCount: variants.length,
+          sku: firstVariant?.sku || null,
+          barcode: firstVariant?.barcode || null,
+          weight: firstVariant?.weight != null ? String(firstVariant.weight) : null,
+          weightUnit: firstVariant?.weight_unit || null,
           lastSyncedAt: new Date(),
         });
 
@@ -3201,6 +3216,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching catalog products:", error);
       res.status(500).json({ error: "Failed to fetch products" });
+    }
+  });
+
+  // Update ERP financial / logistics fields for one product.
+  // Only the seven user-editable fields are accepted — Shopify-native
+  // fields (title, status, price, sku, etc.) are ignored here and
+  // managed exclusively by the sync engine.
+  app.patch("/api/products/:id", async (req, res) => {
+    try {
+      const { cogs, packagingCost, gstRate, hsnCode, dimensionLength, dimensionWidth, dimensionHeight } = req.body;
+      const updated = await storage.updateCatalogProductErp(req.params.id, {
+        cogs: cogs != null ? String(cogs) : null,
+        packagingCost: packagingCost != null ? String(packagingCost) : null,
+        gstRate: gstRate != null ? String(gstRate) : null,
+        hsnCode: hsnCode ?? null,
+        dimensionLength: dimensionLength != null ? String(dimensionLength) : null,
+        dimensionWidth: dimensionWidth != null ? String(dimensionWidth) : null,
+        dimensionHeight: dimensionHeight != null ? String(dimensionHeight) : null,
+      });
+      if (!updated) {
+        return res.status(404).json({ error: "Product not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating product ERP data:", error);
+      res.status(500).json({ error: "Failed to update product" });
     }
   });
 

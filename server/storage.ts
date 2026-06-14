@@ -439,6 +439,16 @@ export interface IStorage {
   // Catalog Products (product-level, for the Products page UI)
   upsertCatalogProduct(product: InsertCatalogProduct): Promise<CatalogProduct>;
   listCatalogProducts(storeId: string): Promise<CatalogProduct[]>;
+  getCatalogProduct(id: string): Promise<CatalogProduct | undefined>;
+  updateCatalogProductErp(id: string, erp: {
+    cogs?: string | null;
+    packagingCost?: string | null;
+    gstRate?: string | null;
+    hsnCode?: string | null;
+    dimensionLength?: string | null;
+    dimensionWidth?: string | null;
+    dimensionHeight?: string | null;
+  }): Promise<CatalogProduct | undefined>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
@@ -2981,15 +2991,23 @@ export class DbStorage implements IStorage {
       .values(product)
       .onConflictDoUpdate({
         target: [catalogProducts.storeId, catalogProducts.shopifyProductId],
+        // ERP fields (cogs, packagingCost, gstRate, hsnCode, dimension*)
+        // are intentionally excluded here. The sync engine only refreshes
+        // Shopify-native data; user-entered ERP values survive every sync.
         set: {
           title: product.title,
           imageUrl: product.imageUrl,
           status: product.status,
           totalInventory: product.totalInventory,
           price: product.price,
+          compareAtPrice: product.compareAtPrice,
           productType: product.productType,
           vendor: product.vendor,
           variantCount: product.variantCount,
+          sku: product.sku,
+          barcode: product.barcode,
+          weight: product.weight,
+          weightUnit: product.weightUnit,
           lastSyncedAt: new Date(),
           updatedAt: new Date(),
         },
@@ -3004,6 +3022,34 @@ export class DbStorage implements IStorage {
       .from(catalogProducts)
       .where(eq(catalogProducts.storeId, storeId))
       .orderBy(asc(catalogProducts.title));
+  }
+
+  async getCatalogProduct(id: string): Promise<CatalogProduct | undefined> {
+    const [row] = await db
+      .select()
+      .from(catalogProducts)
+      .where(eq(catalogProducts.id, id));
+    return row;
+  }
+
+  async updateCatalogProductErp(
+    id: string,
+    erp: {
+      cogs?: string | null;
+      packagingCost?: string | null;
+      gstRate?: string | null;
+      hsnCode?: string | null;
+      dimensionLength?: string | null;
+      dimensionWidth?: string | null;
+      dimensionHeight?: string | null;
+    },
+  ): Promise<CatalogProduct | undefined> {
+    const [row] = await db
+      .update(catalogProducts)
+      .set({ ...erp, updatedAt: new Date() })
+      .where(eq(catalogProducts.id, id))
+      .returning();
+    return row;
   }
 
   // ============================================================================

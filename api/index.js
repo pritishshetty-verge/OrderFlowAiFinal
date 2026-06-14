@@ -538,14 +538,28 @@ var init_schema = __esm({
         id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
         storeId: varchar("store_id").references(() => stores.id),
         shopifyProductId: text("shopify_product_id").notNull(),
+        // ── Shopify-native fields (overwritten on every sync, never by the user) ──
         title: text("title").notNull(),
         imageUrl: text("image_url"),
         status: text("status").notNull().default("active"),
         totalInventory: integer("total_inventory").notNull().default(0),
         price: text("price"),
+        compareAtPrice: text("compare_at_price"),
         productType: text("product_type"),
         vendor: text("vendor"),
         variantCount: integer("variant_count").notNull().default(1),
+        sku: text("sku"),
+        barcode: text("barcode"),
+        weight: decimal("weight", { precision: 10, scale: 3 }),
+        weightUnit: text("weight_unit"),
+        // ── ERP financial fields (user-editable, NEVER touched by the sync engine) ──
+        cogs: decimal("cogs", { precision: 12, scale: 2 }),
+        packagingCost: decimal("packaging_cost", { precision: 12, scale: 2 }),
+        gstRate: decimal("gst_rate", { precision: 5, scale: 2 }),
+        hsnCode: text("hsn_code"),
+        dimensionLength: decimal("dimension_length", { precision: 8, scale: 2 }),
+        dimensionWidth: decimal("dimension_width", { precision: 8, scale: 2 }),
+        dimensionHeight: decimal("dimension_height", { precision: 8, scale: 2 }),
         lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
         createdAt: timestamp("created_at").notNull().defaultNow(),
         updatedAt: timestamp("updated_at").notNull().defaultNow()
@@ -2813,15 +2827,23 @@ var init_storage = __esm({
       async upsertCatalogProduct(product) {
         const [result] = await db.insert(catalogProducts).values(product).onConflictDoUpdate({
           target: [catalogProducts.storeId, catalogProducts.shopifyProductId],
+          // ERP fields (cogs, packagingCost, gstRate, hsnCode, dimension*)
+          // are intentionally excluded here. The sync engine only refreshes
+          // Shopify-native data; user-entered ERP values survive every sync.
           set: {
             title: product.title,
             imageUrl: product.imageUrl,
             status: product.status,
             totalInventory: product.totalInventory,
             price: product.price,
+            compareAtPrice: product.compareAtPrice,
             productType: product.productType,
             vendor: product.vendor,
             variantCount: product.variantCount,
+            sku: product.sku,
+            barcode: product.barcode,
+            weight: product.weight,
+            weightUnit: product.weightUnit,
             lastSyncedAt: /* @__PURE__ */ new Date(),
             updatedAt: /* @__PURE__ */ new Date()
           }
@@ -2830,6 +2852,14 @@ var init_storage = __esm({
       }
       async listCatalogProducts(storeId) {
         return await db.select().from(catalogProducts).where(eq(catalogProducts.storeId, storeId)).orderBy(asc(catalogProducts.title));
+      }
+      async getCatalogProduct(id) {
+        const [row] = await db.select().from(catalogProducts).where(eq(catalogProducts.id, id));
+        return row;
+      }
+      async updateCatalogProductErp(id, erp) {
+        const [row] = await db.update(catalogProducts).set({ ...erp, updatedAt: /* @__PURE__ */ new Date() }).where(eq(catalogProducts.id, id)).returning();
+        return row;
       }
       // ============================================================================
       // DASHBOARD METRICS
@@ -10141,6 +10171,9 @@ async function registerRoutes(app2) {
         );
         const prices = variants.map((v) => parseFloat(v.price)).filter((p) => !isNaN(p));
         const minPrice = prices.length > 0 ? Math.min(...prices).toFixed(2) : null;
+        const firstVariant = variants[0];
+        const compareAtPrices = variants.map((v) => parseFloat(v.compare_at_price)).filter((p) => !isNaN(p) && p > 0);
+        const minCompareAt = compareAtPrices.length > 0 ? Math.min(...compareAtPrices).toFixed(2) : null;
         await storage.upsertCatalogProduct({
           storeId: syncStoreId,
           shopifyProductId: String(product.id),
@@ -10149,9 +10182,14 @@ async function registerRoutes(app2) {
           status: product.status || "active",
           totalInventory,
           price: minPrice,
+          compareAtPrice: minCompareAt,
           productType: product.product_type || null,
           vendor: product.vendor || null,
           variantCount: variants.length,
+          sku: firstVariant?.sku || null,
+          barcode: firstVariant?.barcode || null,
+          weight: firstVariant?.weight != null ? String(firstVariant.weight) : null,
+          weightUnit: firstVariant?.weight_unit || null,
           lastSyncedAt: /* @__PURE__ */ new Date()
         });
         syncedCount++;
@@ -10193,6 +10231,27 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error fetching catalog products:", error);
       res.status(500).json({ error: "Failed to fetch products" });
+    }
+  });
+  app2.patch("/api/products/:id", async (req, res) => {
+    try {
+      const { cogs, packagingCost, gstRate, hsnCode, dimensionLength, dimensionWidth, dimensionHeight } = req.body;
+      const updated = await storage.updateCatalogProductErp(req.params.id, {
+        cogs: cogs != null ? String(cogs) : null,
+        packagingCost: packagingCost != null ? String(packagingCost) : null,
+        gstRate: gstRate != null ? String(gstRate) : null,
+        hsnCode: hsnCode ?? null,
+        dimensionLength: dimensionLength != null ? String(dimensionLength) : null,
+        dimensionWidth: dimensionWidth != null ? String(dimensionWidth) : null,
+        dimensionHeight: dimensionHeight != null ? String(dimensionHeight) : null
+      });
+      if (!updated) {
+        return res.status(404).json({ error: "Product not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating product ERP data:", error);
+      res.status(500).json({ error: "Failed to update product" });
     }
   });
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {
