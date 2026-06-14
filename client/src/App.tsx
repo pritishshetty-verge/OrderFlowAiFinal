@@ -35,6 +35,7 @@ import WebhooksSettingsPage from "@/pages/webhooks-settings";
 import WebhookLogsPage from "@/pages/webhook-logs";
 import IntegrationsPage from "@/pages/integrations";
 import PayrollPage from "@/pages/payroll";
+import ProductsPage from "@/pages/products";
 import NotFound from "@/pages/not-found";
 import { useEffect } from "react";
 
@@ -219,6 +220,9 @@ function Router() {
       </Route>
       <Route path="/payroll">
         {() => <AdminOnlyGuard component={PayrollPage} />}
+      </Route>
+      <Route path="/products">
+        {() => <AdminOnlyGuard component={ProductsPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>

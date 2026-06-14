@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -126,6 +126,11 @@ const adminMenuItems: MenuItem[] = [
         allowedRoles: ["admin", "recovery_agent"],
       },
     ],
+  },
+  {
+    title: "Products",
+    url: "/products",
+    icon: LayoutGrid,
   },
   {
     title: "Learning Center",

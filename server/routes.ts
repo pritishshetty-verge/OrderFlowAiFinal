@@ -3113,10 +3113,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           await storage.upsertProduct({
-            // storeId stamped so the composite UNIQUE
-            // (storeId, shopifyVariantId) namespaces correctly —
-            // two stores sharing supplier variant ids each get
-            // their own row instead of clobbering each other.
             storeId: syncStoreId,
             shopifyProductId: String(product.id),
             shopifyVariantId: String(variant.id),
@@ -3129,6 +3125,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           variantCount++;
         }
+
+        // Also upsert product-level catalog row (one per product, not per variant).
+        // Aggregates total inventory across all variants; picks the lowest price.
+        const variants = product.variants || [];
+        const totalInventory = variants.reduce(
+          (sum: number, v: any) => sum + (Number(v.inventory_quantity) || 0),
+          0,
+        );
+        const prices = variants
+          .map((v: any) => parseFloat(v.price))
+          .filter((p: number) => !isNaN(p));
+        const minPrice = prices.length > 0 ? Math.min(...prices).toFixed(2) : null;
+
+        await storage.upsertCatalogProduct({
+          storeId: syncStoreId,
+          shopifyProductId: String(product.id),
+          title: product.title,
+          imageUrl: productImage,
+          status: product.status || "active",
+          totalInventory,
+          price: minPrice,
+          productType: product.product_type || null,
+          vendor: product.vendor || null,
+          variantCount: variants.length,
+          lastSyncedAt: new Date(),
+        });
+
         syncedCount++;
       }
 
@@ -3163,6 +3186,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         error: "Failed to sync products",
         details: message,
       });
+    }
+  });
+
+  // List catalog products for the active store
+  app.get("/api/products", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const items = await storage.listCatalogProducts(storeId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching catalog products:", error);
+      res.status(500).json({ error: "Failed to fetch products" });
     }
   });
 

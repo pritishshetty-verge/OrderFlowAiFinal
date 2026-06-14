@@ -61,6 +61,8 @@ import {
   type InsertUserOnboardingProgress,
   type Product,
   type InsertProduct,
+  type CatalogProduct,
+  type InsertCatalogProduct,
   type AbandonedCheckout,
   type InsertAbandonedCheckout,
   users,
@@ -89,6 +91,7 @@ import {
   onboardingChecklists,
   userOnboardingProgress,
   products,
+  catalogProducts,
   appSettings,
   stores,
   abandonedCheckouts,
@@ -424,7 +427,7 @@ export interface IStorage {
   createUserOnboardingProgress(progress: InsertUserOnboardingProgress): Promise<UserOnboardingProgress>;
   updateUserOnboardingProgress(id: string, data: Partial<InsertUserOnboardingProgress>): Promise<UserOnboardingProgress | undefined>;
   
-  // Products (Shopify Product Cache)
+  // Products (Shopify Product Cache — variant-level)
   upsertProduct(product: InsertProduct): Promise<Product>;
   upsertProducts(products: InsertProduct[]): Promise<Product[]>;
   getProductByVariantId(shopifyVariantId: string, storeId: string): Promise<Product | undefined>;
@@ -432,6 +435,10 @@ export interface IStorage {
   listProducts(): Promise<Product[]>;
   getProductCount(storeId: string): Promise<number>;
   getLastProductSync(storeId: string): Promise<Date | null>;
+
+  // Catalog Products (product-level, for the Products page UI)
+  upsertCatalogProduct(product: InsertCatalogProduct): Promise<CatalogProduct>;
+  listCatalogProducts(storeId: string): Promise<CatalogProduct[]>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
@@ -2962,6 +2969,41 @@ export class DbStorage implements IStorage {
       .orderBy(desc(products.lastSyncedAt))
       .limit(1);
     return product?.lastSyncedAt || null;
+  }
+
+  // ============================================================================
+  // CATALOG PRODUCTS (product-level cache for the Products page UI)
+  // ============================================================================
+
+  async upsertCatalogProduct(product: InsertCatalogProduct): Promise<CatalogProduct> {
+    const [result] = await db
+      .insert(catalogProducts)
+      .values(product)
+      .onConflictDoUpdate({
+        target: [catalogProducts.storeId, catalogProducts.shopifyProductId],
+        set: {
+          title: product.title,
+          imageUrl: product.imageUrl,
+          status: product.status,
+          totalInventory: product.totalInventory,
+          price: product.price,
+          productType: product.productType,
+          vendor: product.vendor,
+          variantCount: product.variantCount,
+          lastSyncedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async listCatalogProducts(storeId: string): Promise<CatalogProduct[]> {
+    return await db
+      .select()
+      .from(catalogProducts)
+      .where(eq(catalogProducts.storeId, storeId))
+      .orderBy(asc(catalogProducts.title));
   }
 
   // ============================================================================

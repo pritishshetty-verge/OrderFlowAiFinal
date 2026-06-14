@@ -18,6 +18,7 @@ __export(schema_exports, {
   attendance: () => attendance,
   attendanceBreaks: () => attendanceBreaks,
   calls: () => calls,
+  catalogProducts: () => catalogProducts,
   courses: () => courses,
   customers: () => customers,
   holidays: () => holidays,
@@ -27,6 +28,7 @@ __export(schema_exports, {
   insertAttendanceBreakSchema: () => insertAttendanceBreakSchema,
   insertAttendanceSchema: () => insertAttendanceSchema,
   insertCallSchema: () => insertCallSchema,
+  insertCatalogProductSchema: () => insertCatalogProductSchema,
   insertCourseSchema: () => insertCourseSchema,
   insertCustomerSchema: () => insertCustomerSchema,
   insertHolidaySchema: () => insertHolidaySchema,
@@ -90,7 +92,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -530,6 +532,32 @@ var init_schema = __esm({
       })
     );
     insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true, updatedAt: true });
+    catalogProducts = pgTable(
+      "catalog_products",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").references(() => stores.id),
+        shopifyProductId: text("shopify_product_id").notNull(),
+        title: text("title").notNull(),
+        imageUrl: text("image_url"),
+        status: text("status").notNull().default("active"),
+        totalInventory: integer("total_inventory").notNull().default(0),
+        price: text("price"),
+        productType: text("product_type"),
+        vendor: text("vendor"),
+        variantCount: integer("variant_count").notNull().default(1),
+        lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        uniqStoreProduct: unique("catalog_products_store_shopify_product_id_key").on(
+          table.storeId,
+          table.shopifyProductId
+        )
+      })
+    );
+    insertCatalogProductSchema = createInsertSchema(catalogProducts).omit({ id: true, createdAt: true, updatedAt: true });
     orderAssignments = pgTable("order_assignments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // Denormalised from parent order for direct store-scoped queries.
@@ -2778,6 +2806,30 @@ var init_storage = __esm({
       async getLastProductSync(storeId) {
         const [product] = await db.select({ lastSyncedAt: products.lastSyncedAt }).from(products).where(eq(products.storeId, storeId)).orderBy(desc(products.lastSyncedAt)).limit(1);
         return product?.lastSyncedAt || null;
+      }
+      // ============================================================================
+      // CATALOG PRODUCTS (product-level cache for the Products page UI)
+      // ============================================================================
+      async upsertCatalogProduct(product) {
+        const [result] = await db.insert(catalogProducts).values(product).onConflictDoUpdate({
+          target: [catalogProducts.storeId, catalogProducts.shopifyProductId],
+          set: {
+            title: product.title,
+            imageUrl: product.imageUrl,
+            status: product.status,
+            totalInventory: product.totalInventory,
+            price: product.price,
+            productType: product.productType,
+            vendor: product.vendor,
+            variantCount: product.variantCount,
+            lastSyncedAt: /* @__PURE__ */ new Date(),
+            updatedAt: /* @__PURE__ */ new Date()
+          }
+        }).returning();
+        return result;
+      }
+      async listCatalogProducts(storeId) {
+        return await db.select().from(catalogProducts).where(eq(catalogProducts.storeId, storeId)).orderBy(asc(catalogProducts.title));
       }
       // ============================================================================
       // DASHBOARD METRICS
@@ -10071,10 +10123,6 @@ async function registerRoutes(app2) {
             }
           }
           await storage.upsertProduct({
-            // storeId stamped so the composite UNIQUE
-            // (storeId, shopifyVariantId) namespaces correctly —
-            // two stores sharing supplier variant ids each get
-            // their own row instead of clobbering each other.
             storeId: syncStoreId,
             shopifyProductId: String(product.id),
             shopifyVariantId: String(variant.id),
@@ -10086,6 +10134,26 @@ async function registerRoutes(app2) {
           });
           variantCount++;
         }
+        const variants = product.variants || [];
+        const totalInventory = variants.reduce(
+          (sum, v) => sum + (Number(v.inventory_quantity) || 0),
+          0
+        );
+        const prices = variants.map((v) => parseFloat(v.price)).filter((p) => !isNaN(p));
+        const minPrice = prices.length > 0 ? Math.min(...prices).toFixed(2) : null;
+        await storage.upsertCatalogProduct({
+          storeId: syncStoreId,
+          shopifyProductId: String(product.id),
+          title: product.title,
+          imageUrl: productImage,
+          status: product.status || "active",
+          totalInventory,
+          price: minPrice,
+          productType: product.product_type || null,
+          vendor: product.vendor || null,
+          variantCount: variants.length,
+          lastSyncedAt: /* @__PURE__ */ new Date()
+        });
         syncedCount++;
       }
       console.log(
@@ -10112,6 +10180,19 @@ async function registerRoutes(app2) {
         error: "Failed to sync products",
         details: message
       });
+    }
+  });
+  app2.get("/api/products", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const items = await storage.listCatalogProducts(storeId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching catalog products:", error);
+      res.status(500).json({ error: "Failed to fetch products" });
     }
   });
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {

@@ -608,6 +608,43 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type Product = typeof products.$inferSelect;
 
 // ============================================================================
+// CATALOG PRODUCTS (product-level view — one row per Shopify product)
+// The `products` table above is variant-level (used to enrich order items
+// with images). This table stores product-level aggregates for the Products
+// catalog page: status, total inventory, min price, vendor, type.
+// ============================================================================
+
+export const catalogProducts = pgTable(
+  "catalog_products",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id").references(() => stores.id),
+    shopifyProductId: text("shopify_product_id").notNull(),
+    title: text("title").notNull(),
+    imageUrl: text("image_url"),
+    status: text("status").notNull().default("active"),
+    totalInventory: integer("total_inventory").notNull().default(0),
+    price: text("price"),
+    productType: text("product_type"),
+    vendor: text("vendor"),
+    variantCount: integer("variant_count").notNull().default(1),
+    lastSyncedAt: timestamp("last_synced_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqStoreProduct: unique("catalog_products_store_shopify_product_id_key").on(
+      table.storeId,
+      table.shopifyProductId,
+    ),
+  }),
+);
+
+export const insertCatalogProductSchema = createInsertSchema(catalogProducts).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertCatalogProduct = z.infer<typeof insertCatalogProductSchema>;
+export type CatalogProduct = typeof catalogProducts.$inferSelect;
+
+// ============================================================================
 // ORDER ASSIGNMENTS
 // ============================================================================
 
