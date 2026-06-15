@@ -6,7 +6,6 @@ import {
   Webhook,
   MessageCircle,
   ShoppingBag,
-  Mail,
   Loader2,
   ChevronLeft,
   Check,
@@ -71,6 +70,12 @@ type Integration = {
   status: IntegrationStatus;
   // Pick one — iconImg wins if both are set.
   iconImg?: string;
+  // Optional dark-mode variant of iconImg. When set alongside iconImg,
+  // IntegrationLogo renders both <img>s and swaps them via Tailwind's
+  // `dark:` variant (light logo hidden in dark mode and vice-versa) —
+  // for logos that need a different fill per theme (e.g. Resend's
+  // black/white icon).
+  iconImgDark?: string;
   iconBg?: string; // tailwind bg class used behind a fallback letter avatar
   iconFg?: string; // tailwind text class for the letter avatar
   icon?: LucideIcon;
@@ -163,7 +168,12 @@ const INTEGRATIONS: Integration[] = [
     category: "Communication",
     description: "Send transactional emails — invites, alerts, and notifications",
     status: "connected",
-    icon: Mail,
+    // Resend's wordmark icon is a solid glyph, so it needs opposite
+    // fills per theme: black on the light tile, white on the dark tile.
+    iconImg:
+      "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/resend-icon-black.png?v=1781557507",
+    iconImgDark:
+      "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/resend-icon-white.png?v=1781557501",
     iconBg: "bg-neutral-500/10",
     iconFg: "text-neutral-700 dark:text-neutral-300",
   },
@@ -271,6 +281,27 @@ function IntegrationLogo({ integration }: { integration: Integration }) {
     integration.iconBg ?? "bg-muted"
   } ${isMuted ? "opacity-70" : ""}`;
 
+  // Theme-aware pair: render both logos and let Tailwind's `dark:`
+  // variant show the right one. Avoids threading the theme hook into
+  // this presentational component.
+  if (showImg && integration.iconImgDark) {
+    return (
+      <div className={wrapClass}>
+        <img
+          src={integration.iconImg}
+          alt={`${integration.name} logo`}
+          className={`h-10 w-10 object-contain block dark:hidden ${isMuted ? "grayscale" : ""}`}
+          onError={() => setImgFailed(true)}
+        />
+        <img
+          src={integration.iconImgDark}
+          alt={`${integration.name} logo`}
+          className={`h-10 w-10 object-contain hidden dark:block ${isMuted ? "grayscale" : ""}`}
+          onError={() => setImgFailed(true)}
+        />
+      </div>
+    );
+  }
   if (showImg) {
     return (
       <div className={wrapClass}>
