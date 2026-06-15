@@ -1206,6 +1206,10 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
   const [clientName, setClientName] = useState("");
   const [tokenInput, setTokenInput] = useState("");
   const [didBootstrap, setDidBootstrap] = useState(false);
+  // Manage-vs-Edit fork (mirrors Meta's review/edit pattern). When a
+  // token already exists we land on the read-only Manage view; a fresh
+  // store opens straight into the Edit (setup) form.
+  const [isEditing, setIsEditing] = useState(false);
 
   const configQuery = useQuery<DelhiveryConfigResponse>({
     queryKey: ["/api/delhivery/config", activeStoreId],
@@ -1218,11 +1222,13 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
 
   // Pre-fill the client name once the saved config resolves. The token
   // is never returned by the API, so we leave the field empty and show
-  // a masked placeholder when one is already stored.
+  // a masked placeholder when one is already stored. Default to the
+  // Manage view when configured, the setup form when not.
   useEffect(() => {
     if (didBootstrap) return;
     if (configQuery.data) {
       setClientName(configQuery.data.clientName ?? "");
+      setIsEditing(!configQuery.data.hasToken);
       setDidBootstrap(true);
     }
   }, [configQuery.data, didBootstrap]);
@@ -1251,7 +1257,9 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
       queryClient.invalidateQueries({
         queryKey: ["/api/delhivery/config", activeStoreId],
       });
-      onClose();
+      // Drop back to the Manage view rather than closing the sheet, so
+      // the user immediately sees the live management dashboard.
+      setIsEditing(false);
     },
     onError: (err: Error) => {
       toast({
@@ -1286,12 +1294,23 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
     (hasToken || tokenInput.trim().length > 0) &&
     !saveMutation.isPending;
 
+  // Read-only Manage view: shown when a config exists and we're not
+  // actively editing it.
+  const isManageView = !isEditing && hasToken;
+
+  const handleCancelEdit = () => {
+    // Revert any unsaved field changes back to the saved config.
+    setClientName(configQuery.data?.clientName ?? "");
+    setTokenInput("");
+    setIsEditing(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold">
-            {hasToken ? "Active configuration" : "Delhivery Configuration"}
+            {isManageView ? "Active configuration" : "Delhivery Configuration"}
           </h3>
           {hasToken && (
             <Badge
@@ -1304,59 +1323,114 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          Connect your store to sync real-time tracking, handle NDRs, and
-          automate labels. Credentials are stored encrypted and scoped to
-          this store.
+          {isManageView
+            ? "Your Delhivery connection is live. Tracking events, NDRs, and labels are handled automatically for this store."
+            : "Connect your store to sync real-time tracking, handle NDRs, and automate labels. Credentials are stored encrypted and scoped to this store."}
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="delhivery-client-name">Client Name</Label>
-        <Input
-          id="delhivery-client-name"
-          type="text"
-          autoComplete="off"
-          placeholder="Your registered Delhivery client name"
-          value={clientName}
-          onChange={(e) => setClientName(e.target.value)}
-          data-testid="input-delhivery-client-name"
-        />
-        <p className="text-xs text-muted-foreground">
-          The pickup/client name registered with your Delhivery account.
-        </p>
-      </div>
+      {isManageView ? (
+        // ── Manage view: read-only summary ──────────────────────────
+        <div className="space-y-4">
+          <div className="rounded-lg border divide-y">
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">Client name</span>
+              <span className="text-sm font-medium">
+                {configQuery.data?.clientName || "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">API token</span>
+              <span className="text-sm font-medium tracking-widest">
+                ••••••••••••••••
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">
+                Webhook status
+              </span>
+              <span className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                </span>
+                Listening for real-time tracking updates
+              </span>
+            </div>
+          </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="delhivery-api-token">API Token</Label>
-        <Input
-          id="delhivery-api-token"
-          type="password"
-          autoComplete="off"
-          placeholder={hasToken ? "••••••••••••••••" : "Paste your Delhivery API token"}
-          value={tokenInput}
-          onChange={(e) => setTokenInput(e.target.value)}
-          data-testid="input-delhivery-api-token"
-        />
-        <p className="text-xs text-muted-foreground">
-          {hasToken
-            ? "A token is already saved. Leave blank to keep it, or paste a new one to replace it."
-            : "Find this under Settings → API in your Delhivery dashboard. We'll store it encrypted and never show it again."}
-        </p>
-      </div>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setIsEditing(true)}
+              data-testid="button-delhivery-edit-credentials"
+            >
+              Edit credentials
+            </Button>
+          </div>
+        </div>
+      ) : (
+        // ── Edit / setup view: credential form ──────────────────────
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="delhivery-client-name">Client Name</Label>
+            <Input
+              id="delhivery-client-name"
+              type="text"
+              autoComplete="off"
+              placeholder="Your registered Delhivery client name"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              data-testid="input-delhivery-client-name"
+            />
+            <p className="text-xs text-muted-foreground">
+              The pickup/client name registered with your Delhivery account.
+            </p>
+          </div>
 
-      <div className="flex justify-end pt-2 border-t">
-        <Button
-          onClick={() => saveMutation.mutate()}
-          disabled={!canSave}
-          className="gap-2"
-          data-testid="button-delhivery-save-config"
-        >
-          {saveMutation.isPending && (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          )}
-          {saveMutation.isPending ? "Saving…" : "Save Configuration"}
-        </Button>
-      </div>
+          <div className="space-y-2">
+            <Label htmlFor="delhivery-api-token">API Token</Label>
+            <Input
+              id="delhivery-api-token"
+              type="password"
+              autoComplete="off"
+              placeholder={hasToken ? "••••••••••••••••" : "Paste your Delhivery API token"}
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              data-testid="input-delhivery-api-token"
+            />
+            <p className="text-xs text-muted-foreground">
+              {hasToken
+                ? "A token is already saved. Leave blank to keep it, or paste a new one to replace it."
+                : "Find this under Settings → API in your Delhivery dashboard. We'll store it encrypted and never show it again."}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t">
+            {hasToken && (
+              <Button
+                variant="outline"
+                onClick={handleCancelEdit}
+                disabled={saveMutation.isPending}
+                data-testid="button-delhivery-cancel-edit"
+              >
+                Cancel
+              </Button>
+            )}
+            <Button
+              onClick={() => saveMutation.mutate()}
+              disabled={!canSave}
+              className="gap-2"
+              data-testid="button-delhivery-save-config"
+            >
+              {saveMutation.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              {saveMutation.isPending ? "Saving…" : "Save Configuration"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
