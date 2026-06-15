@@ -394,6 +394,13 @@ export default function IntegrationsPage() {
         />
       );
     }
+    if (activeIntegration.id === "delhivery") {
+      return (
+        <DelhiveryConnectionCard
+          onClose={() => setActiveIntegration(null)}
+        />
+      );
+    }
     return (
       <div className="rounded-lg border border-dashed p-6 text-center space-y-2">
         <p className="text-sm font-medium">Configuration coming soon</p>
@@ -1169,6 +1176,187 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DelhiveryConnectionCard — per-store Delhivery credential form rendered
+// inside the integrations Sheet. Single screen (no wizard): client name
+// + API token. The server keeps the token encrypted and scoped to the
+// active store; the client never sees the raw token after it's saved, so
+// when a config already exists we show a masked placeholder and only
+// re-send the token if the user types a fresh one.
+// ─────────────────────────────────────────────────────────────────────
+
+type DelhiveryConfigResponse = {
+  hasToken: boolean;
+  clientName: string | null;
+};
+
+interface DelhiveryConnectionCardProps {
+  onClose: () => void;
+}
+
+function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
+  const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [clientName, setClientName] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
+  const [didBootstrap, setDidBootstrap] = useState(false);
+
+  const configQuery = useQuery<DelhiveryConfigResponse>({
+    queryKey: ["/api/delhivery/config", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/delhivery/config");
+      return (await res.json()) as DelhiveryConfigResponse;
+    },
+    enabled: !!activeStoreId,
+  });
+
+  // Pre-fill the client name once the saved config resolves. The token
+  // is never returned by the API, so we leave the field empty and show
+  // a masked placeholder when one is already stored.
+  useEffect(() => {
+    if (didBootstrap) return;
+    if (configQuery.data) {
+      setClientName(configQuery.data.clientName ?? "");
+      setDidBootstrap(true);
+    }
+  }, [configQuery.data, didBootstrap]);
+
+  const hasToken = !!configQuery.data?.hasToken;
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      // Only send apiToken when the user typed a new one — an empty
+      // field leaves the stored token untouched (PUT route honours this).
+      const body: { clientName: string; apiToken?: string } = {
+        clientName: clientName.trim(),
+      };
+      if (tokenInput.trim().length > 0) {
+        body.apiToken = tokenInput.trim();
+      }
+      const res = await apiRequest("PUT", "/api/delhivery/config", body);
+      return (await res.json()) as DelhiveryConfigResponse;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Delhivery configuration saved",
+        description: "Your credentials are securely stored for this store.",
+      });
+      setTokenInput("");
+      queryClient.invalidateQueries({
+        queryKey: ["/api/delhivery/config", activeStoreId],
+      });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not save configuration",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  if (!activeStoreId) {
+    return (
+      <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground text-center">
+        Select an active store to configure Delhivery.
+      </div>
+    );
+  }
+
+  if (configQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  // A new token is required only when none is stored yet. Once configured,
+  // the user can save changes to the client name alone.
+  const canSave =
+    clientName.trim().length > 0 &&
+    (hasToken || tokenInput.trim().length > 0) &&
+    !saveMutation.isPending;
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">
+            {hasToken ? "Active configuration" : "Delhivery Configuration"}
+          </h3>
+          {hasToken && (
+            <Badge
+              variant="outline"
+              className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 gap-1.5"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Connected
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Connect your store to sync real-time tracking, handle NDRs, and
+          automate labels. Credentials are stored encrypted and scoped to
+          this store.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="delhivery-client-name">Client Name</Label>
+        <Input
+          id="delhivery-client-name"
+          type="text"
+          autoComplete="off"
+          placeholder="Your registered Delhivery client name"
+          value={clientName}
+          onChange={(e) => setClientName(e.target.value)}
+          data-testid="input-delhivery-client-name"
+        />
+        <p className="text-xs text-muted-foreground">
+          The pickup/client name registered with your Delhivery account.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="delhivery-api-token">API Token</Label>
+        <Input
+          id="delhivery-api-token"
+          type="password"
+          autoComplete="off"
+          placeholder={hasToken ? "••••••••••••••••" : "Paste your Delhivery API token"}
+          value={tokenInput}
+          onChange={(e) => setTokenInput(e.target.value)}
+          data-testid="input-delhivery-api-token"
+        />
+        <p className="text-xs text-muted-foreground">
+          {hasToken
+            ? "A token is already saved. Leave blank to keep it, or paste a new one to replace it."
+            : "Find this under Settings → API in your Delhivery dashboard. We'll store it encrypted and never show it again."}
+        </p>
+      </div>
+
+      <div className="flex justify-end pt-2 border-t">
+        <Button
+          onClick={() => saveMutation.mutate()}
+          disabled={!canSave}
+          className="gap-2"
+          data-testid="button-delhivery-save-config"
+        >
+          {saveMutation.isPending && (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          )}
+          {saveMutation.isPending ? "Saving…" : "Save Configuration"}
+        </Button>
+      </div>
     </div>
   );
 }
