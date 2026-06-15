@@ -6,6 +6,7 @@ import {
   Webhook,
   MessageCircle,
   ShoppingBag,
+  Mail,
   Loader2,
   ChevronLeft,
   Check,
@@ -155,6 +156,17 @@ const INTEGRATIONS: Integration[] = [
     iconFg: "text-amber-600 dark:text-amber-400",
   },
   // Communication
+  {
+    id: "resend",
+    name: "Resend",
+    domain: "resend.com",
+    category: "Communication",
+    description: "Send transactional emails — invites, alerts, and notifications",
+    status: "connected",
+    icon: Mail,
+    iconBg: "bg-neutral-500/10",
+    iconFg: "text-neutral-700 dark:text-neutral-300",
+  },
   {
     id: "interakt",
     name: "Interakt",
@@ -397,6 +409,13 @@ export default function IntegrationsPage() {
     if (activeIntegration.id === "delhivery") {
       return (
         <DelhiveryConnectionCard
+          onClose={() => setActiveIntegration(null)}
+        />
+      );
+    }
+    if (activeIntegration.id === "resend") {
+      return (
+        <ResendConnectionCard
           onClose={() => setActiveIntegration(null)}
         />
       );
@@ -1422,6 +1441,251 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
               disabled={!canSave}
               className="gap-2"
               data-testid="button-delhivery-save-config"
+            >
+              {saveMutation.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              {saveMutation.isPending ? "Saving…" : "Save Configuration"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ResendConnectionCard — per-store Resend (transactional email) config
+// rendered inside the integrations Sheet. Same Manage-vs-Edit fork as
+// Delhivery: a read-only summary when a key exists, the credential form
+// otherwise. The API key is kept encrypted server-side and never
+// returned to the browser, so a saved key shows as a masked placeholder
+// and is only re-sent when the user types a fresh one.
+// ─────────────────────────────────────────────────────────────────────
+
+type ResendConfigResponse = {
+  hasToken: boolean;
+  fromEmail: string | null;
+};
+
+interface ResendConnectionCardProps {
+  onClose: () => void;
+}
+
+function ResendConnectionCard({ onClose }: ResendConnectionCardProps) {
+  const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [fromEmail, setFromEmail] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [didBootstrap, setDidBootstrap] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const configQuery = useQuery<ResendConfigResponse>({
+    queryKey: ["/api/resend/config", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/resend/config");
+      return (await res.json()) as ResendConfigResponse;
+    },
+    enabled: !!activeStoreId,
+  });
+
+  // Pre-fill the from-email once the saved config resolves; the API key
+  // is never returned, so we keep that field empty and mask it. Default
+  // to the Manage view when configured, the setup form when not.
+  useEffect(() => {
+    if (didBootstrap) return;
+    if (configQuery.data) {
+      setFromEmail(configQuery.data.fromEmail ?? "");
+      setIsEditing(!configQuery.data.hasToken);
+      setDidBootstrap(true);
+    }
+  }, [configQuery.data, didBootstrap]);
+
+  const hasToken = !!configQuery.data?.hasToken;
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      // Only send apiKey when the user typed a new one — an empty field
+      // leaves the stored key untouched (PUT route honours this).
+      const body: { fromEmail: string; apiKey?: string } = {
+        fromEmail: fromEmail.trim(),
+      };
+      if (apiKeyInput.trim().length > 0) {
+        body.apiKey = apiKeyInput.trim();
+      }
+      const res = await apiRequest("PUT", "/api/resend/config", body);
+      return (await res.json()) as ResendConfigResponse;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Resend configuration saved",
+        description: "Your email credentials are securely stored for this store.",
+      });
+      setApiKeyInput("");
+      queryClient.invalidateQueries({
+        queryKey: ["/api/resend/config", activeStoreId],
+      });
+      // Drop back to the Manage view rather than closing the sheet.
+      setIsEditing(false);
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not save configuration",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  if (!activeStoreId) {
+    return (
+      <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground text-center">
+        Select an active store to configure Resend.
+      </div>
+    );
+  }
+
+  if (configQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  // A new key is required only when none is stored yet. Once configured,
+  // the user can save changes to the from-email alone.
+  const canSave =
+    fromEmail.trim().length > 0 &&
+    (hasToken || apiKeyInput.trim().length > 0) &&
+    !saveMutation.isPending;
+
+  const isManageView = !isEditing && hasToken;
+
+  const handleCancelEdit = () => {
+    setFromEmail(configQuery.data?.fromEmail ?? "");
+    setApiKeyInput("");
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">
+            {isManageView ? "Active configuration" : "Resend Configuration"}
+          </h3>
+          {hasToken && (
+            <Badge
+              variant="outline"
+              className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 gap-1.5"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Connected
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {isManageView
+            ? "Transactional mail server is ready. Invites, alerts, and notifications send from your verified address."
+            : "Connect Resend to send transactional emails from your own verified domain. Credentials are stored encrypted and scoped to this store."}
+        </p>
+      </div>
+
+      {isManageView ? (
+        // ── Manage view: read-only summary ──────────────────────────
+        <div className="space-y-4">
+          <div className="rounded-lg border divide-y">
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">From email</span>
+              <span className="text-sm font-medium">
+                {configQuery.data?.fromEmail || "—"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">API key</span>
+              <span className="text-sm font-medium tracking-widest">
+                ••••••••••••••••
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">Status</span>
+              <span className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                </span>
+                Transactional mail server is ready
+              </span>
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setIsEditing(true)}
+              data-testid="button-resend-edit-credentials"
+            >
+              Edit credentials
+            </Button>
+          </div>
+        </div>
+      ) : (
+        // ── Edit / setup view: credential form ──────────────────────
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="resend-from-email">From Email</Label>
+            <Input
+              id="resend-from-email"
+              type="email"
+              autoComplete="off"
+              placeholder="alerts@mystore.com"
+              value={fromEmail}
+              onChange={(e) => setFromEmail(e.target.value)}
+              data-testid="input-resend-from-email"
+            />
+            <p className="text-xs text-muted-foreground">
+              Must be an address on a domain you've verified in Resend.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="resend-api-key">API Key</Label>
+            <Input
+              id="resend-api-key"
+              type="password"
+              autoComplete="off"
+              placeholder={hasToken ? "••••••••••••••••" : "re_..."}
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              data-testid="input-resend-api-key"
+            />
+            <p className="text-xs text-muted-foreground">
+              {hasToken
+                ? "A key is already saved. Leave blank to keep it, or paste a new one to replace it."
+                : "Create one under API Keys in your Resend dashboard. We'll store it encrypted and never show it again."}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t">
+            {hasToken && (
+              <Button
+                variant="outline"
+                onClick={handleCancelEdit}
+                disabled={saveMutation.isPending}
+                data-testid="button-resend-cancel-edit"
+              >
+                Cancel
+              </Button>
+            )}
+            <Button
+              onClick={() => saveMutation.mutate()}
+              disabled={!canSave}
+              className="gap-2"
+              data-testid="button-resend-save-config"
             >
               {saveMutation.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />

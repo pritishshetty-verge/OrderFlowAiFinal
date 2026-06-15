@@ -2274,6 +2274,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // RESEND CONFIG (per-store transactional email credentials)
+  // ============================================================================
+
+  // GET /api/resend/config — report whether Resend is configured for the
+  // active store, plus the (non-secret) from-email. Never returns the key.
+  app.get("/api/resend/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [row] = await db
+        .select({
+          resendApiKey: stores.resendApiKey,
+          resendFromEmail: stores.resendFromEmail,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!row) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+      res.json({
+        hasToken: !!row.resendApiKey,
+        fromEmail: row.resendFromEmail ?? null,
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/resend/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to read Resend config" });
+    }
+  });
+
+  // PUT /api/resend/config — securely save/update per-store Resend
+  // credentials. Key is encrypted at rest (server/encryption.ts).
+  //   - apiKey: when a non-empty string, encrypt() + persist; when
+  //     omitted/empty, leave the existing key untouched (so the UI can
+  //     update just the from-email without re-sending the secret).
+  //   - fromEmail: when the key is present, always replace (incl. "").
+  app.put("/api/resend/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+
+      const patch: {
+        resendApiKey?: string;
+        resendFromEmail?: string | null;
+        updatedAt?: Date;
+      } = {};
+
+      const { apiKey, fromEmail } = req.body ?? {};
+
+      if (typeof apiKey === "string" && apiKey.trim().length > 0) {
+        patch.resendApiKey = encrypt(apiKey.trim());
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "fromEmail")) {
+        patch.resendFromEmail =
+          typeof fromEmail === "string" && fromEmail.trim().length > 0
+            ? fromEmail.trim()
+            : null;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Nothing to update. Provide apiKey and/or fromEmail." });
+      }
+      patch.updatedAt = new Date();
+
+      await db.update(stores).set(patch).where(eq(stores.id, storeId));
+
+      const [updated] = await db
+        .select({
+          resendApiKey: stores.resendApiKey,
+          resendFromEmail: stores.resendFromEmail,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+
+      res.json({
+        hasToken: !!updated?.resendApiKey,
+        fromEmail: updated?.resendFromEmail ?? null,
+      });
+    } catch (err: any) {
+      console.error("Error in PUT /api/resend/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Resend config" });
+    }
+  });
+
   // GET /api/meta/ad-accounts — server-side proxy to Meta's Graph API
   // /me/adaccounts using the store's decrypted token. We proxy (vs
   // letting the browser talk to Meta directly) so the access token

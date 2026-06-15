@@ -282,6 +282,10 @@ export const stores = pgTable("stores", {
   // routed by AWB → shipment.storeId, not by these fields.
   delhiveryApiToken: text("delhivery_api_token"),
   delhiveryClientName: text("delhivery_client_name"),
+  // Per-store Resend (transactional email) credentials. API key is
+  // encrypted via server/encryption.ts; from-email is stored plain.
+  resendApiKey: text("resend_api_key"),
+  resendFromEmail: text("resend_from_email"),
   isActive: boolean("is_active").notNull().default(true),
   lastTestedAt: timestamp("last_tested_at"),
   testStatus: text("test_status"), // success | failed

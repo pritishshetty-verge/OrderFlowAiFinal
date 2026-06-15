@@ -282,6 +282,10 @@ var init_schema = __esm({
       // routed by AWB → shipment.storeId, not by these fields.
       delhiveryApiToken: text("delhivery_api_token"),
       delhiveryClientName: text("delhivery_client_name"),
+      // Per-store Resend (transactional email) credentials. API key is
+      // encrypted via server/encryption.ts; from-email is stored plain.
+      resendApiKey: text("resend_api_key"),
+      resendFromEmail: text("resend_from_email"),
       isActive: boolean("is_active").notNull().default(true),
       lastTestedAt: timestamp("last_tested_at"),
       testStatus: text("test_status"),
@@ -9627,6 +9631,64 @@ async function registerRoutes(app2) {
     } catch (err) {
       console.error("Error fetching Delhivery label:", err);
       res.status(500).json({ error: err?.message || "Failed to fetch shipping label" });
+    }
+  });
+  app2.get("/api/resend/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [row] = await db.select({
+        resendApiKey: stores.resendApiKey,
+        resendFromEmail: stores.resendFromEmail
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      if (!row) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+      res.json({
+        hasToken: !!row.resendApiKey,
+        fromEmail: row.resendFromEmail ?? null
+      });
+    } catch (err) {
+      console.error("Error in GET /api/resend/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to read Resend config" });
+    }
+  });
+  app2.put("/api/resend/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      const patch = {};
+      const { apiKey, fromEmail } = req.body ?? {};
+      if (typeof apiKey === "string" && apiKey.trim().length > 0) {
+        patch.resendApiKey = encrypt(apiKey.trim());
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "fromEmail")) {
+        patch.resendFromEmail = typeof fromEmail === "string" && fromEmail.trim().length > 0 ? fromEmail.trim() : null;
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "Nothing to update. Provide apiKey and/or fromEmail." });
+      }
+      patch.updatedAt = /* @__PURE__ */ new Date();
+      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
+      const [updated] = await db.select({
+        resendApiKey: stores.resendApiKey,
+        resendFromEmail: stores.resendFromEmail
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      res.json({
+        hasToken: !!updated?.resendApiKey,
+        fromEmail: updated?.resendFromEmail ?? null
+      });
+    } catch (err) {
+      console.error("Error in PUT /api/resend/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Resend config" });
     }
   });
   app2.get("/api/meta/ad-accounts", async (req, res) => {
