@@ -273,6 +273,15 @@ var init_schema = __esm({
       webhookSecret: text("webhook_secret"),
       metaAccessToken: text("meta_access_token"),
       metaAdAccountsConfig: jsonb("meta_ad_accounts_config").$type(),
+      // Per-store Delhivery credentials. Token is encrypted via
+      // server/encryption.ts (same AES-256-GCM helper as the Shopify /
+      // Meta secrets). Both stores currently share one Delhivery account
+      // in a multi-channel setup, but the schema keeps independent values
+      // so they can diverge later without a migration. Outbound calls are
+      // store-scoped via getDelhiveryClient(storeId); inbound webhooks are
+      // routed by AWB → shipment.storeId, not by these fields.
+      delhiveryApiToken: text("delhivery_api_token"),
+      delhiveryClientName: text("delhivery_client_name"),
       isActive: boolean("is_active").notNull().default(true),
       lastTestedAt: timestamp("last_tested_at"),
       testStatus: text("test_status"),
@@ -1064,6 +1073,10 @@ var init_schema = __esm({
       // in cm
       height: decimal("height", { precision: 10, scale: 2 }),
       // in cm
+      // Printable shipping label / packing slip. For Delhivery this is the
+      // packing-slip PDF link returned by /api/p/packing_slip; for
+      // Shiprocket it's the label_url from the label-generation call.
+      shippingLabelUrl: text("shipping_label_url"),
       // Metadata
       rawShiprocketData: jsonb("raw_shiprocket_data"),
       // Full response from Shiprocket
@@ -3260,9 +3273,9 @@ async function updateShopifyClient() {
 async function loadShopifyConfigForStore(storeId) {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { eq: eq7 } = await import("drizzle-orm");
+  const { eq: eq8 } = await import("drizzle-orm");
   const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
-  const [row] = await db2.select().from(stores2).where(eq7(stores2.id, storeId)).limit(1);
+  const [row] = await db2.select().from(stores2).where(eq8(stores2.id, storeId)).limit(1);
   if (!row) {
     throw new Error(
       `[Shopify] getShopifyClient: no stores row for id ${storeId}`
@@ -4358,20 +4371,97 @@ var init_delhivery = __esm({
 // server/services/delhivery.ts
 var delhivery_exports = {};
 __export(delhivery_exports, {
-  default: () => delhivery_default,
-  delhiveryService: () => delhiveryService
+  DelhiveryClient: () => DelhiveryClient,
+  getDelhiveryClient: () => getDelhiveryClient,
+  invalidateDelhiveryClient: () => invalidateDelhiveryClient,
+  isNDRStatus: () => isNDRStatus,
+  mapNDRStatus: () => mapNDRStatus
 });
 import axios from "axios";
-var DELHIVERY_BASE_URL, DelhiveryService, delhiveryService, delhivery_default;
+import { eq as eq5 } from "drizzle-orm";
+function mapNDRStatus(statusCode) {
+  const ndrStatusMap = {
+    "EOD-74": "customer_unavailable",
+    "EOD-15": "address_issue",
+    "EOD-11": "refused",
+    "EOD-3": "customer_unavailable",
+    "EOD-16": "address_issue",
+    "EOD-6": "other",
+    "ST-108": "other",
+    "EOD-104": "address_issue",
+    "EOD-43": "refused",
+    "EOD-86": "other",
+    "EOD-69": "other"
+  };
+  return ndrStatusMap[statusCode] || "other";
+}
+function isNDRStatus(statusCode) {
+  const ndrCodes = [
+    "EOD-74",
+    "EOD-15",
+    "EOD-11",
+    "EOD-3",
+    "EOD-16",
+    "EOD-6",
+    "ST-108",
+    "EOD-104",
+    "EOD-43",
+    "EOD-86",
+    "EOD-69"
+  ];
+  return ndrCodes.includes(statusCode);
+}
+async function getDelhiveryClient(storeId) {
+  if (!storeId) {
+    throw new Error("storeId is required to build a Delhivery client");
+  }
+  const cached = clientCache2.get(storeId);
+  if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.client;
+  }
+  const [row] = await db.select({
+    delhiveryApiToken: stores.delhiveryApiToken,
+    delhiveryClientName: stores.delhiveryClientName
+  }).from(stores).where(eq5(stores.id, storeId)).limit(1);
+  if (!row) {
+    throw new Error(`Store not found: ${storeId}`);
+  }
+  if (!row.delhiveryApiToken) {
+    throw new Error("Delhivery is not configured for this store");
+  }
+  const token = decrypt(row.delhiveryApiToken);
+  if (!token) {
+    throw new Error("Delhivery token failed to decrypt for this store");
+  }
+  const client = new DelhiveryClient({
+    token,
+    clientName: row.delhiveryClientName
+  });
+  clientCache2.set(storeId, { client, loadedAt: Date.now() });
+  return client;
+}
+function invalidateDelhiveryClient(storeId) {
+  if (storeId) {
+    clientCache2.delete(storeId);
+  } else {
+    clientCache2.clear();
+  }
+}
+var DELHIVERY_BASE_URL, DelhiveryClient, clientCache2, CACHE_TTL_MS;
 var init_delhivery2 = __esm({
   "server/services/delhivery.ts"() {
     "use strict";
+    init_db();
+    init_schema();
+    init_encryption();
     DELHIVERY_BASE_URL = process.env.NODE_ENV === "production" ? "https://track.delhivery.com" : "https://staging-express.delhivery.com";
-    DelhiveryService = class {
+    DelhiveryClient = class {
       client;
-      token = null;
-      constructor() {
-        this.token = process.env.DELHIVERY_API_TOKEN || null;
+      token;
+      clientName;
+      constructor(config) {
+        this.token = config.token;
+        this.clientName = config.clientName ?? null;
         this.client = axios.create({
           baseURL: DELHIVERY_BASE_URL,
           timeout: 3e4,
@@ -4379,20 +4469,12 @@ var init_delhivery2 = __esm({
             "Content-Type": "application/json"
           }
         });
-        this.client.interceptors.request.use((config) => {
-          if (this.token) {
-            config.headers.Authorization = `Token ${this.token}`;
-          }
-          return config;
+        this.client.interceptors.request.use((config2) => {
+          config2.headers.Authorization = `Token ${this.token}`;
+          return config2;
         });
       }
-      isConfigured() {
-        return !!this.token;
-      }
       async createShipment(orderData) {
-        if (!this.isConfigured()) {
-          return { success: false, error: "Delhivery API token not configured" };
-        }
         try {
           const shipmentPayload = {
             name: orderData.customerName,
@@ -4406,7 +4488,7 @@ var init_delhivery2 = __esm({
             payment_mode: orderData.paymentMethod.toLowerCase() === "cod" ? "COD" : "Prepaid",
             products_desc: orderData.itemsSummary || "General merchandise",
             weight: orderData.weight?.toString() || "0.5",
-            pickup_location: { name: orderData.pickupLocationName || "Default" }
+            pickup_location: { name: orderData.pickupLocationName || this.clientName || "Default" }
           };
           if (shipmentPayload.payment_mode === "COD") {
             shipmentPayload.cod_amount = orderData.totalPrice;
@@ -4421,15 +4503,13 @@ var init_delhivery2 = __esm({
               }
             }
           );
-          if (response.data.success && response.data.waybill) {
-            return {
-              success: true,
-              awb: response.data.waybill
-            };
+          const awb = response.data.waybill || response.data.packages?.find((p) => p.waybill)?.waybill;
+          if (response.data.success && awb) {
+            return { success: true, awb };
           }
           return {
             success: false,
-            error: response.data.rmk || response.data.error || "Unknown error creating shipment"
+            error: response.data.packages?.[0]?.remarks?.join(", ") || response.data.rmk || response.data.error || "Unknown error creating shipment"
           };
         } catch (error) {
           console.error("Delhivery createShipment error:", error.response?.data || error.message);
@@ -4440,9 +4520,6 @@ var init_delhivery2 = __esm({
         }
       }
       async trackShipment(awb) {
-        if (!this.isConfigured()) {
-          return { success: false, error: "Delhivery API token not configured" };
-        }
         try {
           const response = await this.client.get(
             `/api/v1/packages/json/?waybill=${awb}`
@@ -4472,10 +4549,31 @@ var init_delhivery2 = __esm({
           };
         }
       }
-      async actionNDR(awb, action, actionData) {
-        if (!this.isConfigured()) {
-          return { success: false, error: "Delhivery API token not configured" };
+      /**
+       * Retrieve the printable packing slip / shipping label for an AWB.
+       * Delhivery returns a JSON envelope with a pdf_download_link (and/or
+       * base64 PDF) per package.
+       */
+      async getShippingLabel(awb) {
+        try {
+          const response = await this.client.get(
+            `/api/p/packing_slip?wbns=${encodeURIComponent(awb)}&pdf=true`
+          );
+          const pkg = response.data.packages?.[0];
+          const labelUrl = pkg?.pdf_download_link || pkg?.pdf;
+          if (labelUrl) {
+            return { success: true, labelUrl };
+          }
+          return { success: false, error: "No packing slip available for this AWB yet" };
+        } catch (error) {
+          console.error("Delhivery getShippingLabel error:", error.response?.data || error.message);
+          return {
+            success: false,
+            error: error.response?.data?.Error || error.message || "Failed to fetch shipping label"
+          };
         }
+      }
+      async actionNDR(awb, action, actionData) {
         const actionMap = {
           reattempt: "RE-ATTEMPT",
           rto: "RTO",
@@ -4519,41 +4617,9 @@ var init_delhivery2 = __esm({
           };
         }
       }
-      mapNDRStatus(statusCode) {
-        const ndrStatusMap = {
-          "EOD-74": "customer_unavailable",
-          "EOD-15": "address_issue",
-          "EOD-11": "refused",
-          "EOD-3": "customer_unavailable",
-          "EOD-16": "address_issue",
-          "EOD-6": "other",
-          "ST-108": "other",
-          "EOD-104": "address_issue",
-          "EOD-43": "refused",
-          "EOD-86": "other",
-          "EOD-69": "other"
-        };
-        return ndrStatusMap[statusCode] || "other";
-      }
-      isNDRStatus(statusCode) {
-        const ndrCodes = [
-          "EOD-74",
-          "EOD-15",
-          "EOD-11",
-          "EOD-3",
-          "EOD-16",
-          "EOD-6",
-          "ST-108",
-          "EOD-104",
-          "EOD-43",
-          "EOD-86",
-          "EOD-69"
-        ];
-        return ndrCodes.includes(statusCode);
-      }
     };
-    delhiveryService = new DelhiveryService();
-    delhivery_default = delhiveryService;
+    clientCache2 = /* @__PURE__ */ new Map();
+    CACHE_TTL_MS = 5 * 60 * 1e3;
   }
 });
 
@@ -4562,12 +4628,15 @@ var delhiveryWebhook_exports = {};
 __export(delhiveryWebhook_exports, {
   handleDelhiveryWebhook: () => handleDelhiveryWebhook
 });
+import crypto5 from "crypto";
 function verifyDelhiveryToken(token, secret) {
   if (!token) {
     console.warn("[Delhivery Webhook] No token provided in x-delhivery-token header");
     return false;
   }
-  return token === secret;
+  const tokenHash = crypto5.createHash("sha256").update(token).digest();
+  const secretHash = crypto5.createHash("sha256").update(secret).digest();
+  return crypto5.timingSafeEqual(tokenHash, secretHash);
 }
 function extractPayloadFields(body) {
   const isGenericStatus = (val) => {
@@ -4683,8 +4752,11 @@ async function handleDelhiveryWebhook(req, res) {
       console.warn(`[Delhivery Webhook] Order not found for AWB: ${awb}`);
       return res.status(200).json({ success: false, error: "Order not found for AWB" });
     }
-    console.log(`[Delhivery Webhook] Found order ${order.id} for AWB ${awb}`);
-    const { delhiveryService: delhiveryService2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+    const storeId = order.storeId ?? shipment?.storeId ?? null;
+    const previousStatus = order.status ?? null;
+    console.log(
+      `[Delhivery Webhook] Found order ${order.id} (store=${storeId ?? "unknown"}) for AWB ${awb}`
+    );
     const allInstructions = rawInstructions || req.body.Shipment?.Status?.Instructions || req.body.Instructions || req.body.instructions || "";
     const delhiveryPayload = {
       Shipment: {
@@ -4712,7 +4784,7 @@ async function handleDelhiveryWebhook(req, res) {
     const isOutForDelivery = normalized.status === "out_for_delivery";
     const isInTransit = normalized.status === "in_transit";
     const isActionable = normalized.isActionable;
-    const isNDRByCode = statusCode && delhiveryService2.isNDRStatus(statusCode);
+    const isNDRByCode = statusCode && isNDRStatus(statusCode);
     const isRTOByStatusType = statusType?.toUpperCase() === "RT";
     const determineShipmentStatus = () => {
       return normalized.status;
@@ -4725,6 +4797,7 @@ async function handleDelhiveryWebhook(req, res) {
       console.log(`[Delhivery Webhook] No shipment record found for order ${order.id}, creating one on the fly`);
       const initialStatus = determineShipmentStatus();
       shipment = await storage.createShipment({
+        storeId: storeId ?? void 0,
         orderId: order.id,
         shopifyOrderId: order.shopifyOrderId,
         awb,
@@ -4758,6 +4831,19 @@ async function handleDelhiveryWebhook(req, res) {
     };
     console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${normalized.status} (isActionable: ${isActionable})`);
     await storage.updateOrder(order.id, orderUpdate);
+    if (previousStatus !== normalized.status) {
+      try {
+        await storage.createOrderStatus({
+          storeId: storeId ?? void 0,
+          orderId: order.id,
+          status: normalized.status,
+          previousStatus: previousStatus ?? void 0,
+          note: `Delhivery: ${effectiveStatus}${remarks ? ` \u2014 ${remarks}` : ""} (AWB ${awb})`
+        });
+      } catch (histErr) {
+        console.warn("[Delhivery Webhook] Failed to write status history:", histErr);
+      }
+    }
     if (isNDR || isRTO) {
       console.log("[Delhivery Webhook] NDR/RTO event detected:", {
         awb,
@@ -4769,8 +4855,8 @@ async function handleDelhiveryWebhook(req, res) {
         isNDRByCode
       });
       let ndrStatusValue = "other";
-      if (statusCode && delhiveryService2.isNDRStatus(statusCode)) {
-        ndrStatusValue = delhiveryService2.mapNDRStatus(statusCode);
+      if (statusCode && isNDRStatus(statusCode)) {
+        ndrStatusValue = mapNDRStatus(statusCode);
       } else {
         const statusLower = effectiveStatus.toLowerCase();
         if (statusLower.includes("customer unavailable") || statusLower.includes("not available")) {
@@ -4784,6 +4870,7 @@ async function handleDelhiveryWebhook(req, res) {
         }
       }
       await storage.createNDREvent({
+        storeId: storeId ?? void 0,
         shipmentId: shipment.id,
         orderId: order.id,
         awb,
@@ -4862,6 +4949,7 @@ var init_delhiveryWebhook = __esm({
     "use strict";
     init_storage();
     init_delhivery();
+    init_delhivery2();
   }
 });
 
@@ -5297,7 +5385,7 @@ var meta_exports = {};
 __export(meta_exports, {
   syncMetaInsights: () => syncMetaInsights
 });
-import { eq as eq5, sql as sql4 } from "drizzle-orm";
+import { eq as eq6, sql as sql4 } from "drizzle-orm";
 function sumAction(list, type = PURCHASE_ACTION_TYPE) {
   if (!list) return 0;
   const row = list.find((a) => a.action_type === type);
@@ -5332,7 +5420,7 @@ async function syncMetaInsights(storeId, startDate, endDate) {
     id: stores.id,
     metaAccessToken: stores.metaAccessToken,
     metaAdAccountsConfig: stores.metaAdAccountsConfig
-  }).from(stores).where(eq5(stores.id, storeId)).limit(1);
+  }).from(stores).where(eq6(stores.id, storeId)).limit(1);
   if (!storeRow) {
     throw new Error(`Store not found: ${storeId}`);
   }
@@ -6694,8 +6782,8 @@ init_storage();
 init_db();
 init_schema();
 import { createServer } from "http";
-import crypto5 from "node:crypto";
-import { eq as eq6, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
+import crypto6 from "node:crypto";
+import { eq as eq7, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -9394,7 +9482,7 @@ async function registerRoutes(app2) {
       const [store] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -9413,7 +9501,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq6(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -9439,11 +9527,11 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide accessToken and/or adAccountsConfig." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq6(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
       const [updated] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.metaAccessToken,
         adAccountsConfig: updated?.metaAdAccountsConfig ?? []
@@ -9453,13 +9541,101 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: err?.message || "Failed to update Meta config" });
     }
   });
+  app2.get("/api/delhivery/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [row] = await db.select({
+        delhiveryApiToken: stores.delhiveryApiToken,
+        delhiveryClientName: stores.delhiveryClientName
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      if (!row) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+      res.json({
+        hasToken: !!row.delhiveryApiToken,
+        clientName: row.delhiveryClientName ?? null
+      });
+    } catch (err) {
+      console.error("Error in GET /api/delhivery/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to read Delhivery config" });
+    }
+  });
+  app2.put("/api/delhivery/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      const patch = {};
+      const { apiToken, clientName } = req.body ?? {};
+      if (typeof apiToken === "string" && apiToken.trim().length > 0) {
+        patch.delhiveryApiToken = encrypt(apiToken.trim());
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "clientName")) {
+        patch.delhiveryClientName = typeof clientName === "string" && clientName.trim().length > 0 ? clientName.trim() : null;
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "Nothing to update. Provide apiToken and/or clientName." });
+      }
+      patch.updatedAt = /* @__PURE__ */ new Date();
+      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
+      const { invalidateDelhiveryClient: invalidateDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+      invalidateDelhiveryClient2(storeId);
+      const [updated] = await db.select({
+        delhiveryApiToken: stores.delhiveryApiToken,
+        delhiveryClientName: stores.delhiveryClientName
+      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      res.json({
+        hasToken: !!updated?.delhiveryApiToken,
+        clientName: updated?.delhiveryClientName ?? null
+      });
+    } catch (err) {
+      console.error("Error in PUT /api/delhivery/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Delhivery config" });
+    }
+  });
+  app2.get("/api/delhivery/shipments/:awb/label", async (req, res) => {
+    try {
+      const { awb } = req.params;
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found" });
+      }
+      if (!shipment.storeId) {
+        return res.status(400).json({ error: "Shipment is missing store context" });
+      }
+      const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+      let client;
+      try {
+        client = await getDelhiveryClient2(shipment.storeId);
+      } catch (e) {
+        return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+      }
+      const result = await client.getShippingLabel(awb);
+      if (!result.success || !result.labelUrl) {
+        return res.status(502).json({ error: result.error || "Label not available" });
+      }
+      await storage.updateShipment(shipment.id, { shippingLabelUrl: result.labelUrl });
+      res.json({ success: true, labelUrl: result.labelUrl });
+    } catch (err) {
+      console.error("Error fetching Delhivery label:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch shipping label" });
+    }
+  });
   app2.get("/api/meta/ad-accounts", async (req, res) => {
     try {
       const storeId = req.storeScope?.storeId;
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq7(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -9492,7 +9668,7 @@ async function registerRoutes(app2) {
       if (!adAccountId) {
         return res.status(400).json({ error: "adAccountId query param is required." });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq7(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -9568,7 +9744,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and4(eq6(webhooks.eventType, "order.created"), eq6(webhooks.isActive, true))
+        and4(eq7(webhooks.eventType, "order.created"), eq7(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -10431,7 +10607,7 @@ async function registerRoutes(app2) {
       if (isAdmin(user)) {
         rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq6(userStores.storeId, stores.id)).where(eq6(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq7(userStores.storeId, stores.id)).where(eq7(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -10472,7 +10648,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq6(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq7(stores.storeUrl, normalizedUrl)).limit(1);
       if (existing) {
         return res.status(409).json({
           error: "A store with this URL is already connected.",
@@ -10561,7 +10737,7 @@ async function registerRoutes(app2) {
         return res.status(403).json({ error: "Only admins can update store details." });
       }
       const storeId = req.params.id;
-      const [existing] = await db.select().from(stores).where(eq6(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10606,7 +10782,7 @@ async function registerRoutes(app2) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
       }
-      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq6(stores.id, storeId)).returning({
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq7(stores.id, storeId)).returning({
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
@@ -10638,7 +10814,7 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq6(userStores.userId, targetId));
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq7(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
@@ -10679,7 +10855,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq6(userStores.userId, targetId));
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq7(userStores.userId, targetId));
       const currentSet = new Set(current.map((r) => r.storeId));
       const currentIds = Array.from(currentSet);
       const toInsert = requestedIds.filter((id) => !currentSet.has(id));
@@ -10696,8 +10872,8 @@ async function registerRoutes(app2) {
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
           and4(
-            eq6(userStores.userId, targetId),
-            or2(...toDelete.map((id) => eq6(userStores.storeId, id)))
+            eq7(userStores.userId, targetId),
+            or2(...toDelete.map((id) => eq7(userStores.storeId, id)))
           )
         );
       }
@@ -10987,40 +11163,40 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "User not found" });
       }
       console.log(`Starting cleanup for user ${userId} (${user.email})`);
-      await db.update(orders).set({ assignedTo: null }).where(eq6(orders.assignedTo, userId));
-      await db.update(orders).set({ confirmedBy: null }).where(eq6(orders.confirmedBy, userId));
-      await db.update(orders).set({ cancelledBy: null }).where(eq6(orders.cancelledBy, userId));
+      await db.update(orders).set({ assignedTo: null }).where(eq7(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq7(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq7(orders.cancelledBy, userId));
       console.log("  - Orders unassigned");
       await db.delete(orderAssignments).where(
-        or2(eq6(orderAssignments.userId, userId), eq6(orderAssignments.assignedBy, userId))
+        or2(eq7(orderAssignments.userId, userId), eq7(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
       await db.delete(teamMessages).where(
-        or2(eq6(teamMessages.fromUserId, userId), eq6(teamMessages.toUserId, userId))
+        or2(eq7(teamMessages.fromUserId, userId), eq7(teamMessages.toUserId, userId))
       );
       console.log("  - Team messages deleted");
-      await db.delete(leaveRequests).where(eq6(leaveRequests.userId, userId));
-      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq6(leaveRequests.reviewedBy, userId));
+      await db.delete(leaveRequests).where(eq7(leaveRequests.userId, userId));
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq7(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
-      await db.delete(notifications).where(eq6(notifications.userId, userId));
+      await db.delete(notifications).where(eq7(notifications.userId, userId));
       console.log("  - Notifications deleted");
-      await db.delete(attendance).where(eq6(attendance.userId, userId));
+      await db.delete(attendance).where(eq7(attendance.userId, userId));
       console.log("  - Attendance records deleted");
-      await db.delete(calls).where(eq6(calls.agentId, userId));
+      await db.delete(calls).where(eq7(calls.agentId, userId));
       console.log("  - Call records deleted");
-      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq6(orderStatusHistory.changedBy, userId));
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq7(orderStatusHistory.changedBy, userId));
       console.log("  - Order status history updated");
-      await db.update(invites).set({ invitedBy: null }).where(eq6(invites.invitedBy, userId));
+      await db.update(invites).set({ invitedBy: null }).where(eq7(invites.invitedBy, userId));
       console.log("  - Invites updated");
-      await db.update(ndrEvents).set({ actionBy: null }).where(eq6(ndrEvents.actionBy, userId));
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq7(ndrEvents.actionBy, userId));
       console.log("  - NDR events updated");
-      await db.update(courses).set({ authorId: null }).where(eq6(courses.authorId, userId));
+      await db.update(courses).set({ authorId: null }).where(eq7(courses.authorId, userId));
       console.log("  - Courses updated");
-      await db.update(resources).set({ authorId: null }).where(eq6(resources.authorId, userId));
+      await db.update(resources).set({ authorId: null }).where(eq7(resources.authorId, userId));
       console.log("  - Resources updated");
-      await db.delete(userLessonProgress).where(eq6(userLessonProgress.userId, userId));
+      await db.delete(userLessonProgress).where(eq7(userLessonProgress.userId, userId));
       console.log("  - User lesson progress deleted");
-      await db.delete(userOnboardingProgress).where(eq6(userOnboardingProgress.userId, userId));
+      await db.delete(userOnboardingProgress).where(eq7(userOnboardingProgress.userId, userId));
       console.log("  - User onboarding progress deleted");
       await storage.deleteUser(userId);
       console.log(`User ${userId} deleted successfully`);
@@ -11506,7 +11682,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.startBreak(attendance2.id);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq6(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq7(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error starting break:", error);
@@ -11531,7 +11707,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.endBreak(activeBreak.id, now);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq6(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq7(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error ending break:", error);
@@ -12310,7 +12486,16 @@ async function registerRoutes(app2) {
       }
       const courierName = shipment.courierName?.toLowerCase() || "";
       if (courierName.includes("delhivery")) {
-        const { delhiveryService: delhiveryService2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+        if (!shipment.storeId) {
+          return res.status(400).json({ error: "Shipment is missing store context; cannot route Delhivery call" });
+        }
+        const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+        let delhiveryClient;
+        try {
+          delhiveryClient = await getDelhiveryClient2(shipment.storeId);
+        } catch (e) {
+          return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+        }
         const hasAddress = Boolean(address1 || address2);
         const hasPhone = Boolean(phone);
         const hasDate = Boolean(deferredDate);
@@ -12328,8 +12513,8 @@ async function registerRoutes(app2) {
           actionType = "defer";
           actionData.deferredDate = deferredDate;
         }
-        console.log(`[NDR Reattempt] AWB: ${awb}, Action: ${actionType}, Data:`, actionData);
-        const result = await delhiveryService2.actionNDR(awb, actionType, actionData);
+        console.log(`[NDR Reattempt] AWB: ${awb}, store: ${shipment.storeId}, Action: ${actionType}, Data:`, actionData);
+        const result = await delhiveryClient.actionNDR(awb, actionType, actionData);
         if (!result.success) {
           return res.status(500).json({ error: result.error || "Delhivery reattempt failed" });
         }
@@ -12606,7 +12791,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const token = crypto5.randomBytes(32).toString("hex");
+      const token = crypto6.randomBytes(32).toString("hex");
       const expiresAt = /* @__PURE__ */ new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       const existingInvite = await storage.getInviteByEmail(validatedData.email);
@@ -13269,7 +13454,7 @@ async function registerRoutes(app2) {
       const endDateParsed = endDate && typeof endDate === "string" && endDate.trim() ? new Date(endDate) : null;
       const conditions = [];
       if (req.storeScope?.storeId) {
-        conditions.push(eq6(orders.storeId, req.storeScope.storeId));
+        conditions.push(eq7(orders.storeId, req.storeScope.storeId));
       }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte2(orders.createdAt, startDateParsed));
@@ -13439,7 +13624,7 @@ async function registerRoutes(app2) {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
-      await db.delete(webhooks).where(eq6(webhooks.id, id));
+      await db.delete(webhooks).where(eq7(webhooks.id, id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting webhook:", error);

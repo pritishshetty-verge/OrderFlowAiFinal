@@ -1,6 +1,10 @@
 import axios, { AxiosInstance } from 'axios';
+import { eq } from 'drizzle-orm';
+import { db } from '../db';
+import { stores } from '@shared/schema';
+import { decrypt } from '../encryption';
 
-const DELHIVERY_BASE_URL = process.env.NODE_ENV === 'production' 
+const DELHIVERY_BASE_URL = process.env.NODE_ENV === 'production'
   ? 'https://track.delhivery.com'
   : 'https://staging-express.delhivery.com';
 
@@ -36,7 +40,7 @@ interface DelhiveryShipmentPayload {
 interface DelhiveryCreateResponse {
   success: boolean;
   waybill?: string;
-  packages?: string[];
+  packages?: Array<{ waybill?: string; status?: string; remarks?: string[] }>;
   upload_wbn?: string;
   rmk?: string;
   error?: string;
@@ -98,13 +102,43 @@ interface DelhiveryNDRActionResponse {
   error?: string;
 }
 
-class DelhiveryService {
-  private client: AxiosInstance;
-  private token: string | null = null;
+interface DelhiveryPackingSlipResponse {
+  packages?: Array<{
+    pdf_download_link?: string;
+    pdf?: string;
+    wbn?: string;
+  }>;
+  packages_found?: number;
+}
 
-  constructor() {
-    this.token = process.env.DELHIVERY_API_TOKEN || null;
-    
+export interface DelhiveryClientConfig {
+  token: string;
+  clientName?: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Store-scoped Delhivery client.
+//
+// Previously this module exported a single global `delhiveryService`
+// instance built from process.env.DELHIVERY_API_TOKEN. Now every
+// outbound call must run in the context of a specific store, so the
+// client is constructed per-store from the encrypted credentials on
+// the `stores` row and handed out by `getDelhiveryClient(storeId)`.
+//
+// NDR status classification (mapNDRStatus / isNDRStatus) is pure data —
+// it doesn't need credentials — so it's exported as standalone
+// functions used by both the webhook and the route layer.
+// ─────────────────────────────────────────────────────────────────────
+
+export class DelhiveryClient {
+  private client: AxiosInstance;
+  private token: string;
+  readonly clientName: string | null;
+
+  constructor(config: DelhiveryClientConfig) {
+    this.token = config.token;
+    this.clientName = config.clientName ?? null;
+
     this.client = axios.create({
       baseURL: DELHIVERY_BASE_URL,
       timeout: 30000,
@@ -114,15 +148,9 @@ class DelhiveryService {
     });
 
     this.client.interceptors.request.use((config) => {
-      if (this.token) {
-        config.headers.Authorization = `Token ${this.token}`;
-      }
+      config.headers.Authorization = `Token ${this.token}`;
       return config;
     });
-  }
-
-  isConfigured(): boolean {
-    return !!this.token;
   }
 
   async createShipment(orderData: {
@@ -141,10 +169,6 @@ class DelhiveryService {
     weight?: number;
     pickupLocationName?: string;
   }): Promise<{ success: boolean; awb?: string; error?: string }> {
-    if (!this.isConfigured()) {
-      return { success: false, error: 'Delhivery API token not configured' };
-    }
-
     try {
       const shipmentPayload: DelhiveryShipmentPayload = {
         name: orderData.customerName,
@@ -158,7 +182,7 @@ class DelhiveryService {
         payment_mode: orderData.paymentMethod.toLowerCase() === 'cod' ? 'COD' : 'Prepaid',
         products_desc: orderData.itemsSummary || 'General merchandise',
         weight: orderData.weight?.toString() || '0.5',
-        pickup_location: { name: orderData.pickupLocationName || 'Default' },
+        pickup_location: { name: orderData.pickupLocationName || this.clientName || 'Default' },
       };
 
       if (shipmentPayload.payment_mode === 'COD') {
@@ -177,16 +201,22 @@ class DelhiveryService {
         }
       );
 
-      if (response.data.success && response.data.waybill) {
-        return {
-          success: true,
-          awb: response.data.waybill,
-        };
+      // AWB can be at the top level (waybill) or inside packages[0].
+      const awb =
+        response.data.waybill ||
+        response.data.packages?.find((p) => p.waybill)?.waybill;
+
+      if (response.data.success && awb) {
+        return { success: true, awb };
       }
 
       return {
         success: false,
-        error: response.data.rmk || response.data.error || 'Unknown error creating shipment',
+        error:
+          response.data.packages?.[0]?.remarks?.join(', ') ||
+          response.data.rmk ||
+          response.data.error ||
+          'Unknown error creating shipment',
       };
     } catch (error: any) {
       console.error('Delhivery createShipment error:', error.response?.data || error.message);
@@ -210,17 +240,13 @@ class DelhiveryService {
     }>;
     error?: string;
   }> {
-    if (!this.isConfigured()) {
-      return { success: false, error: 'Delhivery API token not configured' };
-    }
-
     try {
       const response = await this.client.get<DelhiveryTrackResponse>(
         `/api/v1/packages/json/?waybill=${awb}`
       );
 
       const shipmentData = response.data.ShipmentData?.[0]?.Shipment;
-      
+
       if (!shipmentData) {
         return { success: false, error: 'Shipment not found' };
       }
@@ -248,6 +274,38 @@ class DelhiveryService {
     }
   }
 
+  /**
+   * Retrieve the printable packing slip / shipping label for an AWB.
+   * Delhivery returns a JSON envelope with a pdf_download_link (and/or
+   * base64 PDF) per package.
+   */
+  async getShippingLabel(awb: string): Promise<{
+    success: boolean;
+    labelUrl?: string;
+    error?: string;
+  }> {
+    try {
+      const response = await this.client.get<DelhiveryPackingSlipResponse>(
+        `/api/p/packing_slip?wbns=${encodeURIComponent(awb)}&pdf=true`
+      );
+
+      const pkg = response.data.packages?.[0];
+      const labelUrl = pkg?.pdf_download_link || pkg?.pdf;
+
+      if (labelUrl) {
+        return { success: true, labelUrl };
+      }
+
+      return { success: false, error: 'No packing slip available for this AWB yet' };
+    } catch (error: any) {
+      console.error('Delhivery getShippingLabel error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.Error || error.message || 'Failed to fetch shipping label',
+      };
+    }
+  }
+
   async actionNDR(
     awb: string,
     action: 'reattempt' | 'rto' | 'defer' | 'edit',
@@ -258,10 +316,6 @@ class DelhiveryService {
       phone?: string;
     }
   ): Promise<{ success: boolean; uploadId?: string; error?: string }> {
-    if (!this.isConfigured()) {
-      return { success: false, error: 'Delhivery API token not configured' };
-    }
-
     const actionMap: Record<string, DelhiveryNDRActionPayload['act']> = {
       reattempt: 'RE-ATTEMPT',
       rto: 'RTO',
@@ -311,32 +365,96 @@ class DelhiveryService {
       };
     }
   }
-
-  mapNDRStatus(statusCode: string): string {
-    const ndrStatusMap: Record<string, string> = {
-      'EOD-74': 'customer_unavailable',
-      'EOD-15': 'address_issue',
-      'EOD-11': 'refused',
-      'EOD-3': 'customer_unavailable',
-      'EOD-16': 'address_issue',
-      'EOD-6': 'other',
-      'ST-108': 'other',
-      'EOD-104': 'address_issue',
-      'EOD-43': 'refused',
-      'EOD-86': 'other',
-      'EOD-69': 'other',
-    };
-    return ndrStatusMap[statusCode] || 'other';
-  }
-
-  isNDRStatus(statusCode: string): boolean {
-    const ndrCodes = [
-      'EOD-74', 'EOD-15', 'EOD-11', 'EOD-3', 'EOD-16', 
-      'EOD-6', 'ST-108', 'EOD-104', 'EOD-43', 'EOD-86', 'EOD-69'
-    ];
-    return ndrCodes.includes(statusCode);
-  }
 }
 
-export const delhiveryService = new DelhiveryService();
-export default delhiveryService;
+// ── Pure NDR status classification (no credentials needed) ──────────────
+
+export function mapNDRStatus(statusCode: string): string {
+  const ndrStatusMap: Record<string, string> = {
+    'EOD-74': 'customer_unavailable',
+    'EOD-15': 'address_issue',
+    'EOD-11': 'refused',
+    'EOD-3': 'customer_unavailable',
+    'EOD-16': 'address_issue',
+    'EOD-6': 'other',
+    'ST-108': 'other',
+    'EOD-104': 'address_issue',
+    'EOD-43': 'refused',
+    'EOD-86': 'other',
+    'EOD-69': 'other',
+  };
+  return ndrStatusMap[statusCode] || 'other';
+}
+
+export function isNDRStatus(statusCode: string): boolean {
+  const ndrCodes = [
+    'EOD-74', 'EOD-15', 'EOD-11', 'EOD-3', 'EOD-16',
+    'EOD-6', 'ST-108', 'EOD-104', 'EOD-43', 'EOD-86', 'EOD-69',
+  ];
+  return ndrCodes.includes(statusCode);
+}
+
+// ── Store-scoped client factory ─────────────────────────────────────────
+
+interface CacheEntry {
+  client: DelhiveryClient;
+  loadedAt: number;
+}
+
+const clientCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Build (or return a cached) Delhivery client for a specific store.
+ * Reads the encrypted token + client name from the `stores` row,
+ * decrypts the token, and constructs a DelhiveryClient bound to that
+ * store's credentials. Throws if the store has no Delhivery token
+ * configured so callers surface a clear "not configured" error.
+ */
+export async function getDelhiveryClient(storeId: string): Promise<DelhiveryClient> {
+  if (!storeId) {
+    throw new Error('storeId is required to build a Delhivery client');
+  }
+
+  const cached = clientCache.get(storeId);
+  if (cached && Date.now() - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.client;
+  }
+
+  const [row] = await db
+    .select({
+      delhiveryApiToken: stores.delhiveryApiToken,
+      delhiveryClientName: stores.delhiveryClientName,
+    })
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+
+  if (!row) {
+    throw new Error(`Store not found: ${storeId}`);
+  }
+  if (!row.delhiveryApiToken) {
+    throw new Error('Delhivery is not configured for this store');
+  }
+
+  const token = decrypt(row.delhiveryApiToken);
+  if (!token) {
+    throw new Error('Delhivery token failed to decrypt for this store');
+  }
+
+  const client = new DelhiveryClient({
+    token,
+    clientName: row.delhiveryClientName,
+  });
+  clientCache.set(storeId, { client, loadedAt: Date.now() });
+  return client;
+}
+
+/** Drop the cached client for a store after its credentials change. */
+export function invalidateDelhiveryClient(storeId?: string): void {
+  if (storeId) {
+    clientCache.delete(storeId);
+  } else {
+    clientCache.clear();
+  }
+}

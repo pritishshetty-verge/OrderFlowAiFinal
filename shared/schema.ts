@@ -273,6 +273,15 @@ export const stores = pgTable("stores", {
   webhookSecret: text("webhook_secret"),
   metaAccessToken: text("meta_access_token"),
   metaAdAccountsConfig: jsonb("meta_ad_accounts_config").$type<MetaAdAccountConfig[]>(),
+  // Per-store Delhivery credentials. Token is encrypted via
+  // server/encryption.ts (same AES-256-GCM helper as the Shopify /
+  // Meta secrets). Both stores currently share one Delhivery account
+  // in a multi-channel setup, but the schema keeps independent values
+  // so they can diverge later without a migration. Outbound calls are
+  // store-scoped via getDelhiveryClient(storeId); inbound webhooks are
+  // routed by AWB → shipment.storeId, not by these fields.
+  delhiveryApiToken: text("delhivery_api_token"),
+  delhiveryClientName: text("delhivery_client_name"),
   isActive: boolean("is_active").notNull().default(true),
   lastTestedAt: timestamp("last_tested_at"),
   testStatus: text("test_status"), // success | failed
@@ -1315,14 +1324,19 @@ export const shipments = pgTable("shipments", {
   breadth: decimal("breadth", { precision: 10, scale: 2 }), // in cm
   height: decimal("height", { precision: 10, scale: 2 }), // in cm
   
+  // Printable shipping label / packing slip. For Delhivery this is the
+  // packing-slip PDF link returned by /api/p/packing_slip; for
+  // Shiprocket it's the label_url from the label-generation call.
+  shippingLabelUrl: text("shipping_label_url"),
+
   // Metadata
   rawShiprocketData: jsonb("raw_shiprocket_data"), // Full response from Shiprocket
-  
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const insertShipmentSchema = createInsertSchema(shipments).omit({ 
+export const insertShipmentSchema = createInsertSchema(shipments).omit({
   id: true, 
   createdAt: true, 
   updatedAt: true 

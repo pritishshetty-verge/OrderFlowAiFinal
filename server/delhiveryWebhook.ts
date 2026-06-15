@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
+import crypto from 'crypto';
 import { storage } from './storage';
 import { normalizeDelhivery, type DelhiveryPayload } from './logic/rules/delhivery';
+import { isNDRStatus, mapNDRStatus } from './services/delhivery';
 
 interface DelhiveryDefaultPayload {
   Shipment: {
@@ -44,7 +46,12 @@ function verifyDelhiveryToken(
     return false;
   }
 
-  return token === secret;
+  // Timing-safe comparison. timingSafeEqual throws if the buffers differ
+  // in length, so we hash both sides to a fixed-width digest first —
+  // this both equalises length and avoids leaking the secret length.
+  const tokenHash = crypto.createHash('sha256').update(token).digest();
+  const secretHash = crypto.createHash('sha256').update(secret).digest();
+  return crypto.timingSafeEqual(tokenHash, secretHash);
 }
 
 function extractPayloadFields(body: any): {
@@ -220,9 +227,17 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       return res.status(200).json({ success: false, error: 'Order not found for AWB' });
     }
 
-    console.log(`[Delhivery Webhook] Found order ${order.id} for AWB ${awb}`);
-
-    const { delhiveryService } = await import('./services/delhivery');
+    // GLOBAL → STORE ROUTING: both stores share one Delhivery account,
+    // so the webhook token can't tell us which store this AWB belongs
+    // to. We resolved the order/shipment by the globally-unique AWB
+    // above; its storeId is the authoritative store context. Every
+    // write below is stamped with this storeId so status updates,
+    // history logs, NDR events, and notifications stay tenant-scoped.
+    const storeId = order.storeId ?? shipment?.storeId ?? null;
+    const previousStatus = order.status ?? null;
+    console.log(
+      `[Delhivery Webhook] Found order ${order.id} (store=${storeId ?? 'unknown'}) for AWB ${awb}`,
+    );
 
     // Build payload for normalizeDelhivery function
     // Include all possible Instructions sources for accurate OFD detection
@@ -265,7 +280,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     const isActionable = normalized.isActionable;
     
     // Legacy compatibility flags
-    const isNDRByCode = statusCode && delhiveryService.isNDRStatus(statusCode);
+    const isNDRByCode = statusCode && isNDRStatus(statusCode);
     const isRTOByStatusType = statusType?.toUpperCase() === 'RT';
 
     // Determine initial shipment status based on normalized status
@@ -287,6 +302,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       
       // Create shipment record with correct initial status based on event type
       shipment = await storage.createShipment({
+        storeId: storeId ?? undefined,
         orderId: order.id,
         shopifyOrderId: order.shopifyOrderId,
         awb: awb,
@@ -326,8 +342,25 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     };
     
     console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${normalized.status} (isActionable: ${isActionable})`);
-    
+
     await storage.updateOrder(order.id, orderUpdate);
+
+    // Store-scoped status-history log. Only record an entry when the
+    // normalized status actually changed, so repeated webhooks for the
+    // same state don't spam the timeline.
+    if (previousStatus !== normalized.status) {
+      try {
+        await storage.createOrderStatus({
+          storeId: storeId ?? undefined,
+          orderId: order.id,
+          status: normalized.status,
+          previousStatus: previousStatus ?? undefined,
+          note: `Delhivery: ${effectiveStatus}${remarks ? ` — ${remarks}` : ''} (AWB ${awb})`,
+        });
+      } catch (histErr) {
+        console.warn('[Delhivery Webhook] Failed to write status history:', histErr);
+      }
+    }
 
     if (isNDR || isRTO) {
       console.log('[Delhivery Webhook] NDR/RTO event detected:', {
@@ -341,9 +374,9 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
 
       let ndrStatusValue = 'other';
-      
-      if (statusCode && delhiveryService.isNDRStatus(statusCode)) {
-        ndrStatusValue = delhiveryService.mapNDRStatus(statusCode);
+
+      if (statusCode && isNDRStatus(statusCode)) {
+        ndrStatusValue = mapNDRStatus(statusCode);
       } else {
         const statusLower = effectiveStatus.toLowerCase();
         if (statusLower.includes('customer unavailable') || statusLower.includes('not available')) {
@@ -359,6 +392,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
       // Create NDR event - shipment is guaranteed to exist (created on the fly if missing)
       await storage.createNDREvent({
+        storeId: storeId ?? undefined,
         shipmentId: shipment.id,
         orderId: order.id,
         awb,

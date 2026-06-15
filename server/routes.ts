@@ -2131,6 +2131,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ============================================================================
+  // DELHIVERY CONFIG (per-store credentials)
+  // ============================================================================
+
+  // GET /api/delhivery/config — report whether Delhivery is configured
+  // for the active store, plus the (non-secret) client name. Never
+  // returns the token itself.
+  app.get("/api/delhivery/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [row] = await db
+        .select({
+          delhiveryApiToken: stores.delhiveryApiToken,
+          delhiveryClientName: stores.delhiveryClientName,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!row) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+      res.json({
+        hasToken: !!row.delhiveryApiToken,
+        clientName: row.delhiveryClientName ?? null,
+      });
+    } catch (err: any) {
+      console.error("Error in GET /api/delhivery/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to read Delhivery config" });
+    }
+  });
+
+  // PUT /api/delhivery/config — securely save/update per-store Delhivery
+  // credentials. Token is encrypted at rest (server/encryption.ts).
+  //   - apiToken: when a non-empty string, encrypt() + persist; when
+  //     omitted/empty, leave the existing token untouched (so the UI
+  //     can update just the client name without re-sending the secret).
+  //   - clientName: when the key is present, always replace (incl. "").
+  app.put("/api/delhivery/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+
+      const patch: {
+        delhiveryApiToken?: string;
+        delhiveryClientName?: string | null;
+        updatedAt?: Date;
+      } = {};
+
+      const { apiToken, clientName } = req.body ?? {};
+
+      if (typeof apiToken === "string" && apiToken.trim().length > 0) {
+        patch.delhiveryApiToken = encrypt(apiToken.trim());
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, "clientName")) {
+        patch.delhiveryClientName =
+          typeof clientName === "string" && clientName.trim().length > 0
+            ? clientName.trim()
+            : null;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res
+          .status(400)
+          .json({ error: "Nothing to update. Provide apiToken and/or clientName." });
+      }
+      patch.updatedAt = new Date();
+
+      await db.update(stores).set(patch).where(eq(stores.id, storeId));
+
+      // Bust the cached Delhivery client so the next outbound call picks
+      // up the new credentials immediately.
+      const { invalidateDelhiveryClient } = await import("./services/delhivery");
+      invalidateDelhiveryClient(storeId);
+
+      const [updated] = await db
+        .select({
+          delhiveryApiToken: stores.delhiveryApiToken,
+          delhiveryClientName: stores.delhiveryClientName,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+
+      res.json({
+        hasToken: !!updated?.delhiveryApiToken,
+        clientName: updated?.delhiveryClientName ?? null,
+      });
+    } catch (err: any) {
+      console.error("Error in PUT /api/delhivery/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to update Delhivery config" });
+    }
+  });
+
+  // GET /api/delhivery/shipments/:awb/label — fetch the printable
+  // packing-slip / label URL for an AWB, scoped to the shipment's store,
+  // and cache it on the shipment row.
+  app.get("/api/delhivery/shipments/:awb/label", async (req, res) => {
+    try {
+      const { awb } = req.params;
+      const shipment = await storage.getShipmentByAWB(awb);
+      if (!shipment) {
+        return res.status(404).json({ error: "Shipment not found" });
+      }
+      if (!shipment.storeId) {
+        return res.status(400).json({ error: "Shipment is missing store context" });
+      }
+
+      const { getDelhiveryClient } = await import("./services/delhivery");
+      let client;
+      try {
+        client = await getDelhiveryClient(shipment.storeId);
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+      }
+
+      const result = await client.getShippingLabel(awb);
+      if (!result.success || !result.labelUrl) {
+        return res.status(502).json({ error: result.error || "Label not available" });
+      }
+
+      await storage.updateShipment(shipment.id, { shippingLabelUrl: result.labelUrl });
+      res.json({ success: true, labelUrl: result.labelUrl });
+    } catch (err: any) {
+      console.error("Error fetching Delhivery label:", err);
+      res.status(500).json({ error: err?.message || "Failed to fetch shipping label" });
+    }
+  });
+
   // GET /api/meta/ad-accounts — server-side proxy to Meta's Graph API
   // /me/adaccounts using the store's decrypted token. We proxy (vs
   // letting the browser talk to Meta directly) so the access token
@@ -6227,9 +6370,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const courierName = shipment.courierName?.toLowerCase() || "";
 
       if (courierName.includes("delhivery")) {
-        // Use Delhivery API - select correct action based on what's provided
-        const { delhiveryService } = await import("./services/delhivery");
-        
+        // Use Delhivery API - select correct action based on what's provided.
+        // Outbound calls run in the shipment's store context: resolve the
+        // store-scoped client from shipment.storeId so the right account's
+        // credentials are used (both stores share one account today, but
+        // the factory keeps this correct if they diverge).
+        if (!shipment.storeId) {
+          return res.status(400).json({ error: "Shipment is missing store context; cannot route Delhivery call" });
+        }
+        const { getDelhiveryClient } = await import("./services/delhivery");
+        let delhiveryClient;
+        try {
+          delhiveryClient = await getDelhiveryClient(shipment.storeId);
+        } catch (e: any) {
+          return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+        }
+
         const hasAddress = Boolean(address1 || address2);
         const hasPhone = Boolean(phone);
         const hasDate = Boolean(deferredDate);
@@ -6257,9 +6413,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         // else: Use 'reattempt' (RE-ATTEMPT) - no action_data needed
         
-        console.log(`[NDR Reattempt] AWB: ${awb}, Action: ${actionType}, Data:`, actionData);
-        
-        const result = await delhiveryService.actionNDR(awb, actionType, actionData);
+        console.log(`[NDR Reattempt] AWB: ${awb}, store: ${shipment.storeId}, Action: ${actionType}, Data:`, actionData);
+
+        const result = await delhiveryClient.actionNDR(awb, actionType, actionData);
 
         if (!result.success) {
           return res.status(500).json({ error: result.error || "Delhivery reattempt failed" });
