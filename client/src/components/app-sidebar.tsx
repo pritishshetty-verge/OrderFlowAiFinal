@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -131,6 +131,11 @@ const adminMenuItems: MenuItem[] = [
     title: "Products",
     url: "/products",
     icon: LayoutGrid,
+  },
+  {
+    title: "Returns",
+    url: "/returns",
+    icon: RefreshCcw,
   },
   {
     title: "Learning Center",

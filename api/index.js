@@ -13,6 +13,8 @@ var __export = (target, all) => {
 var schema_exports = {};
 __export(schema_exports, {
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
+  REFUND_TYPES: () => REFUND_TYPES,
+  RETURN_STATUSES: () => RETURN_STATUSES,
   abandonedCheckouts: () => abandonedCheckouts,
   appSettings: () => appSettings,
   attendance: () => attendance,
@@ -47,6 +49,8 @@ __export(schema_exports, {
   insertPayrollLedgerSchema: () => insertPayrollLedgerSchema,
   insertProductSchema: () => insertProductSchema,
   insertResourceSchema: () => insertResourceSchema,
+  insertReturnItemSchema: () => insertReturnItemSchema,
+  insertReturnSchema: () => insertReturnSchema,
   insertShipmentSchema: () => insertShipmentSchema,
   insertShopifyCredentialsSchema: () => insertShopifyCredentialsSchema,
   insertShopifySyncLogSchema: () => insertShopifySyncLogSchema,
@@ -74,6 +78,8 @@ __export(schema_exports, {
   pincodeTiers: () => pincodeTiers,
   products: () => products,
   resources: () => resources,
+  returnItems: () => returnItems,
+  returns: () => returns,
   sessions: () => sessions,
   shipments: () => shipments,
   shopifyCredentials: () => shopifyCredentials,
@@ -92,7 +98,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1134,6 +1140,53 @@ var init_schema = __esm({
       id: true,
       createdAt: true,
       updatedAt: true
+    });
+    RETURN_STATUSES = [
+      "PENDING_FEE",
+      "PENDING_APPROVAL",
+      "APPROVED",
+      "PICKUP_SCHEDULED",
+      "IN_TRANSIT",
+      "RECEIVED",
+      "INSPECTED",
+      "REFUNDED",
+      "REJECTED"
+    ];
+    REFUND_TYPES = ["STORE_CREDIT", "ORIGINAL_PAYMENT", "NO_REFUND"];
+    returns = pgTable(
+      "returns",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").references(() => stores.id),
+        orderId: varchar("order_id").references(() => orders.id, { onDelete: "cascade" }),
+        rmaNumber: text("rma_number").notNull().unique(),
+        status: text("status").notNull().default("PENDING_APPROVAL"),
+        returnReason: text("return_reason"),
+        customerNotes: text("customer_notes"),
+        returnFeePaid: boolean("return_fee_paid").notNull().default(false),
+        refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }),
+        refundType: text("refund_type").notNull().default("STORE_CREDIT"),
+        trackingAwb: text("tracking_awb"),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      }
+    );
+    returnItems = pgTable("return_items", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      returnId: varchar("return_id").notNull().references(() => returns.id, { onDelete: "cascade" }),
+      orderItemId: varchar("order_item_id").references(() => orderItems.id),
+      quantity: integer("quantity").notNull().default(1),
+      condition: text("condition"),
+      createdAt: timestamp("created_at").notNull().defaultNow()
+    });
+    insertReturnSchema = createInsertSchema(returns).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
+    insertReturnItemSchema = createInsertSchema(returnItems).omit({
+      id: true,
+      createdAt: true
     });
     appSettings = pgTable(
       "app_settings",
@@ -2876,6 +2929,38 @@ var init_storage = __esm({
       }
       async updateCatalogProductErp(id, erp) {
         const [row] = await db.update(catalogProducts).set({ ...erp, updatedAt: /* @__PURE__ */ new Date() }).where(eq(catalogProducts.id, id)).returning();
+        return row;
+      }
+      // ============================================================================
+      // RETURNS (RMA dashboard)
+      // ============================================================================
+      async listReturns(storeId) {
+        return await db.select({
+          id: returns.id,
+          storeId: returns.storeId,
+          orderId: returns.orderId,
+          rmaNumber: returns.rmaNumber,
+          status: returns.status,
+          returnReason: returns.returnReason,
+          customerNotes: returns.customerNotes,
+          returnFeePaid: returns.returnFeePaid,
+          refundAmount: returns.refundAmount,
+          refundType: returns.refundType,
+          trackingAwb: returns.trackingAwb,
+          createdAt: returns.createdAt,
+          updatedAt: returns.updatedAt,
+          orderNumber: orders.shopifyOrderNumber,
+          customerName: orders.customerName,
+          customerEmail: orders.customerEmail,
+          orderTotal: orders.totalPrice
+        }).from(returns).leftJoin(orders, eq(returns.orderId, orders.id)).where(eq(returns.storeId, storeId)).orderBy(desc(returns.createdAt));
+      }
+      async getReturn(id) {
+        const [row] = await db.select().from(returns).where(eq(returns.id, id));
+        return row;
+      }
+      async updateReturnStatus(id, status) {
+        const [row] = await db.update(returns).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(returns.id, id)).returning();
         return row;
       }
       // ============================================================================
@@ -10490,6 +10575,45 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error updating product ERP data:", error);
       res.status(500).json({ error: "Failed to update product" });
+    }
+  });
+  app2.get("/api/returns", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const items = await storage.listReturns(storeId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching returns:", error);
+      res.status(500).json({ error: "Failed to fetch returns" });
+    }
+  });
+  app2.patch("/api/returns/:id/status", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const { status } = req.body ?? {};
+      if (!status || !RETURN_STATUSES.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status. Must be one of: ${RETURN_STATUSES.join(", ")}`
+        });
+      }
+      const existing = await storage.getReturn(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Return not found" });
+      }
+      if (existing.storeId !== storeId) {
+        return res.status(403).json({ error: "Return belongs to a different store" });
+      }
+      const updated = await storage.updateReturnStatus(req.params.id, status);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating return status:", error);
+      res.status(500).json({ error: "Failed to update return status" });
     }
   });
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {

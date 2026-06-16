@@ -1403,6 +1403,78 @@ export type InsertNdrEvent = z.infer<typeof insertNdrEventSchema>;
 export type NdrEvent = typeof ndrEvents.$inferSelect;
 
 // ============================================================================
+// RETURNS & STORE CREDIT (RMA workflow)
+// ============================================================================
+//
+// `status` is a text column (matching the codebase convention — see
+// shipments.status / ndrEvents — rather than a pgEnum) carrying one of
+// the RETURN_STATUSES values below. `refundType` defaults to
+// STORE_CREDIT. One return groups N return_items (line-level), each
+// pointing at the original order_items row.
+// ============================================================================
+
+export const RETURN_STATUSES = [
+  "PENDING_FEE",
+  "PENDING_APPROVAL",
+  "APPROVED",
+  "PICKUP_SCHEDULED",
+  "IN_TRANSIT",
+  "RECEIVED",
+  "INSPECTED",
+  "REFUNDED",
+  "REJECTED",
+] as const;
+export type ReturnStatus = (typeof RETURN_STATUSES)[number];
+
+export const REFUND_TYPES = ["STORE_CREDIT", "ORIGINAL_PAYMENT", "NO_REFUND"] as const;
+export type RefundType = (typeof REFUND_TYPES)[number];
+
+export const returns = pgTable(
+  "returns",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id").references(() => stores.id),
+    orderId: varchar("order_id").references(() => orders.id, { onDelete: "cascade" }),
+    rmaNumber: text("rma_number").notNull().unique(),
+    status: text("status").notNull().default("PENDING_APPROVAL"),
+    returnReason: text("return_reason"),
+    customerNotes: text("customer_notes"),
+    returnFeePaid: boolean("return_fee_paid").notNull().default(false),
+    refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }),
+    refundType: text("refund_type").notNull().default("STORE_CREDIT"),
+    trackingAwb: text("tracking_awb"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+);
+
+export const returnItems = pgTable("return_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  returnId: varchar("return_id")
+    .notNull()
+    .references(() => returns.id, { onDelete: "cascade" }),
+  orderItemId: varchar("order_item_id").references(() => orderItems.id),
+  quantity: integer("quantity").notNull().default(1),
+  condition: text("condition"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertReturnSchema = createInsertSchema(returns).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertReturn = z.infer<typeof insertReturnSchema>;
+export type Return = typeof returns.$inferSelect;
+
+export const insertReturnItemSchema = createInsertSchema(returnItems).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertReturnItem = z.infer<typeof insertReturnItemSchema>;
+export type ReturnItem = typeof returnItems.$inferSelect;
+
+// ============================================================================
 // APP SETTINGS (Per-Store Configuration)
 // ============================================================================
 //

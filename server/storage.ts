@@ -63,6 +63,8 @@ import {
   type InsertProduct,
   type CatalogProduct,
   type InsertCatalogProduct,
+  type Return,
+  type InsertReturn,
   type AbandonedCheckout,
   type InsertAbandonedCheckout,
   users,
@@ -92,6 +94,7 @@ import {
   userOnboardingProgress,
   products,
   catalogProducts,
+  returns,
   appSettings,
   stores,
   abandonedCheckouts,
@@ -449,6 +452,11 @@ export interface IStorage {
     dimensionWidth?: string | null;
     dimensionHeight?: string | null;
   }): Promise<CatalogProduct | undefined>;
+
+  // Returns (RMA dashboard)
+  listReturns(storeId: string): Promise<any[]>;
+  getReturn(id: string): Promise<Return | undefined>;
+  updateReturnStatus(id: string, status: string): Promise<Return | undefined>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
@@ -3048,6 +3056,56 @@ export class DbStorage implements IStorage {
       .update(catalogProducts)
       .set({ ...erp, updatedAt: new Date() })
       .where(eq(catalogProducts.id, id))
+      .returning();
+    return row;
+  }
+
+  // ============================================================================
+  // RETURNS (RMA dashboard)
+  // ============================================================================
+
+  async listReturns(storeId: string): Promise<any[]> {
+    // Left-join the parent order + customer so the dashboard can show
+    // human-readable order numbers / customer names without N+1 reads.
+    return await db
+      .select({
+        id: returns.id,
+        storeId: returns.storeId,
+        orderId: returns.orderId,
+        rmaNumber: returns.rmaNumber,
+        status: returns.status,
+        returnReason: returns.returnReason,
+        customerNotes: returns.customerNotes,
+        returnFeePaid: returns.returnFeePaid,
+        refundAmount: returns.refundAmount,
+        refundType: returns.refundType,
+        trackingAwb: returns.trackingAwb,
+        createdAt: returns.createdAt,
+        updatedAt: returns.updatedAt,
+        orderNumber: orders.shopifyOrderNumber,
+        customerName: orders.customerName,
+        customerEmail: orders.customerEmail,
+        orderTotal: orders.totalPrice,
+      })
+      .from(returns)
+      .leftJoin(orders, eq(returns.orderId, orders.id))
+      .where(eq(returns.storeId, storeId))
+      .orderBy(desc(returns.createdAt));
+  }
+
+  async getReturn(id: string): Promise<Return | undefined> {
+    const [row] = await db.select().from(returns).where(eq(returns.id, id));
+    return row;
+  }
+
+  async updateReturnStatus(
+    id: string,
+    status: string,
+  ): Promise<Return | undefined> {
+    const [row] = await db
+      .update(returns)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(returns.id, id))
       .returning();
     return row;
   }

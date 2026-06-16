@@ -8,6 +8,7 @@ import {
   attendance, orderAssignments, calls, notifications, ndrEvents,
   courses, resources, userLessonProgress, userOnboardingProgress, users,
   webhooks, insertWebhookSchema, stores, userStores,
+  RETURN_STATUSES,
   type MetaAdAccountConfig,
 } from "@shared/schema";
 import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
@@ -3487,6 +3488,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating product ERP data:", error);
       res.status(500).json({ error: "Failed to update product" });
+    }
+  });
+
+  // ============================================================================
+  // RETURNS (RMA dashboard)
+  // ============================================================================
+
+  // List all returns for the active store, with joined order/customer details.
+  app.get("/api/returns", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const items = await storage.listReturns(storeId);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching returns:", error);
+      res.status(500).json({ error: "Failed to fetch returns" });
+    }
+  });
+
+  // Update the RMA status. Validates against the allowed status set and
+  // verifies the return belongs to the active store before writing.
+  app.patch("/api/returns/:id/status", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const { status } = req.body ?? {};
+      if (!status || !RETURN_STATUSES.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status. Must be one of: ${RETURN_STATUSES.join(", ")}`,
+        });
+      }
+      const existing = await storage.getReturn(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Return not found" });
+      }
+      if (existing.storeId !== storeId) {
+        return res.status(403).json({ error: "Return belongs to a different store" });
+      }
+      const updated = await storage.updateReturnStatus(req.params.id, status);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating return status:", error);
+      res.status(500).json({ error: "Failed to update return status" });
     }
   });
 
