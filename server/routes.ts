@@ -1,6 +1,7 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "node:crypto";
+import { generatePayuHash, verifyPayuHash, getPayuKey, RETURN_FEE_AMOUNT } from "./services/payu";
 import { storage } from "./storage";
 import { db } from "./db";
 import {
@@ -3882,16 +3883,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
         returnItemsToInsert,
       );
 
+      // Build the PayU hosted-checkout payload for the ₹150 return fee.
+      // txnid IS the rmaNumber (unique) so the webhook can find the return.
+      // If PayU isn't configured we still return the created RMA so the
+      // storefront can surface a graceful "fee setup pending" state.
+      let payu:
+        | {
+            key: string;
+            txnid: string;
+            amount: string;
+            productinfo: string;
+            firstname: string;
+            email: string;
+            hash: string;
+          }
+        | null = null;
+      try {
+        const txnid = created.rmaNumber;
+        const amount = RETURN_FEE_AMOUNT; // "150.00"
+        const productinfo = `Return fee ${created.rmaNumber}`;
+        const firstname = (order.customerName || "Customer").split(" ")[0];
+        const email = order.customerEmail || "";
+        const hash = generatePayuHash(txnid, amount, productinfo, firstname, email);
+        payu = {
+          key: getPayuKey(),
+          txnid,
+          amount,
+          productinfo,
+          firstname,
+          email,
+          hash,
+        };
+      } catch (e: any) {
+        console.warn(
+          `[payu] could not build hash for ${created.rmaNumber}: ${e?.message}`,
+        );
+      }
+
       res.status(201).json({
         rmaNumber: created.rmaNumber,
         refundAmount,
         status: created.status,
+        payu,
       });
     } catch (error: any) {
       console.error("Error in public returns create:", error);
       res.status(500).json({ error: "Failed to create return" });
     }
   });
+
+  // PayU server-to-server payment callback. PayU POSTs form-urlencoded
+  // data (not JSON), so we attach express.urlencoded explicitly. NOT under
+  // /api/public/returns, so the Shopify App-Proxy HMAC doesn't apply —
+  // this endpoint authenticates via PayU's own reverse hash instead.
+  app.post(
+    "/api/public/webhooks/payu",
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+      try {
+        const payload = (req.body ?? {}) as Record<string, any>;
+        const { txnid, status, mihpayid } = payload;
+
+        // Authenticate the callback via PayU's reverse hash.
+        if (!verifyPayuHash(payload)) {
+          console.warn(
+            `[payu-webhook] invalid hash for txnid=${txnid ?? "?"}`,
+          );
+          // 200 so PayU doesn't hammer retries on a rejected payload.
+          return res.status(200).json({ received: true, verified: false });
+        }
+
+        if (status !== "success") {
+          console.log(
+            `[payu-webhook] txnid=${txnid} status=${status} — no state change`,
+          );
+          return res.status(200).json({ received: true, verified: true });
+        }
+
+        // txnid is the rmaNumber we generated at create time.
+        const ret = await storage.getReturnByRmaNumber(String(txnid));
+        if (!ret) {
+          console.warn(`[payu-webhook] no return for txnid=${txnid}`);
+          return res.status(200).json({ received: true, found: false });
+        }
+
+        // Idempotent: only advance a still-pending-fee return.
+        if (ret.status === "PENDING_FEE") {
+          await storage.updateReturn(ret.id, {
+            status: "PENDING_APPROVAL",
+            returnFeePaid: true,
+            payuTransactionId: mihpayid ? String(mihpayid) : null,
+          });
+          console.log(
+            `[payu-webhook] RMA ${ret.rmaNumber} fee paid (mihpayid=${mihpayid}); → PENDING_APPROVAL`,
+          );
+        }
+
+        res.status(200).json({ received: true, verified: true });
+      } catch (error) {
+        console.error("Error in PayU webhook:", error);
+        // Still 200 — PayU treats non-200 as failure and retries.
+        res.status(200).json({ received: true });
+      }
+    },
+  );
 
   // ── Admin: retroactive order-item image backfill ────────────────
   //

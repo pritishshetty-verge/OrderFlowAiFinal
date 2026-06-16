@@ -459,6 +459,7 @@ export interface IStorage {
   // Returns (RMA dashboard)
   listReturns(storeId: string): Promise<any[]>;
   getReturn(id: string): Promise<Return | undefined>;
+  getReturnByRmaNumber(rmaNumber: string): Promise<Return | undefined>;
   updateReturnStatus(id: string, status: string): Promise<Return | undefined>;
   updateReturn(id: string, data: Partial<InsertReturn>): Promise<Return | undefined>;
   createReturnWithItems(returnData: InsertReturn, items: InsertReturnItem[]): Promise<Return>;
@@ -3100,6 +3101,14 @@ export class DbStorage implements IStorage {
 
   async getReturn(id: string): Promise<Return | undefined> {
     const [row] = await db.select().from(returns).where(eq(returns.id, id));
+    return row;
+  }
+
+  async getReturnByRmaNumber(rmaNumber: string): Promise<Return | undefined> {
+    const [row] = await db
+      .select()
+      .from(returns)
+      .where(eq(returns.rmaNumber, rmaNumber));
     return row;
   }
 

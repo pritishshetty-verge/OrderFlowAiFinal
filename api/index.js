@@ -1164,6 +1164,8 @@ var init_schema = __esm({
         returnReason: text("return_reason"),
         customerNotes: text("customer_notes"),
         returnFeePaid: boolean("return_fee_paid").notNull().default(false),
+        // PayU gateway transaction id (mihpayid) once the return fee is paid.
+        payuTransactionId: text("payu_transaction_id"),
         refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }),
         refundType: text("refund_type").notNull().default("STORE_CREDIT"),
         trackingAwb: text("tracking_awb"),
@@ -2962,6 +2964,10 @@ var init_storage = __esm({
         const [row] = await db.select().from(returns).where(eq(returns.id, id));
         return row;
       }
+      async getReturnByRmaNumber(rmaNumber) {
+        const [row] = await db.select().from(returns).where(eq(returns.rmaNumber, rmaNumber));
+        return row;
+      }
       async updateReturnStatus(id, status) {
         const [row] = await db.update(returns).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(returns.id, id)).returning();
         return row;
@@ -3275,14 +3281,14 @@ __export(encryption_exports, {
   encrypt: () => encrypt,
   maskSecret: () => maskSecret
 });
-import crypto from "crypto";
+import crypto2 from "crypto";
 function getEncryptionKey() {
-  return crypto.createHash("sha256").update(ENCRYPTION_KEY).digest();
+  return crypto2.createHash("sha256").update(ENCRYPTION_KEY).digest();
 }
 function encrypt(text2) {
   if (!text2) return text2;
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
+  const iv = crypto2.randomBytes(16);
+  const cipher = crypto2.createCipheriv("aes-256-gcm", getEncryptionKey(), iv);
   let encrypted = cipher.update(text2, "utf8", "base64");
   encrypted += cipher.final("base64");
   const authTag = cipher.getAuthTag();
@@ -3298,7 +3304,7 @@ function decrypt(encryptedText) {
     const iv = Buffer.from(parts[0], "base64");
     const authTag = Buffer.from(parts[1], "base64");
     const encrypted = parts[2];
-    const decipher = crypto.createDecipheriv("aes-256-gcm", getEncryptionKey(), iv);
+    const decipher = crypto2.createDecipheriv("aes-256-gcm", getEncryptionKey(), iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(encrypted, "base64", "utf8");
     decrypted += decipher.final("utf8");
@@ -3331,7 +3337,7 @@ __export(shopify_exports, {
   updateShopifyClient: () => updateShopifyClient,
   verifyShopifyHmac: () => verifyShopifyHmac
 });
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 async function loadShopifyCredentials() {
   try {
     const { storage: storage3 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
@@ -3365,11 +3371,11 @@ async function loadShopifyCredentials() {
 function verifyShopifyHmac(rawBody, hmacHeader, secret) {
   if (!secret) return false;
   if (typeof hmacHeader !== "string" || hmacHeader.length === 0) return false;
-  const computed = crypto2.createHmac("sha256", secret).update(rawBody).digest("base64");
+  const computed = crypto3.createHmac("sha256", secret).update(rawBody).digest("base64");
   const a = Buffer.from(computed, "utf8");
   const b = Buffer.from(hmacHeader, "utf8");
   if (a.length !== b.length) return false;
-  return crypto2.timingSafeEqual(a, b);
+  return crypto3.timingSafeEqual(a, b);
 }
 async function updateShopifyClient() {
   const config = await loadShopifyCredentials();
@@ -4272,17 +4278,17 @@ var shiprocketWebhook_exports = {};
 __export(shiprocketWebhook_exports, {
   handleShiprocketWebhook: () => handleShiprocketWebhook
 });
-import crypto4 from "crypto";
+import crypto5 from "crypto";
 function verifyShiprocketSignature(payload, signature, secret) {
   if (!signature) {
     console.error("[Shiprocket Webhook] No signature provided");
     return false;
   }
   try {
-    const hmac = crypto4.createHmac("sha256", secret);
+    const hmac = crypto5.createHmac("sha256", secret);
     hmac.update(payload);
     const expectedSignature = hmac.digest("hex");
-    return crypto4.timingSafeEqual(
+    return crypto5.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature)
     );
@@ -4800,15 +4806,15 @@ var delhiveryWebhook_exports = {};
 __export(delhiveryWebhook_exports, {
   handleDelhiveryWebhook: () => handleDelhiveryWebhook
 });
-import crypto5 from "crypto";
+import crypto6 from "crypto";
 function verifyDelhiveryToken(token, secret) {
   if (!token) {
     console.warn("[Delhivery Webhook] No token provided in x-delhivery-token header");
     return false;
   }
-  const tokenHash = crypto5.createHash("sha256").update(token).digest();
-  const secretHash = crypto5.createHash("sha256").update(secret).digest();
-  return crypto5.timingSafeEqual(tokenHash, secretHash);
+  const tokenHash = crypto6.createHash("sha256").update(token).digest();
+  const secretHash = crypto6.createHash("sha256").update(secret).digest();
+  return crypto6.timingSafeEqual(tokenHash, secretHash);
 }
 function extractPayloadFields(body) {
   const isGenericStatus = (val) => {
@@ -6945,16 +6951,58 @@ var init_shiprocket = __esm({
 
 // server/index.ts
 import "dotenv/config";
-import express2 from "express";
+import express3 from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+
+// server/routes.ts
+import express from "express";
+import { createServer } from "http";
+import crypto7 from "node:crypto";
+
+// server/services/payu.ts
+import crypto from "node:crypto";
+function getCreds() {
+  const key = process.env.PAYU_MERCHANT_KEY;
+  const salt = process.env.PAYU_MERCHANT_SALT;
+  if (!key || !salt) {
+    throw new Error(
+      "PayU is not configured (PAYU_MERCHANT_KEY / PAYU_MERCHANT_SALT missing)"
+    );
+  }
+  return { key, salt };
+}
+function getPayuKey() {
+  return getCreds().key;
+}
+function generatePayuHash(txnid, amount, productinfo, firstname, email) {
+  const { key, salt } = getCreds();
+  const hashString = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|||||||||||${salt}`;
+  return crypto.createHash("sha512").update(hashString).digest("hex");
+}
+function verifyPayuHash(payload) {
+  const { salt } = getCreds();
+  const status = payload.status ?? "";
+  const email = payload.email ?? "";
+  const firstname = payload.firstname ?? "";
+  const productinfo = payload.productinfo ?? "";
+  const amount = payload.amount ?? "";
+  const txnid = payload.txnid ?? "";
+  const key = payload.key ?? "";
+  const provided = (payload.hash ?? "").toLowerCase();
+  if (!provided) return false;
+  const reverseString = `${salt}|${status}|||||||||||${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
+  const computed = crypto.createHash("sha512").update(reverseString).digest("hex");
+  const a = Buffer.from(computed, "utf8");
+  const b = Buffer.from(provided, "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+var RETURN_FEE_AMOUNT = "150.00";
 
 // server/routes.ts
 init_storage();
 init_db();
 init_schema();
-import { createServer } from "http";
-import crypto6 from "node:crypto";
 import { eq as eq7, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
@@ -7926,7 +7974,7 @@ import axios3 from "axios";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 import multer from "multer";
 var KYC_UPLOAD_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "orderflow-kyc") : path.resolve(import.meta.dirname, "..", "uploads", "kyc");
 try {
@@ -7952,7 +8000,7 @@ var storage2 = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     const userId = (req.params.id ?? "unknown").replace(/[^a-zA-Z0-9-]/g, "");
-    const token = crypto3.randomBytes(12).toString("hex");
+    const token = crypto4.randomBytes(12).toString("hex");
     cb(null, `${userId}-${token}${ext}`);
   }
 });
@@ -10821,10 +10869,10 @@ async function registerRoutes(app2) {
       const joined = Array.isArray(val) ? val.join(",") : String(val);
       return `${key}=${joined}`;
     }).join("");
-    const digest = crypto6.createHmac("sha256", secret).update(message).digest("hex");
+    const digest = crypto7.createHmac("sha256", secret).update(message).digest("hex");
     const a = Buffer.from(digest, "utf8");
     const b = Buffer.from(signature, "utf8");
-    if (a.length !== b.length || !crypto6.timingSafeEqual(a, b)) {
+    if (a.length !== b.length || !crypto7.timingSafeEqual(a, b)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     next();
@@ -10916,7 +10964,7 @@ async function registerRoutes(app2) {
       }
       const refundAmount = refundTotal.toFixed(2);
       const orderNum = (order.shopifyOrderNumber || "").replace(/^#/, "") || "ORD";
-      const rand = crypto6.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
+      const rand = crypto7.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
       const rmaNumber = `RMA-${orderNum}-${rand}`;
       const summaryReason = Array.from(new Set(reasons)).join("; ") || null;
       const created = await storage.createReturnWithItems(
@@ -10932,16 +10980,80 @@ async function registerRoutes(app2) {
         },
         returnItemsToInsert
       );
+      let payu = null;
+      try {
+        const txnid = created.rmaNumber;
+        const amount = RETURN_FEE_AMOUNT;
+        const productinfo = `Return fee ${created.rmaNumber}`;
+        const firstname = (order.customerName || "Customer").split(" ")[0];
+        const email = order.customerEmail || "";
+        const hash = generatePayuHash(txnid, amount, productinfo, firstname, email);
+        payu = {
+          key: getPayuKey(),
+          txnid,
+          amount,
+          productinfo,
+          firstname,
+          email,
+          hash
+        };
+      } catch (e) {
+        console.warn(
+          `[payu] could not build hash for ${created.rmaNumber}: ${e?.message}`
+        );
+      }
       res.status(201).json({
         rmaNumber: created.rmaNumber,
         refundAmount,
-        status: created.status
+        status: created.status,
+        payu
       });
     } catch (error) {
       console.error("Error in public returns create:", error);
       res.status(500).json({ error: "Failed to create return" });
     }
   });
+  app2.post(
+    "/api/public/webhooks/payu",
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+      try {
+        const payload = req.body ?? {};
+        const { txnid, status, mihpayid } = payload;
+        if (!verifyPayuHash(payload)) {
+          console.warn(
+            `[payu-webhook] invalid hash for txnid=${txnid ?? "?"}`
+          );
+          return res.status(200).json({ received: true, verified: false });
+        }
+        if (status !== "success") {
+          console.log(
+            `[payu-webhook] txnid=${txnid} status=${status} \u2014 no state change`
+          );
+          return res.status(200).json({ received: true, verified: true });
+        }
+        const ret = await storage.getReturnByRmaNumber(String(txnid));
+        if (!ret) {
+          console.warn(`[payu-webhook] no return for txnid=${txnid}`);
+          return res.status(200).json({ received: true, found: false });
+        }
+        if (ret.status === "PENDING_FEE") {
+          await storage.updateReturn(ret.id, {
+            status: "PENDING_APPROVAL",
+            returnFeePaid: true,
+            payuTransactionId: mihpayid ? String(mihpayid) : null
+          });
+          console.log(
+            `[payu-webhook] RMA ${ret.rmaNumber} fee paid (mihpayid=${mihpayid}); \u2192 PENDING_APPROVAL`
+          );
+        }
+        res.status(200).json({ received: true, verified: true });
+      } catch (error) {
+        console.error("Error in PayU webhook:", error);
+        res.status(200).json({ received: true });
+      }
+    }
+  );
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {
     try {
       const scope = requireStoreScope(req, res);
@@ -13303,7 +13415,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const token = crypto6.randomBytes(32).toString("hex");
+      const token = crypto7.randomBytes(32).toString("hex");
       const expiresAt = /* @__PURE__ */ new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       const existingInvite = await storage.getInviteByEmail(validatedData.email);
@@ -14208,7 +14320,7 @@ TeleCRM: ${incomingNotes.trim()}`;
 }
 
 // server/vite.ts
-import express from "express";
+import express2 from "express";
 import fs5 from "fs";
 import path4 from "path";
 import { nanoid } from "nanoid";
@@ -14270,7 +14382,7 @@ function serveStatic(app2) {
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
   }
-  app2.use(express.static(distPath));
+  app2.use(express2.static(distPath));
   app2.use("*", (_req, res) => {
     res.sendFile(path4.resolve(distPath, "index.html"));
   });
@@ -14301,16 +14413,16 @@ process.on("unhandledRejection", (reason) => {
   }
   console.error("Unhandled rejection (server staying alive):", reason);
 });
-var app = express2();
+var app = express3();
 app.set("trust proxy", 1);
 app.use(
-  express2.json({
+  express3.json({
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     }
   })
 );
-app.use(express2.urlencoded({ extended: false }));
+app.use(express3.urlencoded({ extended: false }));
 var PgSession = connectPgSimple(session);
 var sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) {

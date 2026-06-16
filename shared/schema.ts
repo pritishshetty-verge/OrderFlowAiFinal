@@ -1440,6 +1440,8 @@ export const returns = pgTable(
     returnReason: text("return_reason"),
     customerNotes: text("customer_notes"),
     returnFeePaid: boolean("return_fee_paid").notNull().default(false),
+    // PayU gateway transaction id (mihpayid) once the return fee is paid.
+    payuTransactionId: text("payu_transaction_id"),
     refundAmount: decimal("refund_amount", { precision: 12, scale: 2 }),
     refundType: text("refund_type").notNull().default("STORE_CREDIT"),
     trackingAwb: text("tracking_awb"),
