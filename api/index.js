@@ -10942,8 +10942,15 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "Order not found" });
       }
       const storeId = order.storeId;
+      if (!storeId) {
+        return res.status(404).json({ error: "Order not found" });
+      }
       const orderItems2 = await storage.getOrderItems(orderId);
       const itemById = new Map(orderItems2.map((it) => [it.id, it]));
+      const catalog = await storage.listCatalogProducts(storeId);
+      const freeGiftProductIds = new Set(
+        catalog.filter((p) => (p.productType || "").toLowerCase() === "free_gift").map((p) => p.shopifyProductId)
+      );
       let refundTotal = 0;
       const reasons = [];
       const returnItemsToInsert = [];
@@ -10954,13 +10961,8 @@ async function registerRoutes(app2) {
           return res.status(400).json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
-        const purchasedQty = oi.quantity || 1;
-        const lineDiscountTotal = parseFloat(oi.totalDiscount || "0") || 0;
-        const discountForQty = purchasedQty > 0 ? lineDiscountTotal * qty / purchasedQty : 0;
-        const lineRefund = Math.max(
-          0,
-          (parseFloat(oi.price) || 0) * qty - discountForQty
-        );
+        const isFreeGift = !!oi.shopifyProductId && freeGiftProductIds.has(oi.shopifyProductId);
+        const lineRefund = isFreeGift ? 0 : (parseFloat(oi.price) || 0) * qty;
         refundTotal += lineRefund;
         if (sel.returnReason) reasons.push(String(sel.returnReason));
         returnItemsToInsert.push({

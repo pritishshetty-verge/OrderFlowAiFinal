@@ -3822,10 +3822,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       // Authoritative store scope — derived from the order, never the client.
       const storeId = order.storeId;
+      if (!storeId) {
+        return res.status(404).json({ error: "Order not found" });
+      }
 
       // Validate every selected orderItemId actually belongs to this order.
       const orderItems = await storage.getOrderItems(orderId);
       const itemById = new Map(orderItems.map((it) => [it.id, it]));
+
+      // Promotional free gifts are labelled product_type === "free_gift" in our
+      // catalog. They must contribute ₹0 to the refund regardless of their
+      // listed price, so build the set of free-gift Shopify product IDs upfront.
+      const catalog = await storage.listCatalogProducts(storeId);
+      const freeGiftProductIds = new Set(
+        catalog
+          .filter((p) => (p.productType || "").toLowerCase() === "free_gift")
+          .map((p) => p.shopifyProductId),
+      );
 
       let refundTotal = 0;
       const reasons: string[] = [];
@@ -3840,17 +3853,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
-        // Refund the price net of discounts: (price * qty) - discount, so a
-        // 100%-off free gift contributes ₹0. oi.totalDiscount is the discount
-        // across the whole line, so prorate it by the returned quantity.
-        const purchasedQty = oi.quantity || 1;
-        const lineDiscountTotal = parseFloat(oi.totalDiscount || "0") || 0;
-        const discountForQty =
-          purchasedQty > 0 ? (lineDiscountTotal * qty) / purchasedQty : 0;
-        const lineRefund = Math.max(
-          0,
-          (parseFloat(oi.price) || 0) * qty - discountForQty,
-        );
+        // A free gift contributes ₹0 to the refund. Everything else refunds at
+        // its base price: (price * qty). Free gifts are identified by our
+        // catalog product_type === "free_gift", matched on Shopify product id.
+        const isFreeGift =
+          !!oi.shopifyProductId && freeGiftProductIds.has(oi.shopifyProductId);
+        const lineRefund = isFreeGift
+          ? 0
+          : (parseFloat(oi.price) || 0) * qty;
         refundTotal += lineRefund;
         if (sel.returnReason) reasons.push(String(sel.returnReason));
         returnItemsToInsert.push({
