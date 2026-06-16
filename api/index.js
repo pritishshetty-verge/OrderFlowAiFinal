@@ -1176,6 +1176,9 @@ var init_schema = __esm({
       returnId: varchar("return_id").notNull().references(() => returns.id, { onDelete: "cascade" }),
       orderItemId: varchar("order_item_id").references(() => orderItems.id),
       quantity: integer("quantity").notNull().default(1),
+      // Why the customer is returning this specific line item. Distinct from
+      // `condition`, which records the physical state on inspection.
+      returnReason: text("return_reason"),
       condition: text("condition"),
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
@@ -10792,6 +10795,41 @@ async function registerRoutes(app2) {
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
+  const verifyShopifyProxyHmac = (req, res, next) => {
+    const isDev = process.env.NODE_ENV === "development";
+    const secret = process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_API_SECRET;
+    if (isDev && (req.query.bypass_hmac === "true" || req.headers["x-bypass-hmac"] === "true")) {
+      console.warn("[app-proxy] HMAC check bypassed (development only)");
+      return next();
+    }
+    if (!secret) {
+      if (isDev) {
+        console.warn(
+          "[app-proxy] No SHOPIFY_CLIENT_SECRET configured; allowing in development"
+        );
+        return next();
+      }
+      console.error("[app-proxy] SHOPIFY_CLIENT_SECRET not configured");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const { signature, ...rest } = req.query;
+    if (!signature || typeof signature !== "string") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const message = Object.keys(rest).sort().map((key) => {
+      const val = rest[key];
+      const joined = Array.isArray(val) ? val.join(",") : String(val);
+      return `${key}=${joined}`;
+    }).join("");
+    const digest = crypto6.createHmac("sha256", secret).update(message).digest("hex");
+    const a = Buffer.from(digest, "utf8");
+    const b = Buffer.from(signature, "utf8");
+    if (a.length !== b.length || !crypto6.timingSafeEqual(a, b)) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    next();
+  };
+  app2.use("/api/public/returns", verifyShopifyProxyHmac);
   app2.post("/api/public/returns/lookup", async (req, res) => {
     try {
       const { orderNumber, customerEmailOrPhone, storeId } = req.body ?? {};
@@ -10870,9 +10908,10 @@ async function registerRoutes(app2) {
           // overwritten inside createReturnWithItems
           orderItemId: oi.id,
           quantity: qty,
-          // return_items has no dedicated reason column; the per-item
-          // reason is stored in `condition` (closest free-text field).
-          condition: sel.returnReason ? String(sel.returnReason) : null
+          // First-class per-item reason; `condition` stays null until
+          // the item is physically inspected on receipt.
+          returnReason: sel.returnReason ? String(sel.returnReason) : null,
+          condition: null
         });
       }
       const refundAmount = refundTotal.toFixed(2);

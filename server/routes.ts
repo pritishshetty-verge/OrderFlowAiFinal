@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "node:crypto";
 import { storage } from "./storage";
@@ -3674,6 +3674,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
+  // Shopify App Proxy HMAC verification. Shopify appends a `signature`
+  // query param computed as HMAC-SHA256 over the OTHER query params
+  // (sorted by key, joined as `key=value` with NO separator) using the
+  // app's shared secret. We recompute and timing-safe compare; mismatch
+  // or missing signature → 401. Production strictly enforces; local dev
+  // can opt out with ?bypass_hmac=true (or X-Bypass-Hmac: true).
+  const verifyShopifyProxyHmac = (
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    const isDev = process.env.NODE_ENV === "development";
+    const secret =
+      process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_API_SECRET;
+
+    // Local-dev escape hatch — explicit opt-in only, never in production.
+    if (
+      isDev &&
+      (req.query.bypass_hmac === "true" ||
+        req.headers["x-bypass-hmac"] === "true")
+    ) {
+      console.warn("[app-proxy] HMAC check bypassed (development only)");
+      return next();
+    }
+
+    if (!secret) {
+      if (isDev) {
+        console.warn(
+          "[app-proxy] No SHOPIFY_CLIENT_SECRET configured; allowing in development",
+        );
+        return next();
+      }
+      console.error("[app-proxy] SHOPIFY_CLIENT_SECRET not configured");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { signature, ...rest } = req.query as Record<string, any>;
+    if (!signature || typeof signature !== "string") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // Sorted key=value pairs, array values comma-joined, concatenated
+    // with no separator — the App Proxy signing convention.
+    const message = Object.keys(rest)
+      .sort()
+      .map((key) => {
+        const val = rest[key];
+        const joined = Array.isArray(val) ? val.join(",") : String(val);
+        return `${key}=${joined}`;
+      })
+      .join("");
+
+    const digest = crypto
+      .createHmac("sha256", secret)
+      .update(message)
+      .digest("hex");
+
+    const a = Buffer.from(digest, "utf8");
+    const b = Buffer.from(signature, "utf8");
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    next();
+  };
+
+  // Lock down every customer-facing returns route behind the proxy check.
+  app.use("/api/public/returns", verifyShopifyProxyHmac);
+
   // Look up an order for the returns flow. Requires order number + a
   // matching email/phone; returns only customer-facing order + item data.
   app.post("/api/public/returns/lookup", async (req, res) => {
@@ -3786,9 +3855,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           returnId: "", // overwritten inside createReturnWithItems
           orderItemId: oi.id,
           quantity: qty,
-          // return_items has no dedicated reason column; the per-item
-          // reason is stored in `condition` (closest free-text field).
-          condition: sel.returnReason ? String(sel.returnReason) : null,
+          // First-class per-item reason; `condition` stays null until
+          // the item is physically inspected on receipt.
+          returnReason: sel.returnReason ? String(sel.returnReason) : null,
+          condition: null,
         } as InsertReturnItem);
       }
 

@@ -1455,6 +1455,9 @@ export const returnItems = pgTable("return_items", {
     .references(() => returns.id, { onDelete: "cascade" }),
   orderItemId: varchar("order_item_id").references(() => orderItems.id),
   quantity: integer("quantity").notNull().default(1),
+  // Why the customer is returning this specific line item. Distinct from
+  // `condition`, which records the physical state on inspection.
+  returnReason: text("return_reason"),
   condition: text("condition"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
