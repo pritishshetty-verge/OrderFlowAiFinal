@@ -102,12 +102,16 @@ const TAB_FILTERS: Record<string, string[] | null> = {
 
 const PENDING_STATUSES = ["PENDING_FEE", "PENDING_APPROVAL"];
 
+// Indian Rupee formatter — all refund/price values are INR.
+const inrFormatter = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+});
+
 function fmtAmount(amt: string | null | undefined): string {
   if (!amt) return "—";
   const n = parseFloat(amt);
-  return isNaN(n)
-    ? "—"
-    : `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return isNaN(n) ? "—" : inrFormatter.format(n);
 }
 
 // ── RMA detail slide-over ───────────────────────────────────────────────────

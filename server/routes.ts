@@ -2804,6 +2804,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   totalPrice: (
                     parseFloat(item.price || "0") * item.quantity
                   ).toString(),
+                  totalDiscount: item.total_discount || "0",
                   imageUrl: resolveImage(item.variant_id, item.product_id),
                 });
               }
@@ -2915,6 +2916,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     totalPrice: (
                       parseFloat(item.price || "0") * item.quantity
                     ).toString(),
+                    totalDiscount: item.total_discount || "0",
                     imageUrl: resolveImage(item.variant_id, item.product_id),
                   }));
                   await storage.createOrderItems(items);
@@ -3838,7 +3840,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
-        refundTotal += (parseFloat(oi.price) || 0) * qty;
+        // Refund the price net of discounts: (price * qty) - discount, so a
+        // 100%-off free gift contributes ₹0. oi.totalDiscount is the discount
+        // across the whole line, so prorate it by the returned quantity.
+        const purchasedQty = oi.quantity || 1;
+        const lineDiscountTotal = parseFloat(oi.totalDiscount || "0") || 0;
+        const discountForQty =
+          purchasedQty > 0 ? (lineDiscountTotal * qty) / purchasedQty : 0;
+        const lineRefund = Math.max(
+          0,
+          (parseFloat(oi.price) || 0) * qty - discountForQty,
+        );
+        refundTotal += lineRefund;
         if (sel.returnReason) reasons.push(String(sel.returnReason));
         returnItemsToInsert.push({
           returnId: "", // overwritten inside createReturnWithItems

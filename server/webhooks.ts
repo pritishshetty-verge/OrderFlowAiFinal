@@ -301,6 +301,7 @@ export async function handleOrderCreated(req: Request, res: Response) {
           quantity: item.quantity,
           price: item.price || "0",
           totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+          totalDiscount: item.total_discount || "0",
           imageUrl: imageUrl,
         });
       }

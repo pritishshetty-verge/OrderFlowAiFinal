@@ -516,6 +516,11 @@ var init_schema = __esm({
       quantity: integer("quantity").notNull(),
       price: decimal("price", { precision: 12, scale: 2 }).notNull(),
       totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
+      // Line-item discount from Shopify (line_item.total_discount), across the
+      // whole line's quantity. Used to compute the true refundable value —
+      // e.g. a 100%-off free gift has price>0 but total_discount==price, so it
+      // contributes ₹0 to a refund.
+      totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default("0"),
       imageUrl: text("image_url"),
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
@@ -7512,6 +7517,7 @@ async function handleOrderCreated(req, res) {
           quantity: item.quantity,
           price: item.price || "0",
           totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+          totalDiscount: item.total_discount || "0",
           imageUrl
         });
       }
@@ -10194,6 +10200,7 @@ async function registerRoutes(app2) {
                   quantity: item.quantity,
                   price: item.price || "0",
                   totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+                  totalDiscount: item.total_discount || "0",
                   imageUrl: resolveImage(item.variant_id, item.product_id)
                 });
               }
@@ -10277,6 +10284,7 @@ async function registerRoutes(app2) {
                     quantity: item.quantity,
                     price: item.price || "0",
                     totalPrice: (parseFloat(item.price || "0") * item.quantity).toString(),
+                    totalDiscount: item.total_discount || "0",
                     imageUrl: resolveImage(item.variant_id, item.product_id)
                   }));
                   await storage.createOrderItems(items);
@@ -10946,7 +10954,14 @@ async function registerRoutes(app2) {
           return res.status(400).json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
-        refundTotal += (parseFloat(oi.price) || 0) * qty;
+        const purchasedQty = oi.quantity || 1;
+        const lineDiscountTotal = parseFloat(oi.totalDiscount || "0") || 0;
+        const discountForQty = purchasedQty > 0 ? lineDiscountTotal * qty / purchasedQty : 0;
+        const lineRefund = Math.max(
+          0,
+          (parseFloat(oi.price) || 0) * qty - discountForQty
+        );
+        refundTotal += lineRefund;
         if (sel.returnReason) reasons.push(String(sel.returnReason));
         returnItemsToInsert.push({
           returnId: "",

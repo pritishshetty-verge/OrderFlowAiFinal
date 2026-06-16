@@ -568,9 +568,14 @@ export const orderItems = pgTable("order_items", {
   quantity: integer("quantity").notNull(),
   price: decimal("price", { precision: 12, scale: 2 }).notNull(),
   totalPrice: decimal("total_price", { precision: 12, scale: 2 }).notNull(),
-  
+  // Line-item discount from Shopify (line_item.total_discount), across the
+  // whole line's quantity. Used to compute the true refundable value —
+  // e.g. a 100%-off free gift has price>0 but total_discount==price, so it
+  // contributes ₹0 to a refund.
+  totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default("0"),
+
   imageUrl: text("image_url"),
-  
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
