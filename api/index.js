@@ -2967,6 +2967,22 @@ var init_storage = __esm({
         const [row] = await db.update(returns).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(returns.id, id)).returning();
         return row;
       }
+      /**
+       * Insert a parent RMA and its line items atomically. The return row
+       * and all return_items are committed together (or not at all) so a
+       * customer-facing create can never leave an orphaned header.
+       */
+      async createReturnWithItems(returnData, items) {
+        return await db.transaction(async (tx) => {
+          const [created] = await tx.insert(returns).values(returnData).returning();
+          if (items.length > 0) {
+            await tx.insert(returnItems).values(
+              items.map((i) => ({ ...i, returnId: created.id }))
+            );
+          }
+          return created;
+        });
+      }
       // ============================================================================
       // DASHBOARD METRICS
       // ============================================================================
@@ -10767,6 +10783,124 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error scheduling reverse pickup:", error);
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
+    }
+  });
+  app2.use("/api/public", (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+  app2.post("/api/public/returns/lookup", async (req, res) => {
+    try {
+      const { orderNumber, customerEmailOrPhone, storeId } = req.body ?? {};
+      if (!orderNumber || !customerEmailOrPhone) {
+        return res.status(400).json({ error: "orderNumber and customerEmailOrPhone are required" });
+      }
+      const normalizedNumber = String(orderNumber).trim().replace(/^#/, "");
+      const order = await storage.getOrderByShopifyOrderNumber(
+        normalizedNumber,
+        storeId || void 0
+      ) || await storage.getOrderByShopifyOrderNumber(
+        `#${normalizedNumber}`,
+        storeId || void 0
+      );
+      const fail = () => res.status(404).json({
+        error: "No matching order found. Check the order number and email/phone."
+      });
+      if (!order) return fail();
+      const probe = String(customerEmailOrPhone).trim().toLowerCase();
+      const probeDigits = probe.replace(/\D/g, "");
+      const emailMatch = !!order.customerEmail && order.customerEmail.toLowerCase() === probe;
+      const orderPhoneDigits = (order.customerPhone || "").replace(/\D/g, "");
+      const phoneMatch = probeDigits.length >= 6 && orderPhoneDigits.length >= 6 && orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
+      if (!emailMatch && !phoneMatch) return fail();
+      const items = await storage.getOrderItems(order.id);
+      res.json({
+        order: {
+          orderId: order.id,
+          storeId: order.storeId,
+          orderNumber: order.shopifyOrderNumber,
+          orderDate: order.shopifyCreatedAt,
+          customerName: order.customerName,
+          totalPrice: order.totalPrice
+        },
+        items: items.map((it) => ({
+          orderItemId: it.id,
+          productName: it.productName,
+          variantTitle: it.variantTitle,
+          sku: it.sku,
+          quantity: it.quantity,
+          price: it.price,
+          imageUrl: it.imageUrl
+        }))
+      });
+    } catch (error) {
+      console.error("Error in public returns lookup:", error);
+      res.status(500).json({ error: "Lookup failed" });
+    }
+  });
+  app2.post("/api/public/returns/create", async (req, res) => {
+    try {
+      const { orderId, items, customerNotes } = req.body ?? {};
+      if (!orderId || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "orderId and a non-empty items array are required" });
+      }
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      const storeId = order.storeId;
+      const orderItems2 = await storage.getOrderItems(orderId);
+      const itemById = new Map(orderItems2.map((it) => [it.id, it]));
+      let refundTotal = 0;
+      const reasons = [];
+      const returnItemsToInsert = [];
+      for (const sel of items) {
+        const oi = itemById.get(sel?.orderItemId);
+        if (!oi) {
+          return res.status(400).json({ error: `Item ${sel?.orderItemId} is not part of this order` });
+        }
+        const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
+        refundTotal += (parseFloat(oi.price) || 0) * qty;
+        if (sel.returnReason) reasons.push(String(sel.returnReason));
+        returnItemsToInsert.push({
+          returnId: "",
+          // overwritten inside createReturnWithItems
+          orderItemId: oi.id,
+          quantity: qty,
+          // return_items has no dedicated reason column; the per-item
+          // reason is stored in `condition` (closest free-text field).
+          condition: sel.returnReason ? String(sel.returnReason) : null
+        });
+      }
+      const refundAmount = refundTotal.toFixed(2);
+      const orderNum = (order.shopifyOrderNumber || "").replace(/^#/, "") || "ORD";
+      const rand = crypto6.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
+      const rmaNumber = `RMA-${orderNum}-${rand}`;
+      const summaryReason = Array.from(new Set(reasons)).join("; ") || null;
+      const created = await storage.createReturnWithItems(
+        {
+          storeId,
+          orderId,
+          rmaNumber,
+          status: "PENDING_FEE",
+          returnReason: summaryReason,
+          customerNotes: customerNotes ? String(customerNotes) : null,
+          refundAmount
+          // refundType defaults to STORE_CREDIT in the schema
+        },
+        returnItemsToInsert
+      );
+      res.status(201).json({
+        rmaNumber: created.rmaNumber,
+        refundAmount,
+        status: created.status
+      });
+    } catch (error) {
+      console.error("Error in public returns create:", error);
+      res.status(500).json({ error: "Failed to create return" });
     }
   });
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {

@@ -10,6 +10,8 @@ import {
   webhooks, insertWebhookSchema, stores, userStores,
   RETURN_STATUSES,
   type MetaAdAccountConfig,
+  type InsertReturn,
+  type InsertReturnItem,
 } from "@shared/schema";
 import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
@@ -3643,6 +3645,181 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error scheduling reverse pickup:", error);
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
+    }
+  });
+
+  // ============================================================================
+  // PUBLIC RETURNS API (Shopify storefront via App Proxy)
+  //
+  // These routes are intentionally UNAUTHENTICATED — they're called by the
+  // merchant's Shopify storefront (through a Shopify App Proxy) where there
+  // is no admin session. Security model:
+  //   • Identity gate: lookup requires BOTH a valid order number AND a
+  //     matching customer email/phone before any order data is returned.
+  //   • Whitelisted payloads: only customer-facing fields are returned — no
+  //     internal storeId costs, margins, or backend tracking IDs leak out.
+  //   • Authoritative store scoping: create derives storeId from the order
+  //     itself, never trusting a client-supplied value.
+  //   • Generic 404s on the lookup so attackers can't probe which half
+  //     (order number vs. contact) was wrong.
+  // CORS is permissive here so the storefront can also call directly; App
+  // Proxy traffic arrives server-side and is unaffected.
+  // ============================================================================
+
+  app.use("/api/public", (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+
+  // Look up an order for the returns flow. Requires order number + a
+  // matching email/phone; returns only customer-facing order + item data.
+  app.post("/api/public/returns/lookup", async (req, res) => {
+    try {
+      const { orderNumber, customerEmailOrPhone, storeId } = req.body ?? {};
+      if (!orderNumber || !customerEmailOrPhone) {
+        return res
+          .status(400)
+          .json({ error: "orderNumber and customerEmailOrPhone are required" });
+      }
+
+      const normalizedNumber = String(orderNumber).trim().replace(/^#/, "");
+      // Try the bare number, then the #-prefixed variant Shopify sometimes stores.
+      const order =
+        (await storage.getOrderByShopifyOrderNumber(
+          normalizedNumber,
+          storeId || undefined,
+        )) ||
+        (await storage.getOrderByShopifyOrderNumber(
+          `#${normalizedNumber}`,
+          storeId || undefined,
+        ));
+
+      // Generic failure — never reveal whether the order exists until the
+      // contact detail is also verified.
+      const fail = () =>
+        res.status(404).json({
+          error:
+            "No matching order found. Check the order number and email/phone.",
+        });
+      if (!order) return fail();
+
+      // Identity check: email (case-insensitive) OR phone (last 10 digits).
+      const probe = String(customerEmailOrPhone).trim().toLowerCase();
+      const probeDigits = probe.replace(/\D/g, "");
+      const emailMatch =
+        !!order.customerEmail && order.customerEmail.toLowerCase() === probe;
+      const orderPhoneDigits = (order.customerPhone || "").replace(/\D/g, "");
+      const phoneMatch =
+        probeDigits.length >= 6 &&
+        orderPhoneDigits.length >= 6 &&
+        orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
+      if (!emailMatch && !phoneMatch) return fail();
+
+      const items = await storage.getOrderItems(order.id);
+
+      // Whitelist only what the customer needs to pick items to return.
+      res.json({
+        order: {
+          orderId: order.id,
+          storeId: order.storeId,
+          orderNumber: order.shopifyOrderNumber,
+          orderDate: order.shopifyCreatedAt,
+          customerName: order.customerName,
+          totalPrice: order.totalPrice,
+        },
+        items: items.map((it) => ({
+          orderItemId: it.id,
+          productName: it.productName,
+          variantTitle: it.variantTitle,
+          sku: it.sku,
+          quantity: it.quantity,
+          price: it.price,
+          imageUrl: it.imageUrl,
+        })),
+      });
+    } catch (error) {
+      console.error("Error in public returns lookup:", error);
+      res.status(500).json({ error: "Lookup failed" });
+    }
+  });
+
+  // Create a return request from the storefront. Validates selected items
+  // against the order, computes the expected refund, and inserts the RMA
+  // + return_items atomically with status PENDING_FEE.
+  app.post("/api/public/returns/create", async (req, res) => {
+    try {
+      const { orderId, items, customerNotes } = req.body ?? {};
+      if (!orderId || !Array.isArray(items) || items.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "orderId and a non-empty items array are required" });
+      }
+
+      const order = await storage.getOrder(orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      // Authoritative store scope — derived from the order, never the client.
+      const storeId = order.storeId;
+
+      // Validate every selected orderItemId actually belongs to this order.
+      const orderItems = await storage.getOrderItems(orderId);
+      const itemById = new Map(orderItems.map((it) => [it.id, it]));
+
+      let refundTotal = 0;
+      const reasons: string[] = [];
+      const returnItemsToInsert: InsertReturnItem[] = [];
+      for (const sel of items) {
+        const oi = itemById.get(sel?.orderItemId);
+        if (!oi) {
+          return res
+            .status(400)
+            .json({ error: `Item ${sel?.orderItemId} is not part of this order` });
+        }
+        const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
+        refundTotal += (parseFloat(oi.price) || 0) * qty;
+        if (sel.returnReason) reasons.push(String(sel.returnReason));
+        returnItemsToInsert.push({
+          returnId: "", // overwritten inside createReturnWithItems
+          orderItemId: oi.id,
+          quantity: qty,
+          // return_items has no dedicated reason column; the per-item
+          // reason is stored in `condition` (closest free-text field).
+          condition: sel.returnReason ? String(sel.returnReason) : null,
+        } as InsertReturnItem);
+      }
+
+      const refundAmount = refundTotal.toFixed(2);
+      const orderNum = (order.shopifyOrderNumber || "").replace(/^#/, "") || "ORD";
+      const rand = crypto.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
+      const rmaNumber = `RMA-${orderNum}-${rand}`;
+      const summaryReason = Array.from(new Set(reasons)).join("; ") || null;
+
+      const created = await storage.createReturnWithItems(
+        {
+          storeId,
+          orderId,
+          rmaNumber,
+          status: "PENDING_FEE",
+          returnReason: summaryReason,
+          customerNotes: customerNotes ? String(customerNotes) : null,
+          refundAmount,
+          // refundType defaults to STORE_CREDIT in the schema
+        } as InsertReturn,
+        returnItemsToInsert,
+      );
+
+      res.status(201).json({
+        rmaNumber: created.rmaNumber,
+        refundAmount,
+        status: created.status,
+      });
+    } catch (error: any) {
+      console.error("Error in public returns create:", error);
+      res.status(500).json({ error: "Failed to create return" });
     }
   });
 

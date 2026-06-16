@@ -65,6 +65,8 @@ import {
   type InsertCatalogProduct,
   type Return,
   type InsertReturn,
+  type ReturnItem,
+  type InsertReturnItem,
   type AbandonedCheckout,
   type InsertAbandonedCheckout,
   users,
@@ -95,6 +97,7 @@ import {
   products,
   catalogProducts,
   returns,
+  returnItems,
   appSettings,
   stores,
   abandonedCheckouts,
@@ -458,6 +461,7 @@ export interface IStorage {
   getReturn(id: string): Promise<Return | undefined>;
   updateReturnStatus(id: string, status: string): Promise<Return | undefined>;
   updateReturn(id: string, data: Partial<InsertReturn>): Promise<Return | undefined>;
+  createReturnWithItems(returnData: InsertReturn, items: InsertReturnItem[]): Promise<Return>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
@@ -3121,6 +3125,26 @@ export class DbStorage implements IStorage {
       .where(eq(returns.id, id))
       .returning();
     return row;
+  }
+
+  /**
+   * Insert a parent RMA and its line items atomically. The return row
+   * and all return_items are committed together (or not at all) so a
+   * customer-facing create can never leave an orphaned header.
+   */
+  async createReturnWithItems(
+    returnData: InsertReturn,
+    items: InsertReturnItem[],
+  ): Promise<Return> {
+    return await db.transaction(async (tx) => {
+      const [created] = await tx.insert(returns).values(returnData).returning();
+      if (items.length > 0) {
+        await tx.insert(returnItems).values(
+          items.map((i) => ({ ...i, returnId: created.id })),
+        );
+      }
+      return created;
+    });
   }
 
   // ============================================================================
