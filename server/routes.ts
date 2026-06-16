@@ -3749,26 +3749,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const items = await storage.getOrderItems(order.id);
 
-      // Whitelist only what the customer needs to pick items to return.
-      res.json({
-        order: {
-          orderId: order.id,
-          storeId: order.storeId,
-          orderNumber: order.shopifyOrderNumber,
-          orderDate: order.shopifyCreatedAt,
-          customerName: order.customerName,
-          totalPrice: order.totalPrice,
-        },
-        items: items.map((it) => ({
-          orderItemId: it.id,
-          productName: it.productName,
-          variantTitle: it.variantTitle,
-          sku: it.sku,
-          quantity: it.quantity,
-          price: it.price,
-          imageUrl: it.imageUrl,
-        })),
-      });
+      const cleanNumber = order.shopifyOrderNumber
+        ? String(order.shopifyOrderNumber).replace(/^#/, "")
+        : null;
+
+      // Whitelist customer-facing fields, exposing both our canonical keys
+      // and the Shopify-style aliases the storefront's renderStep2 reads
+      // (order_number/name, created_at, and per-item id/title).
+      const itemsMapped = items.map((it) => ({
+        // identifiers — `id` mirrors orderItemId so the storefront can send
+        // either back to /create (which accepts both).
+        id: it.id,
+        orderItemId: it.id,
+        // title aliases for productName
+        title: it.productName,
+        name: it.productName,
+        productName: it.productName,
+        variantTitle: it.variantTitle,
+        sku: it.sku,
+        quantity: it.quantity,
+        price: it.price,
+        imageUrl: it.imageUrl,
+        image: it.imageUrl,
+      }));
+
+      const responseOrder = {
+        orderId: order.id,
+        storeId: order.storeId,
+        // order number aliases
+        orderNumber: order.shopifyOrderNumber,
+        order_number: cleanNumber,
+        name: cleanNumber ? `#${cleanNumber}` : null,
+        // date aliases (storefront parses created_at)
+        orderDate: order.shopifyCreatedAt,
+        created_at: order.shopifyCreatedAt,
+        customerName: order.customerName,
+        totalPrice: order.totalPrice,
+        // nested items so `order.items` works on the frontend
+        items: itemsMapped,
+      };
+
+      console.log(
+        "Sending lookup response:",
+        JSON.stringify(responseOrder, null, 2),
+      );
+
+      // Keep `items` at the top level too for backwards-compatibility.
+      res.json({ order: responseOrder, items: itemsMapped });
     } catch (error) {
       console.error("Error in public returns lookup:", error);
       res.status(500).json({ error: "Lookup failed" });
@@ -3802,11 +3829,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const reasons: string[] = [];
       const returnItemsToInsert: InsertReturnItem[] = [];
       for (const sel of items) {
-        const oi = itemById.get(sel?.orderItemId);
+        // Storefront may send the item id as `orderItemId` or `id`.
+        const selId = sel?.orderItemId ?? sel?.id;
+        const oi = itemById.get(selId);
         if (!oi) {
           return res
             .status(400)
-            .json({ error: `Item ${sel?.orderItemId} is not part of this order` });
+            .json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
         refundTotal += (parseFloat(oi.price) || 0) * qty;

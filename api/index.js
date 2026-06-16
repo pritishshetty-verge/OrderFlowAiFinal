@@ -10881,25 +10881,43 @@ async function registerRoutes(app2) {
       const phoneMatch = probeDigits.length >= 6 && orderPhoneDigits.length >= 6 && orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
       if (!emailMatch && !phoneMatch) return fail();
       const items = await storage.getOrderItems(order.id);
-      res.json({
-        order: {
-          orderId: order.id,
-          storeId: order.storeId,
-          orderNumber: order.shopifyOrderNumber,
-          orderDate: order.shopifyCreatedAt,
-          customerName: order.customerName,
-          totalPrice: order.totalPrice
-        },
-        items: items.map((it) => ({
-          orderItemId: it.id,
-          productName: it.productName,
-          variantTitle: it.variantTitle,
-          sku: it.sku,
-          quantity: it.quantity,
-          price: it.price,
-          imageUrl: it.imageUrl
-        }))
-      });
+      const cleanNumber = order.shopifyOrderNumber ? String(order.shopifyOrderNumber).replace(/^#/, "") : null;
+      const itemsMapped = items.map((it) => ({
+        // identifiers — `id` mirrors orderItemId so the storefront can send
+        // either back to /create (which accepts both).
+        id: it.id,
+        orderItemId: it.id,
+        // title aliases for productName
+        title: it.productName,
+        name: it.productName,
+        productName: it.productName,
+        variantTitle: it.variantTitle,
+        sku: it.sku,
+        quantity: it.quantity,
+        price: it.price,
+        imageUrl: it.imageUrl,
+        image: it.imageUrl
+      }));
+      const responseOrder = {
+        orderId: order.id,
+        storeId: order.storeId,
+        // order number aliases
+        orderNumber: order.shopifyOrderNumber,
+        order_number: cleanNumber,
+        name: cleanNumber ? `#${cleanNumber}` : null,
+        // date aliases (storefront parses created_at)
+        orderDate: order.shopifyCreatedAt,
+        created_at: order.shopifyCreatedAt,
+        customerName: order.customerName,
+        totalPrice: order.totalPrice,
+        // nested items so `order.items` works on the frontend
+        items: itemsMapped
+      };
+      console.log(
+        "Sending lookup response:",
+        JSON.stringify(responseOrder, null, 2)
+      );
+      res.json({ order: responseOrder, items: itemsMapped });
     } catch (error) {
       console.error("Error in public returns lookup:", error);
       res.status(500).json({ error: "Lookup failed" });
@@ -10922,9 +10940,10 @@ async function registerRoutes(app2) {
       const reasons = [];
       const returnItemsToInsert = [];
       for (const sel of items) {
-        const oi = itemById.get(sel?.orderItemId);
+        const selId = sel?.orderItemId ?? sel?.id;
+        const oi = itemById.get(selId);
         if (!oi) {
-          return res.status(400).json({ error: `Item ${sel?.orderItemId} is not part of this order` });
+          return res.status(400).json({ error: `Item ${selId} is not part of this order` });
         }
         const qty = Math.max(1, Math.min(Number(sel.quantity) || 1, oi.quantity));
         refundTotal += (parseFloat(oi.price) || 0) * qty;
