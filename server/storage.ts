@@ -457,6 +457,7 @@ export interface IStorage {
   listReturns(storeId: string): Promise<any[]>;
   getReturn(id: string): Promise<Return | undefined>;
   updateReturnStatus(id: string, status: string): Promise<Return | undefined>;
+  updateReturn(id: string, data: Partial<InsertReturn>): Promise<Return | undefined>;
 
   // Tags
   getDistinctTags(): Promise<string[]>;
@@ -3105,6 +3106,18 @@ export class DbStorage implements IStorage {
     const [row] = await db
       .update(returns)
       .set({ status, updatedAt: new Date() })
+      .where(eq(returns.id, id))
+      .returning();
+    return row;
+  }
+
+  async updateReturn(
+    id: string,
+    data: Partial<InsertReturn>,
+  ): Promise<Return | undefined> {
+    const [row] = await db
+      .update(returns)
+      .set({ ...data, updatedAt: new Date() })
       .where(eq(returns.id, id))
       .returning();
     return row;

@@ -227,6 +227,95 @@ export class DelhiveryClient {
     }
   }
 
+  /**
+   * Schedule a REVERSE pickup (RMA return). The logistics are inverted
+   * vs. a forward shipment: the consignee fields carry the CUSTOMER's
+   * address (Delhivery picks the parcel up there) and `payment_mode`
+   * is "Pickup" — Delhivery's convention that flags a reverse leg. The
+   * registered `pickup_location` (this store's warehouse, keyed by the
+   * client name) becomes the return destination. Returns the generated
+   * reverse AWB on success.
+   */
+  async createReversePickup(params: {
+    rmaNumber: string;
+    customerName: string;
+    customerPhone: string;
+    pickupAddressLine1: string;
+    pickupAddressLine2?: string;
+    pickupCity: string;
+    pickupState: string;
+    pickupPincode: string;
+    pickupCountry?: string;
+    weight?: number;
+    productsDesc?: string;
+  }): Promise<{ success: boolean; awb?: string; error?: string }> {
+    try {
+      const shipmentPayload: DelhiveryShipmentPayload = {
+        // Consignee = customer: on a reverse leg this is where Delhivery
+        // collects the parcel FROM.
+        name: params.customerName,
+        add: [params.pickupAddressLine1, params.pickupAddressLine2]
+          .filter(Boolean)
+          .join(', '),
+        pin: params.pickupPincode,
+        city: params.pickupCity,
+        state: params.pickupState,
+        country: params.pickupCountry || 'India',
+        phone: params.customerPhone,
+        order: params.rmaNumber,
+        // "Pickup" payment mode marks this as a reverse pickup.
+        payment_mode: 'Pickup',
+        products_desc: params.productsDesc || 'Return item',
+        weight: params.weight?.toString() || '0.5',
+        // Registered warehouse = where the return is delivered back to.
+        pickup_location: { name: this.clientName || 'Default' },
+      };
+
+      const payload = `format=json&data=${encodeURIComponent(
+        JSON.stringify({ shipments: [shipmentPayload] }),
+      )}`;
+
+      const response = await this.client.post<DelhiveryCreateResponse>(
+        '/api/cmu/create.json',
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
+
+      const awb =
+        response.data.waybill ||
+        response.data.packages?.find((p) => p.waybill)?.waybill;
+
+      if (response.data.success && awb) {
+        return { success: true, awb };
+      }
+
+      return {
+        success: false,
+        error:
+          response.data.packages?.[0]?.remarks?.join(', ') ||
+          response.data.rmk ||
+          response.data.error ||
+          'Unknown error scheduling reverse pickup',
+      };
+    } catch (error: any) {
+      console.error(
+        'Delhivery createReversePickup error:',
+        error.response?.data || error.message,
+      );
+      return {
+        success: false,
+        error:
+          error.response?.data?.error ||
+          error.message ||
+          'Failed to schedule reverse pickup',
+      };
+    }
+  }
+
   async trackShipment(awb: string): Promise<{
     success: boolean;
     status?: string;

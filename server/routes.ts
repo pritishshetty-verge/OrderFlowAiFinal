@@ -3539,6 +3539,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Full RMA detail: the return record + its parent order + line items,
+  // composed for the slide-over detail view. Store-scoped.
+  app.get("/api/returns/:id", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+      const ret = await storage.getReturn(req.params.id);
+      if (!ret) {
+        return res.status(404).json({ error: "Return not found" });
+      }
+      if (ret.storeId !== storeId) {
+        return res.status(403).json({ error: "Return belongs to a different store" });
+      }
+      const order = ret.orderId ? await storage.getOrder(ret.orderId) : undefined;
+      const items = ret.orderId ? await storage.getOrderItems(ret.orderId) : [];
+      res.json({ return: ret, order: order ?? null, items });
+    } catch (error) {
+      console.error("Error fetching return detail:", error);
+      res.status(500).json({ error: "Failed to fetch return detail" });
+    }
+  });
+
+  // Approve a pending return and schedule a reverse pickup with Delhivery.
+  // Inverts the shipping logic (customer address = pickup point, store
+  // warehouse = destination) via the store-scoped Delhivery client, then
+  // persists the generated reverse AWB and flips status to PICKUP_SCHEDULED.
+  app.post("/api/returns/:id/approve-pickup", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Active store scope required" });
+      }
+
+      const ret = await storage.getReturn(req.params.id);
+      if (!ret) {
+        return res.status(404).json({ error: "Return not found" });
+      }
+      if (ret.storeId !== storeId) {
+        return res.status(403).json({ error: "Return belongs to a different store" });
+      }
+      // Only pending returns can be approved into a pickup.
+      if (ret.status !== "PENDING_APPROVAL" && ret.status !== "PENDING_FEE") {
+        return res.status(400).json({
+          error: `Return is not in a pending state (current: ${ret.status})`,
+        });
+      }
+      if (!ret.orderId) {
+        return res.status(400).json({ error: "Return has no linked order to pick up from" });
+      }
+
+      const order = await storage.getOrder(ret.orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Linked order not found" });
+      }
+      if (!order.shippingAddressLine1 || !order.shippingPincode) {
+        return res.status(400).json({
+          error: "Order is missing a shipping address; cannot schedule a pickup",
+        });
+      }
+
+      // Store-scoped Delhivery client (decrypts this store's token).
+      let delhiveryClient;
+      try {
+        const { getDelhiveryClient } = await import("./services/delhivery");
+        delhiveryClient = await getDelhiveryClient(storeId);
+      } catch (e: any) {
+        return res.status(400).json({
+          error: e?.message || "Delhivery is not configured for this store",
+        });
+      }
+
+      const result = await delhiveryClient.createReversePickup({
+        rmaNumber: ret.rmaNumber,
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        pickupAddressLine1: order.shippingAddressLine1,
+        pickupAddressLine2: order.shippingAddressLine2 ?? undefined,
+        pickupCity: order.shippingCity ?? "",
+        pickupState: order.shippingState ?? "",
+        pickupPincode: order.shippingPincode,
+        pickupCountry: order.shippingCountry ?? undefined,
+      });
+
+      if (!result.success || !result.awb) {
+        return res.status(502).json({
+          error: result.error || "Delhivery did not return a reverse AWB",
+        });
+      }
+
+      const updated = await storage.updateReturn(ret.id, {
+        status: "PICKUP_SCHEDULED",
+        trackingAwb: result.awb,
+      });
+
+      console.log(
+        `[returns] storeId=${storeId} RMA=${ret.rmaNumber} reverse pickup scheduled, AWB=${result.awb}`,
+      );
+
+      res.json({ success: true, awb: result.awb, return: updated });
+    } catch (error: any) {
+      console.error("Error scheduling reverse pickup:", error);
+      res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
+    }
+  });
+
   // ── Admin: retroactive order-item image backfill ────────────────
   //
   // After a store has been historically synced and THEN the product

@@ -1,10 +1,28 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { RefreshCcw, Search } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import {
+  RefreshCcw,
+  Search,
+  Loader2,
+  Package as PackageIcon,
+  Truck,
+  Copy,
+} from "lucide-react";
 import { format } from "date-fns";
 
 // One return row as returned by GET /api/returns (joined with order details).
@@ -82,9 +100,295 @@ const TAB_FILTERS: Record<string, string[] | null> = {
   refunded: ["REFUNDED"],
 };
 
+const PENDING_STATUSES = ["PENDING_FEE", "PENDING_APPROVAL"];
+
+function fmtAmount(amt: string | null | undefined): string {
+  if (!amt) return "—";
+  const n = parseFloat(amt);
+  return isNaN(n)
+    ? "—"
+    : `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// ── RMA detail slide-over ───────────────────────────────────────────────────
+
+interface OrderDetail {
+  shopifyOrderNumber: string | null;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  totalPrice: string | null;
+  shopifyCreatedAt: string | null;
+  shippingAddressLine1: string | null;
+  shippingAddressLine2: string | null;
+  shippingCity: string | null;
+  shippingState: string | null;
+  shippingPincode: string | null;
+}
+
+interface OrderItemDetail {
+  id: string;
+  productName: string;
+  variantTitle: string | null;
+  quantity: number;
+  price: string;
+  imageUrl: string | null;
+}
+
+interface ReturnDetailResponse {
+  return: ReturnRow & {
+    returnReason: string | null;
+    customerNotes: string | null;
+    refundType: string | null;
+  };
+  order: OrderDetail | null;
+  items: OrderItemDetail[];
+}
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-right">{value}</span>
+    </div>
+  );
+}
+
+function RmaDetailSheet({
+  returnId,
+  onClose,
+}: {
+  returnId: string | null;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+
+  const { data, isLoading } = useQuery<ReturnDetailResponse>({
+    queryKey: ["/api/returns", returnId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/returns/${returnId}`);
+      return (await res.json()) as ReturnDetailResponse;
+    },
+    enabled: !!returnId,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest(
+        "POST",
+        `/api/returns/${returnId}/approve-pickup`,
+      );
+      return await res.json();
+    },
+    onSuccess: (resp: { awb?: string }) => {
+      toast({
+        title: "Pickup scheduled",
+        description: resp?.awb
+          ? `Reverse pickup booked with Delhivery. AWB ${resp.awb}.`
+          : "Reverse pickup scheduled with Delhivery.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/returns"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/returns", returnId] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not schedule pickup",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const ret = data?.return;
+  const order = data?.order;
+  const items = data?.items ?? [];
+  const isPending = !!ret && PENDING_STATUSES.includes(ret.status);
+
+  const copyAwb = (awb: string) => {
+    navigator.clipboard?.writeText(awb);
+    toast({ title: "AWB copied", description: awb });
+  };
+
+  return (
+    <Sheet open={!!returnId} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent
+        className="w-full sm:max-w-xl overflow-y-auto p-0 flex flex-col gap-0"
+        data-testid="sheet-return-detail"
+      >
+        {isLoading || !ret ? (
+          <div className="p-6 space-y-4">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : (
+          <>
+            <SheetHeader className="space-y-3 p-6 border-b">
+              <div className="flex items-center gap-3 flex-wrap">
+                <SheetTitle className="text-lg">{ret.rmaNumber}</SheetTitle>
+                <StatusBadge status={ret.status} />
+              </div>
+              <SheetDescription className="text-xs">
+                Requested{" "}
+                {ret.createdAt
+                  ? format(new Date(ret.createdAt), "dd MMM yyyy")
+                  : "—"}
+                {order?.shopifyOrderNumber ? ` · Order #${order.shopifyOrderNumber}` : ""}
+              </SheetDescription>
+            </SheetHeader>
+
+            <div className="flex-1 overflow-y-auto">
+              {/* Tracking AWB (once scheduled) */}
+              {ret.trackingAwb && (
+                <div className="m-6 mb-0 rounded-lg border bg-muted/30 p-3 flex items-center gap-3">
+                  <Truck className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-muted-foreground">Reverse pickup AWB</p>
+                    <p className="text-sm font-medium font-mono truncate">
+                      {ret.trackingAwb}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyAwb(ret.trackingAwb!)}
+                    data-testid="button-copy-awb"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+
+              {/* Customer */}
+              <div className="p-6 pb-4">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2">
+                  Customer
+                </p>
+                <InfoRow label="Name" value={order?.customerName || "—"} />
+                <InfoRow label="Email" value={order?.customerEmail || "—"} />
+                <InfoRow label="Phone" value={order?.customerPhone || "—"} />
+                {(order?.shippingCity || order?.shippingState) && (
+                  <InfoRow
+                    label="Location"
+                    value={[order?.shippingCity, order?.shippingState]
+                      .filter(Boolean)
+                      .join(", ")}
+                  />
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Order items */}
+              <div className="p-6 pb-4 space-y-3">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                  Order details
+                </p>
+                {items.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No line items on the linked order.
+                  </p>
+                ) : (
+                  items.map((item) => (
+                    <div key={item.id} className="flex items-center gap-3">
+                      {item.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt={item.productName}
+                          className="h-10 w-10 rounded-md object-cover border border-border flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <PackageIcon className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">
+                          {item.productName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {item.variantTitle ? `${item.variantTitle} · ` : ""}
+                          Qty {item.quantity}
+                        </p>
+                      </div>
+                      <span className="text-sm text-muted-foreground">
+                        {fmtAmount(item.price)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Return reason + notes + refund */}
+              <div className="p-6 space-y-4">
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-1.5">
+                    Return reason
+                  </p>
+                  <p className="text-sm">
+                    {ret.returnReason || (
+                      <span className="text-muted-foreground">Not provided</span>
+                    )}
+                  </p>
+                </div>
+                {ret.customerNotes && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-1.5">
+                      Customer notes
+                    </p>
+                    <p className="text-sm rounded-lg border bg-muted/30 p-3">
+                      {ret.customerNotes}
+                    </p>
+                  </div>
+                )}
+                <div className="rounded-lg border divide-y">
+                  <InfoRow
+                    label="Refund type"
+                    value={(ret.refundType || "STORE_CREDIT").replace(/_/g, " ")}
+                  />
+                  <InfoRow
+                    label="Expected refund"
+                    value={
+                      <span className="text-base">{fmtAmount(ret.refundAmount)}</span>
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer action */}
+            {isPending && (
+              <div className="border-t p-6">
+                <Button
+                  className="w-full gap-2"
+                  onClick={() => approveMutation.mutate()}
+                  disabled={approveMutation.isPending}
+                  data-testid="button-approve-schedule-pickup"
+                >
+                  {approveMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Truck className="h-4 w-4" />
+                  )}
+                  {approveMutation.isPending
+                    ? "Scheduling pickup…"
+                    : "Approve & Schedule Pickup"}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export default function ReturnsPage() {
   const [tab, setTab] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { data: returns = [], isLoading } = useQuery<ReturnRow[]>({
     queryKey: ["/api/returns"],
@@ -105,12 +409,6 @@ export default function ReturnsPage() {
       return true;
     });
   }, [returns, tab, search]);
-
-  const fmtAmount = (amt: string | null) => {
-    if (!amt) return "—";
-    const n = parseFloat(amt);
-    return isNaN(n) ? "—" : `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   return (
     <main className="flex-1 overflow-auto">
@@ -210,8 +508,9 @@ export default function ReturnsPage() {
                 filtered.map((r) => (
                   <tr
                     key={r.id}
-                    className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+                    className="border-b last:border-0 hover:bg-muted/30 transition-colors cursor-pointer"
                     data-testid={`row-return-${r.id}`}
+                    onClick={() => setSelectedId(r.id)}
                   >
                     <td className="px-4 py-3">
                       <span className="font-medium">{r.rmaNumber}</span>
@@ -238,11 +537,18 @@ export default function ReturnsPage() {
 
           {!isLoading && filtered.length > 0 && (
             <div className="px-4 py-2.5 border-t bg-muted/20 text-xs text-muted-foreground">
-              Showing {filtered.length} of {returns.length} returns
+              Showing {filtered.length} of {returns.length} returns · Click a row
+              for details
             </div>
           )}
         </div>
       </div>
+
+      {/* RMA detail slide-over */}
+      <RmaDetailSheet
+        returnId={selectedId}
+        onClose={() => setSelectedId(null)}
+      />
     </main>
   );
 }
