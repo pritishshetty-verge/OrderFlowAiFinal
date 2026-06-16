@@ -10836,48 +10836,29 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
     }
   });
+  const storefrontOrigin = process.env.STOREFRONT_DOMAIN?.trim().replace(
+    /\/+$/,
+    ""
+  );
+  if (!storefrontOrigin) {
+    console.warn(
+      "[public-cors] STOREFRONT_DOMAIN is not set \u2014 browser calls to /api/public will be blocked by CORS until it is configured."
+    );
+  }
   app2.use("/api/public", (req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
+    const origin = req.headers.origin;
+    const allowed = !!storefrontOrigin && origin === storefrontOrigin;
+    if (allowed) {
+      res.header("Access-Control-Allow-Origin", storefrontOrigin);
+      res.header("Vary", "Origin");
+      res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Content-Type");
+    }
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(allowed ? 204 : 403);
+    }
     next();
   });
-  const verifyShopifyProxyHmac = (req, res, next) => {
-    const isDev = process.env.NODE_ENV === "development";
-    const secret = process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_API_SECRET;
-    if (isDev && (req.query.bypass_hmac === "true" || req.headers["x-bypass-hmac"] === "true")) {
-      console.warn("[app-proxy] HMAC check bypassed (development only)");
-      return next();
-    }
-    if (!secret) {
-      if (isDev) {
-        console.warn(
-          "[app-proxy] No SHOPIFY_CLIENT_SECRET configured; allowing in development"
-        );
-        return next();
-      }
-      console.error("[app-proxy] SHOPIFY_CLIENT_SECRET not configured");
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    const { signature, ...rest } = req.query;
-    if (!signature || typeof signature !== "string") {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    const message = Object.keys(rest).sort().map((key) => {
-      const val = rest[key];
-      const joined = Array.isArray(val) ? val.join(",") : String(val);
-      return `${key}=${joined}`;
-    }).join("");
-    const digest = crypto7.createHmac("sha256", secret).update(message).digest("hex");
-    const a = Buffer.from(digest, "utf8");
-    const b = Buffer.from(signature, "utf8");
-    if (a.length !== b.length || !crypto7.timingSafeEqual(a, b)) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    next();
-  };
-  app2.use("/api/public/returns", verifyShopifyProxyHmac);
   app2.post("/api/public/returns/lookup", async (req, res) => {
     try {
       const { orderNumber, customerEmailOrPhone, storeId } = req.body ?? {};

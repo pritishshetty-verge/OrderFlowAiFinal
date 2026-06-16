@@ -3650,11 +3650,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
-  // PUBLIC RETURNS API (Shopify storefront via App Proxy)
+  // PUBLIC RETURNS API (Shopify storefront — direct browser fetch)
   //
-  // These routes are intentionally UNAUTHENTICATED — they're called by the
-  // merchant's Shopify storefront (through a Shopify App Proxy) where there
-  // is no admin session. Security model:
+  // The returns UI is deployed directly into the Shopify theme (no App
+  // Proxy), so these routes are called straight from the customer's
+  // browser. Security model:
+  //   • Strict CORS: only the configured STOREFRONT_DOMAIN origin is
+  //     allowed (reflected, not "*"); preflight from any other origin 403s.
   //   • Identity gate: lookup requires BOTH a valid order number AND a
   //     matching customer email/phone before any order data is returned.
   //   • Whitelisted payloads: only customer-facing fields are returned — no
@@ -3663,86 +3665,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //     itself, never trusting a client-supplied value.
   //   • Generic 404s on the lookup so attackers can't probe which half
   //     (order number vs. contact) was wrong.
-  // CORS is permissive here so the storefront can also call directly; App
-  // Proxy traffic arrives server-side and is unaffected.
+  // Server-to-server callers (e.g. the PayU webhook) send no Origin header,
+  // so they bypass CORS untouched — CORS is a browser-enforced control.
   // ============================================================================
 
+  const storefrontOrigin = process.env.STOREFRONT_DOMAIN?.trim().replace(
+    /\/+$/,
+    "",
+  );
+  if (!storefrontOrigin) {
+    console.warn(
+      "[public-cors] STOREFRONT_DOMAIN is not set — browser calls to /api/public will be blocked by CORS until it is configured.",
+    );
+  }
+
   app.use("/api/public", (req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") return res.sendStatus(204);
+    const origin = req.headers.origin;
+    const allowed = !!storefrontOrigin && origin === storefrontOrigin;
+
+    if (allowed) {
+      res.header("Access-Control-Allow-Origin", storefrontOrigin!);
+      res.header("Vary", "Origin");
+      res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Content-Type");
+    }
+
+    // Preflight: 204 for the allowed storefront origin, 403 otherwise.
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(allowed ? 204 : 403);
+    }
+
     next();
   });
-
-  // Shopify App Proxy HMAC verification. Shopify appends a `signature`
-  // query param computed as HMAC-SHA256 over the OTHER query params
-  // (sorted by key, joined as `key=value` with NO separator) using the
-  // app's shared secret. We recompute and timing-safe compare; mismatch
-  // or missing signature → 401. Production strictly enforces; local dev
-  // can opt out with ?bypass_hmac=true (or X-Bypass-Hmac: true).
-  const verifyShopifyProxyHmac = (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    const isDev = process.env.NODE_ENV === "development";
-    const secret =
-      process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_API_SECRET;
-
-    // Local-dev escape hatch — explicit opt-in only, never in production.
-    if (
-      isDev &&
-      (req.query.bypass_hmac === "true" ||
-        req.headers["x-bypass-hmac"] === "true")
-    ) {
-      console.warn("[app-proxy] HMAC check bypassed (development only)");
-      return next();
-    }
-
-    if (!secret) {
-      if (isDev) {
-        console.warn(
-          "[app-proxy] No SHOPIFY_CLIENT_SECRET configured; allowing in development",
-        );
-        return next();
-      }
-      console.error("[app-proxy] SHOPIFY_CLIENT_SECRET not configured");
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    const { signature, ...rest } = req.query as Record<string, any>;
-    if (!signature || typeof signature !== "string") {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    // Sorted key=value pairs, array values comma-joined, concatenated
-    // with no separator — the App Proxy signing convention.
-    const message = Object.keys(rest)
-      .sort()
-      .map((key) => {
-        const val = rest[key];
-        const joined = Array.isArray(val) ? val.join(",") : String(val);
-        return `${key}=${joined}`;
-      })
-      .join("");
-
-    const digest = crypto
-      .createHmac("sha256", secret)
-      .update(message)
-      .digest("hex");
-
-    const a = Buffer.from(digest, "utf8");
-    const b = Buffer.from(signature, "utf8");
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    next();
-  };
-
-  // Lock down every customer-facing returns route behind the proxy check.
-  app.use("/api/public/returns", verifyShopifyProxyHmac);
 
   // Look up an order for the returns flow. Requires order number + a
   // matching email/phone; returns only customer-facing order + item data.
