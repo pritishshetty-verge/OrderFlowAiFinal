@@ -10836,20 +10836,17 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
     }
   });
-  const storefrontOrigin = process.env.STOREFRONT_DOMAIN?.trim().replace(
-    /\/+$/,
-    ""
-  );
-  if (!storefrontOrigin) {
+  const allowedOrigins = (process.env.STOREFRONT_DOMAIN ?? "").split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean);
+  if (allowedOrigins.length === 0) {
     console.warn(
       "[public-cors] STOREFRONT_DOMAIN is not set \u2014 browser calls to /api/public will be blocked by CORS until it is configured."
     );
   }
   app2.use("/api/public", (req, res, next) => {
     const origin = req.headers.origin;
-    const allowed = !!storefrontOrigin && origin === storefrontOrigin;
+    const allowed = !!origin && allowedOrigins.includes(origin);
     if (allowed) {
-      res.header("Access-Control-Allow-Origin", storefrontOrigin);
+      res.header("Access-Control-Allow-Origin", origin);
       res.header("Vary", "Origin");
       res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
       res.header("Access-Control-Allow-Headers", "Content-Type");

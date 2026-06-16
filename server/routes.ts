@@ -3669,11 +3669,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // so they bypass CORS untouched — CORS is a browser-enforced control.
   // ============================================================================
 
-  const storefrontOrigin = process.env.STOREFRONT_DOMAIN?.trim().replace(
-    /\/+$/,
-    "",
-  );
-  if (!storefrontOrigin) {
+  // STOREFRONT_DOMAIN is a comma-separated allowlist of origins the theme
+  // can be served from (apex + www + the *.myshopify.com fallback). Each
+  // entry is trimmed and stripped of trailing slashes so it matches the
+  // browser's Origin header exactly.
+  const allowedOrigins = (process.env.STOREFRONT_DOMAIN ?? "")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+  if (allowedOrigins.length === 0) {
     console.warn(
       "[public-cors] STOREFRONT_DOMAIN is not set — browser calls to /api/public will be blocked by CORS until it is configured.",
     );
@@ -3681,16 +3685,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.use("/api/public", (req, res, next) => {
     const origin = req.headers.origin;
-    const allowed = !!storefrontOrigin && origin === storefrontOrigin;
+    const allowed = !!origin && allowedOrigins.includes(origin);
 
     if (allowed) {
-      res.header("Access-Control-Allow-Origin", storefrontOrigin!);
+      // Reflect the specific matching origin (never "*").
+      res.header("Access-Control-Allow-Origin", origin!);
       res.header("Vary", "Origin");
       res.header("Access-Control-Allow-Methods", "POST, OPTIONS");
       res.header("Access-Control-Allow-Headers", "Content-Type");
     }
 
-    // Preflight: 204 for the allowed storefront origin, 403 otherwise.
+    // Preflight: 204 for an allowed storefront origin, 403 otherwise.
     if (req.method === "OPTIONS") {
       return res.sendStatus(allowed ? 204 : 403);
     }
