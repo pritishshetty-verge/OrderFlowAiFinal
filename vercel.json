@@ -11,5 +11,11 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/((?!assets/|favicon|.*\\..*).*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/attendance-auto-logout",
+      "schedule": "* * * * *"
+    }
   ]
 }

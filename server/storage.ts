@@ -1,5 +1,6 @@
 import {  eq, and, desc, asc, or, count, gte, lte, lt, sql, isNull, isNotNull, inArray } from "drizzle-orm";
 import { db } from "./db";
+import { getAutoLogoutTotalMin } from "./presence-config";
 
 const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
 
@@ -497,6 +498,60 @@ export interface IStorage {
   // Inbound Webhook Logs
   createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
   getInboundWebhookLogs(limit?: number): Promise<InboundWebhookLog[]>;
+
+  // ── Smart presence (idle + auto-logout) ────────────────────────────
+  /**
+   * Throttled `last_active_at` write. Only updates if existing value
+   * is older than 30 seconds — avoids ~thousands of writes per
+   * minute when polling-heavy tabs are open.
+   */
+  heartbeatUser(userId: string): Promise<void>;
+  /**
+   * Monthly idle/attendance rollup per agent. Aggregates all attendance
+   * rows in [year, month] (IST) into a single row per user. Used for
+   * end-of-month payroll inputs and the admin attendance report page.
+   */
+  getMonthlyAttendanceReport(year: number, month: number): Promise<Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+    role: string;
+    daysPresent: number;
+    daysAutoClosed: number;
+    clockedHours: number;
+    breakMinutes: number;
+    idleMinutesDeducted: number;
+    avgHoursPerDay: number;
+  }>>;
+  /** Snapshot of users likely past the auto-logout threshold. */
+  findAutoLogoutCandidates(thresholdMinutes: number): Promise<Array<{
+    userId: string;
+    attendanceId: string;
+    clockInTime: Date | null;
+    lastActiveAt: Date | null;
+  }>>;
+  /**
+   * Close an attendance row via the auto-logout worker. Idempotent —
+   * only closes a row whose auto_closed_at is still NULL. Returns true
+   * if this call performed the close, false if it was already closed.
+   */
+  autoCloseAttendance(
+    attendanceId: string,
+    closeTime: Date,
+    reason: string,
+    totalHours: number,
+  ): Promise<boolean>;
+  /** Admin "Reactivate" — clears autoClose, reopens attendance for clock-in. */
+  reactivateAttendance(
+    attendanceId: string,
+    adminId: string,
+  ): Promise<Attendance | undefined>;
+  /** Was this user's attendance for today auto-closed (and not reactivated)? */
+  isAutoLoggedOutToday(userId: string, dateStr: string): Promise<{
+    isLoggedOut: boolean;
+    autoClosedAt: Date | null;
+    reason: string | null;
+  }>;
 }
 
 export class DbStorage implements IStorage {
@@ -3615,6 +3670,271 @@ export class DbStorage implements IStorage {
       .orderBy(desc(inboundWebhookLogs.createdAt))
       .limit(limit);
   }
+
+  // ── Smart presence helpers (idle + auto-logout) ───────────────────
+
+  async getMonthlyAttendanceReport(
+    year: number,
+    month: number,
+  ): Promise<Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+    role: string;
+    daysPresent: number;
+    daysAutoClosed: number;
+    clockedHours: number;
+    breakMinutes: number;
+    idleMinutesDeducted: number;
+    avgHoursPerDay: number;
+  }>> {
+    // Auto-logout idle window (idle threshold + grace). Each auto-closed
+    // day represents roughly this much elapsed inactivity before the
+    // worker closed the shift. Safe-parsed from env so a malformed value
+    // can't poison the figure (see presence-config).
+    const idleTotalMin = getAutoLogoutTotalMin();
+
+    // Aggregate at SQL — much cheaper than pulling every attendance row
+    // into Node and looping. Date filter uses IST so a clock-in just
+    // before midnight gets counted in the right month.
+    const result: any = await db.execute(sql`
+      WITH month_attendance AS (
+        SELECT
+          a.id,
+          a.user_id,
+          a.clock_in_time,
+          a.clock_out_time,
+          a.total_hours,
+          a.auto_closed_at,
+          a.reactivated_at
+        FROM attendance a
+        WHERE
+          a.clock_in_time IS NOT NULL
+          AND EXTRACT(YEAR FROM (a.date AT TIME ZONE 'Asia/Kolkata'))  = ${year}::int
+          AND EXTRACT(MONTH FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${month}::int
+      ),
+      break_totals AS (
+        SELECT
+          ma.user_id,
+          COALESCE(SUM(
+            EXTRACT(EPOCH FROM (
+              -- Cap an unclosed break at the shift's clock-out (or, for a
+              -- still-open shift, NOW()). Without this, a break row whose
+              -- break_end was never set would accrue duration up to report
+              -- time — potentially hundreds of hours — inflating payroll
+              -- break totals.
+              COALESCE(b.break_end, ma.clock_out_time, NOW()) - b.break_start
+            )) / 60.0
+          ), 0) AS break_minutes
+        FROM month_attendance ma
+        LEFT JOIN attendance_breaks b ON b.attendance_id = ma.id
+        GROUP BY ma.user_id
+      ),
+      per_user AS (
+        SELECT
+          ma.user_id,
+          COUNT(*) AS days_present,
+          SUM(CASE
+                WHEN ma.auto_closed_at IS NOT NULL AND ma.reactivated_at IS NULL THEN 1
+                ELSE 0
+              END) AS days_auto_closed,
+          COALESCE(SUM(ma.total_hours::numeric), 0) AS clocked_hours
+        FROM month_attendance ma
+        GROUP BY ma.user_id
+      )
+      SELECT
+        u.id              AS user_id,
+        u.full_name       AS full_name,
+        u.email           AS email,
+        u.role            AS role,
+        pu.days_present,
+        pu.days_auto_closed,
+        pu.clocked_hours,
+        COALESCE(bt.break_minutes, 0) AS break_minutes
+      FROM per_user pu
+      JOIN users u           ON u.id = pu.user_id
+      LEFT JOIN break_totals bt ON bt.user_id = pu.user_id
+      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support')
+      ORDER BY pu.clocked_hours DESC, u.full_name ASC
+    `);
+
+    const rows = (result as any).rows ?? result;
+    return rows.map((r: any) => {
+      const daysPresent = Number(r.days_present ?? 0);
+      const daysAutoClosed = Number(r.days_auto_closed ?? 0);
+      const clockedHours = Number(r.clocked_hours ?? 0);
+      const breakMinutes = Math.round(Number(r.break_minutes ?? 0));
+      const idleMinutesDeducted = daysAutoClosed * idleTotalMin;
+      const avgHoursPerDay = daysPresent > 0
+        ? +(clockedHours / daysPresent).toFixed(2)
+        : 0;
+      return {
+        userId: r.user_id,
+        fullName: r.full_name,
+        email: r.email,
+        role: r.role,
+        daysPresent,
+        daysAutoClosed,
+        clockedHours: +clockedHours.toFixed(2),
+        breakMinutes,
+        idleMinutesDeducted,
+        avgHoursPerDay,
+      };
+    });
+  }
+
+  async heartbeatUser(userId: string): Promise<void> {
+    // Throttled — only writes if existing timestamp is > 30s old.
+    // Drops the heartbeat write rate from thousands/min to ~100/min
+    // at Glow & Me's typical traffic. Cheap UPDATE either way (PK
+    // lookup), but skipping the write avoids replication overhead.
+    await db.execute(sql`
+      UPDATE users
+      SET last_active_at = NOW()
+      WHERE id = ${userId}
+        AND (last_active_at IS NULL OR last_active_at < NOW() - INTERVAL '30 seconds')
+    `);
+  }
+
+  async findAutoLogoutCandidates(
+    thresholdMinutes: number,
+  ): Promise<Array<{ userId: string; attendanceId: string; clockInTime: Date | null; lastActiveAt: Date | null }>> {
+    // Users to auto-logout:
+    //   - have an open attendance for today (clock_out_time IS NULL)
+    //   - are NOT currently on break (no open attendance_breaks row)
+    //   - haven't been seen active for `thresholdMinutes`
+    //   - aren't already auto-closed (defensive)
+    //   - are NOT full-control admins — they're exempt from monitoring.
+    //     Enforcing the exemption here (the single source feeding both
+    //     the in-process worker and the Vercel cron) means full-control
+    //     admins can never be auto-clocked-out, regardless of caller.
+    const result = await db.execute(sql`
+      SELECT
+        u.id AS user_id,
+        a.id AS attendance_id,
+        a.clock_in_time,
+        u.last_active_at
+      FROM users u
+      JOIN attendance a ON a.user_id = u.id
+      WHERE
+        a.clock_in_time IS NOT NULL
+        AND a.clock_out_time IS NULL
+        AND a.auto_closed_at IS NULL
+        AND DATE(a.date AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
+        AND u.is_active = TRUE
+        AND NOT (u.role = 'admin' AND u.admin_type = 'full_control')
+        AND (u.last_active_at IS NULL OR u.last_active_at < NOW() - (${thresholdMinutes}::numeric * INTERVAL '1 minute'))
+        AND NOT EXISTS (
+          SELECT 1 FROM attendance_breaks b
+          WHERE b.attendance_id = a.id AND b.break_end IS NULL
+        )
+    `);
+    return result.rows.map((r) => {
+      const row = r as any;
+      return {
+        userId: row.user_id,
+        attendanceId: row.attendance_id,
+        // Return clock_in_time directly so callers compute worked-hours
+        // from THIS row, not a re-fetched "today" row. getTodayAttendance
+        // uses server-local day boundaries; near IST/UTC midnight that can
+        // return undefined or a different day's row, which silently
+        // credited 0 hours for a real shift.
+        clockInTime: row.clock_in_time ? new Date(row.clock_in_time) : null,
+        lastActiveAt: row.last_active_at ? new Date(row.last_active_at) : null,
+      };
+    });
+  }
+
+  async autoCloseAttendance(
+    attendanceId: string,
+    closeTime: Date,
+    reason: string,
+    totalHours: number,
+  ): Promise<boolean> {
+    // Write-once: the `auto_closed_at IS NULL` guard makes this
+    // idempotent. If two sweeps (e.g. the in-process worker and an
+    // overlapping cron call) race on the same row, only the first wins;
+    // the second is a no-op instead of overwriting the recorded close
+    // time / hours with a later value. Returns whether this call closed
+    // the row.
+    const result = await db
+      .update(attendance)
+      .set({
+        clockOutTime: closeTime,
+        autoClosedAt: closeTime,
+        autoCloseReason: reason,
+        totalHours: totalHours.toFixed(2),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(attendance.id, attendanceId), isNull(attendance.autoClosedAt)));
+    return ((result as any).rowCount ?? 0) > 0;
+  }
+
+  async reactivateAttendance(
+    attendanceId: string,
+    adminId: string,
+  ): Promise<Attendance | undefined> {
+    // Clears the close so the agent can keep working. Audit trail
+    // appends to notes — keeps full history of reactivations.
+    const [existing] = await db
+      .select()
+      .from(attendance)
+      .where(eq(attendance.id, attendanceId));
+    if (!existing) return undefined;
+
+    const noteEntry = `[${new Date().toISOString()}] Reactivated by admin ${adminId}`;
+    const newNotes = existing.notes
+      ? existing.notes + "\n" + noteEntry
+      : noteEntry;
+
+    const [row] = await db
+      .update(attendance)
+      .set({
+        clockOutTime: null,
+        autoClosedAt: null,
+        autoCloseReason: null,
+        reactivatedAt: new Date(),
+        reactivatedBy: adminId,
+        totalHours: null,
+        notes: newNotes,
+        updatedAt: new Date(),
+      })
+      .where(eq(attendance.id, attendanceId))
+      .returning();
+    return row;
+  }
+
+  async isAutoLoggedOutToday(
+    userId: string,
+    dateStr: string,
+  ): Promise<{ isLoggedOut: boolean; autoClosedAt: Date | null; reason: string | null }> {
+    const [row] = await db
+      .select({
+        autoClosedAt: attendance.autoClosedAt,
+        autoCloseReason: attendance.autoCloseReason,
+        reactivatedAt: attendance.reactivatedAt,
+      })
+      .from(attendance)
+      .where(
+        and(
+          eq(attendance.userId, userId),
+          sql`DATE(${attendance.date}) = DATE(${dateStr})`,
+        ),
+      );
+    if (!row || !row.autoClosedAt) {
+      return { isLoggedOut: false, autoClosedAt: null, reason: null };
+    }
+    // Reactivated overrides — they're not auto-logged-out anymore.
+    if (row.reactivatedAt) {
+      return { isLoggedOut: false, autoClosedAt: null, reason: null };
+    }
+    return {
+      isLoggedOut: true,
+      autoClosedAt: row.autoClosedAt,
+      reason: row.autoCloseReason,
+    };
+  }
+
 }
 
 export const storage = new DbStorage();

@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Users, UserCheck, UserX, Package, Clock } from "lucide-react";
+import { Users, UserCheck, Package, Clock, RotateCcw, Power } from "lucide-react";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 
 interface TeamPresenceProps {
@@ -76,6 +77,32 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
     updatePresenceMutation.mutate({ userId, status });
   };
 
+  // Reactivate an auto-closed shift. Admin only — backend enforces.
+  // Clears auto_closed_at + auto_close_reason on the attendance row and
+  // appends an audit note so future inspection knows who flipped it back.
+  const reactivateMutation = useMutation({
+    mutationFn: async (attendanceId: string) => {
+      return await apiRequest("POST", `/api/attendance/${attendanceId}/reactivate`, {});
+    },
+    onSuccess: (_, attendanceId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/team-today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/presence/me"] });
+      toast({
+        title: "Shift reactivated",
+        description: "The agent is back on shift — no need for them to clock in again.",
+      });
+      void attendanceId;
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Couldn't reactivate",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const getRoleBadge = (role: string) => {
     switch (role) {
       case "admin":
@@ -94,13 +121,21 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
   // Filter to agents and managers only
   const teamMembers = users?.filter((u) => u.role === "agent" || u.role === "manager") || [];
 
-  // Helper to derive live status from attendance record
-  const getLiveStatus = (userId: string, accountStatus: string): "online" | "break" | "offline" => {
+  // Helper to derive live status from attendance record. "auto-closed"
+  // means the smart-presence worker closed today's shift; the agent
+  // can't clock back in until an admin reactivates.
+  const getLiveStatus = (
+    userId: string,
+    accountStatus: string,
+  ): "online" | "break" | "offline" | "auto-closed" => {
     if (accountStatus === "onleave" || accountStatus === "inactive") {
       return "offline";
     }
     const attendance = attendanceMap.get(userId);
     if (!attendance) return "offline";
+    // Auto-close beats plain "offline" — operationally distinct: this
+    // agent was working today and got disconnected by the policy.
+    if (attendance.autoClosedAt && !attendance.reactivatedAt) return "auto-closed";
     if (attendance.clockOutTime) return "offline";
     if (attendance.status === "break") return "break";
     return "online";
@@ -109,7 +144,7 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
   // Stats - count based on LIVE attendance status
   const onlineCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "online").length;
   const onBreakCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "break").length;
-  const offlineCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "offline").length;
+  const autoClosedCount = teamMembers.filter((u) => getLiveStatus(u.id, u.presenceStatus || "inactive") === "auto-closed").length;
   const totalWorkload = Array.from(workloadMap.values()).reduce((sum, count) => sum + count, 0);
 
   // Only allow admins to manage presence
@@ -118,7 +153,7 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
   return (
     <div className="space-y-6">
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <Card data-testid="card-total-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Members</CardTitle>
@@ -157,6 +192,23 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
               <Skeleton className="h-8 w-16" />
             ) : (
               <div className="text-2xl font-bold text-orange-500">{onBreakCount}</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-auto-closed">
+          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Auto Clocked-Out</CardTitle>
+            <Power className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold text-blue-500">{autoClosedCount}</div>
+            )}
+            {autoClosedCount > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-1">Reactivate below to resume their shift</p>
             )}
           </CardContent>
         </Card>
@@ -205,22 +257,53 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                 const workload = workloadMap.get(member.id) || 0;
                 const accountStatus = member.presenceStatus || "inactive";
                 const liveStatus = getLiveStatus(member.id, accountStatus);
-                
+                const attendance = attendanceMap.get(member.id);
+                const autoClosedAt = attendance?.autoClosedAt
+                  ? new Date(attendance.autoClosedAt)
+                  : null;
+                const autoClosedTimeStr = autoClosedAt
+                  ? autoClosedAt.toLocaleTimeString("en-IN", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true,
+                    })
+                  : null;
+
                 return (
                   <div
                     key={member.id}
                     className="flex items-center justify-between p-4 border rounded-md"
                     data-testid={`member-${member.id}`}
                   >
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{member.fullName}</p>
+                    <div className="flex-1 space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium truncate">{member.fullName}</p>
                         {getRoleBadge(member.role)}
                       </div>
-                      <p className="text-sm text-muted-foreground">{member.email}</p>
+                      <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                      {liveStatus === "auto-closed" && autoClosedTimeStr && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 truncate">
+                          Auto clocked-out at {autoClosedTimeStr}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-4">
+                      {/* Reactivate (only when auto-closed, admin only) */}
+                      {liveStatus === "auto-closed" && canManagePresence && attendance && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-blue-500/40 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                          disabled={reactivateMutation.isPending}
+                          onClick={() => reactivateMutation.mutate(attendance.id)}
+                          data-testid={`reactivate-${member.id}`}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                          Reactivate
+                        </Button>
+                      )}
+
                       {/* Workload */}
                       <div className="text-center">
                         <p className="text-xs text-muted-foreground mb-1">Active Orders</p>
@@ -232,24 +315,29 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                         </div>
                       </div>
 
-                      {/* Live Status - derived from attendance */}
-                      <div className="w-24 text-center">
+                      {/* Live Status - derived from attendance.
+                          Width sized to fit the widest badge ("Auto Clocked-Out")
+                          without clipping into the Account Status column. */}
+                      <div className="w-40 shrink-0 text-center">
                         <p className="text-xs text-muted-foreground mb-1">Live Status</p>
                         <div data-testid={`live-status-${member.id}`}>
                           {liveStatus === "online" && (
-                            <Badge className="bg-green-500 text-white">Online</Badge>
+                            <Badge className="bg-green-500 text-white whitespace-nowrap">Online</Badge>
                           )}
                           {liveStatus === "break" && (
-                            <Badge className="bg-orange-500 text-white">On Break</Badge>
+                            <Badge className="bg-orange-500 text-white whitespace-nowrap">On Break</Badge>
+                          )}
+                          {liveStatus === "auto-closed" && (
+                            <Badge className="bg-blue-500 text-white whitespace-nowrap">Auto Clocked-Out</Badge>
                           )}
                           {liveStatus === "offline" && (
-                            <Badge variant="secondary">Offline</Badge>
+                            <Badge variant="secondary" className="whitespace-nowrap">Offline</Badge>
                           )}
                         </div>
                       </div>
 
                       {/* Account Status (admin can change) */}
-                      <div className="w-40">
+                      <div className="w-40 shrink-0">
                         <p className="text-xs text-muted-foreground mb-1">Account Status</p>
                         {canManagePresence ? (
                           <Select

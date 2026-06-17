@@ -73,6 +73,19 @@ export const users = pgTable("users", {
   // KYC document: currently holds the local filename in uploads/kyc/.
   // Will be swapped for the S3 object key once migrated.
   kycDocumentUrl: text("kyc_document_url"),
+  // ── Smart presence (idle / auto-logout) ────────────────────────
+  // Server-authoritative timestamp of this user's last authenticated
+  // API hit. Written by the session middleware on every request,
+  // throttled to ~once/30s. Powers two distinct features:
+  //   1. Idle detection — `getLiveStatus()` returns 'idle' when
+  //      this is older than the configured idle threshold.
+  //   2. Auto-logout worker — sweeps users past
+  //      (idleThreshold + autoLogoutGrace) and closes their
+  //      attendance for the day.
+  // NULL = "never seen active in current session." That's a valid
+  // state for freshly-invited users who haven't logged in yet, and
+  // for users whose row was created before this column existed.
+  lastActiveAt: timestamp("last_active_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -863,6 +876,21 @@ export const attendance = pgTable("attendance", {
   status: text("status").notNull().default("present"), // present, absent, leave
   totalHours: decimal("total_hours", { precision: 5, scale: 2 }), // Calculated field
   notes: text("notes"),
+  // ── Auto-logout (smart presence) ───────────────────────────────
+  // Set when the auto-logout worker closes this attendance row
+  // because the user went past (idleThreshold + autoLogoutGrace)
+  // without an API hit. Distinct from `clockOutTime` so we can tell
+  // "they hit Clock Out" from "the system closed them out." Both
+  // are set when auto-logout fires (clockOutTime gets the same
+  // timestamp), but only autoClosedAt being non-null means "this
+  // wasn't voluntary."
+  autoClosedAt: timestamp("auto_closed_at"),
+  autoCloseReason: text("auto_close_reason"),
+  // Admin override — when an admin clicks "Reactivate" on the Team
+  // page, we set this to NOW and clear clockOutTime. The audit trail
+  // (which admin reactivated, when) lives in `notes`.
+  reactivatedAt: timestamp("reactivated_at"),
+  reactivatedBy: varchar("reactivated_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -1643,3 +1671,4 @@ export const insertInboundWebhookLogSchema = createInsertSchema(inboundWebhookLo
 
 export type InsertInboundWebhookLog = z.infer<typeof insertInboundWebhookLogSchema>;
 export type InboundWebhookLog = typeof inboundWebhookLogs.$inferSelect;
+

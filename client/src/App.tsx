@@ -37,7 +37,9 @@ import IntegrationsPage from "@/pages/integrations";
 import PayrollPage from "@/pages/payroll";
 import ProductsPage from "@/pages/products";
 import ReturnsPage from "@/pages/returns";
+import AttendanceReportPage from "@/pages/attendance-report";
 import NotFound from "@/pages/not-found";
+import { PresenceBanner } from "@/components/presence-banner";
 import { useEffect } from "react";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -228,6 +230,9 @@ function Router() {
       <Route path="/returns">
         {() => <AdminOnlyGuard component={ReturnsPage} />}
       </Route>
+      <Route path="/reports/attendance">
+        {() => <AdminOnlyGuard component={AttendanceReportPage} />}
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -263,7 +268,10 @@ export default function App() {
                 <SidebarProvider style={style as React.CSSProperties}>
                   <div className="flex h-screen w-full">
                     {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
-                    <Router />
+                    <div className="flex flex-col flex-1 min-w-0">
+                      {isLoggedIn && !isLoginPage && !isSignupPage && <PresenceBanner />}
+                      <Router />
+                    </div>
                   </div>
                 </SidebarProvider>
                 <Toaster />

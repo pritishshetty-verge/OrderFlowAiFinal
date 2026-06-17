@@ -45,6 +45,12 @@ import {
   isFullControlAdmin,
   isAdmin,
 } from "./permissions";
+import {
+  getIdleThresholdMin,
+  getGraceMin,
+  getAutoLogoutTotalMin,
+  computeAutoClose,
+} from "./presence-config";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
 
 interface NormalizedFastrrPayload {
@@ -5359,13 +5365,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dateForRecord = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
       }
 
-      // Check if already clocked in for this date
       const dateStr = localDate || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const existing = await storage.getAttendanceByDate(userId, dateStr);
+
+      // Smart presence — block clock-in if today's attendance was
+      // auto-closed and an admin hasn't reactivated. This check MUST
+      // come before the "already clocked in" check below, because an
+      // auto-closed shift still has clockInTime set (the worker only
+      // sets clockOutTime + autoClosedAt). Without this ordering, the
+      // user gets a misleading "already clocked in" 400 instead of the
+      // informative AUTO_LOGGED_OUT 403.
+      const lockout = await storage.isAutoLoggedOutToday(userId, dateStr);
+      if (lockout.isLoggedOut) {
+        return res.status(403).json({
+          error: "Locked out for the day",
+          code: "AUTO_LOGGED_OUT",
+          autoClosedAt: lockout.autoClosedAt,
+          reason: lockout.reason,
+          message:
+            "Your shift was auto-closed due to inactivity. An admin must reactivate you from the Team page before you can clock back in today.",
+        });
+      }
+
+      // One clock-in per day. Any existing row with a clock-in time
+      // blocks a second clock-in — preserves the original behavior
+      // (clockInWithDate INSERTs, so falling through would create a
+      // duplicate attendance row for the same date). Auto-closed shifts
+      // never reach here — the lockout 403 above intercepts them first.
       if (existing && existing.clockInTime) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: "Already clocked in today",
-          attendance: existing 
+          attendance: existing
         });
       }
 
@@ -5375,6 +5405,369 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error clocking in:", error);
       res.status(500).json({ error: "Failed to clock in" });
+    }
+  });
+
+  // Smart presence — explicit heartbeat. The frontend POSTs here on
+  // real user interaction (mousedown / keydown / touchstart, debounced
+  // 30s). We deliberately don't auto-heartbeat on every API call —
+  // background polling from other widgets would keep the user "active"
+  // forever. Throttled in storage layer (only writes if last_active_at
+  // is >30s stale) so a 30s client cadence is essentially free.
+  app.post("/api/presence/heartbeat", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      await storage.heartbeatUser(currentUserId);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[presence/heartbeat] error:", err?.message ?? err);
+      // Never fail loudly — banner can survive a missed heartbeat.
+      return res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  // Smart presence — public policy values. Tiny endpoint so the
+  // frontend can derive idle status for OTHER users (not just /me)
+  // without hardcoding the threshold. Lets the dev IDLE_THRESHOLD_MIN
+  // override flow through to the admin team UI.
+  app.get("/api/presence/policy", (_req, res) => {
+    res.json({
+      idleThresholdMin: getIdleThresholdMin(),
+      graceMin: getGraceMin(),
+      autoLogoutTotalMin: getAutoLogoutTotalMin(),
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Smart presence — auto-logout cron endpoint.
+  //
+  // On standalone Node (dev / `npm start`) the worker runs in-process
+  // via setInterval (server/index.ts). On Vercel serverless that won't
+  // work — there is no persistent process — so a Vercel cron schedule
+  // (see vercel.json) hits this endpoint every minute to run the same
+  // sweep.
+  //
+  // Auth: x-attendance-cron-secret header must match
+  // ATTENDANCE_CRON_SECRET env var. If the secret isn't set, the
+  // endpoint refuses everything — prevents accidental drive-by hits.
+  // ─────────────────────────────────────────────────────────────────
+  // `app.all` because Vercel cron triggers via GET; we also accept POST
+  // for external schedulers and ad-hoc curl tests. Idempotent-ish — calling
+  // it twice in the same minute just no-ops if no candidates fall within
+  // the threshold the second time.
+  //
+  // Auth supports two paths:
+  //   - Vercel cron: `Authorization: Bearer ${CRON_SECRET}` — CRON_SECRET
+  //     is auto-injected by Vercel when the cron entry fires. Standard
+  //     pattern from the Vercel docs.
+  //   - External / curl: `x-attendance-cron-secret: ${ATTENDANCE_CRON_SECRET}`
+  //     — kept for ad-hoc testing and non-Vercel deployments.
+  app.all("/api/cron/attendance-auto-logout", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.ATTENDANCE_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or ATTENDANCE_CRON_SECRET)",
+      });
+    }
+
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-attendance-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" &&
+      vercelSecret !== undefined &&
+      auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" &&
+      customSecret !== undefined &&
+      customHeader === customSecret;
+
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const idleMin = getIdleThresholdMin();
+    const graceMin = getGraceMin();
+    const totalMin = idleMin + graceMin;
+
+    try {
+      const candidates = await storage.findAutoLogoutCandidates(totalMin);
+      const closed: Array<{ userId: string; attendanceId: string; hours: number }> = [];
+      const now = new Date();
+
+      for (const c of candidates) {
+        try {
+          // Use the candidate's own clock_in_time + the shared
+          // computeAutoClose helper — identical to the in-process worker.
+          // Avoids the getTodayAttendance server-local-TZ mismatch that
+          // could credit 0 hours near IST/UTC midnight.
+          const { closeTime, totalHours } = computeAutoClose(c.clockInTime, c.lastActiveAt, now);
+          const reason = `Auto-logout: no activity for ${totalMin}+ minutes (idle ${idleMin}m + grace ${graceMin}m). Admin can reactivate from Team page.`;
+
+          const didClose = await storage.autoCloseAttendance(c.attendanceId, closeTime, reason, totalHours);
+          if (didClose) {
+            closed.push({ userId: c.userId, attendanceId: c.attendanceId, hours: totalHours });
+          }
+        } catch (err: any) {
+          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+        }
+      }
+
+      console.log(`[cron/auto-logout] sweep done — ${closed.length} closed out of ${candidates.length} candidates`);
+      return res.json({
+        ok: true,
+        candidates: candidates.length,
+        closed: closed.length,
+        details: closed,
+      });
+    } catch (err: any) {
+      console.error("[cron/auto-logout] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Smart presence — caller's own status. Frontend polls this for the
+  // countdown banner. Returns the calling user's idle state computed
+  // from their lastActiveAt against the configured threshold. Cheap:
+  // single SELECT on PK + JOIN for today's attendance.
+  app.get("/api/presence/me", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+
+      const user = await storage.getUser(currentUserId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const idleThresholdMin = getIdleThresholdMin();
+      const graceMin = getGraceMin();
+      const autoLogoutTotalMin = getAutoLogoutTotalMin();
+
+      // Full-control admins are exempt from monitoring — the worker
+      // never auto-closes them (see findAutoLogoutCandidates), so the
+      // idle banner would otherwise count up forever without ever
+      // firing. Short-circuit to a benign "active, exempt" state so the
+      // frontend renders no banner for them.
+      if (isFullControlAdmin(user)) {
+        return res.json({
+          status: "active",
+          exempt: true,
+          lastActiveAt: user.lastActiveAt,
+          minutesSinceActive: 0,
+          minutesUntilLogout: autoLogoutTotalMin,
+          idleThresholdMin,
+          graceMin,
+          autoLogoutTotalMin,
+          isClockedIn: false,
+          onBreak: false,
+          autoClosedAt: null,
+        });
+      }
+
+      const now = new Date();
+      const lastActive = user.lastActiveAt ? new Date(user.lastActiveAt) : null;
+      const minutesSinceActive = lastActive
+        ? (now.getTime() - lastActive.getTime()) / 60_000
+        : 0;
+
+      // Pull today's attendance to know whether the timer even applies.
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const todayAtt = await storage.getAttendanceByDate(currentUserId, dateStr);
+      const isClockedIn = !!todayAtt?.clockInTime && !todayAtt?.clockOutTime;
+
+      // On break? Idle timer paused (they declared themselves AFK).
+      const activeBreak = isClockedIn && todayAtt
+        ? await storage.getActiveBreak(todayAtt.id)
+        : null;
+
+      let status: "active" | "idle" | "break" | "offline" = "offline";
+      if (!isClockedIn) {
+        status = "offline";
+      } else if (activeBreak) {
+        status = "break";
+      } else if (minutesSinceActive < idleThresholdMin) {
+        status = "active";
+      } else if (minutesSinceActive < autoLogoutTotalMin) {
+        status = "idle";
+      } else {
+        // Past the threshold — worker will close us on its next sweep.
+        // Returning "idle" until then keeps the banner state stable.
+        status = "idle";
+      }
+
+      const minutesUntilLogout = Math.max(0, Math.ceil(autoLogoutTotalMin - minutesSinceActive));
+
+      // Surface today's autoClosedAt so the banner can show "Shift
+      // auto-closed at HH:MM" without a second roundtrip.
+      const autoClosedAt = todayAtt?.autoClosedAt ?? null;
+
+      return res.json({
+        status,
+        lastActiveAt: user.lastActiveAt,
+        minutesSinceActive: Math.floor(minutesSinceActive),
+        minutesUntilLogout,
+        idleThresholdMin,
+        graceMin,
+        autoLogoutTotalMin,
+        isClockedIn,
+        onBreak: !!activeBreak,
+        autoClosedAt,
+      });
+    } catch (err: any) {
+      console.error("[presence/me] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Admin "Reactivate" — clears an auto-logout so the agent can clock
+  // back in for the rest of the day. Audit trail lands in attendance.notes.
+  app.post("/api/attendance/:attendanceId/reactivate", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { attendanceId } = req.params;
+      const updated = await storage.reactivateAttendance(attendanceId, admin.id);
+      if (!updated) {
+        return res.status(404).json({ error: "Attendance not found" });
+      }
+      console.log(`[reactivate] admin ${admin.email} reactivated attendance ${attendanceId}`);
+      return res.json({ ok: true, attendance: updated });
+    } catch (err: any) {
+      console.error("[reactivate] error:", err);
+      return res.status(500).json({ error: "Reactivation failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Monthly attendance / idle-time report.
+  //
+  // Per-agent rollup of:
+  //   - days_present       — count of attendance rows in the month
+  //   - days_auto_closed   — count of those auto-closed by the worker
+  //                          (excluding admin reactivations)
+  //   - clocked_hours      — sum of attendance.total_hours
+  //   - break_minutes      — sum across attendance_breaks
+  //   - idle_minutes_deducted — days_auto_closed × policy idle window
+  //                             (10m idle + 30m grace by default).
+  //                             This is the time the worker SUBTRACTED
+  //                             from clocked_hours by closing the
+  //                             shift at lastActiveAt instead of now.
+  //   - avg_hours_per_day  — clocked_hours / days_present
+  //
+  // Feeds the admin attendance-report page and (in a follow-up) the
+  // end-of-month Resend email digest used for payroll inputs.
+  //
+  // Admin only.
+  // ─────────────────────────────────────────────────────────────────
+  app.get("/api/reports/attendance-monthly", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const requester = await storage.getUser(currentUserId);
+      if (!requester || requester.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const now = new Date();
+      const year = Number(req.query.year ?? now.getFullYear());
+      const month = Number(req.query.month ?? now.getMonth() + 1);
+      if (
+        !Number.isFinite(year) || year < 2024 || year > 2100 ||
+        !Number.isFinite(month) || month < 1 || month > 12
+      ) {
+        return res.status(400).json({ error: "Invalid year or month" });
+      }
+
+      const rows = await storage.getMonthlyAttendanceReport(year, month);
+      const totals = rows.reduce(
+        (acc, r) => ({
+          daysPresent: acc.daysPresent + r.daysPresent,
+          daysAutoClosed: acc.daysAutoClosed + r.daysAutoClosed,
+          clockedHours: +(acc.clockedHours + r.clockedHours).toFixed(2),
+          breakMinutes: acc.breakMinutes + r.breakMinutes,
+          idleMinutesDeducted: acc.idleMinutesDeducted + r.idleMinutesDeducted,
+        }),
+        { daysPresent: 0, daysAutoClosed: 0, clockedHours: 0, breakMinutes: 0, idleMinutesDeducted: 0 },
+      );
+
+      return res.json({ year, month, rows, totals });
+    } catch (err: any) {
+      console.error("[reports/attendance-monthly] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  app.get("/api/reports/attendance-monthly/csv", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const requester = await storage.getUser(currentUserId);
+      if (!requester || requester.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const now = new Date();
+      const year = Number(req.query.year ?? now.getFullYear());
+      const month = Number(req.query.month ?? now.getMonth() + 1);
+      if (
+        !Number.isFinite(year) || year < 2024 || year > 2100 ||
+        !Number.isFinite(month) || month < 1 || month > 12
+      ) {
+        return res.status(400).send("Invalid year or month");
+      }
+
+      const rows = await storage.getMonthlyAttendanceReport(year, month);
+      const headers = [
+        "Agent",
+        "Email",
+        "Role",
+        "Days Present",
+        "Days Auto-Closed",
+        "Clocked Hours",
+        "Break Minutes",
+        "Est Idle Minutes",
+        "Avg Hours/Day",
+      ];
+      const escapeCSV = (v: unknown): string => {
+        let s = v == null ? "" : String(v);
+        // Formula-injection guard: a cell starting with = + - @ (or a
+        // tab/CR) is executed as a formula by Excel/Sheets. fullName and
+        // email are user-editable, so neutralize by prefixing a single
+        // quote. Done before quoting so the apostrophe lands inside.
+        if (/^[=+\-@\t\r]/.test(s)) {
+          s = `'${s}`;
+        }
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [
+        headers.join(","),
+        ...rows.map((r) => [
+          escapeCSV(r.fullName),
+          escapeCSV(r.email),
+          escapeCSV(r.role),
+          r.daysPresent,
+          r.daysAutoClosed,
+          r.clockedHours,
+          r.breakMinutes,
+          r.idleMinutesDeducted,
+          r.avgHoursPerDay,
+        ].join(",")),
+      ].join("\n");
+
+      const monthStr = String(month).padStart(2, "0");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="attendance_${year}_${monthStr}.csv"`,
+      );
+      return res.send(csv);
+    } catch (err: any) {
+      console.error("[reports/attendance-monthly/csv] error:", err);
+      return res.status(500).send("Failed");
     }
   });
 

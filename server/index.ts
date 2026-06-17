@@ -8,6 +8,12 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { shopifyClient, getLegacyStoreShopifyClient } from "./shopify";
 import { attachStoreScope } from "./storeScope";
+import {
+  getIdleThresholdMin,
+  getGraceMin,
+  getAutoLogoutTotalMin,
+  computeAutoClose,
+} from "./presence-config";
 
 // ─────────────────────────────────────────────────────────────────────
 // Global crash safety net.
@@ -158,6 +164,11 @@ app.use((req, _res, next) => {
     ) {
       (req.body as any).currentUserId = sessionUserId;
     }
+    // Heartbeat is no longer auto-fired here — too many background
+    // polls (auth/me, stores/me, dashboard data) would keep the user
+    // "active" forever. Real user activity is signaled explicitly by
+    // the client posting to /api/presence/heartbeat on mouse/keyboard
+    // events (see client/src/components/presence-banner.tsx).
   }
   next();
 });
@@ -293,12 +304,91 @@ async function registerAllWebhooks(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Smart presence — auto-logout worker.
+//
+// "Auto-logout" here means CLOCKED OUT, not signed out of the web app.
+// We close their attendance row for the day. They stay logged in to
+// OrderFlow (so they can still browse, see their shift status, ask an
+// admin to reactivate) but the clock-in endpoint blocks them until an
+// admin clicks Reactivate.
+//
+// Rule (from product spec):
+//   • 10 min no API activity     → status flips to "idle" (visible only)
+//   • 30 min more (40 min total) → auto-close attendance (clock them out)
+//   • Admin can "Reactivate" from Team page (sets reactivated_at, lets
+//     them clock back in)
+//
+// Runs every 60 seconds. Cheap query: 1 row per active staffer at most,
+// usually 0. We skip the loop entirely while no users are flagged
+// (i.e., quick early-return path) to avoid noisy logs.
+//
+// IDLE_THRESHOLD_MIN + AUTO_LOGOUT_GRACE_MIN are read from env so an
+// admin can tune them per-deployment without a redeploy. Defaults
+// match the policy above.
+// ─────────────────────────────────────────────────────────────────────
+const IDLE_THRESHOLD_MIN = getIdleThresholdMin();
+const AUTO_LOGOUT_GRACE_MIN = getGraceMin();
+const AUTO_LOGOUT_TOTAL_MIN = getAutoLogoutTotalMin();
+
+async function runAutoLogoutSweep() {
+  try {
+    const candidates = await storage.findAutoLogoutCandidates(AUTO_LOGOUT_TOTAL_MIN);
+    if (candidates.length === 0) return;
+
+    const now = new Date();
+    for (const c of candidates) {
+      try {
+        // Use the candidate's own clock_in_time (carried on the row) —
+        // NOT a re-fetched "today" row. getTodayAttendance uses
+        // server-local day boundaries; near IST/UTC midnight that could
+        // return undefined and silently credit 0 hours for a real shift.
+        // computeAutoClose is shared with the cron path so both agree.
+        const { closeTime, totalHours } = computeAutoClose(c.clockInTime, c.lastActiveAt, now);
+        const reason = `Auto-logout: no activity for ${AUTO_LOGOUT_TOTAL_MIN}+ minutes (idle ${IDLE_THRESHOLD_MIN}m + grace ${AUTO_LOGOUT_GRACE_MIN}m). Admin can reactivate from Team page.`;
+
+        const closed = await storage.autoCloseAttendance(c.attendanceId, closeTime, reason, totalHours);
+        // NOTE: deliberately NOT killing web sessions — the user stays
+        // signed in. Only their shift is closed. clock-in endpoint
+        // will block them via isAutoLoggedOutToday until admin reactivates.
+        if (closed) {
+          console.log(
+            `[auto-logout] clocked out user ${c.userId} (attendance ${c.attendanceId}, worked ${totalHours}h)`,
+          );
+        }
+      } catch (err: any) {
+        console.error(`[auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+      }
+    }
+  } catch (err: any) {
+    console.error("[auto-logout] sweep failed:", err?.message ?? err);
+  }
+}
+
 // Bootstrap is an async IIFE that resolves when the app is fully wired up.
 // We export the resulting promise so `api/index.ts` (Vercel) can await it
 // per cold-start invocation.
 const ready = (async () => {
   // Seed default app settings on startup
   await storage.seedDefaultSettings();
+
+  // Start the auto-logout worker. Once a minute is fine — the policy
+  // is "40 min of inactivity," so a 60s sweep gives ±60s precision,
+  // which nobody will notice.
+  //
+  // PRODUCTION path: Vercel cron hits /api/cron/attendance-auto-logout
+  // every minute (see vercel.json + routes.ts). Vercel has no
+  // persistent process, so setInterval would never fire.
+  // DEV / standalone Node path: in-process setInterval, below.
+  if (!process.env.VERCEL) {
+    setInterval(() => {
+      void runAutoLogoutSweep();
+    }, 60_000);
+    console.log(
+      `[auto-logout] worker started — sweeps every 60s, threshold ${AUTO_LOGOUT_TOTAL_MIN} min ` +
+      `(idle ${IDLE_THRESHOLD_MIN}m + grace ${AUTO_LOGOUT_GRACE_MIN}m)`,
+    );
+  }
 
   // Register Shopify webhooks in the background. We don't await it —
   // it can take a couple seconds round-trip to Shopify and we don't

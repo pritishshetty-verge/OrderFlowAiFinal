@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,8 +23,8 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store } from "lucide-react";
-import type { User, Order as BackendOrder } from "@shared/schema";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw } from "lucide-react";
+import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ConfigurePermissionsModal } from "@/components/configure-permissions-modal";
@@ -46,6 +46,8 @@ const COMPENSATION_PROFILE_OPTIONS: { value: CompensationProfile | "NONE"; label
   { value: "CHAT_SUPPORT", label: "Chat Support (base only)" },
 ];
 
+type LiveStatus = "active" | "idle" | "auto-closed" | "on-leave" | "offline";
+
 interface TeamMember {
   id: string;
   name: string;
@@ -55,13 +57,28 @@ interface TeamMember {
   phone: string;
   agentExtension?: string;
   avatarImage?: string;
+  // Account-level status (active / on-leave / offline). Kept around for
+  // the existing "Active" label fallback. Live working status lives on
+  // `liveStatus` below.
   status: "active" | "on-leave" | "offline";
+  // Smart-presence derived working status. Recomputed every 30s from
+  // attendance + users.lastActiveAt + the policy threshold. Drives the
+  // colored avatar dot and the status sub-label.
+  liveStatus: LiveStatus;
+  // Minutes since the user last sent a heartbeat — only meaningful for
+  // `idle` so the card can show "Idle 12 min".
+  minutesSinceActive?: number;
   assignedOrders: number;
   completedOrders: number;
   joinedDate: string;
   holidayState?: HolidayState;
   baseSalary?: number;
   compensationProfile?: CompensationProfile;
+  // Set only when today's attendance was auto-closed by the smart-presence
+  // worker AND the admin hasn't reactivated yet. Drives the auto-closed
+  // badge + Reactivate button on the card.
+  autoClosedAttendanceId?: string;
+  autoClosedAt?: Date;
 }
 
 interface TeamDirectoryProps {
@@ -144,6 +161,9 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     : "/api/users";
   const { data: users, isLoading: usersLoading } = useQuery<User[]>({
     queryKey: [usersUrl],
+    // Refetch every 30s so lastActiveAt stays fresh — the smart-presence
+    // dot/sub-label derivation reads this directly.
+    refetchInterval: 30_000,
   });
 
   // Orders query: drives the per-member "Active / Completed" counters.
@@ -162,6 +182,67 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   }>({
     queryKey: [ordersUrl],
     enabled: !!ordersUrl,
+  });
+
+  // Smart-presence attendance for today, used to surface "auto clocked-out"
+  // status and the Reactivate button on each member card. The presence
+  // banner invalidates this key when it detects an auto-close, so admins
+  // see the change within ~30s of the worker firing.
+  const { data: teamAttendance } = useQuery<Attendance[]>({
+    queryKey: ["/api/attendance/team-today"],
+    refetchInterval: 30_000,
+  });
+  const attendanceByUser = useMemo(() => {
+    const m = new Map<string, Attendance>();
+    teamAttendance?.forEach((a) => m.set(a.userId, a));
+    return m;
+  }, [teamAttendance]);
+
+  // Idle threshold (e.g. 10 minutes) — fetched once at mount. Falls back
+  // to 10 so we never block the directory render if the request fails.
+  const { data: policy } = useQuery<{
+    idleThresholdMin: number;
+    graceMin: number;
+    autoLogoutTotalMin: number;
+  }>({
+    queryKey: ["/api/presence/policy"],
+    staleTime: 5 * 60_000,
+  });
+  const idleThresholdMin = policy?.idleThresholdMin ?? 10;
+
+  // Tick every 30s so the live-status derivation (which depends on
+  // "minutes since lastActiveAt") re-renders without waiting for the
+  // attendance refetch. The teamAttendance query also refetches every
+  // 30s, but lastActiveAt sits on the `users` row — so without a
+  // ticker, the dot stays "Active" forever even as the timestamp ages.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Reactivate mutation — admin-only flow. Server enforces the role
+  // check; we still hide the button for non-admins below.
+  const reactivateMutation = useMutation({
+    mutationFn: async (attendanceId: string) => {
+      return await apiRequest("POST", `/api/attendance/${attendanceId}/reactivate`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/team-today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/presence/me"] });
+      toast({
+        title: "Shift reactivated",
+        description: "The agent is back on shift — no need for them to clock in again.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Couldn't reactivate",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   // Only block the directory on the users query — the orders query is
@@ -415,11 +496,53 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     if (!users) return [];
     const ordersList = ordersResponse?.orders ?? [];
 
+    const now = Date.now();
+
     return users.map((user) => {
       const userOrders = ordersList.filter((o) => o.assignedTo === user.id);
       const completedOrders = userOrders.filter(
         (o) => o.status === "delivered" || o.status === "confirmed"
       );
+
+      const att = attendanceByUser.get(user.id);
+      const isAutoClosed = !!att?.autoClosedAt && !att?.reactivatedAt;
+      const isClockedIn = !!att?.clockInTime && !att?.clockOutTime && !isAutoClosed;
+      // Full-control admins are exempt from the monitoring system — they
+      // can never be auto-clocked-out, so we never show them as "idle"
+      // either (it would imply a countdown that doesn't exist). They
+      // read as active when clocked in, offline otherwise.
+      const isExempt = user.role === "admin" && user.adminType === "full_control";
+
+      // Derive live working status. Auto-closed beats everything else
+      // because the agent is no longer accumulating idle time.
+      let liveStatus: LiveStatus;
+      let minutesSinceActive: number | undefined;
+      if (isAutoClosed) {
+        liveStatus = "auto-closed";
+      } else if (!isClockedIn) {
+        // Account "on-leave" surfaces with the yellow dot; everything
+        // else (inactive account, never clocked in today, already clocked
+        // out) is plain offline.
+        if (user.presenceStatus === "onleave") liveStatus = "on-leave";
+        else liveStatus = "offline";
+      } else if (isExempt) {
+        // Clocked in + exempt → always active, never idle.
+        liveStatus = "active";
+      } else {
+        const lastActive = user.lastActiveAt ? new Date(user.lastActiveAt).getTime() : null;
+        const mins = lastActive ? (now - lastActive) / 60_000 : Infinity;
+        minutesSinceActive = lastActive ? Math.floor(mins) : undefined;
+        if (att?.status === "break") {
+          // Break pauses the idle clock — treat as still active so the
+          // card doesn't go yellow during a legitimate break. The
+          // Presence & Workload tab still shows "On Break" explicitly.
+          liveStatus = "active";
+        } else if (mins >= idleThresholdMin) {
+          liveStatus = "idle";
+        } else {
+          liveStatus = "active";
+        }
+      }
 
       return {
         id: user.id,
@@ -431,6 +554,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         agentExtension: user.agentExtension || undefined,
         avatarImage: user.avatarImage || undefined,
         status: user.isActive ? "active" : "offline",
+        liveStatus,
+        minutesSinceActive,
         assignedOrders: userOrders.filter(
           (o) => o.status !== "delivered" && o.status !== "cancelled"
         ).length,
@@ -446,9 +571,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
             : undefined,
         compensationProfile:
           (user.compensationProfile as CompensationProfile | null) ?? undefined,
+        autoClosedAttendanceId: isAutoClosed ? att!.id : undefined,
+        autoClosedAt: isAutoClosed ? new Date(att!.autoClosedAt!) : undefined,
       };
     });
-  }, [users, ordersResponse]);
+  }, [users, ordersResponse, attendanceByUser, idleThresholdMin]);
 
   const getInitials = (name: string) => {
     return name
@@ -466,6 +593,50 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         return "bg-yellow-500";
       case "offline":
         return "bg-gray-400";
+    }
+  };
+
+  const getLiveStatusColor = (status: LiveStatus) => {
+    switch (status) {
+      case "active":
+        return "bg-green-500";
+      case "idle":
+        return "bg-yellow-500";
+      case "auto-closed":
+        return "bg-blue-500";
+      case "on-leave":
+        return "bg-yellow-500";
+      case "offline":
+        return "bg-gray-400";
+    }
+  };
+
+  const getLiveStatusLabel = (member: TeamMember): { text: string; color?: string } => {
+    switch (member.liveStatus) {
+      case "active":
+        return { text: "Active" };
+      case "idle":
+        return {
+          text:
+            member.minutesSinceActive != null
+              ? `Idle ${member.minutesSinceActive} min`
+              : "Idle",
+          color: "text-yellow-600 dark:text-yellow-400",
+        };
+      case "auto-closed":
+        return {
+          text: member.autoClosedAt
+            ? `Auto clocked-out at ${member.autoClosedAt.toLocaleTimeString(
+                "en-IN",
+                { hour: "2-digit", minute: "2-digit", hour12: true },
+              )}`
+            : "Auto clocked-out",
+          color: "text-blue-600 dark:text-blue-400",
+        };
+      case "on-leave":
+        return { text: "On leave" };
+      case "offline":
+        return { text: "Offline" };
     }
   };
 
@@ -553,16 +724,21 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                       </AvatarFallback>
                     </Avatar>
                     <div
-                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-card ${getStatusColor(
-                        member.status
+                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-card ${getLiveStatusColor(
+                        member.liveStatus,
                       )}`}
                     />
                   </div>
                   <div>
                     <CardTitle className="text-base">{member.name}</CardTitle>
-                    <CardDescription className="text-xs capitalize">
-                      {member.status.replace("-", " ")}
-                    </CardDescription>
+                    {(() => {
+                      const label = getLiveStatusLabel(member);
+                      return (
+                        <CardDescription className={`text-xs ${label.color ?? ""}`}>
+                          {label.text}
+                        </CardDescription>
+                      );
+                    })()}
                   </div>
                 </div>
                 <Badge variant={getRoleBadgeVariant(member.role)}>
@@ -660,6 +836,25 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <p className="text-xs text-muted-foreground">Completed</p>
                 </div>
               </div>
+
+              {/* Reactivate auto-closed shift — admin only. Backend
+                  enforces the role check; we hide the UI to avoid
+                  confusion for non-admins. */}
+              {member.autoClosedAttendanceId && userRole === "admin" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-blue-500/40 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                  disabled={reactivateMutation.isPending}
+                  onClick={() =>
+                    reactivateMutation.mutate(member.autoClosedAttendanceId!)
+                  }
+                  data-testid={`button-reactivate-${member.id}`}
+                >
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                  Reactivate shift
+                </Button>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <Button
