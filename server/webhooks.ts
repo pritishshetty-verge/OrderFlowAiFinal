@@ -3,7 +3,9 @@ import { verifyShopifyHmac } from "./shopify";
 import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
+import { SHIPPING_STATUS_LABELS } from "@shared/schema";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
+import { toUnifiedStatus, type ShippingStatus } from "./logic/unifiedStatus";
 import { triggerWebhooks } from "./services/webhooks";
 import {
   resolveWebhookStore,
@@ -545,14 +547,14 @@ export async function handleOrderCancelled(req: Request, res: Response) {
     // on the day the purchase actually happened, not the day it was
     // cancelled. This is the behaviour Shopify's own sales report has.
     await storage.updateOrder(existingOrder.id, {
-      status: "Cancelled",
+      status: "cancelled",
     });
 
     // Create status history
     await storage.createOrderStatus({
       storeId: store.id,
       orderId: existingOrder.id,
-      status: "Cancelled",
+      status: "cancelled",
       previousStatus: existingOrder.status,
       changedBy: null,
       note: shopifyOrder.cancel_reason
@@ -640,45 +642,15 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
 
     console.log(`[Fulfillment Update] Order ${existingOrder.shopifyOrderNumber}: shipment_status = "${shopifyShipmentStatus}"`);
 
-    // Map Shopify shipment_status to our internal status
-    // Shopify values: "confirmed", "in_transit", "out_for_delivery", "delivered", "failure", etc.
-    const mapShipmentStatusToInternal = (status: string | null): string | null => {
-      if (!status) return null;
-      
-      const statusLower = status.toLowerCase();
-      
-      // Map to user-friendly display values
-      const statusMap: Record<string, string> = {
-        "confirmed": "Confirmed",
-        "in_transit": "In Transit",
-        "out_for_delivery": "Out for Delivery",
-        "delivered": "Delivered",
-        "attempted_delivery": "Attempted Delivery",
-        "failure": "Delivery Failed",
-        "ready_for_pickup": "Ready for Pickup",
-        "picked_up": "Picked Up",
-      };
-      
-      return statusMap[statusLower] || status;
-    };
-
-    const mappedShipmentStatus = mapShipmentStatusToInternal(shopifyShipmentStatus);
-
-    // Determine if we should also update the main order status
-    // For "out_for_delivery" and "in_transit", we want the order to appear in the OFD tab
-    let newOrderStatus: string | undefined = undefined;
-    
-    if (shopifyShipmentStatus) {
-      const statusLower = shopifyShipmentStatus.toLowerCase();
-      
-      if (statusLower === "out_for_delivery") {
-        newOrderStatus = "out_for_delivery";
-      } else if (statusLower === "in_transit") {
-        newOrderStatus = "in_transit";
-      } else if (statusLower === "delivered") {
-        newOrderStatus = "Delivered";
-      }
-    }
+    // Translate Shopify's carrier shipment_status into our canonical status via
+    // the single centralized mapper. Only update the main order status when the
+    // fulfillment actually carries a tracking status.
+    const newOrderStatus: ShippingStatus | undefined = shopifyShipmentStatus
+      ? toUnifiedStatus({ source: "shopify_fulfillment", rawStatus: shopifyShipmentStatus })
+      : undefined;
+    const mappedShipmentStatus = newOrderStatus
+      ? SHIPPING_STATUS_LABELS[newOrderStatus]
+      : null;
 
     // Build update object
     const updateData: any = {

@@ -759,7 +759,7 @@ export function OrderQuickPreview({
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Status</p>
-              <StatusBadge status={order.status as any} shipmentStatus={order.shipmentStatus} />
+              <StatusBadge status={order.status} />
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Tags</p>

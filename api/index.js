@@ -15,6 +15,8 @@ __export(schema_exports, {
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
   REFUND_TYPES: () => REFUND_TYPES,
   RETURN_STATUSES: () => RETURN_STATUSES,
+  SHIPPING_STATUSES: () => SHIPPING_STATUSES,
+  SHIPPING_STATUS_LABELS: () => SHIPPING_STATUS_LABELS,
   abandonedCheckouts: () => abandonedCheckouts,
   appSettings: () => appSettings,
   attendance: () => attendance,
@@ -98,7 +100,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -407,7 +409,7 @@ var init_schema = __esm({
       customerPhone: text("customer_phone").notNull(),
       // Order details
       status: text("status").notNull().default("pending"),
-      // pending, assigned, confirmed, shipped, delivered, cancelled, ndr
+      // pre-ship workflow: pending, assigned, confirmed | then a SHIPPING_STATUSES value (see unified list)
       callStatus: text("call_status").notNull().default("Pending"),
       // Pending, Confirmed, Cancelled, Follow Up
       fulfillmentStatus: text("fulfillment_status"),
@@ -1158,6 +1160,41 @@ var init_schema = __esm({
       "REJECTED"
     ];
     REFUND_TYPES = ["STORE_CREDIT", "ORIGINAL_PAYMENT", "NO_REFUND"];
+    SHIPPING_STATUSES = [
+      "unfulfilled",
+      "awb_assigned",
+      // AWB Assigned / Ready To Ship
+      "ready_for_pickup",
+      "picked_up",
+      "in_transit",
+      "out_for_delivery",
+      "delivered",
+      "ndr",
+      // displayed as "Undelivered"
+      "rto_initiated",
+      // displayed as "RTO in Transit"
+      "rto_ofd",
+      // RTO Out for Delivery
+      "rto_delivered",
+      // RTO Delivered / Returned
+      "cancelled",
+      "lost"
+    ];
+    SHIPPING_STATUS_LABELS = {
+      unfulfilled: "Unfulfilled",
+      awb_assigned: "AWB Assigned",
+      ready_for_pickup: "Ready for Pickup",
+      picked_up: "Picked Up",
+      in_transit: "In Transit",
+      out_for_delivery: "Out for Delivery",
+      delivered: "Delivered",
+      ndr: "Undelivered",
+      rto_initiated: "RTO in Transit",
+      rto_ofd: "RTO OFD",
+      rto_delivered: "RTO Delivered",
+      cancelled: "Cancelled",
+      lost: "Lost"
+    };
     returns = pgTable(
       "returns",
       {
@@ -4125,6 +4162,150 @@ var init_shopify = __esm({
   }
 });
 
+// server/logic/unifiedStatus.ts
+function safeFallback(raw, source) {
+  const lower = (raw || "").toLowerCase();
+  const fallback = lower.includes("rto") || lower.includes("return") || lower.includes("rtnd") ? "rto_initiated" : "in_transit";
+  console.warn(
+    `[unifiedStatus] Unknown ${source} status "${raw}" \u2014 falling back to "${fallback}". Add an explicit mapping if this status is expected.`
+  );
+  return fallback;
+}
+function mapDelhivery(rawStatus) {
+  const key = (rawStatus || "").toLowerCase().trim();
+  return DELHIVERY_TO_UNIFIED[key] ?? safeFallback(rawStatus, "delhivery");
+}
+function mapShiprocket(rawStatus) {
+  const key = (rawStatus || "").toLowerCase().trim();
+  if (!key) {
+    console.warn('[unifiedStatus] Empty shiprocket status \u2014 defaulting to "in_transit".');
+    return "in_transit";
+  }
+  if (SHIPROCKET_TO_UNIFIED[key]) return SHIPROCKET_TO_UNIFIED[key];
+  if (key.includes("out for delivery")) return key.includes("rto") ? "rto_ofd" : "out_for_delivery";
+  if (key.includes("rto") && (key.includes("deliver") || key.includes("return"))) return "rto_delivered";
+  if (key.includes("rto")) return "rto_initiated";
+  if (key.includes("deliver")) return "delivered";
+  if (key.includes("picked")) return "picked_up";
+  if (key.includes("pickup")) return "ready_for_pickup";
+  if (key.includes("transit")) return "in_transit";
+  if (key.includes("lost") || key.includes("damaged")) return "lost";
+  if (key.includes("cancel")) return "cancelled";
+  if (key.includes("undeliver") || key.includes("ndr")) return "ndr";
+  return safeFallback(rawStatus ?? "", "shiprocket");
+}
+function mapShopify(input) {
+  if (input.cancelledAt) return "cancelled";
+  if (input.shipmentStatus === "delivered") return "delivered";
+  if (input.fulfillmentStatus === "fulfilled" || input.fulfillmentStatus === "partial") {
+    return "awb_assigned";
+  }
+  return "unfulfilled";
+}
+function mapShopifyFulfillment(rawStatus) {
+  const key = (rawStatus || "").toLowerCase().trim();
+  if (!key) {
+    return "awb_assigned";
+  }
+  return SHOPIFY_FULFILLMENT_TO_UNIFIED[key] ?? safeFallback(rawStatus ?? "", "shopify_fulfillment");
+}
+function toUnifiedStatus(input) {
+  switch (input.source) {
+    case "delhivery":
+      return mapDelhivery(input.rawStatus);
+    case "shiprocket":
+      return mapShiprocket(input.rawStatus);
+    case "shopify_fulfillment":
+      return mapShopifyFulfillment(input.rawStatus);
+    case "shopify":
+      return mapShopify(input);
+    default: {
+      const _exhaustive = input;
+      console.warn("[unifiedStatus] Unknown source \u2014 defaulting to in_transit.", _exhaustive);
+      return "in_transit";
+    }
+  }
+}
+var VALID_STATUSES, DELHIVERY_TO_UNIFIED, SHIPROCKET_TO_UNIFIED, SHOPIFY_FULFILLMENT_TO_UNIFIED;
+var init_unifiedStatus = __esm({
+  "server/logic/unifiedStatus.ts"() {
+    "use strict";
+    init_schema();
+    VALID_STATUSES = new Set(SHIPPING_STATUSES);
+    DELHIVERY_TO_UNIFIED = {
+      unfulfilled: "unfulfilled",
+      awb_assigned: "awb_assigned",
+      ready_to_ship: "awb_assigned",
+      // legacy alias
+      ready_for_pickup: "ready_for_pickup",
+      picked_up: "picked_up",
+      in_transit: "in_transit",
+      out_for_delivery: "out_for_delivery",
+      delivered: "delivered",
+      ndr: "ndr",
+      rto_initiated: "rto_initiated",
+      rto_ofd: "rto_ofd",
+      rto_delivered: "rto_delivered",
+      cancelled: "cancelled",
+      lost: "lost"
+    };
+    SHIPROCKET_TO_UNIFIED = {
+      // pre-pickup
+      "manifest generated": "awb_assigned",
+      "awb assigned": "awb_assigned",
+      "label generated": "awb_assigned",
+      "ready to ship": "awb_assigned",
+      "pickup scheduled": "ready_for_pickup",
+      "pickup generated": "ready_for_pickup",
+      "pickup queued": "ready_for_pickup",
+      "out for pickup": "ready_for_pickup",
+      "pickup rescheduled": "ready_for_pickup",
+      // in motion
+      "picked up": "picked_up",
+      "pickup done": "picked_up",
+      "in transit": "in_transit",
+      shipped: "in_transit",
+      "reached at destination hub": "in_transit",
+      "misrouted": "in_transit",
+      "out for delivery": "out_for_delivery",
+      // terminal (forward)
+      delivered: "delivered",
+      // failed delivery
+      undelivered: "ndr",
+      ndr: "ndr",
+      "ndr raised": "ndr",
+      "delivery attempted": "ndr",
+      // RTO lifecycle
+      "rto initiated": "rto_initiated",
+      "rto acknowledged": "rto_initiated",
+      "rto in transit": "rto_initiated",
+      rto: "rto_initiated",
+      "rto out for delivery": "rto_ofd",
+      "rto ofd": "rto_ofd",
+      "rto delivered": "rto_delivered",
+      "rto returned": "rto_delivered",
+      returned: "rto_delivered",
+      // exceptions
+      cancelled: "cancelled",
+      canceled: "cancelled",
+      lost: "lost",
+      "lost in transit": "lost",
+      damaged: "lost",
+      "damaged in transit": "lost"
+    };
+    SHOPIFY_FULFILLMENT_TO_UNIFIED = {
+      confirmed: "awb_assigned",
+      ready_for_pickup: "ready_for_pickup",
+      picked_up: "picked_up",
+      in_transit: "in_transit",
+      out_for_delivery: "out_for_delivery",
+      delivered: "delivered",
+      attempted_delivery: "ndr",
+      failure: "ndr"
+    };
+  }
+});
+
 // server/resend.ts
 import { Resend } from "resend";
 function getResendConfig() {
@@ -4335,18 +4516,14 @@ async function handleShiprocketWebhook(req, res) {
       statusUpdatedAt: /* @__PURE__ */ new Date(),
       courierName: payload.courier_name || shipment.courierName
     });
-    const ndrStatuses = [
-      "ndr",
-      "NDR",
-      "non delivery report",
-      "customer unavailable",
-      "address issue",
-      "refused",
-      "incomplete address"
-    ];
-    const isNDR = ndrStatuses.some(
-      (status) => payload.current_status.toLowerCase().includes(status.toLowerCase())
-    ) || payload.ndr_status;
+    const unifiedStatus = payload.ndr_status ? "ndr" : toUnifiedStatus({ source: "shiprocket", rawStatus: payload.current_status });
+    const isNDR = unifiedStatus === "ndr";
+    const isDelivered = unifiedStatus === "delivered";
+    const isRTO = unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered";
+    await storage.updateOrder(shipment.orderId, {
+      status: unifiedStatus,
+      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || payload.current_status
+    });
     if (isNDR) {
       console.log("[Shiprocket Webhook] NDR event detected:", {
         awb: payload.awb,
@@ -4362,7 +4539,7 @@ async function handleShiprocketWebhook(req, res) {
       } else if (statusLower.includes("refused") || statusLower.includes("reject")) {
         ndrStatus = "refused";
       }
-      const ndrEvent = await storage.createNDREvent({
+      await storage.createNDREvent({
         shipmentId: shipment.id,
         orderId: shipment.orderId,
         awb: payload.awb,
@@ -4370,10 +4547,6 @@ async function handleShiprocketWebhook(req, res) {
         ndrReason: payload.comment || payload.current_status,
         ndrDate: /* @__PURE__ */ new Date(),
         rawNdrData: payload
-      });
-      await storage.updateOrder(shipment.orderId, {
-        status: "ndr",
-        shipmentStatus: "NDR"
       });
       const order = await storage.getOrder(shipment.orderId);
       if (order && order.assignedTo) {
@@ -4391,38 +4564,24 @@ async function handleShiprocketWebhook(req, res) {
         status: "ndr"
       });
     }
-    const deliveredStatuses = ["delivered", "delivery completed", "successful"];
-    const isDelivered = deliveredStatuses.some(
-      (status) => payload.current_status.toLowerCase().includes(status.toLowerCase())
-    );
     if (isDelivered) {
       console.log("[Shiprocket Webhook] Delivery completed:", payload.awb);
       await storage.updateShipment(shipment.id, {
         status: "delivered",
         deliveredAt: /* @__PURE__ */ new Date()
       });
-      await storage.updateOrder(shipment.orderId, {
-        status: "delivered",
-        shipmentStatus: "Delivered"
-      });
     }
-    const rtoStatuses = ["rto", "return to origin", "returned"];
-    const isRTO = rtoStatuses.some(
-      (status) => payload.current_status.toLowerCase().includes(status.toLowerCase())
-    );
     if (isRTO) {
-      console.log("[Shiprocket Webhook] RTO detected:", payload.awb);
+      console.log("[Shiprocket Webhook] RTO detected:", payload.awb, unifiedStatus);
       await storage.updateShipment(shipment.id, {
-        status: "rto"
-      });
-      await storage.updateOrder(shipment.orderId, {
-        status: "ndr",
-        shipmentStatus: "RTO"
+        status: "rto",
+        ...unifiedStatus === "rto_delivered" ? { deliveredAt: /* @__PURE__ */ new Date() } : {}
       });
     }
     console.log("[Shiprocket Webhook] Webhook processed successfully:", {
       awb: payload.awb,
       status: payload.current_status,
+      unifiedStatus,
       isNDR,
       isDelivered,
       isRTO
@@ -4437,6 +4596,8 @@ var init_shiprocketWebhook = __esm({
   "server/shiprocketWebhook.ts"() {
     "use strict";
     init_storage();
+    init_unifiedStatus();
+    init_schema();
   }
 });
 
@@ -4444,16 +4605,36 @@ var init_shiprocketWebhook = __esm({
 function normalizeDelhivery(payload) {
   const type = (payload.Shipment?.Status?.StatusType || "").toUpperCase();
   const statusText = payload.Shipment?.Status?.Status || "";
+  const statusLower = statusText.toLowerCase();
   const instr = (payload.Shipment?.Status?.Instructions || "").toLowerCase();
   const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || "";
+  const looksLost = (s) => s.includes("lost") || s.includes("untraceable") || s.includes("damaged");
+  if (looksLost(statusLower) || looksLost(instr)) {
+    return { status: "lost", isActionable: false };
+  }
   if (type === "DL") {
-    if (statusText.toLowerCase().includes("rto") || instr.includes("return")) {
+    if (statusLower.includes("rto") || instr.includes("return")) {
       return { status: "rto_delivered", isActionable: false };
     }
     return { status: "delivered", isActionable: false };
   }
   if (type === "RT") {
+    if (instr.includes("out for delivery") || statusLower.includes("out for delivery")) {
+      return { status: "rto_ofd", isActionable: false };
+    }
     return { status: "rto_initiated", isActionable: false };
+  }
+  if (type === "PU") {
+    return { status: "picked_up", isActionable: false };
+  }
+  if (type === "PP" || type === "MN" || statusLower.includes("manifest")) {
+    if (statusLower.includes("pickup") || instr.includes("pickup")) {
+      return { status: "ready_for_pickup", isActionable: false };
+    }
+    return { status: "awb_assigned", isActionable: false };
+  }
+  if (type === "CN" || statusLower.includes("cancel")) {
+    return { status: "cancelled", isActionable: false };
   }
   if (type === "UD") {
     if (instr.includes("out for delivery")) {
@@ -4953,24 +5134,26 @@ async function handleDelhiveryWebhook(req, res) {
       }
     };
     const normalized = normalizeDelhivery(delhiveryPayload);
+    const unifiedStatus = toUnifiedStatus({ source: "delhivery", rawStatus: normalized.status });
     console.log(`[Delhivery Webhook] Normalized status:`, {
       awb,
       statusType,
       effectiveStatus,
       nslCode,
       normalizedStatus: normalized.status,
+      unifiedStatus,
       isActionable: normalized.isActionable
     });
-    const isRTO = normalized.status === "rto_initiated" || normalized.status === "rto_delivered";
-    const isNDR = normalized.status === "ndr";
-    const isDelivered = normalized.status === "delivered";
-    const isOutForDelivery = normalized.status === "out_for_delivery";
-    const isInTransit = normalized.status === "in_transit";
+    const isRTO = unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered";
+    const isNDR = unifiedStatus === "ndr";
+    const isDelivered = unifiedStatus === "delivered";
+    const isOutForDelivery = unifiedStatus === "out_for_delivery";
+    const isInTransit = unifiedStatus === "in_transit";
     const isActionable = normalized.isActionable;
     const isNDRByCode = statusCode && isNDRStatus(statusCode);
     const isRTOByStatusType = statusType?.toUpperCase() === "RT";
     const determineShipmentStatus = () => {
-      return normalized.status;
+      return unifiedStatus;
     };
     if (!shipment) {
       shipment = await storage.getShipmentByOrderId(order.id);
@@ -4999,27 +5182,19 @@ async function handleDelhiveryWebhook(req, res) {
         statusUpdatedAt: /* @__PURE__ */ new Date()
       });
     }
-    const shipmentStatusMap = {
-      "rto_initiated": "RTO",
-      "rto_delivered": "RTO",
-      "delivered": "Delivered",
-      "ndr": "NDR",
-      "out_for_delivery": "Out for Delivery",
-      "in_transit": "In Transit"
-    };
     const orderUpdate = {
-      shipmentStatus: shipmentStatusMap[normalized.status] || effectiveStatus,
-      status: normalized.status,
+      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || effectiveStatus,
+      status: unifiedStatus,
       isActionable
     };
-    console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${normalized.status} (isActionable: ${isActionable})`);
+    console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${unifiedStatus} (isActionable: ${isActionable})`);
     await storage.updateOrder(order.id, orderUpdate);
-    if (previousStatus !== normalized.status) {
+    if (previousStatus !== unifiedStatus) {
       try {
         await storage.createOrderStatus({
           storeId: storeId ?? void 0,
           orderId: order.id,
-          status: normalized.status,
+          status: unifiedStatus,
           previousStatus: previousStatus ?? void 0,
           note: `Delhivery: ${effectiveStatus}${remarks ? ` \u2014 ${remarks}` : ""} (AWB ${awb})`
         });
@@ -5063,9 +5238,9 @@ async function handleDelhiveryWebhook(req, res) {
         rawNdrData: req.body
       });
       console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
-      const shipmentStatusLabel = isRTO ? "RTO" : "NDR";
+      const shipmentStatusLabel = SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "NDR");
       await storage.updateOrder(order.id, {
-        status: normalized.status,
+        status: unifiedStatus,
         shipmentStatus: shipmentStatusLabel,
         nslCode: nslCode || statusCode || null,
         failureReason: remarks || effectiveStatus,
@@ -5087,21 +5262,21 @@ async function handleDelhiveryWebhook(req, res) {
         console.log("[Delhivery Webhook] NDR notification created for agent:", order.assignedTo);
       }
     }
-    const isDeliveryComplete = isDelivered || normalized.status === "rto_delivered";
+    const isDeliveryComplete = isDelivered || unifiedStatus === "rto_delivered";
     if (isDeliveryComplete && !shipmentJustCreated) {
-      console.log("[Delhivery Webhook] Delivery completed:", awb, "status:", normalized.status);
+      console.log("[Delhivery Webhook] Delivery completed:", awb, "status:", unifiedStatus);
       await storage.updateShipment(shipment.id, {
-        status: normalized.status,
+        status: unifiedStatus,
         deliveredAt: statusDateTime ? new Date(statusDateTime) : /* @__PURE__ */ new Date()
       });
       await storage.updateOrder(order.id, {
-        status: normalized.status,
-        shipmentStatus: isRTO ? "RTO" : "Delivered"
+        status: unifiedStatus,
+        shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "Delivered")
       });
     } else if (isDeliveryComplete && shipmentJustCreated) {
       await storage.updateOrder(order.id, {
-        status: normalized.status,
-        shipmentStatus: isRTO ? "RTO" : "Delivered"
+        status: unifiedStatus,
+        shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "Delivered")
       });
     }
     if ((isInTransit || isOutForDelivery) && !isNDR && !isRTO && !isDelivered && !shipmentJustCreated) {
@@ -5132,6 +5307,8 @@ var init_delhiveryWebhook = __esm({
     "use strict";
     init_storage();
     init_delhivery();
+    init_unifiedStatus();
+    init_schema();
     init_delhivery2();
   }
 });
@@ -7238,18 +7415,18 @@ var OrderAssignmentEngine = class {
   }
 };
 
+// server/webhooks.ts
+init_schema();
+
 // server/utils/orderStatus.ts
+init_unifiedStatus();
 function mapShopifyStatus(financialStatus, fulfillmentStatus, shipmentStatus, cancelledAt) {
-  if (cancelledAt) {
-    return "Cancelled";
-  }
-  if (shipmentStatus === "delivered") {
-    return "Delivered";
-  }
-  if (fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial") {
-    return "Shipped";
-  }
-  return "Unfulfilled";
+  return toUnifiedStatus({
+    source: "shopify",
+    fulfillmentStatus,
+    shipmentStatus,
+    cancelledAt
+  });
 }
 function extractFulfillmentTracking(fulfillments) {
   const firstFulfillment = fulfillments?.[0];
@@ -7268,6 +7445,9 @@ function extractFulfillmentTracking(fulfillments) {
     shipmentStatus: firstFulfillment.shipment_status || null
   };
 }
+
+// server/webhooks.ts
+init_unifiedStatus();
 
 // server/webhookStoreResolver.ts
 init_db();
@@ -7700,12 +7880,12 @@ async function handleOrderCancelled(req, res) {
       return res.status(404).json({ error: "Order not found" });
     }
     await storage.updateOrder(existingOrder.id, {
-      status: "Cancelled"
+      status: "cancelled"
     });
     await storage.createOrderStatus({
       storeId: store.id,
       orderId: existingOrder.id,
-      status: "Cancelled",
+      status: "cancelled",
       previousStatus: existingOrder.status,
       changedBy: null,
       note: shopifyOrder.cancel_reason ? `Cancelled: ${shopifyOrder.cancel_reason}` : "Cancelled from Shopify"
@@ -7754,33 +7934,8 @@ async function handleFulfillmentUpdate(req, res) {
     const trackingUrl = fulfillment.tracking_url || existingOrder.trackingUrl;
     const trackingCompany = fulfillment.tracking_company || existingOrder.courierName;
     console.log(`[Fulfillment Update] Order ${existingOrder.shopifyOrderNumber}: shipment_status = "${shopifyShipmentStatus}"`);
-    const mapShipmentStatusToInternal = (status) => {
-      if (!status) return null;
-      const statusLower = status.toLowerCase();
-      const statusMap = {
-        "confirmed": "Confirmed",
-        "in_transit": "In Transit",
-        "out_for_delivery": "Out for Delivery",
-        "delivered": "Delivered",
-        "attempted_delivery": "Attempted Delivery",
-        "failure": "Delivery Failed",
-        "ready_for_pickup": "Ready for Pickup",
-        "picked_up": "Picked Up"
-      };
-      return statusMap[statusLower] || status;
-    };
-    const mappedShipmentStatus = mapShipmentStatusToInternal(shopifyShipmentStatus);
-    let newOrderStatus = void 0;
-    if (shopifyShipmentStatus) {
-      const statusLower = shopifyShipmentStatus.toLowerCase();
-      if (statusLower === "out_for_delivery") {
-        newOrderStatus = "out_for_delivery";
-      } else if (statusLower === "in_transit") {
-        newOrderStatus = "in_transit";
-      } else if (statusLower === "delivered") {
-        newOrderStatus = "Delivered";
-      }
-    }
+    const newOrderStatus = shopifyShipmentStatus ? toUnifiedStatus({ source: "shopify_fulfillment", rawStatus: shopifyShipmentStatus }) : void 0;
+    const mappedShipmentStatus = newOrderStatus ? SHIPPING_STATUS_LABELS[newOrderStatus] : null;
     const updateData = {
       shipmentStatus: mappedShipmentStatus,
       trackingNumber,

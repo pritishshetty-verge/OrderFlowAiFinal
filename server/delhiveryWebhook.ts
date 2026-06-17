@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { storage } from './storage';
 import { normalizeDelhivery, type DelhiveryPayload } from './logic/rules/delhivery';
+import { toUnifiedStatus } from './logic/unifiedStatus';
+import { SHIPPING_STATUS_LABELS } from '@shared/schema';
 import { isNDRStatus, mapNDRStatus } from './services/delhivery';
 
 interface DelhiveryDefaultPayload {
@@ -259,33 +261,40 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       },
     };
 
-    // Use the strict normalization logic from delhivery.ts
+    // Use the strict normalization logic from delhivery.ts, then pipe the
+    // result through the centralized unified mapper so orders.status only ever
+    // carries a canonical SHIPPING_STATUSES value.
     const normalized = normalizeDelhivery(delhiveryPayload);
-    
+    const unifiedStatus = toUnifiedStatus({ source: 'delhivery', rawStatus: normalized.status });
+
     console.log(`[Delhivery Webhook] Normalized status:`, {
       awb,
       statusType,
       effectiveStatus,
       nslCode,
       normalizedStatus: normalized.status,
+      unifiedStatus,
       isActionable: normalized.isActionable,
     });
 
-    // Map normalized status to flags for compatibility with existing code
-    const isRTO = normalized.status === 'rto_initiated' || normalized.status === 'rto_delivered';
-    const isNDR = normalized.status === 'ndr';
-    const isDelivered = normalized.status === 'delivered';
-    const isOutForDelivery = normalized.status === 'out_for_delivery';
-    const isInTransit = normalized.status === 'in_transit';
+    // Map unified status to flags for compatibility with existing code
+    const isRTO =
+      unifiedStatus === 'rto_initiated' ||
+      unifiedStatus === 'rto_ofd' ||
+      unifiedStatus === 'rto_delivered';
+    const isNDR = unifiedStatus === 'ndr';
+    const isDelivered = unifiedStatus === 'delivered';
+    const isOutForDelivery = unifiedStatus === 'out_for_delivery';
+    const isInTransit = unifiedStatus === 'in_transit';
     const isActionable = normalized.isActionable;
     
     // Legacy compatibility flags
     const isNDRByCode = statusCode && isNDRStatus(statusCode);
     const isRTOByStatusType = statusType?.toUpperCase() === 'RT';
 
-    // Determine initial shipment status based on normalized status
+    // Determine initial shipment status based on the unified status
     const determineShipmentStatus = (): string => {
-      return normalized.status;
+      return unifiedStatus;
     };
 
     // Check if shipment exists for this order, if not - create one on the fly
@@ -324,36 +333,28 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
     }
     
-    // Update order's shipment status AND main status using normalized values
-    // Map normalized status to shipmentStatus display values
-    const shipmentStatusMap: Record<string, string> = {
-      'rto_initiated': 'RTO',
-      'rto_delivered': 'RTO',
-      'delivered': 'Delivered',
-      'ndr': 'NDR',
-      'out_for_delivery': 'Out for Delivery',
-      'in_transit': 'In Transit',
-    };
-    
+    // Update order's main status (canonical) AND the human-readable
+    // shipmentStatus breadcrumb. Display copy comes from the single source of
+    // truth, SHIPPING_STATUS_LABELS.
     const orderUpdate: Record<string, any> = {
-      shipmentStatus: shipmentStatusMap[normalized.status] || effectiveStatus,
-      status: normalized.status,
+      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || effectiveStatus,
+      status: unifiedStatus,
       isActionable: isActionable,
     };
-    
-    console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${normalized.status} (isActionable: ${isActionable})`);
+
+    console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${unifiedStatus} (isActionable: ${isActionable})`);
 
     await storage.updateOrder(order.id, orderUpdate);
 
     // Store-scoped status-history log. Only record an entry when the
-    // normalized status actually changed, so repeated webhooks for the
+    // unified status actually changed, so repeated webhooks for the
     // same state don't spam the timeline.
-    if (previousStatus !== normalized.status) {
+    if (previousStatus !== unifiedStatus) {
       try {
         await storage.createOrderStatus({
           storeId: storeId ?? undefined,
           orderId: order.id,
-          status: normalized.status,
+          status: unifiedStatus,
           previousStatus: previousStatus ?? undefined,
           note: `Delhivery: ${effectiveStatus}${remarks ? ` — ${remarks}` : ''} (AWB ${awb})`,
         });
@@ -404,11 +405,11 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       
       console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
 
-      const shipmentStatusLabel = isRTO ? 'RTO' : 'NDR';
+      const shipmentStatusLabel = SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? 'RTO' : 'NDR');
 
       // Update order with NDR details including nslCode, failureReason, lastFailedAt, isActionable
       await storage.updateOrder(order.id, {
-        status: normalized.status,
+        status: unifiedStatus,
         shipmentStatus: shipmentStatusLabel,
         nslCode: nslCode || statusCode || null,
         failureReason: remarks || effectiveStatus,
@@ -436,23 +437,23 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
     // Handle delivered status (skip if shipment was just created with correct status)
     // Also handle rto_delivered as a delivery event
-    const isDeliveryComplete = isDelivered || normalized.status === 'rto_delivered';
+    const isDeliveryComplete = isDelivered || unifiedStatus === 'rto_delivered';
     if (isDeliveryComplete && !shipmentJustCreated) {
-      console.log('[Delhivery Webhook] Delivery completed:', awb, 'status:', normalized.status);
-      
+      console.log('[Delhivery Webhook] Delivery completed:', awb, 'status:', unifiedStatus);
+
       await storage.updateShipment(shipment.id, {
-        status: normalized.status,
+        status: unifiedStatus,
         deliveredAt: statusDateTime ? new Date(statusDateTime) : new Date(),
       });
 
       await storage.updateOrder(order.id, {
-        status: normalized.status,
-        shipmentStatus: isRTO ? 'RTO' : 'Delivered',
+        status: unifiedStatus,
+        shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? 'RTO' : 'Delivered'),
       });
     } else if (isDeliveryComplete && shipmentJustCreated) {
       await storage.updateOrder(order.id, {
-        status: normalized.status,
-        shipmentStatus: isRTO ? 'RTO' : 'Delivered',
+        status: unifiedStatus,
+        shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? 'RTO' : 'Delivered'),
       });
     }
 

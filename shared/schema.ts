@@ -449,7 +449,7 @@ export const orders = pgTable("orders", {
   customerPhone: text("customer_phone").notNull(),
   
   // Order details
-  status: text("status").notNull().default("pending"), // pending, assigned, confirmed, shipped, delivered, cancelled, ndr
+  status: text("status").notNull().default("pending"), // pre-ship workflow: pending, assigned, confirmed | then a SHIPPING_STATUSES value (see unified list)
   callStatus: text("call_status").notNull().default("Pending"), // Pending, Confirmed, Cancelled, Follow Up
   fulfillmentStatus: text("fulfillment_status"), // Shopify fulfillment status
   fulfilledAt: timestamp("fulfilled_at"),
@@ -1433,6 +1433,60 @@ export type ReturnStatus = (typeof RETURN_STATUSES)[number];
 
 export const REFUND_TYPES = ["STORE_CREDIT", "ORIGINAL_PAYMENT", "NO_REFUND"] as const;
 export type RefundType = (typeof REFUND_TYPES)[number];
+
+// ============================================================================
+// UNIFIED SHIPPING STATUSES (single source of truth = orders.status)
+// ============================================================================
+//
+// Every logistics partner (Delhivery, Shiprocket) and Shopify funnels its
+// proprietary status vocabulary through server/logic/unifiedStatus.ts and
+// lands on exactly ONE of these keys, which is written to `orders.status`.
+//
+// `orders.status` is a plain text column (codebase convention — see the note
+// on the returns table above) but is constrained at the application layer to
+// this tuple plus the pre-shipment workflow values (pending/assigned/confirmed)
+// that the call-centre flow assigns before a courier ever scans the parcel.
+//
+// Keys are intentionally kept stable with the values already wired into the
+// analytics SQL (rto_initiated, ndr, out_for_delivery, …) so this refactor
+// needs no data migration. The human-facing names live in
+// SHIPPING_STATUS_LABELS, which is the ONLY place display copy is defined.
+// ============================================================================
+
+export const SHIPPING_STATUSES = [
+  "unfulfilled",
+  "awb_assigned", // AWB Assigned / Ready To Ship
+  "ready_for_pickup",
+  "picked_up",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "ndr", // displayed as "Undelivered"
+  "rto_initiated", // displayed as "RTO in Transit"
+  "rto_ofd", // RTO Out for Delivery
+  "rto_delivered", // RTO Delivered / Returned
+  "cancelled",
+  "lost",
+] as const;
+export type ShippingStatus = (typeof SHIPPING_STATUSES)[number];
+
+// Human-facing copy for each unified status. Single source of display truth —
+// the frontend badge and any backend logging read labels from here.
+export const SHIPPING_STATUS_LABELS: Record<ShippingStatus, string> = {
+  unfulfilled: "Unfulfilled",
+  awb_assigned: "AWB Assigned",
+  ready_for_pickup: "Ready for Pickup",
+  picked_up: "Picked Up",
+  in_transit: "In Transit",
+  out_for_delivery: "Out for Delivery",
+  delivered: "Delivered",
+  ndr: "Undelivered",
+  rto_initiated: "RTO in Transit",
+  rto_ofd: "RTO OFD",
+  rto_delivered: "RTO Delivered",
+  cancelled: "Cancelled",
+  lost: "Lost",
+};
 
 export const returns = pgTable(
   "returns",

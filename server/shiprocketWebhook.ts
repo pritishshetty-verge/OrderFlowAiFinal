@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { storage } from './storage';
+import { toUnifiedStatus } from './logic/unifiedStatus';
+import { SHIPPING_STATUS_LABELS } from '@shared/schema';
 
 interface ShiprocketWebhookPayload {
   awb: string;
@@ -92,27 +94,32 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
       return res.status(404).json({ error: 'Shipment not found' });
     }
 
-    // Update shipment status
+    // Update raw shipment tracking string
     await storage.updateShipment(shipment.id, {
       currentStatus: payload.current_status,
       statusUpdatedAt: new Date(),
       courierName: payload.courier_name || shipment.courierName,
     });
 
-    // Check if this is an NDR event
-    const ndrStatuses = [
-      'ndr',
-      'NDR',
-      'non delivery report',
-      'customer unavailable',
-      'address issue',
-      'refused',
-      'incomplete address',
-    ];
+    // Translate Shiprocket's free-text status into our canonical status via
+    // the single centralized mapper, then write it to orders.status (the
+    // single source of truth). An explicit ndr_status flag always means NDR.
+    const unifiedStatus = payload.ndr_status
+      ? 'ndr'
+      : toUnifiedStatus({ source: 'shiprocket', rawStatus: payload.current_status });
 
-    const isNDR = ndrStatuses.some(status => 
-      payload.current_status.toLowerCase().includes(status.toLowerCase())
-    ) || payload.ndr_status;
+    const isNDR = unifiedStatus === 'ndr';
+    const isDelivered = unifiedStatus === 'delivered';
+    const isRTO =
+      unifiedStatus === 'rto_initiated' ||
+      unifiedStatus === 'rto_ofd' ||
+      unifiedStatus === 'rto_delivered';
+
+    // Always update the order's canonical status + human-readable breadcrumb.
+    await storage.updateOrder(shipment.orderId, {
+      status: unifiedStatus,
+      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || payload.current_status,
+    });
 
     if (isNDR) {
       console.log('[Shiprocket Webhook] NDR event detected:', {
@@ -124,7 +131,7 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
       // Determine NDR reason
       let ndrStatus = 'other';
       const statusLower = (payload.current_status || '').toLowerCase();
-      
+
       if (statusLower.includes('customer unavailable') || statusLower.includes('not available')) {
         ndrStatus = 'customer_unavailable';
       } else if (statusLower.includes('address') || statusLower.includes('incomplete')) {
@@ -134,7 +141,7 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
       }
 
       // Create NDR event
-      const ndrEvent = await storage.createNDREvent({
+      await storage.createNDREvent({
         shipmentId: shipment.id,
         orderId: shipment.orderId,
         awb: payload.awb,
@@ -144,15 +151,9 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
         rawNdrData: payload,
       });
 
-      // Update order status to NDR
-      await storage.updateOrder(shipment.orderId, {
-        status: 'ndr',
-        shipmentStatus: 'NDR',
-      });
-
       // Get order to find assigned agent
       const order = await storage.getOrder(shipment.orderId);
-      
+
       if (order && order.assignedTo) {
         // Create notification for assigned agent
         await storage.createNotification({
@@ -173,48 +174,28 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
       });
     }
 
-    // Check for delivered status
-    const deliveredStatuses = ['delivered', 'delivery completed', 'successful'];
-    const isDelivered = deliveredStatuses.some(status =>
-      payload.current_status.toLowerCase().includes(status.toLowerCase())
-    );
-
     if (isDelivered) {
       console.log('[Shiprocket Webhook] Delivery completed:', payload.awb);
-      
+
       await storage.updateShipment(shipment.id, {
         status: 'delivered',
         deliveredAt: new Date(),
       });
-
-      await storage.updateOrder(shipment.orderId, {
-        status: 'delivered',
-        shipmentStatus: 'Delivered',
-      });
     }
 
-    // Check for RTO (Return to Origin)
-    const rtoStatuses = ['rto', 'return to origin', 'returned'];
-    const isRTO = rtoStatuses.some(status =>
-      payload.current_status.toLowerCase().includes(status.toLowerCase())
-    );
-
     if (isRTO) {
-      console.log('[Shiprocket Webhook] RTO detected:', payload.awb);
-      
+      console.log('[Shiprocket Webhook] RTO detected:', payload.awb, unifiedStatus);
+
       await storage.updateShipment(shipment.id, {
         status: 'rto',
-      });
-
-      await storage.updateOrder(shipment.orderId, {
-        status: 'ndr',
-        shipmentStatus: 'RTO',
+        ...(unifiedStatus === 'rto_delivered' ? { deliveredAt: new Date() } : {}),
       });
     }
 
     console.log('[Shiprocket Webhook] Webhook processed successfully:', {
       awb: payload.awb,
       status: payload.current_status,
+      unifiedStatus,
       isNDR,
       isDelivered,
       isRTO,
