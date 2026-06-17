@@ -3,6 +3,30 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { stores } from '@shared/schema';
 import { decrypt } from '../encryption';
+import type {
+  CourierProvider,
+  ReversePickupRequest,
+  ReversePickupResult,
+  ReversePickupErrorCode,
+} from './courier/types';
+
+/**
+ * Map a Delhivery failure message onto our provider-agnostic error code so the
+ * route/UI can react (and tell ops exactly why) without parsing free text.
+ */
+function classifyReverseError(message: string): ReversePickupErrorCode {
+  const m = (message || '').toLowerCase();
+  if (m.includes('serviceab') || m.includes('non-serviceable') || (m.includes('pin') && m.includes('serv'))) {
+    return 'UNSERVICEABLE';
+  }
+  if (m.includes('warehouse') || m.includes('pickup_location') || m.includes('client') || m.includes('registered')) {
+    return 'WAREHOUSE_NOT_REGISTERED';
+  }
+  if (m.includes('address') || m.includes('pincode') || m.includes('phone') || m.includes('invalid')) {
+    return 'INVALID_ADDRESS';
+  }
+  return 'PROVIDER_REJECTED';
+}
 
 const DELHIVERY_BASE_URL = process.env.NODE_ENV === 'production'
   ? 'https://track.delhivery.com'
@@ -130,7 +154,9 @@ export interface DelhiveryClientConfig {
 // functions used by both the webhook and the route layer.
 // ─────────────────────────────────────────────────────────────────────
 
-export class DelhiveryClient {
+export class DelhiveryClient implements CourierProvider {
+  /** CourierProvider slug — used for logging / persistence. */
+  readonly name = 'delhivery';
   private client: AxiosInstance;
   private token: string;
   readonly clientName: string | null;
@@ -228,45 +254,39 @@ export class DelhiveryClient {
   }
 
   /**
-   * Schedule a REVERSE pickup (RMA return). The logistics are inverted
-   * vs. a forward shipment: the consignee fields carry the CUSTOMER's
-   * address (Delhivery picks the parcel up there) and `payment_mode`
-   * is "Pickup" — Delhivery's convention that flags a reverse leg. The
-   * registered `pickup_location` (this store's warehouse, keyed by the
-   * client name) becomes the return destination. Returns the generated
-   * reverse AWB on success.
+   * Schedule a paperless B2C REVERSE pickup (CourierProvider contract).
+   *
+   * Per Delhivery's docs, a reverse pickup uses the SAME Order Creation
+   * endpoint (`/api/cmu/create.json`) as a forward shipment, but with
+   * `payment_mode: "Pickup"` — that flag turns the leg around and tells
+   * Delhivery to send a rider with the label (paperless; the customer doesn't
+   * print anything). The logistics are inverted vs. a forward shipment:
+   *   - consignee fields = the CUSTOMER (where Delhivery collects FROM)
+   *   - registered `pickup_location` (this store's warehouse, keyed by client
+   *     name) = the return DESTINATION.
+   *
+   * Never throws for an expected courier rejection (e.g. unserviceable
+   * pincode): returns `{ success: false, error, errorCode }` so ops sees why.
    */
-  async createReversePickup(params: {
-    rmaNumber: string;
-    customerName: string;
-    customerPhone: string;
-    pickupAddressLine1: string;
-    pickupAddressLine2?: string;
-    pickupCity: string;
-    pickupState: string;
-    pickupPincode: string;
-    pickupCountry?: string;
-    weight?: number;
-    productsDesc?: string;
-  }): Promise<{ success: boolean; awb?: string; error?: string }> {
+  async scheduleReversePickup(req: ReversePickupRequest): Promise<ReversePickupResult> {
     try {
       const shipmentPayload: DelhiveryShipmentPayload = {
         // Consignee = customer: on a reverse leg this is where Delhivery
         // collects the parcel FROM.
-        name: params.customerName,
-        add: [params.pickupAddressLine1, params.pickupAddressLine2]
+        name: req.customerName,
+        add: [req.pickupAddressLine1, req.pickupAddressLine2]
           .filter(Boolean)
           .join(', '),
-        pin: params.pickupPincode,
-        city: params.pickupCity,
-        state: params.pickupState,
-        country: params.pickupCountry || 'India',
-        phone: params.customerPhone,
-        order: params.rmaNumber,
-        // "Pickup" payment mode marks this as a reverse pickup.
+        pin: req.pickupPincode,
+        city: req.pickupCity,
+        state: req.pickupState,
+        country: req.pickupCountry || 'India',
+        phone: req.customerPhone,
+        order: req.rmaNumber,
+        // "Pickup" payment mode marks this as a paperless reverse pickup.
         payment_mode: 'Pickup',
-        products_desc: params.productsDesc || 'Return item',
-        weight: params.weight?.toString() || '0.5',
+        products_desc: req.productsDesc || 'Return item',
+        weight: req.weight?.toString() || '0.5',
         // Registered warehouse = where the return is delivered back to.
         pickup_location: { name: this.clientName || 'Default' },
       };
@@ -293,26 +313,22 @@ export class DelhiveryClient {
         return { success: true, awb };
       }
 
-      return {
-        success: false,
-        error:
-          response.data.packages?.[0]?.remarks?.join(', ') ||
-          response.data.rmk ||
-          response.data.error ||
-          'Unknown error scheduling reverse pickup',
-      };
+      // Delhivery accepted the request but rejected the shipment — surface the
+      // stated reason and classify it (e.g. unserviceable pincode).
+      const error =
+        response.data.packages?.[0]?.remarks?.join(', ') ||
+        response.data.rmk ||
+        response.data.error ||
+        'Delhivery rejected the reverse pickup';
+      return { success: false, error, errorCode: classifyReverseError(error) };
     } catch (error: any) {
-      console.error(
-        'Delhivery createReversePickup error:',
-        error.response?.data || error.message,
-      );
-      return {
-        success: false,
-        error:
-          error.response?.data?.error ||
-          error.message ||
-          'Failed to schedule reverse pickup',
-      };
+      // Network / 5xx / timeout — the courier itself is unreachable.
+      const msg =
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to reach Delhivery to schedule the reverse pickup';
+      console.error('Delhivery scheduleReversePickup error:', error.response?.data || error.message);
+      return { success: false, error: msg, errorCode: 'PROVIDER_UNAVAILABLE' };
     }
   }
 

@@ -182,22 +182,39 @@ function RmaDetailSheet({
       );
       return await res.json();
     },
-    onSuccess: (resp: { awb?: string }) => {
+    onSuccess: (resp: { awb?: string; provider?: string }) => {
+      const courier = resp?.provider
+        ? resp.provider.charAt(0).toUpperCase() + resp.provider.slice(1)
+        : "the courier";
       toast({
         title: "Pickup scheduled",
         description: resp?.awb
-          ? `Reverse pickup booked with Delhivery. AWB ${resp.awb}.`
-          : "Reverse pickup scheduled with Delhivery.",
+          ? `Reverse pickup booked with ${courier}. AWB ${resp.awb}.`
+          : `Reverse pickup scheduled with ${courier}.`,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/returns"] });
       queryClient.invalidateQueries({ queryKey: ["/api/returns", returnId] });
     },
     onError: (err: Error) => {
-      toast({
-        title: "Could not schedule pickup",
-        description: err.message,
-        variant: "destructive",
-      });
+      // The backend returns a clean `{ error, code, provider }`. apiRequest
+      // surfaces it as "<status>: <body>" — unwrap it so ops sees exactly why
+      // the courier refused (e.g. an unserviceable pincode) instead of raw JSON.
+      let description = err.message;
+      let code: string | undefined;
+      try {
+        const parsed = JSON.parse(err.message.replace(/^\d+:\s*/, ""));
+        if (parsed?.error) description = parsed.error;
+        if (parsed?.code) code = parsed.code;
+      } catch {
+        /* message wasn't JSON — show it verbatim */
+      }
+      const title =
+        code === "UNSERVICEABLE"
+          ? "Pickup pincode not serviceable"
+          : code === "WAREHOUSE_NOT_REGISTERED"
+            ? "Warehouse not registered with courier"
+            : "Could not schedule pickup";
+      toast({ title, description, variant: "destructive" });
     },
   });
 

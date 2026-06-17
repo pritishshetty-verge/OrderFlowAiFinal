@@ -3615,18 +3615,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Store-scoped Delhivery client (decrypts this store's token).
-      let delhiveryClient;
+      // Resolve the store's reverse-pickup courier via the generic provider
+      // registry (Delhivery today; Shiprocket / F-ship / … plug in later). The
+      // route stays courier-agnostic — it only calls scheduleReversePickup().
+      let provider;
       try {
-        const { getDelhiveryClient } = await import("./services/delhivery");
-        delhiveryClient = await getDelhiveryClient(storeId);
+        const { resolveReversePickupProvider } = await import("./services/courier");
+        provider = await resolveReversePickupProvider(storeId);
       } catch (e: any) {
         return res.status(400).json({
-          error: e?.message || "Delhivery is not configured for this store",
+          error: e?.message || "No reverse-pickup courier is configured for this store",
         });
       }
 
-      const result = await delhiveryClient.createReversePickup({
+      const result = await provider.scheduleReversePickup({
         rmaNumber: ret.rmaNumber,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
@@ -3639,8 +3641,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       if (!result.success || !result.awb) {
+        // Courier rejected the pickup (e.g. unserviceable pincode) or was
+        // unreachable. Pass the exact reason + machine code through so ops
+        // knows precisely why the approval failed.
         return res.status(502).json({
-          error: result.error || "Delhivery did not return a reverse AWB",
+          error: result.error || `${provider.name} did not return a reverse AWB`,
+          code: result.errorCode,
+          provider: provider.name,
         });
       }
 
@@ -3650,10 +3657,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       console.log(
-        `[returns] storeId=${storeId} RMA=${ret.rmaNumber} reverse pickup scheduled, AWB=${result.awb}`,
+        `[returns] storeId=${storeId} RMA=${ret.rmaNumber} reverse pickup scheduled via ${provider.name}, AWB=${result.awb}`,
       );
 
-      res.json({ success: true, awb: result.awb, return: updated });
+      res.json({ success: true, awb: result.awb, provider: provider.name, return: updated });
     } catch (error: any) {
       console.error("Error scheduling reverse pickup:", error);
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });

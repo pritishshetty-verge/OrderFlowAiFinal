@@ -4683,6 +4683,19 @@ __export(delhivery_exports, {
 });
 import axios from "axios";
 import { eq as eq5 } from "drizzle-orm";
+function classifyReverseError(message) {
+  const m = (message || "").toLowerCase();
+  if (m.includes("serviceab") || m.includes("non-serviceable") || m.includes("pin") && m.includes("serv")) {
+    return "UNSERVICEABLE";
+  }
+  if (m.includes("warehouse") || m.includes("pickup_location") || m.includes("client") || m.includes("registered")) {
+    return "WAREHOUSE_NOT_REGISTERED";
+  }
+  if (m.includes("address") || m.includes("pincode") || m.includes("phone") || m.includes("invalid")) {
+    return "INVALID_ADDRESS";
+  }
+  return "PROVIDER_REJECTED";
+}
 function mapNDRStatus(statusCode) {
   const ndrStatusMap = {
     "EOD-74": "customer_unavailable",
@@ -4760,6 +4773,8 @@ var init_delhivery2 = __esm({
     init_encryption();
     DELHIVERY_BASE_URL = process.env.NODE_ENV === "production" ? "https://track.delhivery.com" : "https://staging-express.delhivery.com";
     DelhiveryClient = class {
+      /** CourierProvider slug — used for logging / persistence. */
+      name = "delhivery";
       client;
       token;
       clientName;
@@ -4824,31 +4839,37 @@ var init_delhivery2 = __esm({
         }
       }
       /**
-       * Schedule a REVERSE pickup (RMA return). The logistics are inverted
-       * vs. a forward shipment: the consignee fields carry the CUSTOMER's
-       * address (Delhivery picks the parcel up there) and `payment_mode`
-       * is "Pickup" — Delhivery's convention that flags a reverse leg. The
-       * registered `pickup_location` (this store's warehouse, keyed by the
-       * client name) becomes the return destination. Returns the generated
-       * reverse AWB on success.
+       * Schedule a paperless B2C REVERSE pickup (CourierProvider contract).
+       *
+       * Per Delhivery's docs, a reverse pickup uses the SAME Order Creation
+       * endpoint (`/api/cmu/create.json`) as a forward shipment, but with
+       * `payment_mode: "Pickup"` — that flag turns the leg around and tells
+       * Delhivery to send a rider with the label (paperless; the customer doesn't
+       * print anything). The logistics are inverted vs. a forward shipment:
+       *   - consignee fields = the CUSTOMER (where Delhivery collects FROM)
+       *   - registered `pickup_location` (this store's warehouse, keyed by client
+       *     name) = the return DESTINATION.
+       *
+       * Never throws for an expected courier rejection (e.g. unserviceable
+       * pincode): returns `{ success: false, error, errorCode }` so ops sees why.
        */
-      async createReversePickup(params) {
+      async scheduleReversePickup(req) {
         try {
           const shipmentPayload = {
             // Consignee = customer: on a reverse leg this is where Delhivery
             // collects the parcel FROM.
-            name: params.customerName,
-            add: [params.pickupAddressLine1, params.pickupAddressLine2].filter(Boolean).join(", "),
-            pin: params.pickupPincode,
-            city: params.pickupCity,
-            state: params.pickupState,
-            country: params.pickupCountry || "India",
-            phone: params.customerPhone,
-            order: params.rmaNumber,
-            // "Pickup" payment mode marks this as a reverse pickup.
+            name: req.customerName,
+            add: [req.pickupAddressLine1, req.pickupAddressLine2].filter(Boolean).join(", "),
+            pin: req.pickupPincode,
+            city: req.pickupCity,
+            state: req.pickupState,
+            country: req.pickupCountry || "India",
+            phone: req.customerPhone,
+            order: req.rmaNumber,
+            // "Pickup" payment mode marks this as a paperless reverse pickup.
             payment_mode: "Pickup",
-            products_desc: params.productsDesc || "Return item",
-            weight: params.weight?.toString() || "0.5",
+            products_desc: req.productsDesc || "Return item",
+            weight: req.weight?.toString() || "0.5",
             // Registered warehouse = where the return is delivered back to.
             pickup_location: { name: this.clientName || "Default" }
           };
@@ -4868,19 +4889,12 @@ var init_delhivery2 = __esm({
           if (response.data.success && awb) {
             return { success: true, awb };
           }
-          return {
-            success: false,
-            error: response.data.packages?.[0]?.remarks?.join(", ") || response.data.rmk || response.data.error || "Unknown error scheduling reverse pickup"
-          };
+          const error = response.data.packages?.[0]?.remarks?.join(", ") || response.data.rmk || response.data.error || "Delhivery rejected the reverse pickup";
+          return { success: false, error, errorCode: classifyReverseError(error) };
         } catch (error) {
-          console.error(
-            "Delhivery createReversePickup error:",
-            error.response?.data || error.message
-          );
-          return {
-            success: false,
-            error: error.response?.data?.error || error.message || "Failed to schedule reverse pickup"
-          };
+          const msg = error.response?.data?.error || error.message || "Failed to reach Delhivery to schedule the reverse pickup";
+          console.error("Delhivery scheduleReversePickup error:", error.response?.data || error.message);
+          return { success: false, error: msg, errorCode: "PROVIDER_UNAVAILABLE" };
         }
       }
       async trackShipment(awb) {
@@ -5893,6 +5907,41 @@ var init_meta = __esm({
     META_API_VERSION = "v19.0";
     META_API_HOST = "https://graph.facebook.com";
     PURCHASE_ACTION_TYPE = "purchase";
+  }
+});
+
+// server/services/courier/types.ts
+var init_types = __esm({
+  "server/services/courier/types.ts"() {
+    "use strict";
+  }
+});
+
+// server/services/courier/index.ts
+var courier_exports = {};
+__export(courier_exports, {
+  DEFAULT_REVERSE_PROVIDER: () => DEFAULT_REVERSE_PROVIDER,
+  REVERSE_PICKUP_PROVIDERS: () => REVERSE_PICKUP_PROVIDERS,
+  resolveReversePickupProvider: () => resolveReversePickupProvider
+});
+async function resolveReversePickupProvider(storeId, provider = DEFAULT_REVERSE_PROVIDER) {
+  switch (provider) {
+    case "delhivery":
+      return getDelhiveryClient(storeId);
+    default: {
+      const _exhaustive = provider;
+      throw new Error(`Reverse pickups are not supported for provider "${_exhaustive}"`);
+    }
+  }
+}
+var REVERSE_PICKUP_PROVIDERS, DEFAULT_REVERSE_PROVIDER;
+var init_courier = __esm({
+  "server/services/courier/index.ts"() {
+    "use strict";
+    init_delhivery2();
+    init_types();
+    REVERSE_PICKUP_PROVIDERS = ["delhivery"];
+    DEFAULT_REVERSE_PROVIDER = "delhivery";
   }
 });
 
@@ -11000,16 +11049,16 @@ async function registerRoutes(app2) {
           error: "Order is missing a shipping address; cannot schedule a pickup"
         });
       }
-      let delhiveryClient;
+      let provider;
       try {
-        const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
-        delhiveryClient = await getDelhiveryClient2(storeId);
+        const { resolveReversePickupProvider: resolveReversePickupProvider2 } = await Promise.resolve().then(() => (init_courier(), courier_exports));
+        provider = await resolveReversePickupProvider2(storeId);
       } catch (e) {
         return res.status(400).json({
-          error: e?.message || "Delhivery is not configured for this store"
+          error: e?.message || "No reverse-pickup courier is configured for this store"
         });
       }
-      const result = await delhiveryClient.createReversePickup({
+      const result = await provider.scheduleReversePickup({
         rmaNumber: ret.rmaNumber,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
@@ -11022,7 +11071,9 @@ async function registerRoutes(app2) {
       });
       if (!result.success || !result.awb) {
         return res.status(502).json({
-          error: result.error || "Delhivery did not return a reverse AWB"
+          error: result.error || `${provider.name} did not return a reverse AWB`,
+          code: result.errorCode,
+          provider: provider.name
         });
       }
       const updated = await storage.updateReturn(ret.id, {
@@ -11030,9 +11081,9 @@ async function registerRoutes(app2) {
         trackingAwb: result.awb
       });
       console.log(
-        `[returns] storeId=${storeId} RMA=${ret.rmaNumber} reverse pickup scheduled, AWB=${result.awb}`
+        `[returns] storeId=${storeId} RMA=${ret.rmaNumber} reverse pickup scheduled via ${provider.name}, AWB=${result.awb}`
       );
-      res.json({ success: true, awb: result.awb, return: updated });
+      res.json({ success: true, awb: result.awb, provider: provider.name, return: updated });
     } catch (error) {
       console.error("Error scheduling reverse pickup:", error);
       res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
