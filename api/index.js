@@ -7181,6 +7181,42 @@ function verifyPayuHash(payload) {
 }
 var RETURN_FEE_AMOUNT = "150.00";
 
+// server/logic/returnGuards.ts
+var OK = { ok: true };
+function canManuallySetStatus(current, target) {
+  if (current === "PENDING_FEE" && target !== "REJECTED") {
+    return {
+      ok: false,
+      status: 402,
+      code: "FEE_UNPAID",
+      error: "Return fee is unpaid. It can only be advanced by a successful payment, or rejected."
+    };
+  }
+  return OK;
+}
+function canSchedulePickup(current, returnFeePaid) {
+  if (current === "PENDING_FEE" || !returnFeePaid) {
+    return {
+      ok: false,
+      status: 402,
+      code: "FEE_UNPAID",
+      error: "Return fee has not been paid; cannot schedule a pickup."
+    };
+  }
+  if (current !== "PENDING_APPROVAL") {
+    return {
+      ok: false,
+      status: 400,
+      code: "INVALID_STATE",
+      error: `Return is not awaiting approval (current: ${current})`
+    };
+  }
+  return OK;
+}
+function shouldWebhookAdvance(current) {
+  return current === "PENDING_FEE";
+}
+
 // server/routes.ts
 init_storage();
 init_db();
@@ -10903,11 +10939,9 @@ async function registerRoutes(app2) {
       if (existing.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      if (existing.status === "PENDING_FEE" && status !== "REJECTED") {
-        return res.status(402).json({
-          error: "Return fee is unpaid. It can only be advanced by a successful payment, or rejected.",
-          code: "FEE_UNPAID"
-        });
+      const gate = canManuallySetStatus(existing.status, status);
+      if (!gate.ok) {
+        return res.status(gate.status).json({ error: gate.error, code: gate.code });
       }
       const updated = await storage.updateReturnStatus(req.params.id, status);
       res.json(updated);
@@ -10950,16 +10984,9 @@ async function registerRoutes(app2) {
       if (ret.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      if (ret.status === "PENDING_FEE" || !ret.returnFeePaid) {
-        return res.status(402).json({
-          error: "Return fee has not been paid; cannot schedule a pickup.",
-          code: "FEE_UNPAID"
-        });
-      }
-      if (ret.status !== "PENDING_APPROVAL") {
-        return res.status(400).json({
-          error: `Return is not awaiting approval (current: ${ret.status})`
-        });
+      const gate = canSchedulePickup(ret.status, ret.returnFeePaid);
+      if (!gate.ok) {
+        return res.status(gate.status).json({ error: gate.error, code: gate.code });
       }
       if (!ret.orderId) {
         return res.status(400).json({ error: "Return has no linked order to pick up from" });
@@ -11218,7 +11245,7 @@ async function registerRoutes(app2) {
           console.warn(`[payu-webhook] no return for txnid=${txnid}`);
           return res.status(200).json({ received: true, found: false });
         }
-        if (ret.status === "PENDING_FEE") {
+        if (shouldWebhookAdvance(ret.status)) {
           await storage.updateReturn(ret.id, {
             status: "PENDING_APPROVAL",
             returnFeePaid: true,

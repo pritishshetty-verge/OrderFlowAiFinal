@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { createServer, type Server } from "http";
 import crypto from "node:crypto";
 import { generatePayuHash, verifyPayuHash, getPayuKey, RETURN_FEE_AMOUNT } from "./services/payu";
+import { canManuallySetStatus, canSchedulePickup, shouldWebhookAdvance } from "./logic/returnGuards";
 import { storage } from "./storage";
 import { db } from "./db";
 import {
@@ -3536,17 +3537,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existing.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      // SECURITY — payment gate. A return in PENDING_FEE is awaiting the
-      // customer's reverse-pickup fee. The PayU webhook is the ONLY mechanism
-      // allowed to advance it to an actionable state. Through this manual
-      // endpoint the single permitted transition out of PENDING_FEE is an
-      // explicit rejection (so ops can clear abandoned, never-paid requests).
-      if (existing.status === "PENDING_FEE" && status !== "REJECTED") {
-        return res.status(402).json({
-          error:
-            "Return fee is unpaid. It can only be advanced by a successful payment, or rejected.",
-          code: "FEE_UNPAID",
-        });
+      // SECURITY — payment gate (see server/logic/returnGuards.ts). A return in
+      // PENDING_FEE may only be advanced by the paid PayU webhook; the single
+      // manual transition permitted here is an explicit rejection.
+      const gate = canManuallySetStatus(existing.status, status);
+      if (!gate.ok) {
+        return res.status(gate.status).json({ error: gate.error, code: gate.code });
       }
       const updated = await storage.updateReturnStatus(req.params.id, status);
       res.json(updated);
@@ -3598,22 +3594,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (ret.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      // SECURITY — payment gate. A return sits in PENDING_FEE until the
-      // customer pays the reverse-pickup fee; the PayU webhook is the ONLY
-      // thing that advances it to PENDING_APPROVAL (and sets returnFeePaid).
-      // Never schedule a pickup for an unpaid return, or ops would fulfil a
-      // free return. Check both the status AND the paid flag (defence in depth).
-      if (ret.status === "PENDING_FEE" || !ret.returnFeePaid) {
-        return res.status(402).json({
-          error: "Return fee has not been paid; cannot schedule a pickup.",
-          code: "FEE_UNPAID",
-        });
-      }
-      // Only an approval-pending (fee-paid) return can be scheduled.
-      if (ret.status !== "PENDING_APPROVAL") {
-        return res.status(400).json({
-          error: `Return is not awaiting approval (current: ${ret.status})`,
-        });
+      // SECURITY — payment gate (see server/logic/returnGuards.ts). Only a
+      // fee-paid, approval-pending return may be scheduled for a reverse pickup;
+      // the paid PayU webhook is the only thing that reaches that state.
+      const gate = canSchedulePickup(ret.status, ret.returnFeePaid);
+      if (!gate.ok) {
+        return res.status(gate.status).json({ error: gate.error, code: gate.code });
       }
       if (!ret.orderId) {
         return res.status(400).json({ error: "Return has no linked order to pick up from" });
@@ -4001,8 +3987,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(200).json({ received: true, found: false });
         }
 
-        // Idempotent: only advance a still-pending-fee return.
-        if (ret.status === "PENDING_FEE") {
+        // Idempotent: only advance a still-pending-fee return. This is the sole
+        // sanctioned path out of PENDING_FEE (see server/logic/returnGuards.ts).
+        if (shouldWebhookAdvance(ret.status)) {
           await storage.updateReturn(ret.id, {
             status: "PENDING_APPROVAL",
             returnFeePaid: true,
