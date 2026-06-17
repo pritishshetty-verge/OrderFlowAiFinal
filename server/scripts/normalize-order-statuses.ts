@@ -4,18 +4,29 @@ import { sql } from "drizzle-orm";
 import { SHIPPING_STATUSES } from "@shared/schema";
 
 /**
- * One-off backfill: normalize historical `orders.status` legacy string formats
+ * One-off backfill: normalize historical legacy shipping-status strings
  * (Title-case Shopify output like "Shipped"/"Delivered"/"Cancelled", plus older
  * aliases) into the strict canonical SHIPPING_STATUSES keys, so analytics never
  * has to special-case legacy formats again.
  *
+ * Applies to `orders.status` and BOTH status columns of
+ * `order_status_history` (status + previous_status).
+ *
  * Safety:
  *  - Only the explicit legacy values below are touched. Canonical shipping keys
- *    and the pre-ship workflow states (pending/assigned/confirmed/followup) are
- *    left untouched.
+ *    and the pre-ship workflow states (pending/assigned/confirmed/follow up/…)
+ *    are left untouched — their casing is owned by the call-centre flow, not
+ *    this shipping refactor.
  *  - Every target is validated against SHIPPING_STATUSES.
  *  - Runs in a single transaction and is idempotent (re-running maps 0 rows).
  */
+
+// (table, column) pairs to normalize, in order.
+const TARGETS: Array<{ table: string; column: string }> = [
+  { table: "orders", column: "status" },
+  { table: "order_status_history", column: "status" },
+  { table: "order_status_history", column: "previous_status" },
+];
 
 // Exact legacy value (as stored) → canonical key.
 const LEGACY_MAP: Record<string, string> = {
@@ -36,10 +47,14 @@ const LEGACY_MAP: Record<string, string> = {
   NDR: "ndr",
 };
 
-async function snapshot(label: string) {
-  const r = await db.execute(sql`
-    SELECT status, COUNT(*)::int AS n FROM orders GROUP BY status ORDER BY n DESC`);
-  console.log(`\n${label}:`);
+async function snapshot(table: string, column: string, label: string) {
+  // table/column are hardcoded constants from TARGETS — safe to inline.
+  const r = await db.execute(
+    sql.raw(
+      `SELECT ${column} AS value, COUNT(*)::int AS n FROM ${table} GROUP BY ${column} ORDER BY n DESC`,
+    ),
+  );
+  console.log(`\n${label} — ${table}.${column}:`);
   console.table((r as any).rows ?? r);
 }
 
@@ -52,32 +67,39 @@ async function main() {
     }
   }
 
-  await snapshot("BEFORE");
+  for (const { table, column } of TARGETS) {
+    await snapshot(table, column, "BEFORE");
+  }
 
   const updated: Record<string, number> = {};
   let total = 0;
 
   await db.transaction(async (tx) => {
-    for (const [from, to] of Object.entries(LEGACY_MAP)) {
-      const res: any = await tx.execute(sql`
-        UPDATE orders SET status = ${to} WHERE status = ${from}`);
-      const n = res.rowCount ?? 0;
-      if (n > 0) {
-        updated[`${from} → ${to}`] = n;
-        total += n;
+    for (const { table, column } of TARGETS) {
+      for (const [from, to] of Object.entries(LEGACY_MAP)) {
+        const res: any = await tx.execute(
+          sql`UPDATE ${sql.raw(table)} SET ${sql.raw(column)} = ${to} WHERE ${sql.raw(column)} = ${from}`,
+        );
+        const n = res.rowCount ?? 0;
+        if (n > 0) {
+          updated[`${table}.${column}: ${from} → ${to}`] = n;
+          total += n;
+        }
       }
     }
   });
 
   console.log("\n=== Backfill summary ===");
   if (total === 0) {
-    console.log("No legacy rows found — orders.status already pristine.");
+    console.log("No legacy rows found — already pristine.");
   } else {
     console.table(updated);
     console.log(`Total rows updated: ${total}`);
   }
 
-  await snapshot("AFTER");
+  for (const { table, column } of TARGETS) {
+    await snapshot(table, column, "AFTER");
+  }
   process.exit(0);
 }
 
