@@ -10903,6 +10903,12 @@ async function registerRoutes(app2) {
       if (existing.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
+      if (existing.status === "PENDING_FEE" && status !== "REJECTED") {
+        return res.status(402).json({
+          error: "Return fee is unpaid. It can only be advanced by a successful payment, or rejected.",
+          code: "FEE_UNPAID"
+        });
+      }
       const updated = await storage.updateReturnStatus(req.params.id, status);
       res.json(updated);
     } catch (error) {
@@ -10944,9 +10950,15 @@ async function registerRoutes(app2) {
       if (ret.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      if (ret.status !== "PENDING_APPROVAL" && ret.status !== "PENDING_FEE") {
+      if (ret.status === "PENDING_FEE" || !ret.returnFeePaid) {
+        return res.status(402).json({
+          error: "Return fee has not been paid; cannot schedule a pickup.",
+          code: "FEE_UNPAID"
+        });
+      }
+      if (ret.status !== "PENDING_APPROVAL") {
         return res.status(400).json({
-          error: `Return is not in a pending state (current: ${ret.status})`
+          error: `Return is not awaiting approval (current: ${ret.status})`
         });
       }
       if (!ret.orderId) {

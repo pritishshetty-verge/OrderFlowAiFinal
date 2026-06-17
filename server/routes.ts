@@ -3536,6 +3536,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existing.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
+      // SECURITY — payment gate. A return in PENDING_FEE is awaiting the
+      // customer's reverse-pickup fee. The PayU webhook is the ONLY mechanism
+      // allowed to advance it to an actionable state. Through this manual
+      // endpoint the single permitted transition out of PENDING_FEE is an
+      // explicit rejection (so ops can clear abandoned, never-paid requests).
+      if (existing.status === "PENDING_FEE" && status !== "REJECTED") {
+        return res.status(402).json({
+          error:
+            "Return fee is unpaid. It can only be advanced by a successful payment, or rejected.",
+          code: "FEE_UNPAID",
+        });
+      }
       const updated = await storage.updateReturnStatus(req.params.id, status);
       res.json(updated);
     } catch (error) {
@@ -3586,10 +3598,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (ret.storeId !== storeId) {
         return res.status(403).json({ error: "Return belongs to a different store" });
       }
-      // Only pending returns can be approved into a pickup.
-      if (ret.status !== "PENDING_APPROVAL" && ret.status !== "PENDING_FEE") {
+      // SECURITY — payment gate. A return sits in PENDING_FEE until the
+      // customer pays the reverse-pickup fee; the PayU webhook is the ONLY
+      // thing that advances it to PENDING_APPROVAL (and sets returnFeePaid).
+      // Never schedule a pickup for an unpaid return, or ops would fulfil a
+      // free return. Check both the status AND the paid flag (defence in depth).
+      if (ret.status === "PENDING_FEE" || !ret.returnFeePaid) {
+        return res.status(402).json({
+          error: "Return fee has not been paid; cannot schedule a pickup.",
+          code: "FEE_UNPAID",
+        });
+      }
+      // Only an approval-pending (fee-paid) return can be scheduled.
+      if (ret.status !== "PENDING_APPROVAL") {
         return res.status(400).json({
-          error: `Return is not in a pending state (current: ${ret.status})`,
+          error: `Return is not awaiting approval (current: ${ret.status})`,
         });
       }
       if (!ret.orderId) {

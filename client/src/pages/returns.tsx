@@ -45,8 +45,8 @@ interface ReturnRow {
 function StatusBadge({ status }: { status: string }) {
   const cfg: Record<string, { label: string; className: string }> = {
     PENDING_FEE: {
-      label: "Pending Fee",
-      className: "bg-yellow-100 text-yellow-800 dark:bg-yellow-500/15 dark:text-yellow-400",
+      label: "Unpaid",
+      className: "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-400",
     },
     PENDING_APPROVAL: {
       label: "Pending Approval",
@@ -99,8 +99,6 @@ const TAB_FILTERS: Record<string, string[] | null> = {
   received: ["RECEIVED", "INSPECTED"],
   refunded: ["REFUNDED"],
 };
-
-const PENDING_STATUSES = ["PENDING_FEE", "PENDING_APPROVAL"];
 
 // Indian Rupee formatter — all refund/price values are INR.
 const inrFormatter = new Intl.NumberFormat("en-IN", {
@@ -206,7 +204,11 @@ function RmaDetailSheet({
   const ret = data?.return;
   const order = data?.order;
   const items = data?.items ?? [];
-  const isPending = !!ret && PENDING_STATUSES.includes(ret.status);
+  // A return is only approvable once the reverse-pickup fee is paid (the PayU
+  // webhook flips it to PENDING_APPROVAL). PENDING_FEE = unpaid, must NOT be
+  // actionable from the dashboard.
+  const isAwaitingPayment = !!ret && ret.status === "PENDING_FEE";
+  const isApprovable = !!ret && ret.status === "PENDING_APPROVAL";
 
   const copyAwb = (awb: string) => {
     navigator.clipboard?.writeText(awb);
@@ -363,7 +365,27 @@ function RmaDetailSheet({
             </div>
 
             {/* Footer action */}
-            {isPending && (
+            {isAwaitingPayment ? (
+              // Unpaid: the customer hasn't paid the reverse-pickup fee yet.
+              // Ops must NOT be able to process this — show a locked notice
+              // instead of the approve button. (The server also rejects it.)
+              <div className="border-t p-6">
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-500/30 dark:bg-red-500/10">
+                  <p className="text-sm font-medium text-red-800 dark:text-red-400">
+                    Awaiting return fee payment
+                  </p>
+                  <p className="mt-0.5 text-xs text-red-700/80 dark:text-red-400/80">
+                    This RMA is locked until the customer pays the reverse-pickup
+                    fee. It can't be approved or scheduled until payment is
+                    confirmed.
+                  </p>
+                </div>
+                <Button className="mt-3 w-full gap-2" disabled data-testid="button-approve-locked-unpaid">
+                  <Truck className="h-4 w-4" />
+                  Approve &amp; Schedule Pickup
+                </Button>
+              </div>
+            ) : isApprovable ? (
               <div className="border-t p-6">
                 <Button
                   className="w-full gap-2"
@@ -381,7 +403,7 @@ function RmaDetailSheet({
                     : "Approve & Schedule Pickup"}
                 </Button>
               </div>
-            )}
+            ) : null}
           </>
         )}
       </SheetContent>
