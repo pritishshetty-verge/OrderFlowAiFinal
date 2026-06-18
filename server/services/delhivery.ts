@@ -270,9 +270,25 @@ export class DelhiveryClient implements CourierProvider {
    */
   async scheduleReversePickup(req: ReversePickupRequest): Promise<ReversePickupResult> {
     try {
+      // pickup_location.name MUST exactly match a registered, reverse-enabled
+      // Delhivery facility. If it's wrong/blank, Delhivery can't resolve the
+      // warehouse and rejects the leg as "pickup pincode not serviceable".
+      // Fail fast with a precise reason instead of sending an unresolvable name
+      // (the old `'Default'` fallback was guaranteed to fail serviceability).
+      const pickupLocationName = this.clientName?.trim();
+      if (!pickupLocationName) {
+        return {
+          success: false,
+          error:
+            "Delhivery pickup location is not configured for this store. Set the store's " +
+            "Delhivery client name to the exact registered warehouse name before scheduling a pickup.",
+          errorCode: 'WAREHOUSE_NOT_REGISTERED',
+        };
+      }
+
       const shipmentPayload: DelhiveryShipmentPayload = {
         // Consignee = customer: on a reverse leg this is where Delhivery
-        // collects the parcel FROM.
+        // collects the parcel FROM (the rider goes to the customer's address).
         name: req.customerName,
         add: [req.pickupAddressLine1, req.pickupAddressLine2]
           .filter(Boolean)
@@ -287,8 +303,9 @@ export class DelhiveryClient implements CourierProvider {
         payment_mode: 'Pickup',
         products_desc: req.productsDesc || 'Return item',
         weight: req.weight?.toString() || '0.5',
-        // Registered warehouse = where the return is delivered back to.
-        pickup_location: { name: this.clientName || 'Default' },
+        // Registered warehouse = the return destination. Must exactly match the
+        // facility name registered in the Delhivery panel (e.g. "Glow&Me").
+        pickup_location: { name: pickupLocationName },
       };
 
       const payload = `format=json&data=${encodeURIComponent(
