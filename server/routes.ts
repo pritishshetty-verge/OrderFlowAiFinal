@@ -5543,12 +5543,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const graceMin = getGraceMin();
       const autoLogoutTotalMin = getAutoLogoutTotalMin();
 
-      // Full-control admins are exempt from monitoring — the worker
-      // never auto-closes them (see findAutoLogoutCandidates), so the
-      // idle banner would otherwise count up forever without ever
-      // firing. Short-circuit to a benign "active, exempt" state so the
-      // frontend renders no banner for them.
-      if (isFullControlAdmin(user)) {
+      // Exempt users (full-control admins, or anyone an admin has toggled
+      // off via monitoringExempt) are never auto-closed by the worker, so
+      // the idle banner would otherwise count up forever without firing.
+      // Short-circuit to a benign "active, exempt" state → no banner.
+      if (isFullControlAdmin(user) || user.monitoringExempt) {
         return res.json({
           status: "active",
           exempt: true,
@@ -5615,6 +5614,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err: any) {
       console.error("[presence/me] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Admin toggle — exempt (or re-include) a user from smart-presence
+  // monitoring. Exempt users are never auto-clocked-out and see no idle
+  // banner. Admin only. Body: { exempt: boolean }.
+  app.post("/api/users/:userId/monitoring-exempt", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { userId } = req.params;
+      const exempt = req.body?.exempt === true;
+      const updated = await storage.setMonitoringExempt(userId, exempt);
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      console.log(
+        `[monitoring-exempt] admin ${admin.email} set ${updated.email} exempt=${exempt}`,
+      );
+      return res.json({ ok: true, userId, monitoringExempt: exempt });
+    } catch (err: any) {
+      console.error("[monitoring-exempt] error:", err);
       return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
     }
   });

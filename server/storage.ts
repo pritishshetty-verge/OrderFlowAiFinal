@@ -507,6 +507,12 @@ export interface IStorage {
    */
   heartbeatUser(userId: string): Promise<void>;
   /**
+   * Toggle a user's smart-presence exemption. When exempt, the user is
+   * never auto-clocked-out and sees no idle banner. Admin-only (enforced
+   * at the route). Returns the updated user.
+   */
+  setMonitoringExempt(userId: string, exempt: boolean): Promise<User | undefined>;
+  /**
    * Monthly idle/attendance rollup per agent. Aggregates all attendance
    * rows in [year, month] (IST) into a single row per user. Used for
    * end-of-month payroll inputs and the admin attendance report page.
@@ -3783,6 +3789,15 @@ export class DbStorage implements IStorage {
     });
   }
 
+  async setMonitoringExempt(userId: string, exempt: boolean): Promise<User | undefined> {
+    const [row] = await db
+      .update(users)
+      .set({ monitoringExempt: exempt, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
+  }
+
   async heartbeatUser(userId: string): Promise<void> {
     // Throttled — only writes if existing timestamp is > 30s old.
     // Drops the heartbeat write rate from thousands/min to ~100/min
@@ -3822,6 +3837,7 @@ export class DbStorage implements IStorage {
         AND a.auto_closed_at IS NULL
         AND DATE(a.date AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
         AND u.is_active = TRUE
+        AND u.monitoring_exempt = FALSE
         AND NOT (u.role = 'admin' AND u.admin_type = 'full_control')
         AND (u.last_active_at IS NULL OR u.last_active_at < NOW() - (${thresholdMinutes}::numeric * INTERVAL '1 minute'))
         AND NOT EXISTS (

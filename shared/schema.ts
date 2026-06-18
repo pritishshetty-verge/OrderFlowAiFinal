@@ -86,6 +86,11 @@ export const users = pgTable("users", {
   // state for freshly-invited users who haven't logged in yet, and
   // for users whose row was created before this column existed.
   lastActiveAt: timestamp("last_active_at"),
+  // Smart-presence opt-out. When true, this user is never auto-clocked-out
+  // and sees no idle banner — regardless of role. Admins toggle this
+  // per-user from the Team page. Full-control admins are also exempt
+  // implicitly (see findAutoLogoutCandidates), independent of this flag.
+  monitoringExempt: boolean("monitoring_exempt").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

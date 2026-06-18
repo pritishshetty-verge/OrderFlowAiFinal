@@ -22,8 +22,9 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye } from "lucide-react";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -79,6 +80,8 @@ interface TeamMember {
   // badge + Reactivate button on the card.
   autoClosedAttendanceId?: string;
   autoClosedAt?: Date;
+  // When true, this user is exempt from auto clock-out monitoring.
+  monitoringExempt?: boolean;
 }
 
 interface TeamDirectoryProps {
@@ -197,6 +200,26 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     teamAttendance?.forEach((a) => m.set(a.userId, a));
     return m;
   }, [teamAttendance]);
+
+  // Admin toggle — exempt / re-include a user in auto clock-out monitoring.
+  const monitoringExemptMutation = useMutation({
+    mutationFn: async ({ userId, exempt }: { userId: string; exempt: boolean }) => {
+      return await apiRequest("POST", `/api/users/${userId}/monitoring-exempt`, { exempt });
+    },
+    onSuccess: (_res, { exempt }) => {
+      queryClient.invalidateQueries({ queryKey: [usersUrl] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: exempt ? "Monitoring turned off" : "Monitoring turned on",
+        description: exempt
+          ? "This member won't be auto-clocked-out for inactivity."
+          : "This member is back under the auto clock-out policy.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Couldn't update monitoring", description: error.message, variant: "destructive" });
+    },
+  });
 
   // Idle threshold (e.g. 10 minutes) — fetched once at mount. Falls back
   // to 10 so we never block the directory render if the request fails.
@@ -573,6 +596,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           (user.compensationProfile as CompensationProfile | null) ?? undefined,
         autoClosedAttendanceId: isAutoClosed ? att!.id : undefined,
         autoClosedAt: isAutoClosed ? new Date(att!.autoClosedAt!) : undefined,
+        monitoringExempt: (user as any).monitoringExempt ?? false,
       };
     });
   }, [users, ordersResponse, attendanceByUser, idleThresholdMin]);
@@ -854,6 +878,33 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
                   Reactivate shift
                 </Button>
+              )}
+
+              {/* Auto clock-out monitoring toggle — admin only. Off =
+                  this member is exempt (never auto-clocked-out). Full-
+                  control admins are always exempt regardless, so we hide
+                  the toggle for them. */}
+              {userRole === "admin" && member.role !== "admin" && (
+                <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Eye className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium">Auto clock-out</p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        {member.monitoringExempt ? "Exempt — not monitored" : "Monitored for inactivity"}
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={!member.monitoringExempt}
+                    disabled={monitoringExemptMutation.isPending}
+                    onCheckedChange={(on) =>
+                      monitoringExemptMutation.mutate({ userId: member.id, exempt: !on })
+                    }
+                    data-testid={`switch-monitoring-${member.id}`}
+                    aria-label="Toggle auto clock-out monitoring"
+                  />
+                </div>
               )}
 
               <div className="flex gap-2 pt-2">
