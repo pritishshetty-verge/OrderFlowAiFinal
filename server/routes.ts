@@ -4024,6 +4024,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
+  // PayU browser-return bridge (surl / furl).
+  //
+  // PayU redirects the CUSTOMER'S BROWSER here with an HTTP POST
+  // (application/x-www-form-urlencoded) carrying the signed transaction
+  // result. Shopify storefront pages only answer GET, so PayU must not POST
+  // straight at glowandme.in (that 404s). Instead the storefront sets
+  // surl=furl=https://www.orderflow.sbs/api/public/returns/payu-callback; this
+  // endpoint verifies the reverse hash, advances the RMA (idempotently — the
+  // S2S webhook above is the authoritative backstop), then 303-redirects the
+  // browser (forcing a GET) to the Shopify returns page with a status flag.
+  const STOREFRONT_RETURNS_URL = "https://glowandme.in/pages/returns";
+  const payuSuccessRedirect = `${STOREFRONT_RETURNS_URL}?payment=success`;
+  const payuFailedRedirect = `${STOREFRONT_RETURNS_URL}?payment=failed`;
+
+  app.post(
+    "/api/public/returns/payu-callback",
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+      const payload = (req.body ?? {}) as Record<string, any>;
+      const { txnid, status, mihpayid } = payload;
+      try {
+        // 1. Authenticate via PayU's reverse hash. A forged/tampered response
+        //    (e.g. a customer trying to fake success) fails here.
+        if (!verifyPayuHash(payload)) {
+          console.warn(`[payu-callback] invalid hash for txnid=${txnid ?? "?"} — redirecting to failed`);
+          return res.redirect(303, payuFailedRedirect);
+        }
+
+        // 2. Only a genuine success advances state / lands on success.
+        if (status !== "success") {
+          console.log(`[payu-callback] txnid=${txnid} status=${status} — redirecting to failed`);
+          return res.redirect(303, payuFailedRedirect);
+        }
+
+        // 3. Idempotent advance — same sanctioned path out of PENDING_FEE as the
+        //    S2S webhook (server/logic/returnGuards.ts). Safe if the webhook
+        //    already fired (shouldWebhookAdvance is then false).
+        const ret = await storage.getReturnByRmaNumber(String(txnid));
+        if (!ret) {
+          // Payment is real (hash verified) but we can't find the RMA. The money
+          // was taken, so still land the customer on success; log loudly.
+          console.warn(`[payu-callback] verified success but no return for txnid=${txnid}`);
+          return res.redirect(303, payuSuccessRedirect);
+        }
+        if (shouldWebhookAdvance(ret.status)) {
+          await storage.updateReturn(ret.id, {
+            status: "PENDING_APPROVAL",
+            returnFeePaid: true,
+            payuTransactionId: mihpayid ? String(mihpayid) : null,
+          });
+          console.log(`[payu-callback] RMA ${ret.rmaNumber} fee paid (mihpayid=${mihpayid}); → PENDING_APPROVAL`);
+        }
+
+        // 4. 303 See Other forces the browser to GET the Shopify page (a 302
+        //    could be re-POSTed by strict clients, re-triggering the 404).
+        return res.redirect(303, payuSuccessRedirect);
+      } catch (error) {
+        console.error(`[payu-callback] error handling txnid=${txnid ?? "?"}:`, error);
+        // Never strand the customer on our domain — bounce to the failed page.
+        return res.redirect(303, payuFailedRedirect);
+      }
+    },
+  );
+
   // ── Admin: retroactive order-item image backfill ────────────────
   //
   // After a store has been historically synced and THEN the product

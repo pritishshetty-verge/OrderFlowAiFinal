@@ -11580,6 +11580,44 @@ async function registerRoutes(app2) {
       }
     }
   );
+  const STOREFRONT_RETURNS_URL = "https://glowandme.in/pages/returns";
+  const payuSuccessRedirect = `${STOREFRONT_RETURNS_URL}?payment=success`;
+  const payuFailedRedirect = `${STOREFRONT_RETURNS_URL}?payment=failed`;
+  app2.post(
+    "/api/public/returns/payu-callback",
+    express.urlencoded({ extended: false }),
+    async (req, res) => {
+      const payload = req.body ?? {};
+      const { txnid, status, mihpayid } = payload;
+      try {
+        if (!verifyPayuHash(payload)) {
+          console.warn(`[payu-callback] invalid hash for txnid=${txnid ?? "?"} \u2014 redirecting to failed`);
+          return res.redirect(303, payuFailedRedirect);
+        }
+        if (status !== "success") {
+          console.log(`[payu-callback] txnid=${txnid} status=${status} \u2014 redirecting to failed`);
+          return res.redirect(303, payuFailedRedirect);
+        }
+        const ret = await storage.getReturnByRmaNumber(String(txnid));
+        if (!ret) {
+          console.warn(`[payu-callback] verified success but no return for txnid=${txnid}`);
+          return res.redirect(303, payuSuccessRedirect);
+        }
+        if (shouldWebhookAdvance(ret.status)) {
+          await storage.updateReturn(ret.id, {
+            status: "PENDING_APPROVAL",
+            returnFeePaid: true,
+            payuTransactionId: mihpayid ? String(mihpayid) : null
+          });
+          console.log(`[payu-callback] RMA ${ret.rmaNumber} fee paid (mihpayid=${mihpayid}); \u2192 PENDING_APPROVAL`);
+        }
+        return res.redirect(303, payuSuccessRedirect);
+      } catch (error) {
+        console.error(`[payu-callback] error handling txnid=${txnid ?? "?"}:`, error);
+        return res.redirect(303, payuFailedRedirect);
+      }
+    }
+  );
   app2.post("/api/admin/backfill-order-item-images", async (req, res) => {
     try {
       const scope = requireStoreScope(req, res);
