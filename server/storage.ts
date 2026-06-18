@@ -493,7 +493,9 @@ export interface IStorage {
 
   // Abandoned Checkouts
   createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
+  upsertAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
+  getPrimaryStoreId(): Promise<string | null>;
 
   // Inbound Webhook Logs
   createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
@@ -3635,6 +3637,45 @@ export class DbStorage implements IStorage {
   async createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout> {
     const [checkout] = await db.insert(abandonedCheckouts).values(data).returning();
     return checkout;
+  }
+
+  /**
+   * UPSERT an abandoned checkout keyed by external_id (the Shiprocket Faster
+   * cart_id). Shiprocket fires a webhook per checkout stage for the same cart;
+   * we keep ONE row whose stage/value/items advance over time. On conflict we
+   * always update the progression fields (checkoutStage, cartValue, items) and
+   * COALESCE-enrich the contact/address fields (later stages add phone/email)
+   * WITHOUT ever resetting assignment, recovery flag, storeId, or createdAt.
+   */
+  async upsertAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout> {
+    const [checkout] = await db
+      .insert(abandonedCheckouts)
+      .values(data)
+      .onConflictDoUpdate({
+        target: abandonedCheckouts.externalId,
+        set: {
+          checkoutStage: data.checkoutStage,
+          cartValue: data.cartValue,
+          items: data.items,
+          customerName: sql`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
+          customerPhone: sql`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
+          customerEmail: sql`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
+          checkoutUrl: sql`COALESCE(${data.checkoutUrl ?? null}, ${abandonedCheckouts.checkoutUrl})`,
+          address: sql`COALESCE(${data.address ?? null}, ${abandonedCheckouts.address})`,
+        },
+      })
+      .returning();
+    return checkout;
+  }
+
+  /** The primary (oldest) store id — used to stamp single-tenant inbound data. */
+  async getPrimaryStoreId(): Promise<string | null> {
+    const [row] = await db
+      .select({ id: stores.id })
+      .from(stores)
+      .orderBy(asc(stores.createdAt))
+      .limit(1);
+    return row?.id ?? null;
   }
 
   async getAbandonedCheckouts(): Promise<(AbandonedCheckout & { assignedAgentName: string | null })[]> {

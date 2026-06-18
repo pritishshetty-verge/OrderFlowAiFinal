@@ -1615,7 +1615,10 @@ export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   // Multi-store: the Fastrr/Shopify checkout that produced this
   // abandoned cart belongs to one store. Nullable in Phase 1.
   storeId: varchar("store_id").references(() => stores.id),
-  externalId: text("external_id"),
+  // Unique: Shiprocket Faster sends multiple webhooks per cart as the customer
+  // moves through checkout stages. We UPSERT on external_id so each cart is one
+  // row whose stage/value/items advance over time.
+  externalId: text("external_id").unique(),
   customerName: text("customer_name"),
   customerPhone: text("customer_phone"),
   customerEmail: text("customer_email"),

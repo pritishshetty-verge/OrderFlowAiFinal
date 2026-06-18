@@ -155,6 +155,24 @@ var init_schema = __esm({
       // KYC document: currently holds the local filename in uploads/kyc/.
       // Will be swapped for the S3 object key once migrated.
       kycDocumentUrl: text("kyc_document_url"),
+      // ── Smart presence (idle / auto-logout) ────────────────────────
+      // Server-authoritative timestamp of this user's last authenticated
+      // API hit. Written by the session middleware on every request,
+      // throttled to ~once/30s. Powers two distinct features:
+      //   1. Idle detection — `getLiveStatus()` returns 'idle' when
+      //      this is older than the configured idle threshold.
+      //   2. Auto-logout worker — sweeps users past
+      //      (idleThreshold + autoLogoutGrace) and closes their
+      //      attendance for the day.
+      // NULL = "never seen active in current session." That's a valid
+      // state for freshly-invited users who haven't logged in yet, and
+      // for users whose row was created before this column existed.
+      lastActiveAt: timestamp("last_active_at"),
+      // Smart-presence opt-out. When true, this user is never auto-clocked-out
+      // and sees no idle banner — regardless of role. Admins toggle this
+      // per-user from the Team page. Full-control admins are also exempt
+      // implicitly (see findAutoLogoutCandidates), independent of this flag.
+      monitoringExempt: boolean("monitoring_exempt").notNull().default(false),
       createdAt: timestamp("created_at").notNull().defaultNow(),
       updatedAt: timestamp("updated_at").notNull().defaultNow()
     });
@@ -734,6 +752,21 @@ var init_schema = __esm({
       totalHours: decimal("total_hours", { precision: 5, scale: 2 }),
       // Calculated field
       notes: text("notes"),
+      // ── Auto-logout (smart presence) ───────────────────────────────
+      // Set when the auto-logout worker closes this attendance row
+      // because the user went past (idleThreshold + autoLogoutGrace)
+      // without an API hit. Distinct from `clockOutTime` so we can tell
+      // "they hit Clock Out" from "the system closed them out." Both
+      // are set when auto-logout fires (clockOutTime gets the same
+      // timestamp), but only autoClosedAt being non-null means "this
+      // wasn't voluntary."
+      autoClosedAt: timestamp("auto_closed_at"),
+      autoCloseReason: text("auto_close_reason"),
+      // Admin override — when an admin clicks "Reactivate" on the Team
+      // page, we set this to NOW and clear clockOutTime. The audit trail
+      // (which admin reactivated, when) lives in `notes`.
+      reactivatedAt: timestamp("reactivated_at"),
+      reactivatedBy: varchar("reactivated_by").references(() => users.id, { onDelete: "set null" }),
       createdAt: timestamp("created_at").notNull().defaultNow(),
       updatedAt: timestamp("updated_at").notNull().defaultNow()
     });
@@ -1255,7 +1288,10 @@ var init_schema = __esm({
       // Multi-store: the Fastrr/Shopify checkout that produced this
       // abandoned cart belongs to one store. Nullable in Phase 1.
       storeId: varchar("store_id").references(() => stores.id),
-      externalId: text("external_id"),
+      // Unique: Shiprocket Faster sends multiple webhooks per cart as the customer
+      // moves through checkout stages. We UPSERT on external_id so each cart is one
+      // row whose stage/value/items advance over time.
+      externalId: text("external_id").unique(),
       customerName: text("customer_name"),
       customerPhone: text("customer_phone"),
       customerEmail: text("customer_email"),
@@ -1361,6 +1397,40 @@ var init_db = __esm({
   }
 });
 
+// server/presence-config.ts
+function parseMinutes(raw, fallback) {
+  if (raw === void 0) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+function getIdleThresholdMin() {
+  return parseMinutes(process.env.IDLE_THRESHOLD_MIN, DEFAULT_IDLE_MIN);
+}
+function getGraceMin() {
+  return parseMinutes(process.env.AUTO_LOGOUT_GRACE_MIN, DEFAULT_GRACE_MIN);
+}
+function getAutoLogoutTotalMin() {
+  return getIdleThresholdMin() + getGraceMin();
+}
+function computeAutoClose(clockInTime, lastActiveAt, now) {
+  if (!clockInTime) {
+    return { closeTime: now, totalHours: 0 };
+  }
+  const clockInMs = clockInTime.getTime();
+  const effectiveEndMs = lastActiveAt ? Math.max(clockInMs, lastActiveAt.getTime()) : clockInMs;
+  const workedMs = Math.max(0, effectiveEndMs - clockInMs);
+  const totalHours = +(workedMs / (1e3 * 60 * 60)).toFixed(2);
+  return { closeTime: new Date(effectiveEndMs), totalHours };
+}
+var DEFAULT_IDLE_MIN, DEFAULT_GRACE_MIN;
+var init_presence_config = __esm({
+  "server/presence-config.ts"() {
+    "use strict";
+    DEFAULT_IDLE_MIN = 10;
+    DEFAULT_GRACE_MIN = 30;
+  }
+});
+
 // server/storage.ts
 var storage_exports = {};
 __export(storage_exports, {
@@ -1424,6 +1494,7 @@ var init_storage = __esm({
   "server/storage.ts"() {
     "use strict";
     init_db();
+    init_presence_config();
     init_schema();
     AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
     DbStorage = class {
@@ -3282,6 +3353,35 @@ var init_storage = __esm({
         const [checkout] = await db.insert(abandonedCheckouts).values(data).returning();
         return checkout;
       }
+      /**
+       * UPSERT an abandoned checkout keyed by external_id (the Shiprocket Faster
+       * cart_id). Shiprocket fires a webhook per checkout stage for the same cart;
+       * we keep ONE row whose stage/value/items advance over time. On conflict we
+       * always update the progression fields (checkoutStage, cartValue, items) and
+       * COALESCE-enrich the contact/address fields (later stages add phone/email)
+       * WITHOUT ever resetting assignment, recovery flag, storeId, or createdAt.
+       */
+      async upsertAbandonedCheckout(data) {
+        const [checkout] = await db.insert(abandonedCheckouts).values(data).onConflictDoUpdate({
+          target: abandonedCheckouts.externalId,
+          set: {
+            checkoutStage: data.checkoutStage,
+            cartValue: data.cartValue,
+            items: data.items,
+            customerName: sql2`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
+            customerPhone: sql2`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
+            customerEmail: sql2`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
+            checkoutUrl: sql2`COALESCE(${data.checkoutUrl ?? null}, ${abandonedCheckouts.checkoutUrl})`,
+            address: sql2`COALESCE(${data.address ?? null}, ${abandonedCheckouts.address})`
+          }
+        }).returning();
+        return checkout;
+      }
+      /** The primary (oldest) store id — used to stamp single-tenant inbound data. */
+      async getPrimaryStoreId() {
+        const [row] = await db.select({ id: stores.id }).from(stores).orderBy(asc(stores.createdAt)).limit(1);
+        return row?.id ?? null;
+      }
       async getAbandonedCheckouts() {
         const results = await db.select({
           id: abandonedCheckouts.id,
@@ -3310,6 +3410,191 @@ var init_storage = __esm({
       }
       async getInboundWebhookLogs(limit = 50) {
         return await db.select().from(inboundWebhookLogs).orderBy(desc(inboundWebhookLogs.createdAt)).limit(limit);
+      }
+      // ── Smart presence helpers (idle + auto-logout) ───────────────────
+      async getMonthlyAttendanceReport(year, month) {
+        const idleTotalMin = getAutoLogoutTotalMin();
+        const result = await db.execute(sql2`
+      WITH month_attendance AS (
+        SELECT
+          a.id,
+          a.user_id,
+          a.clock_in_time,
+          a.clock_out_time,
+          a.total_hours,
+          a.auto_closed_at,
+          a.reactivated_at
+        FROM attendance a
+        WHERE
+          a.clock_in_time IS NOT NULL
+          AND EXTRACT(YEAR FROM (a.date AT TIME ZONE 'Asia/Kolkata'))  = ${year}::int
+          AND EXTRACT(MONTH FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${month}::int
+      ),
+      break_totals AS (
+        SELECT
+          ma.user_id,
+          COALESCE(SUM(
+            EXTRACT(EPOCH FROM (
+              -- Cap an unclosed break at the shift's clock-out (or, for a
+              -- still-open shift, NOW()). Without this, a break row whose
+              -- break_end was never set would accrue duration up to report
+              -- time — potentially hundreds of hours — inflating payroll
+              -- break totals.
+              COALESCE(b.break_end, ma.clock_out_time, NOW()) - b.break_start
+            )) / 60.0
+          ), 0) AS break_minutes
+        FROM month_attendance ma
+        LEFT JOIN attendance_breaks b ON b.attendance_id = ma.id
+        GROUP BY ma.user_id
+      ),
+      per_user AS (
+        SELECT
+          ma.user_id,
+          COUNT(*) AS days_present,
+          SUM(CASE
+                WHEN ma.auto_closed_at IS NOT NULL AND ma.reactivated_at IS NULL THEN 1
+                ELSE 0
+              END) AS days_auto_closed,
+          COALESCE(SUM(ma.total_hours::numeric), 0) AS clocked_hours
+        FROM month_attendance ma
+        GROUP BY ma.user_id
+      )
+      SELECT
+        u.id              AS user_id,
+        u.full_name       AS full_name,
+        u.email           AS email,
+        u.role            AS role,
+        pu.days_present,
+        pu.days_auto_closed,
+        pu.clocked_hours,
+        COALESCE(bt.break_minutes, 0) AS break_minutes
+      FROM per_user pu
+      JOIN users u           ON u.id = pu.user_id
+      LEFT JOIN break_totals bt ON bt.user_id = pu.user_id
+      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support')
+      ORDER BY pu.clocked_hours DESC, u.full_name ASC
+    `);
+        const rows = result.rows ?? result;
+        return rows.map((r) => {
+          const daysPresent = Number(r.days_present ?? 0);
+          const daysAutoClosed = Number(r.days_auto_closed ?? 0);
+          const clockedHours = Number(r.clocked_hours ?? 0);
+          const breakMinutes = Math.round(Number(r.break_minutes ?? 0));
+          const idleMinutesDeducted = daysAutoClosed * idleTotalMin;
+          const avgHoursPerDay = daysPresent > 0 ? +(clockedHours / daysPresent).toFixed(2) : 0;
+          return {
+            userId: r.user_id,
+            fullName: r.full_name,
+            email: r.email,
+            role: r.role,
+            daysPresent,
+            daysAutoClosed,
+            clockedHours: +clockedHours.toFixed(2),
+            breakMinutes,
+            idleMinutesDeducted,
+            avgHoursPerDay
+          };
+        });
+      }
+      async setMonitoringExempt(userId, exempt) {
+        const [row] = await db.update(users).set({ monitoringExempt: exempt, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, userId)).returning();
+        return row;
+      }
+      async heartbeatUser(userId) {
+        await db.execute(sql2`
+      UPDATE users
+      SET last_active_at = NOW()
+      WHERE id = ${userId}
+        AND (last_active_at IS NULL OR last_active_at < NOW() - INTERVAL '30 seconds')
+    `);
+      }
+      async findAutoLogoutCandidates(thresholdMinutes) {
+        const result = await db.execute(sql2`
+      SELECT
+        u.id AS user_id,
+        a.id AS attendance_id,
+        a.clock_in_time,
+        u.last_active_at
+      FROM users u
+      JOIN attendance a ON a.user_id = u.id
+      WHERE
+        a.clock_in_time IS NOT NULL
+        AND a.clock_out_time IS NULL
+        AND a.auto_closed_at IS NULL
+        AND DATE(a.date AT TIME ZONE 'Asia/Kolkata') = DATE(NOW() AT TIME ZONE 'Asia/Kolkata')
+        AND u.is_active = TRUE
+        AND u.monitoring_exempt = FALSE
+        AND NOT (u.role = 'admin' AND u.admin_type = 'full_control')
+        AND (u.last_active_at IS NULL OR u.last_active_at < NOW() - (${thresholdMinutes}::numeric * INTERVAL '1 minute'))
+        AND NOT EXISTS (
+          SELECT 1 FROM attendance_breaks b
+          WHERE b.attendance_id = a.id AND b.break_end IS NULL
+        )
+    `);
+        return result.rows.map((r) => {
+          const row = r;
+          return {
+            userId: row.user_id,
+            attendanceId: row.attendance_id,
+            // Return clock_in_time directly so callers compute worked-hours
+            // from THIS row, not a re-fetched "today" row. getTodayAttendance
+            // uses server-local day boundaries; near IST/UTC midnight that can
+            // return undefined or a different day's row, which silently
+            // credited 0 hours for a real shift.
+            clockInTime: row.clock_in_time ? new Date(row.clock_in_time) : null,
+            lastActiveAt: row.last_active_at ? new Date(row.last_active_at) : null
+          };
+        });
+      }
+      async autoCloseAttendance(attendanceId, closeTime, reason, totalHours) {
+        const result = await db.update(attendance).set({
+          clockOutTime: closeTime,
+          autoClosedAt: closeTime,
+          autoCloseReason: reason,
+          totalHours: totalHours.toFixed(2),
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(and(eq(attendance.id, attendanceId), isNull(attendance.autoClosedAt)));
+        return (result.rowCount ?? 0) > 0;
+      }
+      async reactivateAttendance(attendanceId, adminId) {
+        const [existing] = await db.select().from(attendance).where(eq(attendance.id, attendanceId));
+        if (!existing) return void 0;
+        const noteEntry = `[${(/* @__PURE__ */ new Date()).toISOString()}] Reactivated by admin ${adminId}`;
+        const newNotes = existing.notes ? existing.notes + "\n" + noteEntry : noteEntry;
+        const [row] = await db.update(attendance).set({
+          clockOutTime: null,
+          autoClosedAt: null,
+          autoCloseReason: null,
+          reactivatedAt: /* @__PURE__ */ new Date(),
+          reactivatedBy: adminId,
+          totalHours: null,
+          notes: newNotes,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(attendance.id, attendanceId)).returning();
+        return row;
+      }
+      async isAutoLoggedOutToday(userId, dateStr) {
+        const [row] = await db.select({
+          autoClosedAt: attendance.autoClosedAt,
+          autoCloseReason: attendance.autoCloseReason,
+          reactivatedAt: attendance.reactivatedAt
+        }).from(attendance).where(
+          and(
+            eq(attendance.userId, userId),
+            sql2`DATE(${attendance.date}) = DATE(${dateStr})`
+          )
+        );
+        if (!row || !row.autoClosedAt) {
+          return { isLoggedOut: false, autoClosedAt: null, reason: null };
+        }
+        if (row.reactivatedAt) {
+          return { isLoggedOut: false, autoClosedAt: null, reason: null };
+        }
+        return {
+          isLoggedOut: true,
+          autoClosedAt: row.autoClosedAt,
+          reason: row.autoCloseReason
+        };
       }
     };
     storage = new DbStorage();
@@ -8697,73 +8982,50 @@ async function verifyPassword(plaintext, stored) {
 // server/routes.ts
 import fs4 from "fs";
 import path3 from "path";
+init_presence_config();
+function timingSafeEqualStr(a, b) {
+  const ah = crypto7.createHash("sha256").update(a).digest();
+  const bh = crypto7.createHash("sha256").update(b).digest();
+  return crypto7.timingSafeEqual(ah, bh);
+}
 function normalizeFastrrPayload(raw) {
   const payload = raw?.data || raw?.checkout || raw || {};
-  const pick = (...keys) => {
-    for (const k of keys) {
-      const val = payload[k];
-      if (val !== void 0 && val !== null && val !== "") return val;
-    }
-    return null;
-  };
-  const nested = (obj, ...keys) => {
-    if (!obj || typeof obj !== "object") return null;
-    for (const k of keys) {
-      if (obj[k] !== void 0 && obj[k] !== null && obj[k] !== "") return obj[k];
-    }
-    return null;
-  };
-  const externalId = pick("cartId", "cart_id", "id", "cart_token")?.toString() || null;
-  let customerName = pick("custName", "customer_name", "name");
-  if (!customerName) {
-    const firstName = pick("first_name", "firstName") || nested(payload.shipping_address, "first_name", "firstName") || nested(payload.customer, "first_name", "firstName");
-    const lastName = pick("last_name", "lastName") || nested(payload.shipping_address, "last_name", "lastName") || nested(payload.customer, "last_name", "lastName");
-    if (firstName || lastName) {
-      customerName = [firstName, lastName].filter(Boolean).join(" ");
-    }
-  }
-  let customerPhone = pick("custPhone", "customer_phone", "phone", "phone_number", "mobile") || nested(payload.shipping_address, "phone", "phone_number") || nested(payload.customer, "phone", "phone_number");
-  if (typeof customerPhone === "string") {
-    customerPhone = customerPhone.replace(/\s+/g, "");
-  }
-  const customerEmail = pick("custEmail", "customer_email", "email") || nested(payload.customer, "email");
-  const checkoutUrl = pick("abandonLink", "url", "checkout_url", "abandon_link");
-  const cartValue = pick("cartTotal", "cart_total", "total_price")?.toString() || null;
-  const checkoutStage = pick("latest_stage", "checkoutStage", "checkout_stage", "stage");
+  const str = (v) => v !== void 0 && v !== null && v !== "" ? String(v) : null;
+  const externalId = str(payload.cart_id ?? payload.cartId ?? payload.id ?? payload.cart_token);
+  const combined = [payload.first_name ?? payload.firstName, payload.last_name ?? payload.lastName].filter(Boolean).join(" ").trim();
+  const customerName = combined || str(payload.customer_name ?? payload.custName ?? payload.name);
+  let customerPhone = str(
+    payload.phone_number ?? payload.customer_phone ?? payload.custPhone ?? payload.phone ?? payload.mobile
+  );
+  if (customerPhone) customerPhone = customerPhone.replace(/\s+/g, "");
+  const customerEmail = str(payload.email ?? payload.customer_email ?? payload.custEmail);
+  const checkoutUrl = str(payload.checkout_url ?? payload.abandonLink ?? payload.url ?? payload.abandon_link);
+  const cartValue = str(payload.total_price ?? payload.cartTotal ?? payload.cart_total);
+  const checkoutStage = str(payload.latest_stage ?? payload.checkoutStage ?? payload.checkout_stage ?? payload.stage);
   let address = null;
   if (typeof payload.address === "string" && payload.address.trim()) {
     address = payload.address.trim();
   } else {
-    const source = payload.shipping_address && typeof payload.shipping_address === "object" ? payload.shipping_address : payload;
+    const src = payload.shipping_address && typeof payload.shipping_address === "object" ? payload.shipping_address : payload;
     const parts = [
-      source.address1 || source.address_1,
-      source.address2 || source.address_2,
-      source.city,
-      source.province || source.state,
-      source.zip || source.postal_code || source.pincode,
-      source.country
-    ].filter((p) => p && typeof p === "string" && p.trim());
+      src.address1 || src.address_1,
+      src.address2 || src.address_2,
+      src.city,
+      src.province || src.state,
+      src.zip || src.postal_code || src.pincode,
+      src.country
+    ].filter((p) => typeof p === "string" && p.trim());
     address = parts.length > 0 ? parts.join(", ") : null;
   }
-  let items = null;
-  if (Array.isArray(payload.items) && payload.items.length > 0) {
-    items = payload.items;
-  } else if (payload.productName || payload.product_name) {
-    items = [{
-      name: payload.productName || payload.product_name,
-      price: payload.productPrice || payload.product_price,
-      quantity: payload.productQuantity || payload.product_quantity,
-      variant: payload.productVariant || payload.product_variant
-    }];
-  }
+  const items = Array.isArray(payload.items) && payload.items.length > 0 ? payload.items : null;
   return {
     externalId,
     customerName: customerName || null,
     customerPhone: customerPhone || null,
     customerEmail: customerEmail || null,
-    checkoutUrl: checkoutUrl || null,
+    checkoutUrl,
     cartValue,
-    checkoutStage: checkoutStage || null,
+    checkoutStage,
     address,
     items
   };
@@ -9013,22 +9275,25 @@ async function registerRoutes(app2) {
   app2.post("/api/webhooks/delhivery", handleDelhiveryWebhook2);
   app2.post("/api/webhooks/fastrr-abandoned", async (req, res) => {
     try {
-      const secret = req.headers["x-api-secret"];
-      const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET;
+      const expectedSecret = process.env.FASTER_WEBHOOK_SECRET;
       if (!expectedSecret) {
-        console.error("[Fastrr Webhook] FASTRR_WEBHOOK_SECRET is not configured");
+        console.error("[Faster Webhook] FASTER_WEBHOOK_SECRET is not configured");
         return res.status(500).json({ error: "Webhook not configured" });
       }
-      if (secret !== expectedSecret) {
-        console.warn("[Fastrr Webhook] Authentication failed");
+      const authHeader = req.headers["authorization"];
+      const token = typeof authHeader === "string" && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+      if (!token || !timingSafeEqualStr(token, expectedSecret)) {
+        console.warn("[Faster Webhook] Authentication failed");
         return res.status(403).json({ error: "Forbidden" });
       }
       const normalized = normalizeFastrrPayload(req.body);
       if (!normalized.externalId) {
-        console.warn("[Fastrr Webhook] Skipped \u2014 no external ID found in payload");
+        console.warn("[Faster Webhook] Skipped \u2014 no cart_id found in payload");
         return res.status(422).json({ error: "Missing cart identifier" });
       }
-      const checkout = await storage.createAbandonedCheckout({
+      const storeId = await storage.getPrimaryStoreId();
+      const checkout = await storage.upsertAbandonedCheckout({
+        storeId: storeId ?? void 0,
         externalId: normalized.externalId,
         customerName: normalized.customerName,
         customerPhone: normalized.customerPhone,
@@ -9040,10 +9305,12 @@ async function registerRoutes(app2) {
         address: normalized.address,
         isRecovered: false
       });
-      console.log(`[Fastrr Webhook] Saved cart ${checkout.id} for: ${normalized.customerName || normalized.customerPhone || "Unknown"}`);
+      console.log(
+        `[Faster Webhook] Upserted cart ${checkout.id} (${normalized.checkoutStage ?? "?"}) for: ${normalized.customerName || normalized.customerPhone || "Unknown"}`
+      );
       res.status(200).json({ success: true, id: checkout.id });
     } catch (error) {
-      console.error("[Fastrr Webhook] Processing error:", error);
+      console.error("[Faster Webhook] Processing error:", error);
       res.status(500).json({ error: "Failed to process webhook" });
     }
   });
@@ -12105,6 +12372,16 @@ async function registerRoutes(app2) {
       }
       const dateStr = localDate || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       const existing = await storage.getAttendanceByDate(userId, dateStr);
+      const lockout = await storage.isAutoLoggedOutToday(userId, dateStr);
+      if (lockout.isLoggedOut) {
+        return res.status(403).json({
+          error: "Locked out for the day",
+          code: "AUTO_LOGGED_OUT",
+          autoClosedAt: lockout.autoClosedAt,
+          reason: lockout.reason,
+          message: "Your shift was auto-closed due to inactivity. An admin must reactivate you from the Team page before you can clock back in today."
+        });
+      }
       if (existing && existing.clockInTime) {
         return res.status(400).json({
           error: "Already clocked in today",
@@ -12116,6 +12393,265 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error clocking in:", error);
       res.status(500).json({ error: "Failed to clock in" });
+    }
+  });
+  app2.post("/api/presence/heartbeat", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      await storage.heartbeatUser(currentUserId);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("[presence/heartbeat] error:", err?.message ?? err);
+      return res.status(500).json({ error: "Failed" });
+    }
+  });
+  app2.get("/api/presence/policy", (_req, res) => {
+    res.json({
+      idleThresholdMin: getIdleThresholdMin(),
+      graceMin: getGraceMin(),
+      autoLogoutTotalMin: getAutoLogoutTotalMin()
+    });
+  });
+  app2.all("/api/cron/attendance-auto-logout", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.ATTENDANCE_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or ATTENDANCE_CRON_SECRET)"
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-attendance-cron-secret"];
+    const vercelOk = typeof auth === "string" && vercelSecret !== void 0 && auth === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHeader === "string" && customSecret !== void 0 && customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const idleMin = getIdleThresholdMin();
+    const graceMin = getGraceMin();
+    const totalMin = idleMin + graceMin;
+    try {
+      const candidates = await storage.findAutoLogoutCandidates(totalMin);
+      const closed = [];
+      const now = /* @__PURE__ */ new Date();
+      for (const c of candidates) {
+        try {
+          const { closeTime, totalHours } = computeAutoClose(c.clockInTime, c.lastActiveAt, now);
+          const reason = `Auto-logout: no activity for ${totalMin}+ minutes (idle ${idleMin}m + grace ${graceMin}m). Admin can reactivate from Team page.`;
+          const didClose = await storage.autoCloseAttendance(c.attendanceId, closeTime, reason, totalHours);
+          if (didClose) {
+            closed.push({ userId: c.userId, attendanceId: c.attendanceId, hours: totalHours });
+          }
+        } catch (err) {
+          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+        }
+      }
+      console.log(`[cron/auto-logout] sweep done \u2014 ${closed.length} closed out of ${candidates.length} candidates`);
+      return res.json({
+        ok: true,
+        candidates: candidates.length,
+        closed: closed.length,
+        details: closed
+      });
+    } catch (err) {
+      console.error("[cron/auto-logout] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/presence/me", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const idleThresholdMin = getIdleThresholdMin();
+      const graceMin = getGraceMin();
+      const autoLogoutTotalMin = getAutoLogoutTotalMin();
+      if (isFullControlAdmin(user) || user.monitoringExempt) {
+        return res.json({
+          status: "active",
+          exempt: true,
+          lastActiveAt: user.lastActiveAt,
+          minutesSinceActive: 0,
+          minutesUntilLogout: autoLogoutTotalMin,
+          idleThresholdMin,
+          graceMin,
+          autoLogoutTotalMin,
+          isClockedIn: false,
+          onBreak: false,
+          autoClosedAt: null
+        });
+      }
+      const now = /* @__PURE__ */ new Date();
+      const lastActive = user.lastActiveAt ? new Date(user.lastActiveAt) : null;
+      const minutesSinceActive = lastActive ? (now.getTime() - lastActive.getTime()) / 6e4 : 0;
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const todayAtt = await storage.getAttendanceByDate(currentUserId, dateStr);
+      const isClockedIn = !!todayAtt?.clockInTime && !todayAtt?.clockOutTime;
+      const activeBreak = isClockedIn && todayAtt ? await storage.getActiveBreak(todayAtt.id) : null;
+      let status = "offline";
+      if (!isClockedIn) {
+        status = "offline";
+      } else if (activeBreak) {
+        status = "break";
+      } else if (minutesSinceActive < idleThresholdMin) {
+        status = "active";
+      } else if (minutesSinceActive < autoLogoutTotalMin) {
+        status = "idle";
+      } else {
+        status = "idle";
+      }
+      const minutesUntilLogout = Math.max(0, Math.ceil(autoLogoutTotalMin - minutesSinceActive));
+      const autoClosedAt = todayAtt?.autoClosedAt ?? null;
+      return res.json({
+        status,
+        lastActiveAt: user.lastActiveAt,
+        minutesSinceActive: Math.floor(minutesSinceActive),
+        minutesUntilLogout,
+        idleThresholdMin,
+        graceMin,
+        autoLogoutTotalMin,
+        isClockedIn,
+        onBreak: !!activeBreak,
+        autoClosedAt
+      });
+    } catch (err) {
+      console.error("[presence/me] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.post("/api/users/:userId/monitoring-exempt", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { userId } = req.params;
+      const exempt = req.body?.exempt === true;
+      const updated = await storage.setMonitoringExempt(userId, exempt);
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      console.log(
+        `[monitoring-exempt] admin ${admin.email} set ${updated.email} exempt=${exempt}`
+      );
+      return res.json({ ok: true, userId, monitoringExempt: exempt });
+    } catch (err) {
+      console.error("[monitoring-exempt] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.post("/api/attendance/:attendanceId/reactivate", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { attendanceId } = req.params;
+      const updated = await storage.reactivateAttendance(attendanceId, admin.id);
+      if (!updated) {
+        return res.status(404).json({ error: "Attendance not found" });
+      }
+      console.log(`[reactivate] admin ${admin.email} reactivated attendance ${attendanceId}`);
+      return res.json({ ok: true, attendance: updated });
+    } catch (err) {
+      console.error("[reactivate] error:", err);
+      return res.status(500).json({ error: "Reactivation failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/reports/attendance-monthly", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const requester = await storage.getUser(currentUserId);
+      if (!requester || requester.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const now = /* @__PURE__ */ new Date();
+      const year = Number(req.query.year ?? now.getFullYear());
+      const month = Number(req.query.month ?? now.getMonth() + 1);
+      if (!Number.isFinite(year) || year < 2024 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "Invalid year or month" });
+      }
+      const rows = await storage.getMonthlyAttendanceReport(year, month);
+      const totals = rows.reduce(
+        (acc, r) => ({
+          daysPresent: acc.daysPresent + r.daysPresent,
+          daysAutoClosed: acc.daysAutoClosed + r.daysAutoClosed,
+          clockedHours: +(acc.clockedHours + r.clockedHours).toFixed(2),
+          breakMinutes: acc.breakMinutes + r.breakMinutes,
+          idleMinutesDeducted: acc.idleMinutesDeducted + r.idleMinutesDeducted
+        }),
+        { daysPresent: 0, daysAutoClosed: 0, clockedHours: 0, breakMinutes: 0, idleMinutesDeducted: 0 }
+      );
+      return res.json({ year, month, rows, totals });
+    } catch (err) {
+      console.error("[reports/attendance-monthly] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/reports/attendance-monthly/csv", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const requester = await storage.getUser(currentUserId);
+      if (!requester || requester.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const now = /* @__PURE__ */ new Date();
+      const year = Number(req.query.year ?? now.getFullYear());
+      const month = Number(req.query.month ?? now.getMonth() + 1);
+      if (!Number.isFinite(year) || year < 2024 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
+        return res.status(400).send("Invalid year or month");
+      }
+      const rows = await storage.getMonthlyAttendanceReport(year, month);
+      const headers = [
+        "Agent",
+        "Email",
+        "Role",
+        "Days Present",
+        "Days Auto-Closed",
+        "Clocked Hours",
+        "Break Minutes",
+        "Est Idle Minutes",
+        "Avg Hours/Day"
+      ];
+      const escapeCSV = (v) => {
+        let s = v == null ? "" : String(v);
+        if (/^[=+\-@\t\r]/.test(s)) {
+          s = `'${s}`;
+        }
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const csv = [
+        headers.join(","),
+        ...rows.map((r) => [
+          escapeCSV(r.fullName),
+          escapeCSV(r.email),
+          escapeCSV(r.role),
+          r.daysPresent,
+          r.daysAutoClosed,
+          r.clockedHours,
+          r.breakMinutes,
+          r.idleMinutesDeducted,
+          r.avgHoursPerDay
+        ].join(","))
+      ].join("\n");
+      const monthStr = String(month).padStart(2, "0");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="attendance_${year}_${monthStr}.csv"`
+      );
+      return res.send(csv);
+    } catch (err) {
+      console.error("[reports/attendance-monthly/csv] error:", err);
+      return res.status(500).send("Failed");
     }
   });
   app2.post("/api/attendance/clock-out", async (req, res) => {
@@ -14651,6 +15187,7 @@ function serveStatic(app2) {
 init_storage();
 init_db();
 init_shopify();
+init_presence_config();
 var NEON_WS_FINGERPRINT = "Cannot set property message of #<ErrorEvent>";
 process.on("uncaughtException", (err) => {
   if (err?.message?.includes(NEON_WS_FINGERPRINT)) {
@@ -14793,8 +15330,42 @@ ${summary}`);
     console.warn("  Server continuing; webhooks can be re-registered via the UI.");
   }
 }
+var IDLE_THRESHOLD_MIN = getIdleThresholdMin();
+var AUTO_LOGOUT_GRACE_MIN = getGraceMin();
+var AUTO_LOGOUT_TOTAL_MIN = getAutoLogoutTotalMin();
+async function runAutoLogoutSweep() {
+  try {
+    const candidates = await storage.findAutoLogoutCandidates(AUTO_LOGOUT_TOTAL_MIN);
+    if (candidates.length === 0) return;
+    const now = /* @__PURE__ */ new Date();
+    for (const c of candidates) {
+      try {
+        const { closeTime, totalHours } = computeAutoClose(c.clockInTime, c.lastActiveAt, now);
+        const reason = `Auto-logout: no activity for ${AUTO_LOGOUT_TOTAL_MIN}+ minutes (idle ${IDLE_THRESHOLD_MIN}m + grace ${AUTO_LOGOUT_GRACE_MIN}m). Admin can reactivate from Team page.`;
+        const closed = await storage.autoCloseAttendance(c.attendanceId, closeTime, reason, totalHours);
+        if (closed) {
+          console.log(
+            `[auto-logout] clocked out user ${c.userId} (attendance ${c.attendanceId}, worked ${totalHours}h)`
+          );
+        }
+      } catch (err) {
+        console.error(`[auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+      }
+    }
+  } catch (err) {
+    console.error("[auto-logout] sweep failed:", err?.message ?? err);
+  }
+}
 var ready = (async () => {
   await storage.seedDefaultSettings();
+  if (!process.env.VERCEL) {
+    setInterval(() => {
+      void runAutoLogoutSweep();
+    }, 6e4);
+    console.log(
+      `[auto-logout] worker started \u2014 sweeps every 60s, threshold ${AUTO_LOGOUT_TOTAL_MIN} min (idle ${IDLE_THRESHOLD_MIN}m + grace ${AUTO_LOGOUT_GRACE_MIN}m)`
+    );
+  }
   registerAllWebhooks().catch((err) => {
     console.error("[webhook-register] uncaught:", err);
   });

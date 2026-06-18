@@ -65,92 +65,80 @@ interface NormalizedFastrrPayload {
   items: any[] | null;
 }
 
+// Timing-safe string compare (hash first so unequal lengths don't throw or
+// leak length) — used to validate the Faster webhook bearer token.
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ah = crypto.createHash("sha256").update(a).digest();
+  const bh = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ah, bh);
+}
+
+// Maps a Shiprocket Faster (formerly Fastrr) abandoned-cart webhook body onto
+// our abandoned_checkouts shape. The documented Faster keys are primary; a few
+// legacy Fastrr aliases are kept as fallbacks so older payloads still parse.
 function normalizeFastrrPayload(raw: any): NormalizedFastrrPayload {
   const payload = raw?.data || raw?.checkout || raw || {};
 
-  const pick = (...keys: string[]) => {
-    for (const k of keys) {
-      const val = payload[k];
-      if (val !== undefined && val !== null && val !== "") return val;
-    }
-    return null;
-  };
+  const str = (v: any): string | null =>
+    v !== undefined && v !== null && v !== "" ? String(v) : null;
 
-  const nested = (obj: any, ...keys: string[]) => {
-    if (!obj || typeof obj !== "object") return null;
-    for (const k of keys) {
-      if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
-    }
-    return null;
-  };
+  // externalId = cart_id
+  const externalId = str(payload.cart_id ?? payload.cartId ?? payload.id ?? payload.cart_token);
 
-  const externalId = pick("cartId", "cart_id", "id", "cart_token")?.toString() || null;
+  // customerName = first_name + last_name (fallback: any single name field)
+  const combined = [payload.first_name ?? payload.firstName, payload.last_name ?? payload.lastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const customerName = combined || str(payload.customer_name ?? payload.custName ?? payload.name);
 
-  let customerName = pick("custName", "customer_name", "name");
-  if (!customerName) {
-    const firstName = pick("first_name", "firstName")
-      || nested(payload.shipping_address, "first_name", "firstName")
-      || nested(payload.customer, "first_name", "firstName");
-    const lastName = pick("last_name", "lastName")
-      || nested(payload.shipping_address, "last_name", "lastName")
-      || nested(payload.customer, "last_name", "lastName");
-    if (firstName || lastName) {
-      customerName = [firstName, lastName].filter(Boolean).join(" ");
-    }
-  }
+  // customerPhone = phone_number (strip whitespace)
+  let customerPhone = str(
+    payload.phone_number ?? payload.customer_phone ?? payload.custPhone ?? payload.phone ?? payload.mobile,
+  );
+  if (customerPhone) customerPhone = customerPhone.replace(/\s+/g, "");
 
-  let customerPhone = pick("custPhone", "customer_phone", "phone", "phone_number", "mobile")
-    || nested(payload.shipping_address, "phone", "phone_number")
-    || nested(payload.customer, "phone", "phone_number");
-  if (typeof customerPhone === "string") {
-    customerPhone = customerPhone.replace(/\s+/g, "");
-  }
+  // customerEmail = email
+  const customerEmail = str(payload.email ?? payload.customer_email ?? payload.custEmail);
+  // checkoutUrl = checkout_url
+  const checkoutUrl = str(payload.checkout_url ?? payload.abandonLink ?? payload.url ?? payload.abandon_link);
+  // cartValue = total_price
+  const cartValue = str(payload.total_price ?? payload.cartTotal ?? payload.cart_total);
+  // checkoutStage = latest_stage
+  const checkoutStage = str(payload.latest_stage ?? payload.checkoutStage ?? payload.checkout_stage ?? payload.stage);
 
-  const customerEmail = pick("custEmail", "customer_email", "email")
-    || nested(payload.customer, "email");
-
-  const checkoutUrl = pick("abandonLink", "url", "checkout_url", "abandon_link");
-  const cartValue = pick("cartTotal", "cart_total", "total_price")?.toString() || null;
-  const checkoutStage = pick("latest_stage", "checkoutStage", "checkout_stage", "stage");
-
+  // address: prefer the structured shipping_address (city/state/zip), else a
+  // flat string or top-level fields.
   let address: string | null = null;
   if (typeof payload.address === "string" && payload.address.trim()) {
     address = payload.address.trim();
   } else {
-    const source = (payload.shipping_address && typeof payload.shipping_address === "object")
-      ? payload.shipping_address
-      : payload;
+    const src =
+      payload.shipping_address && typeof payload.shipping_address === "object"
+        ? payload.shipping_address
+        : payload;
     const parts = [
-      source.address1 || source.address_1,
-      source.address2 || source.address_2,
-      source.city,
-      source.province || source.state,
-      source.zip || source.postal_code || source.pincode,
-      source.country,
-    ].filter((p) => p && typeof p === "string" && p.trim());
+      src.address1 || src.address_1,
+      src.address2 || src.address_2,
+      src.city,
+      src.province || src.state,
+      src.zip || src.postal_code || src.pincode,
+      src.country,
+    ].filter((p) => typeof p === "string" && p.trim());
     address = parts.length > 0 ? parts.join(", ") : null;
   }
 
-  let items: any[] | null = null;
-  if (Array.isArray(payload.items) && payload.items.length > 0) {
-    items = payload.items;
-  } else if (payload.productName || payload.product_name) {
-    items = [{
-      name: payload.productName || payload.product_name,
-      price: payload.productPrice || payload.product_price,
-      quantity: payload.productQuantity || payload.product_quantity,
-      variant: payload.productVariant || payload.product_variant,
-    }];
-  }
+  // items = the cart line items array, as-is
+  const items = Array.isArray(payload.items) && payload.items.length > 0 ? payload.items : null;
 
   return {
     externalId,
     customerName: customerName || null,
     customerPhone: customerPhone || null,
     customerEmail: customerEmail || null,
-    checkoutUrl: checkoutUrl || null,
+    checkoutUrl,
     cartValue,
-    checkoutStage: checkoutStage || null,
+    checkoutStage,
     address,
     items,
   };
@@ -688,28 +676,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { handleDelhiveryWebhook } = await import("./delhiveryWebhook");
   app.post("/api/webhooks/delhivery", handleDelhiveryWebhook);
 
-  // Fastrr Abandoned Cart webhook
+  // Shiprocket Faster (formerly Fastrr) abandoned-cart webhook.
   app.post("/api/webhooks/fastrr-abandoned", async (req, res) => {
     try {
-      const secret = req.headers["x-api-secret"];
-      const expectedSecret = process.env.FASTRR_WEBHOOK_SECRET;
+      const expectedSecret = process.env.FASTER_WEBHOOK_SECRET;
       if (!expectedSecret) {
-        console.error("[Fastrr Webhook] FASTRR_WEBHOOK_SECRET is not configured");
+        console.error("[Faster Webhook] FASTER_WEBHOOK_SECRET is not configured");
         return res.status(500).json({ error: "Webhook not configured" });
       }
-      if (secret !== expectedSecret) {
-        console.warn("[Fastrr Webhook] Authentication failed");
+      // Standard Bearer auth: `Authorization: Bearer <FASTER_WEBHOOK_SECRET>`.
+      const authHeader = req.headers["authorization"];
+      const token =
+        typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : null;
+      if (!token || !timingSafeEqualStr(token, expectedSecret)) {
+        console.warn("[Faster Webhook] Authentication failed");
         return res.status(403).json({ error: "Forbidden" });
       }
 
       const normalized = normalizeFastrrPayload(req.body);
 
       if (!normalized.externalId) {
-        console.warn("[Fastrr Webhook] Skipped — no external ID found in payload");
+        console.warn("[Faster Webhook] Skipped — no cart_id found in payload");
         return res.status(422).json({ error: "Missing cart identifier" });
       }
 
-      const checkout = await storage.createAbandonedCheckout({
+      // Single-tenant for now: stamp the primary (oldest) store so the row is
+      // store-scoped. Replace with a per-domain lookup when multi-store lands.
+      const storeId = await storage.getPrimaryStoreId();
+
+      // UPSERT on cart_id: Shiprocket fires one webhook per checkout stage, so
+      // a cart advances (e.g. CART_CREATED → PAYMENT_INITIATED) in a single row.
+      const checkout = await storage.upsertAbandonedCheckout({
+        storeId: storeId ?? undefined,
         externalId: normalized.externalId,
         customerName: normalized.customerName,
         customerPhone: normalized.customerPhone,
@@ -722,10 +722,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isRecovered: false,
       });
 
-      console.log(`[Fastrr Webhook] Saved cart ${checkout.id} for: ${normalized.customerName || normalized.customerPhone || "Unknown"}`);
+      console.log(
+        `[Faster Webhook] Upserted cart ${checkout.id} (${normalized.checkoutStage ?? "?"}) for: ${normalized.customerName || normalized.customerPhone || "Unknown"}`,
+      );
       res.status(200).json({ success: true, id: checkout.id });
     } catch (error) {
-      console.error("[Fastrr Webhook] Processing error:", error);
+      console.error("[Faster Webhook] Processing error:", error);
       res.status(500).json({ error: "Failed to process webhook" });
     }
   });
