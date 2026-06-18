@@ -286,6 +286,22 @@ export class DelhiveryClient implements CourierProvider {
         };
       }
 
+      // Reverse pickups collect FROM the customer, so the customer's pincode
+      // must be REVERSE (pickup) serviceable — a separate, narrower Delhivery
+      // capability than forward delivery. Pre-check it against Delhivery's own
+      // serviceability API so an uncovered pincode returns a precise reason
+      // instead of the generic "pickup pincode not serviceable" crash. Only
+      // block on a DEFINITIVE no; if the check is inconclusive we proceed and
+      // let the create call decide (never false-block a valid pickup).
+      const serviceability = await this.checkPincodeServiceability(req.pickupPincode);
+      if (serviceability.pickup === false) {
+        return {
+          success: false,
+          error: `Pincode ${req.pickupPincode} is not serviceable for reverse pickup by Delhivery (no reverse/pickup coverage at this location).`,
+          errorCode: 'UNSERVICEABLE',
+        };
+      }
+
       const shipmentPayload: DelhiveryShipmentPayload = {
         // Consignee = customer: on a reverse leg this is where Delhivery
         // collects the parcel FROM (the rider goes to the customer's address).
@@ -331,13 +347,15 @@ export class DelhiveryClient implements CourierProvider {
       }
 
       // Delhivery accepted the request but rejected the shipment — surface the
-      // stated reason and classify it (e.g. unserviceable pincode).
-      const error =
+      // stated reason and classify it. Include the pickup_location name we sent
+      // so a registered-warehouse-name mismatch is visible to ops at a glance.
+      const reason =
         response.data.packages?.[0]?.remarks?.join(', ') ||
         response.data.rmk ||
         response.data.error ||
         'Delhivery rejected the reverse pickup';
-      return { success: false, error, errorCode: classifyReverseError(error) };
+      const error = `${reason} [pickup_location="${pickupLocationName}", pin=${req.pickupPincode}]`;
+      return { success: false, error, errorCode: classifyReverseError(reason) };
     } catch (error: any) {
       // Network / 5xx / timeout — the courier itself is unreachable.
       const msg =
@@ -346,6 +364,36 @@ export class DelhiveryClient implements CourierProvider {
         'Failed to reach Delhivery to schedule the reverse pickup';
       console.error('Delhivery scheduleReversePickup error:', error.response?.data || error.message);
       return { success: false, error: msg, errorCode: 'PROVIDER_UNAVAILABLE' };
+    }
+  }
+
+  /**
+   * Query Delhivery's pincode serviceability API and report the REVERSE
+   * (pickup) capability for the pin. The response exposes a `pickup` flag
+   * ("Y"/"N") per postal code — distinct from forward delivery. Best-effort:
+   * on any error or an inconclusive response returns `pickup: null` so callers
+   * never false-block a valid pickup.
+   *
+   * GET /c/api/pin-codes/json/?filter_codes=<pin>
+   */
+  async checkPincodeServiceability(
+    pin: string,
+  ): Promise<{ pickup: boolean | null; raw?: any }> {
+    try {
+      const response = await this.client.get(
+        `/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pin)}`,
+      );
+      const pc = (response.data as any)?.delivery_codes?.[0]?.postal_code;
+      if (!pc) return { pickup: null };
+      const flag =
+        typeof pc.pickup === 'string' ? pc.pickup.toUpperCase() === 'Y' : null;
+      return { pickup: flag, raw: pc };
+    } catch (error: any) {
+      console.warn(
+        'Delhivery checkPincodeServiceability error:',
+        error.response?.data || error.message,
+      );
+      return { pickup: null };
     }
   }
 
