@@ -5148,11 +5148,32 @@ var init_delhivery2 = __esm({
               errorCode: "WAREHOUSE_NOT_REGISTERED"
             };
           }
-          const serviceability = await this.checkPincodeServiceability(req.pickupPincode);
-          if (serviceability.pickup === false) {
+          const addr = [req.pickupAddressLine1, req.pickupAddressLine2].filter(Boolean).join(", ").trim();
+          const pin = (req.pickupPincode ?? "").toString().trim();
+          const missing = [];
+          if (!req.customerName?.trim()) missing.push("name");
+          if (!req.rmaNumber?.trim()) missing.push("order");
+          if (!req.customerPhone?.trim()) missing.push("phone");
+          if (!addr) missing.push("add");
+          if (missing.length > 0) {
             return {
               success: false,
-              error: `Pincode ${req.pickupPincode} is not serviceable for reverse pickup by Delhivery (no reverse/pickup coverage at this location).`,
+              error: `Missing required Delhivery shipment fields: ${missing.join(", ")}.`,
+              errorCode: "INVALID_ADDRESS"
+            };
+          }
+          if (!/^[1-9]\d{5}$/.test(pin)) {
+            return {
+              success: false,
+              error: `Invalid pickup pincode "${pin}" \u2014 Delhivery requires a 6-digit Indian pincode.`,
+              errorCode: "INVALID_ADDRESS"
+            };
+          }
+          const serv = await this.checkPincodeServiceability(pin);
+          if (serv.serviceable === false) {
+            return {
+              success: false,
+              error: serv.embargo ? `Pincode ${pin} is temporarily non-serviceable (Embargo) by Delhivery; a reverse pickup cannot be scheduled right now.` : `Pincode ${pin} is not serviceable by Delhivery (empty delivery_codes / Non-Serviceable Zone). A reverse pickup cannot be scheduled here. Raw: ${JSON.stringify(serv.raw)}`,
               errorCode: "UNSERVICEABLE"
             };
           }
@@ -5160,19 +5181,21 @@ var init_delhivery2 = __esm({
             // Consignee = customer: on a reverse leg this is where Delhivery
             // collects the parcel FROM (the rider goes to the customer's address).
             name: req.customerName,
-            add: [req.pickupAddressLine1, req.pickupAddressLine2].filter(Boolean).join(", "),
-            pin: req.pickupPincode,
+            add: addr,
+            // Schema: pin is an INTEGER.
+            pin: parseInt(pin, 10),
             city: req.pickupCity,
             state: req.pickupState,
             country: req.pickupCountry || "India",
             phone: req.customerPhone,
             order: req.rmaNumber,
-            // "Pickup" payment mode marks this as a paperless reverse pickup.
+            // "Pickup" payment mode = reverse leg (PUR is auto-scheduled by Delhivery).
             payment_mode: "Pickup",
             products_desc: req.productsDesc || "Return item",
             weight: req.weight?.toString() || "0.5",
             // Registered warehouse = the return destination. Must exactly match the
-            // facility name registered in the Delhivery panel (e.g. "Glow&Me").
+            // facility name registered in the Delhivery panel. return_* fields are
+            // OPTIONAL per the schema; omitting them delivers to this warehouse.
             pickup_location: { name: pickupLocationName }
           };
           const payload = `format=json&data=${encodeURIComponent(
@@ -5192,20 +5215,22 @@ var init_delhivery2 = __esm({
             return { success: true, awb };
           }
           const reason = response.data.packages?.[0]?.remarks?.join(", ") || response.data.rmk || response.data.error || "Delhivery rejected the reverse pickup";
-          const error = `${reason} [pickup_location="${pickupLocationName}", pin=${req.pickupPincode}]`;
+          const error = `${reason} [pickup_location="${pickupLocationName}", pin=${pin}] | Delhivery raw response: ${JSON.stringify(response.data)}`;
+          console.error("[delhivery] reverse pickup rejected \u2014 raw response:", JSON.stringify(response.data));
           return { success: false, error, errorCode: classifyReverseError(reason) };
         } catch (error) {
-          const msg = error.response?.data?.error || error.message || "Failed to reach Delhivery to schedule the reverse pickup";
-          console.error("Delhivery scheduleReversePickup error:", error.response?.data || error.message);
+          const raw = error.response?.data;
+          const msg = raw && (raw.error || (typeof raw === "string" ? raw : JSON.stringify(raw))) || error.message || "Failed to reach Delhivery to schedule the reverse pickup";
+          console.error("Delhivery scheduleReversePickup error:", raw || error.message);
           return { success: false, error: msg, errorCode: "PROVIDER_UNAVAILABLE" };
         }
       }
       /**
-       * Query Delhivery's pincode serviceability API and report the REVERSE
-       * (pickup) capability for the pin. The response exposes a `pickup` flag
-       * ("Y"/"N") per postal code — distinct from forward delivery. Best-effort:
-       * on any error or an inconclusive response returns `pickup: null` so callers
-       * never false-block a valid pickup.
+       * Query Delhivery's Pincode Serviceability API and interpret it per the
+       * official schema: `delivery_codes` empty → Non-Serviceable Zone;
+       * postal_code[].remark "Embargo" → temporary NSZ; "" → serviceable.
+       * Best-effort: on any error / inconclusive response returns
+       * `serviceable: null` so callers never false-block a valid pickup.
        *
        * GET /c/api/pin-codes/json/?filter_codes=<pin>
        */
@@ -5214,16 +5239,26 @@ var init_delhivery2 = __esm({
           const response = await this.client.get(
             `/c/api/pin-codes/json/?filter_codes=${encodeURIComponent(pin)}`
           );
-          const pc = response.data?.delivery_codes?.[0]?.postal_code;
-          if (!pc) return { pickup: null };
-          const flag = typeof pc.pickup === "string" ? pc.pickup.toUpperCase() === "Y" : null;
-          return { pickup: flag, raw: pc };
+          const codes = response.data?.delivery_codes;
+          if (!Array.isArray(codes)) {
+            return { serviceable: null, embargo: false, raw: response.data };
+          }
+          if (codes.length === 0) {
+            return { serviceable: false, embargo: false, raw: response.data };
+          }
+          const pcEntry = codes[0]?.postal_code;
+          const pc = Array.isArray(pcEntry) ? pcEntry[0] : pcEntry;
+          const remark = (pc?.remark ?? "").toString().trim().toLowerCase();
+          if (remark === "embargo") {
+            return { serviceable: false, embargo: true, raw: response.data };
+          }
+          return { serviceable: true, embargo: false, raw: response.data };
         } catch (error) {
           console.warn(
             "Delhivery checkPincodeServiceability error:",
             error.response?.data || error.message
           );
-          return { pickup: null };
+          return { serviceable: null, embargo: false };
         }
       }
       async trackShipment(awb) {
