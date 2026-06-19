@@ -32,9 +32,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Phone, ShoppingCart, Package, Copy, ExternalLink, Mail, X, Link as LinkIcon,
-  Clock, CheckCircle2, XCircle, MessageCircle, ChevronDown, ChevronLeft, ChevronRight,
+  Clock, CheckCircle2, XCircle, ChevronDown, ChevronLeft, ChevronRight,
+  Search, Download, Filter as FilterIcon,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -239,6 +243,9 @@ export default function AbandonedCartsPage() {
   const [selected, setSelected] = useState<AbandonedCheckoutRow | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [stageFilter, setStageFilter] = useState("all");
 
   const { data: checkouts, isLoading } = useQuery<AbandonedCheckoutRow[]>({
     queryKey: ["/api/abandoned-checkouts"],
@@ -246,7 +253,7 @@ export default function AbandonedCartsPage() {
 
   // Fastrr visibility pattern: only carts with a real NAME and a SHIPPING
   // ADDRESS. Phone-only "Guest" drop-offs are hidden.
-  const visible = useMemo(() => {
+  const baseVisible = useMemo(() => {
     return (checkouts ?? []).filter((c) => {
       const name = (c.customerName ?? "").trim();
       const hasName = name.length > 0 && name.toLowerCase() !== "guest";
@@ -255,16 +262,82 @@ export default function AbandonedCartsPage() {
     });
   }, [checkouts]);
 
-  const total = visible.length;
+  // Distinct checkout stages present in the data (for the Filter popover).
+  const availableStages = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of baseVisible) {
+      if (c.checkoutStage) map.set(c.checkoutStage, humanize(c.checkoutStage));
+    }
+    return Array.from(map.entries());
+  }, [baseVisible]);
+
+  // Search (name/phone, case-insensitive) + Recovery Status + Checkout Stage.
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return baseVisible.filter((c) => {
+      if (q) {
+        const name = (c.customerName ?? "").toLowerCase();
+        const phone = (c.customerPhone ?? "").toLowerCase();
+        if (!name.includes(q) && !phone.includes(q)) return false;
+      }
+      if (statusFilter !== "all" && (c.recoveryStatus ?? "PENDING") !== statusFilter) return false;
+      if (stageFilter !== "all" && c.checkoutStage !== stageFilter) return false;
+      return true;
+    });
+  }, [baseVisible, searchQuery, statusFilter, stageFilter]);
+
+  const total = filtered.length;
   const totalPages = Math.ceil(total / pageSize) || 1;
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * pageSize;
   const end = Math.min(start + pageSize, total);
-  const pageRows = visible.slice(start, end);
+  const pageRows = filtered.slice(start, end);
 
   useEffect(() => {
     setPage(1);
   }, [pageSize, total]);
+
+  const activeFilters: { key: string; label: string; clear: () => void }[] = [];
+  if (statusFilter !== "all") {
+    activeFilters.push({ key: "status", label: `Status: ${humanize(statusFilter)}`, clear: () => setStatusFilter("all") });
+  }
+  if (stageFilter !== "all") {
+    activeFilters.push({ key: "stage", label: `Stage: ${humanize(stageFilter)}`, clear: () => setStageFilter("all") });
+  }
+  const activeCount = activeFilters.length;
+
+  // Export the currently-filtered list as a CSV download.
+  const handleExport = () => {
+    const headers = ["Date", "Name", "Phone", "Email", "Cart Value", "Checkout Stage", "Status"];
+    const esc = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")];
+    for (const c of filtered) {
+      lines.push(
+        [
+          format(new Date(c.createdAt), "do MMMM , h:mm aaa"),
+          c.customerName ?? "",
+          c.customerPhone ?? "",
+          c.customerEmail ?? "",
+          c.cartValue ?? "",
+          humanize(c.checkoutStage),
+          humanize(c.recoveryStatus ?? "PENDING"),
+        ].map(esc).join(","),
+      );
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `abandoned-carts-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: "Export ready", description: `${filtered.length} carts exported.` });
+  };
 
   const statusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
@@ -289,7 +362,92 @@ export default function AbandonedCartsPage() {
 
   return (
     <PageLayout title="Abandoned Checkouts" description="Track and recover abandoned carts from Fastrr">
-      <div className="p-4 space-y-4 overflow-auto flex-1">
+      <div className="p-6 space-y-4">
+        {/* Toolbar — cloned from the Orders page (Search · Filter · Export). */}
+        <div className="space-y-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                placeholder="Search by customer name or phone…"
+                className="pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                data-testid="input-search-carts"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="gap-2" data-testid="button-open-filters">
+                    <FilterIcon className="h-4 w-4" />
+                    Filter
+                    {activeCount > 0 && (
+                      <Badge variant="secondary" className="ml-0.5 h-5 min-w-[1.25rem] rounded-full px-1.5 text-[10px] font-semibold" data-testid="badge-filters-count">
+                        {activeCount}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-4" data-testid="popover-filters">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recovery Status</Label>
+                      <Select value={statusFilter} onValueChange={setStatusFilter}>
+                        <SelectTrigger data-testid="select-status-filter"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Statuses</SelectItem>
+                          {RECOVERY_STATUSES.map((s) => (
+                            <SelectItem key={s} value={s}>{humanize(s)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Checkout Stage</Label>
+                      <Select value={stageFilter} onValueChange={setStageFilter}>
+                        <SelectTrigger data-testid="select-stage-filter"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Stages</SelectItem>
+                          {availableStages.map(([raw, label]) => (
+                            <SelectItem key={raw} value={raw}>{label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {activeCount > 0 && (
+                      <Button variant="ghost" size="sm" className="w-full" onClick={() => { setStatusFilter("all"); setStageFilter("all"); }} data-testid="button-clear-filters">
+                        Clear all filters
+                      </Button>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Button variant="outline" onClick={handleExport} data-testid="button-export-csv">
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
+            </div>
+          </div>
+
+          {activeCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2" data-testid="active-filter-chips">
+              <span className="text-xs text-muted-foreground">Active filters:</span>
+              {activeFilters.map((f) => (
+                <Badge key={f.key} variant="secondary" className="gap-1 pl-2.5 pr-1 py-0.5 text-xs font-medium" data-testid={`chip-filter-${f.key}`}>
+                  {f.label}
+                  <button type="button" onClick={f.clear} className="ml-0.5 inline-flex items-center justify-center rounded-sm hover:bg-foreground/10 p-0.5" aria-label={`Remove ${f.key} filter`}>
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
         {isLoading ? (
           <div className="rounded-lg border bg-card p-6 space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
@@ -300,8 +458,17 @@ export default function AbandonedCartsPage() {
           <div className="rounded-lg border bg-card">
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <ShoppingCart className="h-12 w-12 mb-3 opacity-40" />
-              <p className="text-sm font-medium">No abandoned checkouts yet</p>
-              <p className="text-xs mt-1">Carts with a name &amp; address will appear here when received from Fastrr</p>
+              {searchQuery || activeCount > 0 ? (
+                <>
+                  <p className="text-sm font-medium">No carts match your search or filters</p>
+                  <p className="text-xs mt-1">Try clearing the search box or the active filters</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium">No abandoned checkouts yet</p>
+                  <p className="text-xs mt-1">Carts with a name &amp; address will appear here when received from Fastrr</p>
+                </>
+              )}
             </div>
           </div>
         ) : (
