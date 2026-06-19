@@ -359,6 +359,18 @@ export default function AbandonedCartsPage() {
   };
 
   const selectedItems = asItems(selected?.items);
+  // Prev/next navigation within the currently-filtered list.
+  const selectedIndex = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
+  const canPrev = selectedIndex > 0;
+  const canNext = selectedIndex >= 0 && selectedIndex < filtered.length - 1;
+  const goPrev = () => { if (canPrev) setSelected(filtered[selectedIndex - 1]); };
+  const goNext = () => { if (canNext) setSelected(filtered[selectedIndex + 1]); };
+  // Price breakdown.
+  const subtotal = selectedItems.reduce(
+    (s, it) => s + (parseFloat(String(it.price ?? 0)) || 0) * (Number(it.quantity) || 1),
+    0,
+  );
+  const cartTotal = parseFloat(String(selected?.cartValue ?? 0)) || 0;
 
   return (
     <PageLayout title="Abandoned Checkouts" description="Track and recover abandoned carts from Fastrr">
@@ -580,22 +592,53 @@ export default function AbandonedCartsPage() {
         >
           {selected && (
             <div className="flex flex-col h-full">
+              {/* Header: Cart ID (left) + prev/next nav + close (right) */}
               <div className="flex-shrink-0 border-b bg-card rounded-tl-xl">
                 <div className="flex items-center justify-between gap-2 px-4 py-3">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-lg font-semibold truncate" data-testid="text-drawer-customer">{selected.customerName}</span>
-                    <StageBadge stage={selected.checkoutStage} />
+                    <span className="text-lg font-semibold truncate" title={selected.externalId ?? ""} data-testid="text-cart-id">
+                      {selected.externalId ? `#${selected.externalId}` : "Cart"}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-base font-semibold tabular-nums">{formatINR(selected.cartValue)}</span>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelected(null)} data-testid="button-close-drawer">
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" onClick={goPrev} disabled={!canPrev} className="h-7 w-7" data-testid="button-prev-cart">
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs text-muted-foreground min-w-[60px] text-center" data-testid="text-cart-position">
+                      {selectedIndex + 1} of {filtered.length}
+                    </span>
+                    <Button variant="ghost" size="icon" onClick={goNext} disabled={!canNext} className="h-7 w-7" data-testid="button-next-cart">
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => setSelected(null)} className="h-7 w-7 ml-1" data-testid="button-close-drawer">
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+                {/* Info grid: Created | Checkout Stage | Source */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Created</p>
+                    <p className="text-sm font-medium">{format(new Date(selected.createdAt), "MMM dd, yyyy")}</p>
+                    <p className="text-xs text-muted-foreground">{format(new Date(selected.createdAt), "h:mm a")}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Checkout Stage</p>
+                    <StageBadge stage={selected.checkoutStage} />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Source</p>
+                    <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-xs font-medium">Fastrr</Badge>
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Customer */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Customer</p>
                   <div className="space-y-1.5">
@@ -626,6 +669,7 @@ export default function AbandonedCartsPage() {
 
                 <Separator />
 
+                {/* Items */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Items</p>
                   {selectedItems.length === 0 ? (
@@ -659,44 +703,72 @@ export default function AbandonedCartsPage() {
 
                 <Separator />
 
-                {selected.checkoutUrl && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Checkout link</p>
-                    <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5">
-                      <a href={selected.checkoutUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline truncate flex-1" data-testid="link-checkout-url">
-                        <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
-                        <span className="truncate">{selected.checkoutUrl}</span>
-                      </a>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0" onClick={() => copyLink(selected.checkoutUrl!)} data-testid="button-copy-link">
-                        <Copy className="h-3.5 w-3.5" />
-                      </Button>
+                {/* Price breakdown */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Price breakdown</p>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span>{formatINR(subtotal)}</span>
+                    </div>
+                    <Separator className="my-1.5" />
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span>Total</span>
+                      <span>{formatINR(cartTotal)}</span>
                     </div>
                   </div>
+                </div>
+
+                {selected.checkoutUrl && (
+                  <>
+                    <Separator />
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-2">Checkout link</p>
+                      <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5">
+                        <a href={selected.checkoutUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline truncate flex-1" data-testid="link-checkout-url">
+                          <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span className="truncate">{selected.checkoutUrl}</span>
+                        </a>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0" onClick={() => copyLink(selected.checkoutUrl!)} data-testid="button-copy-link">
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
                 )}
+              </div>
 
-                <Separator />
-
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Recovery status</p>
-                  <Select
-                    value={selected.recoveryStatus ?? "PENDING"}
-                    onValueChange={(status) => statusMutation.mutate({ id: selected.id, status })}
-                    disabled={statusMutation.isPending}
-                  >
-                    <SelectTrigger data-testid="select-recovery-status">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {RECOVERY_STATUSES.map((s) => (
-                        <SelectItem key={s} value={s} data-testid={`status-option-${s}`}>
-                          {humanize(s)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="pt-2">
-                    <ActionIcons phone={selected.customerPhone} checkoutUrl={selected.checkoutUrl} onCopy={copyLink} />
+              {/* Status update footer: Prev · Recovery Status · Next */}
+              <div className="flex-shrink-0 border-t bg-card px-3 py-2 rounded-bl-xl">
+                <div className="flex items-center justify-between gap-4">
+                  <Button variant="outline" size="icon" onClick={goPrev} disabled={!canPrev} className="h-8 w-8 flex-shrink-0 rounded-full" data-testid="button-footer-prev">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="flex-1 flex justify-center">
+                    <Select
+                      value={selected.recoveryStatus ?? "PENDING"}
+                      onValueChange={(status) => statusMutation.mutate({ id: selected.id, status })}
+                      disabled={statusMutation.isPending}
+                    >
+                      <SelectTrigger className="w-[160px] h-8" data-testid="select-recovery-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {RECOVERY_STATUSES.map((s) => (
+                          <SelectItem key={s} value={s} data-testid={`status-option-${s}`}>
+                            <div className="flex items-center gap-2">
+                              <span className={cn("inline-flex", RECOVERY_META[s].color)}>{RECOVERY_META[s].icon}</span>
+                              <span>{RECOVERY_META[s].label}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
+                  <Button variant="default" size="sm" onClick={goNext} disabled={!canNext} className="gap-1.5 flex-shrink-0 h-8" data-testid="button-footer-next">
+                    Next
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             </div>
