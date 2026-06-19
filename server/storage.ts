@@ -4004,7 +4004,6 @@ export class DbStorage implements IStorage {
       .select({
         autoClosedAt: attendance.autoClosedAt,
         autoCloseReason: attendance.autoCloseReason,
-        reactivatedAt: attendance.reactivatedAt,
       })
       .from(attendance)
       .where(
@@ -4013,11 +4012,15 @@ export class DbStorage implements IStorage {
           sql`DATE(${attendance.date}) = DATE(${dateStr})`,
         ),
       );
+    // `auto_closed_at` is the single source of truth for "currently
+    // auto-closed": reactivateAttendance clears it back to NULL. A non-null
+    // value therefore always means the shift is closed RIGHT NOW and the
+    // agent is locked out — even if it was reactivated earlier today and
+    // then auto-closed again (a stale `reactivated_at` lingers from the
+    // first reactivation, so we must NOT key off it). Keying off
+    // `reactivated_at` here was the bug that let a re-closed shift fall
+    // through to "already clocked in today", trapping the agent.
     if (!row || !row.autoClosedAt) {
-      return { isLoggedOut: false, autoClosedAt: null, reason: null };
-    }
-    // Reactivated overrides — they're not auto-logged-out anymore.
-    if (row.reactivatedAt) {
       return { isLoggedOut: false, autoClosedAt: null, reason: null };
     }
     return {
