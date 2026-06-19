@@ -11,6 +11,7 @@ import {
   courses, resources, userLessonProgress, userOnboardingProgress, users,
   webhooks, insertWebhookSchema, stores, userStores,
   RETURN_STATUSES,
+  ABANDONED_RECOVERY_STATUSES,
   type MetaAdAccountConfig,
   type InsertReturn,
   type InsertReturnItem,
@@ -740,6 +741,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching abandoned checkouts:", error);
       res.status(500).json({ error: "Failed to fetch abandoned checkouts" });
+    }
+  });
+
+  // Update the telecalling recovery status of an abandoned checkout.
+  app.patch("/api/abandoned-checkouts/:id/status", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        return res.status(400).json({ error: "Invalid checkout id" });
+      }
+      const { status } = req.body ?? {};
+      if (!status || !ABANDONED_RECOVERY_STATUSES.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status. Must be one of: ${ABANDONED_RECOVERY_STATUSES.join(", ")}`,
+        });
+      }
+      const updated = await storage.updateAbandonedCheckoutStatus(id, status);
+      if (!updated) {
+        return res.status(404).json({ error: "Abandoned checkout not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating abandoned checkout status:", error);
+      res.status(500).json({ error: "Failed to update status" });
     }
   });
 

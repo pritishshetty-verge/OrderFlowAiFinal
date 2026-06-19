@@ -495,6 +495,7 @@ export interface IStorage {
   createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   upsertAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
+  updateAbandonedCheckoutStatus(id: number, status: string): Promise<AbandonedCheckout | undefined>;
   getPrimaryStoreId(): Promise<string | null>;
 
   // Inbound Webhook Logs
@@ -3614,6 +3615,18 @@ export class DbStorage implements IStorage {
    * `stores` so newly-connected tenants pick up the default on
    * the next server boot without manual intervention.
    */
+  /**
+   * Idempotent boot-time schema guards for columns added without a formal
+   * migration runner. Awaited in the boot `ready` promise (server/index.ts),
+   * which the Vercel handler awaits before serving — so these columns are
+   * guaranteed to exist before any request. Safe/cheap to run every cold start.
+   */
+  async ensureSchemaPatches(): Promise<void> {
+    await db.execute(sql`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'PENDING'`);
+  }
+
   async seedDefaultSettings(): Promise<void> {
     const allStores = await db.select({ id: stores.id }).from(stores);
     if (allStores.length === 0) {
@@ -3696,6 +3709,7 @@ export class DbStorage implements IStorage {
         address: abandonedCheckouts.address,
         assignedTo: abandonedCheckouts.assignedTo,
         isRecovered: abandonedCheckouts.isRecovered,
+        recoveryStatus: abandonedCheckouts.recoveryStatus,
         createdAt: abandonedCheckouts.createdAt,
         assignedAgentName: users.fullName,
       })
@@ -3703,6 +3717,19 @@ export class DbStorage implements IStorage {
       .leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id))
       .orderBy(desc(abandonedCheckouts.createdAt));
     return results;
+  }
+
+  /** Update the telecalling recovery status; keep isRecovered in sync. */
+  async updateAbandonedCheckoutStatus(
+    id: number,
+    status: string,
+  ): Promise<AbandonedCheckout | undefined> {
+    const [row] = await db
+      .update(abandonedCheckouts)
+      .set({ recoveryStatus: status, isRecovered: status === "RECOVERED" })
+      .where(eq(abandonedCheckouts.id, id))
+      .returning();
+    return row;
   }
 
   async createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog> {

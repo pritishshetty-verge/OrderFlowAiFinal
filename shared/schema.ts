@@ -1629,8 +1629,19 @@ export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   address: text("address"),
   assignedTo: text("assigned_to"),
   isRecovered: boolean("is_recovered").notNull().default(false),
+  // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).
+  // isRecovered is kept in sync (true when RECOVERED) for backwards-compat.
+  recoveryStatus: text("recovery_status").notNull().default("PENDING"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export const ABANDONED_RECOVERY_STATUSES = [
+  "PENDING",
+  "CONTACTED",
+  "RECOVERED",
+  "LOST",
+] as const;
+export type AbandonedRecoveryStatus = (typeof ABANDONED_RECOVERY_STATUSES)[number];
 
 export const insertAbandonedCheckoutSchema = createInsertSchema(abandonedCheckouts).omit({
   id: true,

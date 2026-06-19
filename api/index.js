@@ -12,6 +12,7 @@ var __export = (target, all) => {
 // shared/schema.ts
 var schema_exports = {};
 __export(schema_exports, {
+  ABANDONED_RECOVERY_STATUSES: () => ABANDONED_RECOVERY_STATUSES,
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
   REFUND_TYPES: () => REFUND_TYPES,
   RETURN_STATUSES: () => RETURN_STATUSES,
@@ -100,7 +101,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1302,8 +1303,17 @@ var init_schema = __esm({
       address: text("address"),
       assignedTo: text("assigned_to"),
       isRecovered: boolean("is_recovered").notNull().default(false),
+      // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).
+      // isRecovered is kept in sync (true when RECOVERED) for backwards-compat.
+      recoveryStatus: text("recovery_status").notNull().default("PENDING"),
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
+    ABANDONED_RECOVERY_STATUSES = [
+      "PENDING",
+      "CONTACTED",
+      "RECOVERED",
+      "LOST"
+    ];
     insertAbandonedCheckoutSchema = createInsertSchema(abandonedCheckouts).omit({
       id: true,
       createdAt: true
@@ -3333,6 +3343,17 @@ var init_storage = __esm({
        * `stores` so newly-connected tenants pick up the default on
        * the next server boot without manual intervention.
        */
+      /**
+       * Idempotent boot-time schema guards for columns added without a formal
+       * migration runner. Awaited in the boot `ready` promise (server/index.ts),
+       * which the Vercel handler awaits before serving — so these columns are
+       * guaranteed to exist before any request. Safe/cheap to run every cold start.
+       */
+      async ensureSchemaPatches() {
+        await db.execute(sql2`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'PENDING'`);
+      }
       async seedDefaultSettings() {
         const allStores = await db.select({ id: stores.id }).from(stores);
         if (allStores.length === 0) {
@@ -3399,10 +3420,16 @@ var init_storage = __esm({
           address: abandonedCheckouts.address,
           assignedTo: abandonedCheckouts.assignedTo,
           isRecovered: abandonedCheckouts.isRecovered,
+          recoveryStatus: abandonedCheckouts.recoveryStatus,
           createdAt: abandonedCheckouts.createdAt,
           assignedAgentName: users.fullName
         }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).orderBy(desc(abandonedCheckouts.createdAt));
         return results;
+      }
+      /** Update the telecalling recovery status; keep isRecovered in sync. */
+      async updateAbandonedCheckoutStatus(id, status) {
+        const [row] = await db.update(abandonedCheckouts).set({ recoveryStatus: status, isRecovered: status === "RECOVERED" }).where(eq(abandonedCheckouts.id, id)).returning();
+        return row;
       }
       async createInboundWebhookLog(data) {
         const [log2] = await db.insert(inboundWebhookLogs).values(data).returning();
@@ -9400,6 +9427,28 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error fetching abandoned checkouts:", error);
       res.status(500).json({ error: "Failed to fetch abandoned checkouts" });
+    }
+  });
+  app2.patch("/api/abandoned-checkouts/:id/status", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        return res.status(400).json({ error: "Invalid checkout id" });
+      }
+      const { status } = req.body ?? {};
+      if (!status || !ABANDONED_RECOVERY_STATUSES.includes(status)) {
+        return res.status(400).json({
+          error: `Invalid status. Must be one of: ${ABANDONED_RECOVERY_STATUSES.join(", ")}`
+        });
+      }
+      const updated = await storage.updateAbandonedCheckoutStatus(id, status);
+      if (!updated) {
+        return res.status(404).json({ error: "Abandoned checkout not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating abandoned checkout status:", error);
+      res.status(500).json({ error: "Failed to update status" });
     }
   });
   app2.get("/api/orders", async (req, res) => {
@@ -15474,6 +15523,11 @@ async function runAutoLogoutSweep() {
   }
 }
 var ready = (async () => {
+  try {
+    await storage.ensureSchemaPatches();
+  } catch (err) {
+    console.error("[schema-patch] ensure failed (non-fatal):", err);
+  }
   await storage.seedDefaultSettings();
   if (!process.env.VERCEL) {
     setInterval(() => {

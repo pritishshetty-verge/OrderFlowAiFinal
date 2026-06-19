@@ -369,6 +369,15 @@ async function runAutoLogoutSweep() {
 // We export the resulting promise so `api/index.ts` (Vercel) can await it
 // per cold-start invocation.
 const ready = (async () => {
+  // Idempotent schema guard for columns added without a migration runner
+  // (e.g. abandoned_checkouts.recovery_status). Non-fatal: a transient DDL
+  // hiccup must not take down boot.
+  try {
+    await storage.ensureSchemaPatches();
+  } catch (err) {
+    console.error("[schema-patch] ensure failed (non-fatal):", err);
+  }
+
   // Seed default app settings on startup
   await storage.seedDefaultSettings();
 
