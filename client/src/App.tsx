@@ -1,5 +1,6 @@
 import { Switch, Route, useLocation, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
+import { pathGrantedByModule } from "./lib/access";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -74,9 +75,10 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
   const userRole = localStorage.getItem("userRole");
 
   if (userRole === "recovery_agent") {
-    const isAllowed = RECOVERY_AGENT_ALLOWED_PATHS.some(
-      (path) => location === path || location.startsWith(path + "/")
-    );
+    const isAllowed =
+      RECOVERY_AGENT_ALLOWED_PATHS.some(
+        (path) => location === path || location.startsWith(path + "/")
+      ) || pathGrantedByModule(location);
     if (!isAllowed) {
       return <Redirect to="/abandoned-carts" />;
     }
@@ -114,11 +116,12 @@ function ChatSupportGuard({ component: Component }: { component: React.Component
   const userRole = localStorage.getItem("userRole");
 
   if (userRole === "chat_support") {
-    const isAllowed = CHAT_SUPPORT_ALLOWED_PATHS.some(
-      (path) =>
-        location === path ||
-        (path !== "/" && location.startsWith(path + "/")),
-    );
+    const isAllowed =
+      CHAT_SUPPORT_ALLOWED_PATHS.some(
+        (path) =>
+          location === path ||
+          (path !== "/" && location.startsWith(path + "/")),
+      ) || pathGrantedByModule(location);
     if (!isAllowed) {
       return <Redirect to="/" />;
     }

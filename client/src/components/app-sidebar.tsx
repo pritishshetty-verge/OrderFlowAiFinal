@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { getGrantedModules } from "@/lib/access";
 import type { User } from "@shared/schema";
 
 type UserRole = "admin" | "agent" | "recovery_agent" | "chat_support";
@@ -49,6 +50,12 @@ type MenuItem = {
    * want admins + recovery_agents only, NOT plain agents).
    */
   allowedRoles?: UserRole[];
+  /**
+   * Page-access module key. When set, a user who has been granted this
+   * module (users.module_access) sees the item even if their role isn't in
+   * `allowedRoles` — i.e. admins manage per-user access from the Team page.
+   */
+  accessModule?: string;
 };
 
 type SubMenuItem = {
@@ -126,6 +133,7 @@ const adminMenuItems: MenuItem[] = [
     url: "/abandoned-carts",
     icon: ShoppingCart,
     allowedRoles: ["admin", "recovery_agent"],
+    accessModule: "abandoned_carts",
   },
   {
     title: "Products",
@@ -251,12 +259,22 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
     "/payroll",
     "/api-logs",
   ]);
-  // Helper: enforce a per-item allowlist when the item declares one.
-  // Items without `allowedRoles` are visible to whoever the menu
-  // array already says they're visible to (the v1 contract).
+  // The logged-in user's granted module keys. Prefer the freshly-fetched
+  // currentUser (so a just-granted module appears without a re-login); fall
+  // back to the localStorage mirror while that query is still loading.
+  const grantedModules: string[] = Array.isArray((currentUser as any)?.moduleAccess)
+    ? ((currentUser as any).moduleAccess as string[])
+    : getGrantedModules();
+
+  // Helper: an item is visible if its role allowlist passes (items without
+  // `allowedRoles` are visible per the v1 contract) OR the user has been
+  // granted the item's `accessModule` from the Team page.
   const passesRoleAllowlist = (item: {
     allowedRoles?: UserRole[];
-  }): boolean => !item.allowedRoles || item.allowedRoles.includes(userRole as UserRole);
+    accessModule?: string;
+  }): boolean =>
+    (!item.allowedRoles || item.allowedRoles.includes(userRole as UserRole)) ||
+    (!!item.accessModule && grantedModules.includes(item.accessModule));
 
   const menuItems = (isAdmin
     ? baseMenuItems

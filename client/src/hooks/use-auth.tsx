@@ -64,11 +64,18 @@ function writeShim(u: AuthUser | null) {
     localStorage.setItem("userRole", u.role);
     localStorage.setItem("userEmail", u.email);
     if (u.fullName) localStorage.setItem("userFullName", u.fullName);
+    // Per-user module access grants — mirrored so route guards read them
+    // synchronously (see client/src/lib/access.ts).
+    localStorage.setItem(
+      "moduleAccess",
+      JSON.stringify(Array.isArray((u as any).moduleAccess) ? (u as any).moduleAccess : []),
+    );
   } else {
     localStorage.removeItem("userId");
     localStorage.removeItem("userRole");
     localStorage.removeItem("userEmail");
     localStorage.removeItem("userFullName");
+    localStorage.removeItem("moduleAccess");
     // Phase 3: clear the active store id on logout so a subsequent
     // login by a different user doesn't inherit the previous one's
     // store selection (or worse, send a header for a store the new

@@ -13,6 +13,7 @@ var __export = (target, all) => {
 var schema_exports = {};
 __export(schema_exports, {
   ABANDONED_RECOVERY_STATUSES: () => ABANDONED_RECOVERY_STATUSES,
+  ACCESS_MODULES: () => ACCESS_MODULES,
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
   REFUND_TYPES: () => REFUND_TYPES,
   RETURN_STATUSES: () => RETURN_STATUSES,
@@ -101,7 +102,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -131,6 +132,10 @@ var init_schema = __esm({
       // full_control, partial_control (nullable, only for admins)
       permissions: jsonb("permissions"),
       // Custom permissions for partial_control admins
+      // Per-user page/module access grants, additive on top of the role's
+      // baseline (e.g. ["abandoned_carts"]). Admins manage this from the Team page
+      // so access can be granted dynamically without new hardcoded role guards.
+      moduleAccess: jsonb("module_access").$type(),
       department: text("department").default("Operations"),
       employeeId: text("employee_id").unique(),
       agentExtension: varchar("agent_extension", { length: 10 }),
@@ -189,7 +194,11 @@ var init_schema = __esm({
       department: true,
       agentExtension: true
     });
-    updateUserSchema = createInsertSchema(users).pick({
+    updateUserSchema = createInsertSchema(users, {
+      // jsonb().$type<string[]>() infers an awkward array type via drizzle-zod;
+      // pin it to a plain string[] so UpdateUser.moduleAccess is assignable.
+      moduleAccess: z.array(z.string())
+    }).pick({
       username: true,
       email: true,
       fullName: true,
@@ -198,6 +207,7 @@ var init_schema = __esm({
       role: true,
       adminType: true,
       permissions: true,
+      moduleAccess: true,
       department: true,
       employeeId: true,
       agentExtension: true,
@@ -208,6 +218,9 @@ var init_schema = __esm({
       isActive: true,
       kycDocumentUrl: true
     }).partial();
+    ACCESS_MODULES = [
+      { key: "abandoned_carts", label: "Abandoned Carts" }
+    ];
     DEFAULT_MANAGER_PERMISSIONS = {
       teamManagement: {
         viewDirectory: true,
@@ -3359,6 +3372,9 @@ var init_storage = __esm({
         await db.execute(sql2`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS raw_data JSONB`);
+        await db.execute(sql2`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS module_access JSONB`);
       }
       async seedDefaultSettings() {
         const allStores = await db.select({ id: stores.id }).from(stores);

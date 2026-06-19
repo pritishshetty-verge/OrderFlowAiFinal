@@ -50,6 +50,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("agent"), // admin, agent
   adminType: text("admin_type"), // full_control, partial_control (nullable, only for admins)
   permissions: jsonb("permissions"), // Custom permissions for partial_control admins
+  // Per-user page/module access grants, additive on top of the role's
+  // baseline (e.g. ["abandoned_carts"]). Admins manage this from the Team page
+  // so access can be granted dynamically without new hardcoded role guards.
+  moduleAccess: jsonb("module_access").$type<string[]>(),
   department: text("department").default("Operations"),
   employeeId: text("employee_id").unique(),
   agentExtension: varchar("agent_extension", { length: 10 }), // IVR phone extension for agents
@@ -108,7 +112,11 @@ export const insertUserSchema = createInsertSchema(users).pick({
   agentExtension: true,
 });
 
-export const updateUserSchema = createInsertSchema(users).pick({
+export const updateUserSchema = createInsertSchema(users, {
+  // jsonb().$type<string[]>() infers an awkward array type via drizzle-zod;
+  // pin it to a plain string[] so UpdateUser.moduleAccess is assignable.
+  moduleAccess: z.array(z.string()),
+}).pick({
   username: true,
   email: true,
   fullName: true,
@@ -117,6 +125,7 @@ export const updateUserSchema = createInsertSchema(users).pick({
   role: true,
   adminType: true,
   permissions: true,
+  moduleAccess: true,
   department: true,
   employeeId: true,
   agentExtension: true,
@@ -127,6 +136,15 @@ export const updateUserSchema = createInsertSchema(users).pick({
   isActive: true,
   kycDocumentUrl: true,
 }).partial();
+
+// Grantable page modules an Admin can assign to a team member from the Team
+// page. Additive: a user sees these in addition to whatever their role grants.
+// Extend this list (and tag the matching sidebar item with `accessModule`) to
+// make another page permission-grantable.
+export const ACCESS_MODULES = [
+  { key: "abandoned_carts", label: "Abandoned Carts" },
+] as const;
+export type AccessModuleKey = (typeof ACCESS_MODULES)[number]["key"];
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type UpdateUser = z.infer<typeof updateUserSchema>;

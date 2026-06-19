@@ -83,6 +83,7 @@ export default function LoginPage() {
       // localStorage. Replaced by useAuth() in Phase 2.
       localStorage.setItem("userId", data.id);
       localStorage.setItem("userRole", data.role);
+      localStorage.setItem("moduleAccess", JSON.stringify(Array.isArray(data.moduleAccess) ? data.moduleAccess : []));
       localStorage.setItem("userEmail", data.email);
       if (data.fullName) localStorage.setItem("userFullName", data.fullName);
       setLocation("/");

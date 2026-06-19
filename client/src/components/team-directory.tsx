@@ -24,12 +24,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye, KeyRound } from "lucide-react";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ConfigurePermissionsModal } from "@/components/configure-permissions-modal";
 import { ManageStoreAccessDialog } from "@/components/manage-store-access-dialog";
+import { ManageModuleAccessDialog } from "@/components/manage-module-access-dialog";
 
 type HolidayState = "MUMBAI" | "DELHI" | "BENGALURU" | "HYDERABAD";
 const HOLIDAY_STATE_OPTIONS: HolidayState[] = [
@@ -54,6 +55,7 @@ interface TeamMember {
   name: string;
   role: "admin" | "agent" | "recovery_agent" | "chat_support";
   adminType?: "full_control" | "partial_control";
+  moduleAccess?: string[];
   email: string;
   phone: string;
   agentExtension?: string;
@@ -146,6 +148,9 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   // Phase 4 RBAC: which user's store memberships are being edited
   // right now. Null when the modal is closed.
   const [userForStoreAccess, setUserForStoreAccess] =
+    useState<TeamMember | null>(null);
+  // Which user's per-page module access is being edited (null = closed).
+  const [userForModuleAccess, setUserForModuleAccess] =
     useState<TeamMember | null>(null);
   const { toast } = useToast();
 
@@ -572,6 +577,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         name: user.fullName,
         role: user.role as TeamMember["role"],
         adminType: (user.adminType as "full_control" | "partial_control") || undefined,
+        moduleAccess: Array.isArray(user.moduleAccess) ? (user.moduleAccess as string[]) : [],
         email: user.email,
         phone: user.phone || "N/A",
         agentExtension: user.agentExtension || undefined,
@@ -938,6 +944,17 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     title="Manage store access"
                   >
                     <Store className="h-4 w-4" />
+                  </Button>
+                )}
+                {userRole === "admin" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setUserForModuleAccess(member)}
+                    data-testid={`button-manage-page-access-${member.id}`}
+                    title="Manage page access"
+                  >
+                    <KeyRound className="h-4 w-4" />
                   </Button>
                 )}
                 {userRole === "admin" && (
@@ -1325,6 +1342,23 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                 fullName: userForStoreAccess.name,
                 email: userForStoreAccess.email,
                 role: userForStoreAccess.role,
+              }
+            : null
+        }
+      />
+
+      {/* Per-user page (module) access modal. */}
+      <ManageModuleAccessDialog
+        open={!!userForModuleAccess}
+        onOpenChange={(next) => {
+          if (!next) setUserForModuleAccess(null);
+        }}
+        user={
+          userForModuleAccess
+            ? {
+                id: userForModuleAccess.id,
+                fullName: userForModuleAccess.name,
+                moduleAccess: userForModuleAccess.moduleAccess,
               }
             : null
         }

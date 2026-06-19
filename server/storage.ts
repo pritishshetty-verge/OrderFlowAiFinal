@@ -3628,6 +3628,9 @@ export class DbStorage implements IStorage {
     await db.execute(sql`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS raw_data JSONB`);
+    await db.execute(sql`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS module_access JSONB`);
   }
 
   async seedDefaultSettings(): Promise<void> {

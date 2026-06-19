@@ -130,6 +130,7 @@ export default function SignupPage() {
 
       localStorage.setItem("userRole", user.role);
       localStorage.setItem("userId", user.id);
+      localStorage.setItem("moduleAccess", JSON.stringify(Array.isArray(user.moduleAccess) ? user.moduleAccess : []));
       localStorage.setItem("userEmail", user.email);
 
       setLocation("/");
