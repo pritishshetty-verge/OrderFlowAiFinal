@@ -412,9 +412,14 @@ export default function AbandonedCartsPage() {
       await apiRequest("PATCH", `/api/abandoned-checkouts/${id}/status`, { status });
     },
     onSuccess: (_data, vars) => {
+      // Flip the badge instantly (table + drawer), then reconcile in the
+      // background. Silent — no success toast, matching the Orders page.
+      queryClient.setQueryData<AbandonedCheckoutRow[]>(
+        ["/api/abandoned-checkouts"],
+        (old) => old?.map((c) => (c.id === vars.id ? { ...c, recoveryStatus: vars.status } : c)),
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/abandoned-checkouts"] });
       setSelected((prev) => (prev ? { ...prev, recoveryStatus: vars.status } : prev));
-      toast({ title: "Recovery status updated" });
     },
     onError: () => {
       toast({ title: "Could not update status", description: "Please try again.", variant: "destructive" });

@@ -114,18 +114,18 @@ const adminMenuItems: MenuItem[] = [
         icon: Phone,
         comingSoon: true,
       },
-      {
-        // Abandoned Carts is operational territory for admins and
-        // recovery agents. Plain "agent" role sees the rest of the
-        // Orders subtree but not this — they don't action cart
-        // recovery flows. The runtime filter below uses
-        // `allowedRoles` to enforce this without forking the menu.
-        title: "Abandoned Carts",
-        url: "/abandoned-carts",
-        icon: ShoppingCart,
-        allowedRoles: ["admin", "recovery_agent"],
-      },
     ],
+  },
+  {
+    // Abandoned Carts — promoted to a top-level section (was nested under
+    // Orders). Heavy recovery features (coupon tracking, email templates)
+    // are planned, so it gets its own primary nav entry, sitting right
+    // below Orders. Visible to admins + recovery agents only; plain
+    // "agent" doesn't action cart-recovery flows.
+    title: "Abandoned Carts",
+    url: "/abandoned-carts",
+    icon: ShoppingCart,
+    allowedRoles: ["admin", "recovery_agent"],
   },
   {
     title: "Products",
