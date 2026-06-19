@@ -720,6 +720,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         checkoutUrl: normalized.checkoutUrl,
         checkoutStage: normalized.checkoutStage,
         address: normalized.address,
+        // Keep the full payload so the UI can render the detailed price
+        // breakdown (shipping, prepaid/coupon discounts) Fastrr sends.
+        rawData: req.body ?? null,
         isRecovered: false,
       });
 

@@ -1627,6 +1627,9 @@ export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   checkoutUrl: text("checkout_url"),
   checkoutStage: text("checkout_stage"),
   address: text("address"),
+  // Full raw Fastrr/Shiprocket Faster webhook payload — kept so the detailed
+  // price breakdown (shipping, prepaid/coupon discounts) can be parsed in the UI.
+  rawData: jsonb("raw_data"),
   assignedTo: text("assigned_to"),
   isRecovered: boolean("is_recovered").notNull().default(false),
   // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).

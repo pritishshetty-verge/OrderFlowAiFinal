@@ -36,7 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Phone, ShoppingCart, Package, Copy, ExternalLink, Mail, X, Link as LinkIcon,
+  Phone, ShoppingCart, Package, Copy, Mail, X, Link as LinkIcon,
   Clock, CheckCircle2, XCircle, ChevronDown, ChevronLeft, ChevronRight,
   Search, Download, Filter as FilterIcon,
 } from "lucide-react";
@@ -74,6 +74,64 @@ function humanize(value: string | null): string {
 
 function asItems(items: unknown): CartItem[] {
   return Array.isArray(items) ? (items as CartItem[]) : [];
+}
+
+function toNum(v: unknown): number {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+interface Pricing {
+  subtotal: number;
+  shipping: number;
+  prepaidDiscount: number;
+  couponDiscount: number;
+  couponCode?: string;
+  total: number;
+}
+
+// Parse Fastrr's raw payload for a detailed price breakdown. Field names vary,
+// so match defensively by key pattern (and flatten one nested level). Rows
+// render only when a value is found.
+function parsePricing(rawData: unknown, items: CartItem[], cartValue: string | null): Pricing {
+  const raw = rawData && typeof rawData === "object" ? (rawData as Record<string, any>) : {};
+  const flat: Record<string, any> = { ...raw };
+  for (const k of Object.keys(raw)) {
+    const v = raw[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [nk, nv] of Object.entries(v)) if (!(nk in flat)) flat[nk] = nv;
+    }
+  }
+  const find = (test: (k: string) => boolean): number => {
+    for (const k of Object.keys(flat)) {
+      if (test(k.toLowerCase())) {
+        const n = toNum(flat[k]);
+        if (n) return n;
+      }
+    }
+    return 0;
+  };
+  const findStr = (test: (k: string) => boolean): string | undefined => {
+    for (const k of Object.keys(flat)) {
+      if (test(k.toLowerCase()) && flat[k]) return String(flat[k]);
+    }
+    return undefined;
+  };
+
+  const itemsSubtotal = items.reduce((s, it) => s + toNum(it.price) * (Number(it.quantity) || 1), 0);
+  const subtotal = find((k) => /sub.?total/.test(k)) || itemsSubtotal;
+  const shipping =
+    find((k) => /(ship|deliver)/.test(k) && /(charge|cost|price|fee|amount)/.test(k)) ||
+    find((k) => k === "shipping");
+  const prepaidDiscount =
+    find((k) => /prepaid/.test(k) && /disc/.test(k)) ||
+    find((k) => /online/.test(k) && /disc/.test(k));
+  const couponDiscount =
+    find((k) => /coupon/.test(k) && /disc/.test(k)) ||
+    find((k) => /coupon/.test(k) && /(value|amount)/.test(k));
+  const couponCode = findStr((k) => /coupon/.test(k) && /code/.test(k));
+  const total = toNum(cartValue) || find((k) => /total/.test(k) && !/sub/.test(k));
+  return { subtotal, shipping, prepaidDiscount, couponDiscount, couponCode, total };
 }
 
 function formatINR(value: string | number | null | undefined, decimals = 2) {
@@ -365,12 +423,8 @@ export default function AbandonedCartsPage() {
   const canNext = selectedIndex >= 0 && selectedIndex < filtered.length - 1;
   const goPrev = () => { if (canPrev) setSelected(filtered[selectedIndex - 1]); };
   const goNext = () => { if (canNext) setSelected(filtered[selectedIndex + 1]); };
-  // Price breakdown.
-  const subtotal = selectedItems.reduce(
-    (s, it) => s + (parseFloat(String(it.price ?? 0)) || 0) * (Number(it.quantity) || 1),
-    0,
-  );
-  const cartTotal = parseFloat(String(selected?.cartValue ?? 0)) || 0;
+  // Detailed price breakdown parsed from Fastrr's raw payload.
+  const pricing = selected ? parsePricing(selected.rawData, selectedItems, selected.cartValue) : null;
 
   return (
     <PageLayout title="Abandoned Checkouts" description="Track and recover abandoned carts from Fastrr">
@@ -596,9 +650,18 @@ export default function AbandonedCartsPage() {
               <div className="flex-shrink-0 border-b bg-card rounded-tl-xl">
                 <div className="flex items-center justify-between gap-2 px-4 py-3">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-lg font-semibold truncate" title={selected.externalId ?? ""} data-testid="text-cart-id">
-                      {selected.externalId ? `#${selected.externalId}` : "Cart"}
-                    </span>
+                    {/* Cart ID — click copies the CHECKOUT URL (not the id text). */}
+                    <button
+                      type="button"
+                      onClick={() => selected.checkoutUrl && copyLink(selected.checkoutUrl)}
+                      disabled={!selected.checkoutUrl}
+                      title={selected.checkoutUrl ? "Copy checkout link" : "No checkout link"}
+                      className="group inline-flex items-center gap-1.5 min-w-0 text-lg font-semibold hover:text-foreground/80 transition-colors disabled:cursor-default"
+                      data-testid="button-cart-id-copy"
+                    >
+                      <span className="truncate">{selected.externalId ? `#${selected.externalId}` : "Cart"}</span>
+                      <Copy className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" onClick={goPrev} disabled={!canPrev} className="h-7 w-7" data-testid="button-prev-cart">
@@ -703,39 +766,46 @@ export default function AbandonedCartsPage() {
 
                 <Separator />
 
-                {/* Price breakdown */}
+                {/* Price breakdown — parsed from Fastrr payload (Orders UI). */}
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Price breakdown</p>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Payment</p>
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">Subtotal</span>
-                      <span>{formatINR(subtotal)}</span>
+                      <span>{formatINR(pricing?.subtotal ?? 0)}</span>
                     </div>
+                    {!!pricing?.shipping && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Shipping cost</span>
+                        <span>{formatINR(pricing.shipping)}</span>
+                      </div>
+                    )}
+                    {!!pricing?.prepaidDiscount && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Prepaid discount</span>
+                        <span>−{formatINR(pricing.prepaidDiscount)}</span>
+                      </div>
+                    )}
+                    {!!pricing?.couponDiscount && (
+                      <div className="flex justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-muted-foreground">Coupon discount</span>
+                          {pricing.couponCode && (
+                            <Badge className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate" data-testid="badge-coupon-code">
+                              {pricing.couponCode}
+                            </Badge>
+                          )}
+                        </div>
+                        <span>−{formatINR(pricing.couponDiscount)}</span>
+                      </div>
+                    )}
                     <Separator className="my-1.5" />
                     <div className="flex justify-between text-sm font-semibold">
                       <span>Total</span>
-                      <span>{formatINR(cartTotal)}</span>
+                      <span>{formatINR(pricing?.total ?? 0)}</span>
                     </div>
                   </div>
                 </div>
-
-                {selected.checkoutUrl && (
-                  <>
-                    <Separator />
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-2">Checkout link</p>
-                      <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5">
-                        <a href={selected.checkoutUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline truncate flex-1" data-testid="link-checkout-url">
-                          <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
-                          <span className="truncate">{selected.checkoutUrl}</span>
-                        </a>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0" onClick={() => copyLink(selected.checkoutUrl!)} data-testid="button-copy-link">
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                )}
               </div>
 
               {/* Status update footer: Prev · Recovery Status · Next */}

@@ -1301,6 +1301,9 @@ var init_schema = __esm({
       checkoutUrl: text("checkout_url"),
       checkoutStage: text("checkout_stage"),
       address: text("address"),
+      // Full raw Fastrr/Shiprocket Faster webhook payload — kept so the detailed
+      // price breakdown (shipping, prepaid/coupon discounts) can be parsed in the UI.
+      rawData: jsonb("raw_data"),
       assignedTo: text("assigned_to"),
       isRecovered: boolean("is_recovered").notNull().default(false),
       // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).
@@ -3353,6 +3356,9 @@ var init_storage = __esm({
         await db.execute(sql2`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'PENDING'`);
+        await db.execute(sql2`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS raw_data JSONB`);
       }
       async seedDefaultSettings() {
         const allStores = await db.select({ id: stores.id }).from(stores);
@@ -3389,6 +3395,7 @@ var init_storage = __esm({
             checkoutStage: data.checkoutStage,
             cartValue: data.cartValue,
             items: data.items,
+            rawData: data.rawData,
             customerName: sql2`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
             customerPhone: sql2`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
             customerEmail: sql2`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
@@ -3421,6 +3428,7 @@ var init_storage = __esm({
           assignedTo: abandonedCheckouts.assignedTo,
           isRecovered: abandonedCheckouts.isRecovered,
           recoveryStatus: abandonedCheckouts.recoveryStatus,
+          rawData: abandonedCheckouts.rawData,
           createdAt: abandonedCheckouts.createdAt,
           assignedAgentName: users.fullName
         }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).orderBy(desc(abandonedCheckouts.createdAt));
@@ -9409,6 +9417,9 @@ async function registerRoutes(app2) {
         checkoutUrl: normalized.checkoutUrl,
         checkoutStage: normalized.checkoutStage,
         address: normalized.address,
+        // Keep the full payload so the UI can render the detailed price
+        // breakdown (shipping, prepaid/coupon discounts) Fastrr sends.
+        rawData: req.body ?? null,
         isRecovered: false
       });
       console.log(

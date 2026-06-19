@@ -3625,6 +3625,9 @@ export class DbStorage implements IStorage {
     await db.execute(sql`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'PENDING'`);
+    await db.execute(sql`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS raw_data JSONB`);
   }
 
   async seedDefaultSettings(): Promise<void> {
@@ -3670,6 +3673,7 @@ export class DbStorage implements IStorage {
           checkoutStage: data.checkoutStage,
           cartValue: data.cartValue,
           items: data.items,
+          rawData: data.rawData,
           customerName: sql`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
           customerPhone: sql`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
           customerEmail: sql`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
@@ -3710,6 +3714,7 @@ export class DbStorage implements IStorage {
         assignedTo: abandonedCheckouts.assignedTo,
         isRecovered: abandonedCheckouts.isRecovered,
         recoveryStatus: abandonedCheckouts.recoveryStatus,
+        rawData: abandonedCheckouts.rawData,
         createdAt: abandonedCheckouts.createdAt,
         assignedAgentName: users.fullName,
       })
