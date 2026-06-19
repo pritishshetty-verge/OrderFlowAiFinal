@@ -84,54 +84,64 @@ function toNum(v: unknown): number {
 interface Pricing {
   subtotal: number;
   shipping: number;
-  prepaidDiscount: number;
-  couponDiscount: number;
-  couponCode?: string;
+  discount: number;
+  tax: number;
   total: number;
+  discountCodes: string[];
+  hasRawData: boolean;
 }
 
-// Parse Fastrr's raw payload for a detailed price breakdown. Field names vary,
-// so match defensively by key pattern (and flatten one nested level). Rows
-// render only when a value is found.
-function parsePricing(rawData: unknown, items: CartItem[], cartValue: string | null): Pricing {
-  const raw = rawData && typeof rawData === "object" ? (rawData as Record<string, any>) : {};
-  const flat: Record<string, any> = { ...raw };
-  for (const k of Object.keys(raw)) {
-    const v = raw[k];
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      for (const [nk, nv] of Object.entries(v)) if (!(nk in flat)) flat[nk] = nv;
-    }
-  }
-  const find = (test: (k: string) => boolean): number => {
-    for (const k of Object.keys(flat)) {
-      if (test(k.toLowerCase())) {
-        const n = toNum(flat[k]);
-        if (n) return n;
-      }
-    }
-    return 0;
-  };
-  const findStr = (test: (k: string) => boolean): string | undefined => {
-    for (const k of Object.keys(flat)) {
-      if (test(k.toLowerCase()) && flat[k]) return String(flat[k]);
-    }
-    return undefined;
-  };
+// Split a discount_codes entry like "PrepaidDiscount+AppliedDiscount" into
+// individual, readable labels.
+function parseDiscountCodes(codes: unknown): string[] {
+  if (!Array.isArray(codes)) return [];
+  return codes
+    .flatMap((c) => String(c).split(/[+,]/))
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
+// Parse Fastrr's live webhook payload (stored in raw_data) for the price
+// breakdown. The webhook gives total_price, shipping_price, total_discount, tax
+// and discount_codes — but NOT subtotal, so it's back-computed:
+//   subtotal = total_price + total_discount − shipping_price − tax
+// Falls back to the items-derived subtotal / cart value when raw_data is null
+// (older carts created before we captured the payload).
+function parsePricing(rawData: unknown, items: CartItem[], cartValue: string | null): Pricing {
+  const raw = rawData && typeof rawData === "object" ? (rawData as Record<string, any>) : null;
   const itemsSubtotal = items.reduce((s, it) => s + toNum(it.price) * (Number(it.quantity) || 1), 0);
-  const subtotal = find((k) => /sub.?total/.test(k)) || itemsSubtotal;
-  const shipping =
-    find((k) => /(ship|deliver)/.test(k) && /(charge|cost|price|fee|amount)/.test(k)) ||
-    find((k) => k === "shipping");
-  const prepaidDiscount =
-    find((k) => /prepaid/.test(k) && /disc/.test(k)) ||
-    find((k) => /online/.test(k) && /disc/.test(k));
-  const couponDiscount =
-    find((k) => /coupon/.test(k) && /disc/.test(k)) ||
-    find((k) => /coupon/.test(k) && /(value|amount)/.test(k));
-  const couponCode = findStr((k) => /coupon/.test(k) && /code/.test(k));
-  const total = toNum(cartValue) || find((k) => /total/.test(k) && !/sub/.test(k));
-  return { subtotal, shipping, prepaidDiscount, couponDiscount, couponCode, total };
+
+  if (!raw) {
+    // Older cart — no captured payload. Show only what we can derive.
+    return {
+      subtotal: itemsSubtotal,
+      shipping: 0,
+      discount: 0,
+      tax: 0,
+      total: toNum(cartValue) || itemsSubtotal,
+      discountCodes: [],
+      hasRawData: false,
+    };
+  }
+
+  const totalPrice = toNum(raw.total_price) || toNum(cartValue);
+  const shipping = toNum(raw.shipping_price);
+  const discount = toNum(raw.total_discount);
+  const tax = toNum(raw.tax);
+  // Back-compute subtotal from the final figures; fall back to the items sum.
+  const subtotal = totalPrice
+    ? totalPrice + discount - shipping - tax
+    : itemsSubtotal;
+
+  return {
+    subtotal,
+    shipping,
+    discount,
+    tax,
+    total: totalPrice || itemsSubtotal,
+    discountCodes: parseDiscountCodes(raw.discount_codes),
+    hasRawData: true,
+  };
 }
 
 function formatINR(value: string | number | null | undefined, decimals = 2) {
@@ -774,29 +784,29 @@ export default function AbandonedCartsPage() {
                       <span className="text-muted-foreground">Subtotal</span>
                       <span>{formatINR(pricing?.subtotal ?? 0)}</span>
                     </div>
+                    {!!pricing?.discount && (
+                      <div className="flex justify-between text-xs">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-muted-foreground">Discount</span>
+                          {pricing.discountCodes.map((code, i) => (
+                            <Badge key={i} className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate" data-testid={`badge-discount-code-${i}`}>
+                              {code}
+                            </Badge>
+                          ))}
+                        </div>
+                        <span>−{formatINR(pricing.discount)}</span>
+                      </div>
+                    )}
                     {!!pricing?.shipping && (
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Shipping cost</span>
                         <span>{formatINR(pricing.shipping)}</span>
                       </div>
                     )}
-                    {!!pricing?.prepaidDiscount && (
+                    {!!pricing?.tax && (
                       <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Prepaid discount</span>
-                        <span>−{formatINR(pricing.prepaidDiscount)}</span>
-                      </div>
-                    )}
-                    {!!pricing?.couponDiscount && (
-                      <div className="flex justify-between text-xs">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-muted-foreground">Coupon discount</span>
-                          {pricing.couponCode && (
-                            <Badge className="bg-[#4F46E5] hover:bg-[#4338CA] text-white border-0 font-medium text-xs px-2 py-0.5 no-default-hover-elevate" data-testid="badge-coupon-code">
-                              {pricing.couponCode}
-                            </Badge>
-                          )}
-                        </div>
-                        <span>−{formatINR(pricing.couponDiscount)}</span>
+                        <span className="text-muted-foreground">Tax</span>
+                        <span>{formatINR(pricing.tax)}</span>
                       </div>
                     )}
                     <Separator className="my-1.5" />
@@ -805,6 +815,11 @@ export default function AbandonedCartsPage() {
                       <span>{formatINR(pricing?.total ?? 0)}</span>
                     </div>
                   </div>
+                  {pricing && !pricing.hasRawData && (
+                    <p className="text-[11px] text-muted-foreground mt-2" data-testid="text-breakdown-unavailable">
+                      Detailed breakdown unavailable for older carts
+                    </p>
+                  )}
                 </div>
               </div>
 
