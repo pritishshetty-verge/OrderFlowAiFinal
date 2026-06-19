@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
@@ -21,8 +21,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Phone, ShoppingCart, Package, Copy, ExternalLink, Mail, X } from "lucide-react";
-import { formatDistanceToNow, format } from "date-fns";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Phone, ShoppingCart, Package, Copy, ExternalLink, Mail, X, Link as LinkIcon,
+  Clock, CheckCircle2, XCircle, MessageCircle, ChevronDown, ChevronLeft, ChevronRight,
+} from "lucide-react";
+import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -40,70 +54,28 @@ interface CartItem {
   image?: string;
 }
 
-const WHATSAPP_ICON_LIGHT =
-  "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/icons8-whatsapp-48.png?v=1781842548";
-const WHATSAPP_ICON_DARK =
-  "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/whatsapp-16.png?v=1781842662";
+// Action icons (provided assets). Phone-call images map to the CALL action;
+// WhatsApp glyph for the WhatsApp action; copy uses a link/chain icon.
+const PHONE_ICON_LIGHT = "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/phone-call.png?v=1781846985";
+const PHONE_ICON_DARK = "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/phone-call-white-icon.webp?v=1781846981";
+const WHATSAPP_ICON_LIGHT = "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/whatsapp-glyph-black-logo.svg?v=1781846840";
+const WHATSAPP_ICON_DARK = "https://cdn.shopify.com/s/files/1/0763/9089/1698/files/whatsapp-16.png?v=1781842662";
 
 const RECOVERY_STATUSES = ["PENDING", "CONTACTED", "RECOVERED", "LOST"] as const;
 
-// Same color families + pill shape as the order-status Badges (status-badge.tsx).
-const BADGE_FAMILY = {
-  slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-600",
-  blue: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-700",
-  amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-700",
-  yellow: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700",
-  green: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700",
-  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border border-red-200 dark:border-red-700",
-} as const;
-
-function Pill({ label, family }: { label: string; family: keyof typeof BADGE_FAMILY }) {
-  return (
-    <Badge variant="outline" className={cn("rounded-full px-3 py-1 text-xs font-medium", BADGE_FAMILY[family])}>
-      {label}
-    </Badge>
-  );
-}
-
 function humanize(value: string | null): string {
   if (!value) return "Cart Created";
-  return value
-    .replace(/[_\s]+/g, " ")
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function StageBadge({ stage }: { stage: string | null }) {
-  const n = (stage || "").toLowerCase();
-  const family: keyof typeof BADGE_FAMILY = n.includes("payment")
-    ? "amber"
-    : n.includes("detail") || n.includes("address")
-      ? "blue"
-      : "slate";
-  return <Pill label={humanize(stage)} family={family} />;
-}
-
-function RecoveryBadge({ status }: { status: string | null | undefined }) {
-  switch (status) {
-    case "RECOVERED":
-      return <Pill label="Recovered" family="green" />;
-    case "CONTACTED":
-      return <Pill label="Contacted" family="blue" />;
-    case "LOST":
-      return <Pill label="Lost" family="red" />;
-    default:
-      return <Pill label="Pending" family="yellow" />;
-  }
-}
-
-function formatINR(value: string | number | null | undefined) {
-  const num = typeof value === "number" ? value : parseFloat(value ?? "0");
-  if (isNaN(num)) return "₹0";
-  return `₹${num.toLocaleString("en-IN")}`;
+  return value.replace(/[_\s]+/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function asItems(items: unknown): CartItem[] {
   return Array.isArray(items) ? (items as CartItem[]) : [];
+}
+
+function formatINR(value: string | number | null | undefined, decimals = 2) {
+  const num = typeof value === "number" ? value : parseFloat(value ?? "0");
+  if (isNaN(num)) return "₹0";
+  return `₹${num.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
 
 function whatsappLink(phone: string | null): string | null {
@@ -113,23 +85,151 @@ function whatsappLink(phone: string | null): string | null {
   return `https://wa.me/${digits.length === 10 ? `91${digits}` : digits}`;
 }
 
-function RowActions({ phone, id }: { phone: string | null; id: number }) {
-  const wa = whatsappLink(phone);
+// Checkout Stage — exact PaymentBadge pill (rounded-full, transparent, colored
+// border/text) used on the Orders page Payment column.
+function StageBadge({ stage }: { stage: string | null }) {
+  const n = (stage || "").toLowerCase();
+  const style = n.includes("payment")
+    ? "text-yellow-600 dark:text-yellow-400 border-yellow-600 dark:border-yellow-400"
+    : n.includes("detail") || n.includes("address")
+      ? "text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400"
+      : "text-gray-500 dark:text-gray-400 border-gray-500 dark:border-gray-400";
   return (
-    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-      <Button variant="ghost" size="icon" disabled={!phone} asChild={!!phone} title={phone ? `Call ${phone}` : "No phone"} data-testid={`button-call-${id}`}>
-        {phone ? <a href={`tel:${phone}`}><Phone className="h-4 w-4" /></a> : <Phone className="h-4 w-4" />}
-      </Button>
-      <Button variant="ghost" size="icon" disabled={!wa} asChild={!!wa} title={wa ? "WhatsApp" : "No phone"} data-testid={`button-whatsapp-${id}`}>
-        {wa ? (
-          <a href={wa} target="_blank" rel="noopener noreferrer">
-            <img src={WHATSAPP_ICON_LIGHT} alt="WhatsApp" className="h-4 w-4 block dark:hidden" />
-            <img src={WHATSAPP_ICON_DARK} alt="WhatsApp" className="h-4 w-4 hidden dark:block" />
-          </a>
-        ) : (
-          <img src={WHATSAPP_ICON_LIGHT} alt="WhatsApp" className="h-4 w-4 opacity-50" />
-        )}
-      </Button>
+    <Badge
+      variant="outline"
+      className={cn("rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent", style)}
+    >
+      {humanize(stage)}
+    </Badge>
+  );
+}
+
+const RECOVERY_META: Record<string, { color: string; icon: JSX.Element; label: string }> = {
+  PENDING: { color: "text-purple-600 dark:text-purple-400", icon: <Clock className="h-4 w-4 mr-1" />, label: "Pending" },
+  CONTACTED: { color: "text-blue-600 dark:text-blue-400", icon: <Phone className="h-4 w-4 mr-1" />, label: "Contacted" },
+  RECOVERED: { color: "text-green-600 dark:text-green-400", icon: <CheckCircle2 className="h-4 w-4 mr-1" />, label: "Recovered" },
+  LOST: { color: "text-red-600 dark:text-red-400", icon: <XCircle className="h-4 w-4 mr-1" />, label: "Lost" },
+};
+
+// Recovery Status — exact CallStatusActions dropdown pill from the Orders page.
+function RecoveryStatusDropdown({
+  status,
+  onChange,
+  disabled,
+}: {
+  status: string;
+  onChange: (status: string) => void;
+  disabled?: boolean;
+}) {
+  const meta = RECOVERY_META[status] ?? RECOVERY_META.PENDING;
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" disabled={disabled} className={cn("gap-1", meta.color)} data-testid="dropdown-recovery-status">
+            {meta.icon}
+            {meta.label}
+            <ChevronDown className="h-3 w-3 ml-1" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          {RECOVERY_STATUSES.map((s) => (
+            <DropdownMenuItem
+              key={s}
+              onClick={() => onChange(s)}
+              className={cn("gap-2", RECOVERY_META[s].color, "focus:" + RECOVERY_META[s].color)}
+              data-testid={`menuitem-${s}`}
+            >
+              {RECOVERY_META[s].icon}
+              {RECOVERY_META[s].label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+// Cart Details — exact OrderItemsSummary smart-summary + hover card.
+function CartDetails({ items }: { items: CartItem[] }) {
+  if (items.length === 0) return <span className="text-sm text-muted-foreground">—</span>;
+  const first = items[0].name || "Item";
+  const remaining = items.length - 1;
+  const summary = remaining > 0 ? `${first} + ${remaining} more ${remaining === 1 ? "item" : "items"}` : first;
+  return (
+    <HoverCard openDelay={200}>
+      <HoverCardTrigger asChild>
+        <button className="text-sm text-left hover:underline cursor-help focus:outline-none">{summary}</button>
+      </HoverCardTrigger>
+      <HoverCardContent className="w-80 border shadow-lg z-50">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 border-b pb-2">
+            <Package className="h-4 w-4 text-muted-foreground" />
+            <h4 className="font-semibold text-sm">Cart Items ({items.length})</h4>
+          </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {items.map((item, index) => (
+              <div key={index} className="flex justify-between gap-2 text-sm pb-2 border-b last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{item.name || "Unnamed item"}</p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="font-medium">×{Number(item.quantity) || 1}</p>
+                  <p className="text-xs text-muted-foreground">{formatINR(item.price as any, 0)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+// Three inline, aligned action icons: Copy link · Call · WhatsApp.
+function ActionIcons({
+  phone,
+  checkoutUrl,
+  onCopy,
+}: {
+  phone: string | null;
+  checkoutUrl: string | null;
+  onCopy: (url: string) => void;
+}) {
+  const wa = whatsappLink(phone);
+  const iconBtn = "inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:pointer-events-none";
+  return (
+    <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className={iconBtn}
+        disabled={!checkoutUrl}
+        onClick={() => checkoutUrl && onCopy(checkoutUrl)}
+        title="Copy checkout link"
+        data-testid="action-copy"
+      >
+        <LinkIcon className="h-4 w-4" />
+      </button>
+      <a
+        href={phone ? `tel:${phone}` : undefined}
+        className={cn(iconBtn, !phone && "opacity-40 pointer-events-none")}
+        title={phone ? `Call ${phone}` : "No phone"}
+        data-testid="action-call"
+      >
+        <img src={PHONE_ICON_LIGHT} alt="Call" className="h-[18px] w-[18px] block dark:hidden" />
+        <img src={PHONE_ICON_DARK} alt="Call" className="h-[18px] w-[18px] hidden dark:block" />
+      </a>
+      <a
+        href={wa ?? undefined}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(iconBtn, !wa && "opacity-40 pointer-events-none")}
+        title={wa ? "WhatsApp" : "No phone"}
+        data-testid="action-whatsapp"
+      >
+        <img src={WHATSAPP_ICON_LIGHT} alt="WhatsApp" className="h-[18px] w-[18px] block dark:hidden" />
+        <img src={WHATSAPP_ICON_DARK} alt="WhatsApp" className="h-[18px] w-[18px] hidden dark:block" />
+      </a>
     </div>
   );
 }
@@ -137,13 +237,15 @@ function RowActions({ phone, id }: { phone: string | null; id: number }) {
 export default function AbandonedCartsPage() {
   const { toast } = useToast();
   const [selected, setSelected] = useState<AbandonedCheckoutRow | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   const { data: checkouts, isLoading } = useQuery<AbandonedCheckoutRow[]>({
     queryKey: ["/api/abandoned-checkouts"],
   });
 
-  // Fastrr visibility pattern: only carts where the shopper provided a real
-  // NAME and a SHIPPING ADDRESS. Phone-only "Guest" drop-offs are hidden.
+  // Fastrr visibility pattern: only carts with a real NAME and a SHIPPING
+  // ADDRESS. Phone-only "Guest" drop-offs are hidden.
   const visible = useMemo(() => {
     return (checkouts ?? []).filter((c) => {
       const name = (c.customerName ?? "").trim();
@@ -152,6 +254,17 @@ export default function AbandonedCartsPage() {
       return hasName && hasAddress;
     });
   }, [checkouts]);
+
+  const total = visible.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const end = Math.min(start + pageSize, total);
+  const pageRows = visible.slice(start, end);
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize, total]);
 
   const statusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
@@ -169,7 +282,7 @@ export default function AbandonedCartsPage() {
 
   const copyLink = (url: string) => {
     navigator.clipboard?.writeText(url);
-    toast({ title: "Checkout link copied" });
+    toast({ title: "Link Copied" });
   };
 
   const selectedItems = asItems(selected?.items);
@@ -183,7 +296,7 @@ export default function AbandonedCartsPage() {
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
-        ) : visible.length === 0 ? (
+        ) : total === 0 ? (
           <div className="rounded-lg border bg-card">
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <ShoppingCart className="h-12 w-12 mb-3 opacity-40" />
@@ -197,18 +310,18 @@ export default function AbandonedCartsPage() {
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
                   <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
-                    <TableHead>Date</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Items</TableHead>
-                    <TableHead className="text-right">Cart Value</TableHead>
-                    <TableHead>Stage</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead className="w-[160px]">Date &amp; Time</TableHead>
+                    <TableHead>Customer Name</TableHead>
+                    <TableHead>Cart Details</TableHead>
+                    <TableHead className="w-[120px]">Cart Value</TableHead>
+                    <TableHead className="w-[150px]">Checkout Stage</TableHead>
+                    <TableHead className="w-[140px]">Status</TableHead>
+                    <TableHead className="w-[130px] text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px]">
-                  {visible.map((checkout) => {
-                    const count = asItems(checkout.items).length;
+                  {pageRows.map((checkout) => {
+                    const items = asItems(checkout.items);
                     return (
                       <TableRow
                         key={checkout.id}
@@ -217,7 +330,7 @@ export default function AbandonedCartsPage() {
                         data-testid={`row-checkout-${checkout.id}`}
                       >
                         <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDistanceToNow(new Date(checkout.createdAt), { addSuffix: true })}
+                          {format(new Date(checkout.createdAt), "do MMMM , h:mm aaa")}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col leading-tight">
@@ -227,26 +340,66 @@ export default function AbandonedCartsPage() {
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap" data-testid={`text-items-${checkout.id}`}>
-                          {count} {count === 1 ? "item" : "items"}
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <CartDetails items={items} />
                         </TableCell>
-                        <TableCell className="text-right font-medium tabular-nums">
+                        <TableCell className="font-medium tabular-nums whitespace-nowrap">
                           {formatINR(checkout.cartValue)}
                         </TableCell>
                         <TableCell>
                           <StageBadge stage={checkout.checkoutStage} />
                         </TableCell>
                         <TableCell>
-                          <RecoveryBadge status={checkout.recoveryStatus} />
+                          <RecoveryStatusDropdown
+                            status={checkout.recoveryStatus ?? "PENDING"}
+                            onChange={(status) => statusMutation.mutate({ id: checkout.id, status })}
+                            disabled={statusMutation.isPending}
+                          />
                         </TableCell>
                         <TableCell className="text-right">
-                          <RowActions phone={checkout.customerPhone} id={checkout.id} />
+                          <ActionIcons phone={checkout.customerPhone} checkoutUrl={checkout.checkoutUrl} onCopy={copyLink} />
                         </TableCell>
                       </TableRow>
                     );
                   })}
                 </TableBody>
               </Table>
+            </div>
+
+            {/* Pagination footer — cloned from the Orders table. */}
+            <div className="sticky bottom-0 bg-card border-t p-4 z-10">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-muted-foreground">
+                  Showing {total === 0 ? 0 : start + 1}-{end} of {total} carts
+                </span>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Rows per page:</span>
+                    <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                      <SelectTrigger className="w-[80px]" data-testid="select-page-size">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => setPage(safePage - 1)} disabled={safePage === 1} data-testid="button-prev-page">
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground px-4">Page {safePage} of {totalPages}</span>
+                    <Button variant="outline" size="sm" onClick={() => setPage(safePage + 1)} disabled={safePage >= totalPages} data-testid="button-next-page">
+                      Next
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -260,7 +413,6 @@ export default function AbandonedCartsPage() {
         >
           {selected && (
             <div className="flex flex-col h-full">
-              {/* Sticky header: Customer Name + Cart Value */}
               <div className="flex-shrink-0 border-b bg-card rounded-tl-xl">
                 <div className="flex items-center justify-between gap-2 px-4 py-3">
                   <div className="flex items-center gap-2 min-w-0">
@@ -276,9 +428,7 @@ export default function AbandonedCartsPage() {
                 </div>
               </div>
 
-              {/* Scrollable body */}
               <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-                {/* Customer / contact / address */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Customer</p>
                   <div className="space-y-1.5">
@@ -309,7 +459,6 @@ export default function AbandonedCartsPage() {
 
                 <Separator />
 
-                {/* Items — same Item Card layout as Orders preview */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Items</p>
                   {selectedItems.length === 0 ? (
@@ -331,7 +480,7 @@ export default function AbandonedCartsPage() {
                               <p className="text-xs font-medium truncate">{item.name || "Unnamed item"}</p>
                             </div>
                             <div className="text-right flex-shrink-0">
-                              <p className="text-xs font-medium">{formatINR(item.price as any)}</p>
+                              <p className="text-xs font-medium">{formatINR(item.price as any, 0)}</p>
                               <p className="text-xs text-muted-foreground">Qty: {Number(item.quantity) || 1}</p>
                             </div>
                           </div>
@@ -343,18 +492,11 @@ export default function AbandonedCartsPage() {
 
                 <Separator />
 
-                {/* Recovery actions — checkout link + status */}
                 {selected.checkoutUrl && (
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-2">Checkout link</p>
                     <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5">
-                      <a
-                        href={selected.checkoutUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline truncate flex-1"
-                        data-testid="link-checkout-url"
-                      >
+                      <a href={selected.checkoutUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline truncate flex-1" data-testid="link-checkout-url">
                         <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
                         <span className="truncate">{selected.checkoutUrl}</span>
                       </a>
@@ -385,9 +527,8 @@ export default function AbandonedCartsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <div className="flex items-center gap-1 pt-2">
-                    <RowActions phone={selected.customerPhone} id={selected.id} />
-                    <span className="text-xs text-muted-foreground">Call or message the customer</span>
+                  <div className="pt-2">
+                    <ActionIcons phone={selected.customerPhone} checkoutUrl={selected.checkoutUrl} onCopy={copyLink} />
                   </div>
                 </div>
               </div>
