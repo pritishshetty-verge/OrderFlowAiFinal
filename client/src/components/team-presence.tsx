@@ -128,14 +128,19 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
     userId: string,
     accountStatus: string,
   ): "online" | "break" | "offline" | "auto-closed" => {
+    const attendance = attendanceMap.get(userId);
+    // Auto-close is a fact about today's shift and MUST surface regardless
+    // of the account presence status. An idle agent is typically "inactive"
+    // (and the field defaults to "inactive" when unset), so checking account
+    // status first would wrongly hide auto-closed shifts and the reactivate
+    // button. `autoClosedAt` is cleared to null on reactivation, so its mere
+    // presence means "currently auto-closed" — this also covers a shift that
+    // was reactivated earlier and then auto-closed again.
+    if (attendance?.autoClosedAt) return "auto-closed";
     if (accountStatus === "onleave" || accountStatus === "inactive") {
       return "offline";
     }
-    const attendance = attendanceMap.get(userId);
     if (!attendance) return "offline";
-    // Auto-close beats plain "offline" — operationally distinct: this
-    // agent was working today and got disconnected by the policy.
-    if (attendance.autoClosedAt && !attendance.reactivatedAt) return "auto-closed";
     if (attendance.clockOutTime) return "offline";
     if (attendance.status === "break") return "break";
     return "online";

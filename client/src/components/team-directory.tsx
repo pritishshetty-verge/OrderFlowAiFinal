@@ -533,7 +533,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       );
 
       const att = attendanceByUser.get(user.id);
-      const isAutoClosed = !!att?.autoClosedAt && !att?.reactivatedAt;
+      // `autoClosedAt` is cleared to null on reactivation, so its presence
+      // alone means "currently auto-closed". Don't also gate on
+      // `reactivatedAt` — that stays set from an earlier reactivation and
+      // would hide a shift that was reactivated and then auto-closed again.
+      const isAutoClosed = !!att?.autoClosedAt;
       const isClockedIn = !!att?.clockInTime && !att?.clockOutTime && !isAutoClosed;
       // Full-control admins are exempt from the monitoring system — they
       // can never be auto-clocked-out, so we never show them as "idle"
