@@ -4935,42 +4935,57 @@ var init_shiprocketWebhook = __esm({
 
 // server/logic/rules/delhivery.ts
 function normalizeDelhivery(payload) {
-  const type = (payload.Shipment?.Status?.StatusType || "").toUpperCase();
+  const rawType = (payload.Shipment?.Status?.StatusType || "").toUpperCase().trim();
   const statusText = payload.Shipment?.Status?.Status || "";
-  const statusLower = statusText.toLowerCase();
+  const s = statusText.toLowerCase().trim();
   const instr = (payload.Shipment?.Status?.Instructions || "").toLowerCase();
   const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || "";
-  const looksLost = (s) => s.includes("lost") || s.includes("untraceable") || s.includes("damaged");
-  if (looksLost(statusLower) || looksLost(instr)) {
+  const isUD = rawType === "UD" || rawType.includes("UNDELIVER");
+  const isRT = rawType === "RT" || rawType.includes("RETURN");
+  const isPP = rawType === "PP" || rawType.includes("MANIFEST") || rawType.includes("PENDING PICKUP");
+  const isPU = rawType === "PU" || rawType.includes("PICK") && rawType.includes("UP");
+  const isCN = rawType === "CN" || rawType.includes("CANCEL");
+  const isDL = rawType === "DL" || rawType.includes("DELIVER") && !isUD;
+  const looksLost = (x) => x.includes("lost") || x.includes("untraceable") || x.includes("damaged");
+  if (looksLost(s) || looksLost(instr)) {
     return { status: "lost", isActionable: false };
   }
-  if (type === "DL") {
-    if (statusLower.includes("rto") || instr.includes("return")) {
+  if (isDL) {
+    if (s.includes("dto") || s.includes("rto") || s.includes("return") || instr.includes("return")) {
       return { status: "rto_delivered", isActionable: false };
     }
     return { status: "delivered", isActionable: false };
   }
-  if (type === "RT") {
-    if (instr.includes("out for delivery") || statusLower.includes("out for delivery")) {
+  if (isRT) {
+    if (s.includes("dispatch") || s.includes("out for delivery") || instr.includes("out for delivery")) {
       return { status: "rto_ofd", isActionable: false };
     }
     return { status: "rto_initiated", isActionable: false };
   }
-  if (type === "PU") {
+  if (isPP) {
+    return { status: "ready_for_pickup", isActionable: false };
+  }
+  if (isPU) {
     return { status: "picked_up", isActionable: false };
   }
-  if (type === "PP" || type === "MN" || statusLower.includes("manifest")) {
-    if (statusLower.includes("pickup") || instr.includes("pickup")) {
-      return { status: "ready_for_pickup", isActionable: false };
-    }
-    return { status: "awb_assigned", isActionable: false };
-  }
-  if (type === "CN" || statusLower.includes("cancel")) {
+  if (isCN) {
     return { status: "cancelled", isActionable: false };
   }
-  if (type === "UD") {
-    if (instr.includes("out for delivery")) {
+  if (isUD) {
+    if (s.includes("manifest")) {
+      return { status: "awb_assigned", isActionable: false };
+    }
+    if (s.includes("not picked")) {
+      return { status: "ready_for_pickup", isActionable: false };
+    }
+    if (s.includes("dispatch") || instr.includes("out for delivery")) {
       return { status: "out_for_delivery", isActionable: false };
+    }
+    if (s.includes("pending")) {
+      return { status: "ndr", isActionable: ACTIONABLE_CODES.includes(nsl) };
+    }
+    if (s.includes("in transit") || s.includes("in-transit")) {
+      return { status: "in_transit", isActionable: false };
     }
     if (ACTIONABLE_CODES.includes(nsl)) {
       return { status: "ndr", isActionable: true };
@@ -5492,52 +5507,58 @@ function extractPayloadFields(body) {
     statusType: body.StatusType || body.status_type
   };
 }
+function extractDelhiveryToken(req) {
+  const x = req.headers["x-delhivery-token"];
+  if (typeof x === "string" && x.trim()) return x.trim();
+  const auth = req.headers["authorization"];
+  if (typeof auth === "string" && auth.trim()) {
+    return auth.replace(/^Bearer\s+/i, "").replace(/^Token\s+/i, "").trim();
+  }
+  return void 0;
+}
 async function handleDelhiveryWebhook(req, res) {
+  const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
+  if (!delhiveryWebhookSecret) {
+    console.error("[Delhivery Webhook] No webhook secret configured (DELHIVERY_WEBHOOK_SECRET / DELHIVERY_API_TOKEN)");
+    return res.status(500).json({ error: "Webhook secret not configured" });
+  }
+  const token = extractDelhiveryToken(req);
+  if (!token || !verifyDelhiveryToken(token, delhiveryWebhookSecret)) {
+    console.warn("[Delhivery Webhook] Unauthorized \u2014 invalid or missing token");
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  res.status(200).json({ received: true });
+  await processDelhiveryScan(req.body);
+}
+async function processDelhiveryScan(body) {
   const startTime = Date.now();
   try {
-    console.log("[Delhivery Webhook] Received webhook:", {
-      headers: {
-        "x-delhivery-token": req.headers["x-delhivery-token"] ? "[PRESENT]" : "[MISSING]",
-        "content-type": req.headers["content-type"]
-      },
-      body: JSON.stringify(req.body).substring(0, 500)
-    });
+    console.log("[Delhivery Webhook] Processing scan:", JSON.stringify(body).substring(0, 500));
     try {
-      const capturedAwb = req.body?.Shipment?.AWB || req.body?.AWB || req.body?.awb || req.body?.waybill || "unknown";
+      const capturedAwb = body?.Shipment?.AWB || body?.AWB || body?.awb || body?.waybill || "unknown";
       await storage.createInboundWebhookLog({
         source: "delhivery",
         eventType: String(capturedAwb).slice(0, 80),
-        payload: req.body ?? null
+        payload: body ?? null
       });
     } catch (captureErr) {
       console.warn("[Delhivery Webhook] raw-body capture failed (non-fatal):", captureErr);
     }
-    const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
-    if (!delhiveryWebhookSecret) {
-      console.error("[Delhivery Webhook] No webhook secret configured (DELHIVERY_WEBHOOK_SECRET or DELHIVERY_API_TOKEN)");
-      return res.status(200).json({ success: false, error: "Webhook secret not configured" });
-    }
-    const token = req.headers["x-delhivery-token"];
-    if (!verifyDelhiveryToken(token, delhiveryWebhookSecret)) {
-      console.error("[Delhivery Webhook] Invalid or missing token");
-      return res.status(200).json({ success: false, error: "Invalid token" });
-    }
-    console.log("[Delhivery Webhook] Token verified successfully");
-    const { awb, status, statusCode, remarks, statusDateTime, nslCode, statusType } = extractPayloadFields(req.body);
+    const { awb, status, statusCode, remarks, statusDateTime, nslCode, statusType } = extractPayloadFields(body);
     if (!awb) {
       console.error("[Delhivery Webhook] No AWB found in payload");
-      return res.status(200).json({ success: false, error: "No AWB found in payload" });
+      return;
     }
-    const rawInstructions = req.body.Shipment?.Status?.Instructions || req.body.Instructions || req.body.instructions || "";
+    const rawInstructions = body.Shipment?.Status?.Instructions || body.Instructions || body.instructions || "";
     const isOFDByInstructions = rawInstructions.toLowerCase().includes("out for delivery");
     let effectiveStatus = status || statusCode || "";
     if (isOFDByInstructions && effectiveStatus.toLowerCase() === "dispatched") {
-      console.log(`[Delhivery Webhook] Overriding "Dispatched" \u2192 "Out for Delivery" based on Instructions field`);
+      console.log('[Delhivery Webhook] Overriding "Dispatched" \u2192 "Out for Delivery" via Instructions');
       effectiveStatus = "Out for Delivery";
     }
     if (!effectiveStatus) {
       console.log(`[Delhivery Webhook] Ignoring event with no status for AWB ${awb}`);
-      return res.status(200).json({ success: true, message: "No status to process" });
+      return;
     }
     let order = await storage.getOrderByTrackingNumber(awb);
     let shipment = null;
@@ -5549,14 +5570,14 @@ async function handleDelhiveryWebhook(req, res) {
     }
     if (!order) {
       console.warn(`[Delhivery Webhook] Order not found for AWB: ${awb}`);
-      return res.status(200).json({ success: false, error: "Order not found for AWB" });
+      return;
     }
     const storeId = order.storeId ?? shipment?.storeId ?? null;
     const previousStatus = order.status ?? null;
     console.log(
       `[Delhivery Webhook] Found order ${order.id} (store=${storeId ?? "unknown"}) for AWB ${awb}`
     );
-    const allInstructions = rawInstructions || req.body.Shipment?.Status?.Instructions || req.body.Instructions || req.body.instructions || "";
+    const allInstructions = rawInstructions || body.Shipment?.Status?.Instructions || body.Instructions || body.instructions || "";
     const delhiveryPayload = {
       Shipment: {
         Status: {
@@ -5670,7 +5691,7 @@ async function handleDelhiveryWebhook(req, res) {
         ndrStatus: ndrStatusValue,
         ndrReason: remarks || effectiveStatus,
         ndrDate: statusDateTime ? new Date(statusDateTime) : /* @__PURE__ */ new Date(),
-        rawNdrData: req.body
+        rawNdrData: body
       });
       console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
       const shipmentStatusLabel = SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "NDR");
@@ -5719,22 +5740,21 @@ async function handleDelhiveryWebhook(req, res) {
         status: isOutForDelivery ? "out_for_delivery" : "in_transit"
       });
     }
-    const elapsedTime = Date.now() - startTime;
-    console.log("[Delhivery Webhook] Webhook processed successfully:", {
+    console.log("[Delhivery Webhook] Processed successfully:", {
       awb,
       status: effectiveStatus,
+      unifiedStatus,
       isNDR,
       isRTO,
       isDelivered,
       isOutForDelivery,
       isInTransit,
-      elapsedMs: elapsedTime
+      elapsedMs: Date.now() - startTime
     });
-    res.status(200).json({ success: true, message: "Webhook processed successfully" });
   } catch (error) {
-    const elapsedTime = Date.now() - startTime;
-    console.error("[Delhivery Webhook] Error processing webhook:", error, { elapsedMs: elapsedTime });
-    res.status(200).json({ success: false, error: "Failed to process webhook" });
+    console.error("[Delhivery Webhook] Error in processDelhiveryScan:", error, {
+      elapsedMs: Date.now() - startTime
+    });
   }
 }
 var init_delhiveryWebhook = __esm({

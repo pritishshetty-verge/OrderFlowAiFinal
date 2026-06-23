@@ -153,86 +153,84 @@ function extractPayloadFields(body: any): {
   };
 }
 
-export async function handleDelhiveryWebhook(req: Request, res: Response) {
-  const startTime = Date.now();
-  
-  try {
-    console.log('[Delhivery Webhook] Received webhook:', {
-      headers: {
-        'x-delhivery-token': req.headers['x-delhivery-token'] ? '[PRESENT]' : '[MISSING]',
-        'content-type': req.headers['content-type'],
-      },
-      body: JSON.stringify(req.body).substring(0, 500),
-    });
+// Accept Delhivery's secret from either the x-delhivery-token header or a
+// standard Authorization header (Bearer/Token <secret>).
+function extractDelhiveryToken(req: Request): string | undefined {
+  const x = req.headers['x-delhivery-token'];
+  if (typeof x === 'string' && x.trim()) return x.trim();
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string' && auth.trim()) {
+    return auth.replace(/^Bearer\s+/i, '').replace(/^Token\s+/i, '').trim();
+  }
+  return undefined;
+}
 
-    // ── TEMPORARY raw-payload capture ────────────────────────────────────
-    // We currently persist NO raw Delhivery webhook body anywhere, so we
-    // can't confirm the exact JSON keys (StatusType / Status / Current
-    // Status / NSLCode) before rebuilding the status mapping. Store the full
-    // req.body in inbound_webhook_logs (source="delhivery") for the next few
-    // webhooks. Safe + non-fatal; runs even if the token check below fails so
-    // we still capture the real structure. REMOVE once the keys are confirmed.
+export async function handleDelhiveryWebhook(req: Request, res: Response) {
+  // 1. Strict authorization (x-delhivery-token OR Authorization: Bearer/Token).
+  const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
+  if (!delhiveryWebhookSecret) {
+    console.error('[Delhivery Webhook] No webhook secret configured (DELHIVERY_WEBHOOK_SECRET / DELHIVERY_API_TOKEN)');
+    return res.status(500).json({ error: 'Webhook secret not configured' });
+  }
+  const token = extractDelhiveryToken(req);
+  if (!token || !verifyDelhiveryToken(token, delhiveryWebhookSecret)) {
+    console.warn('[Delhivery Webhook] Unauthorized — invalid or missing token');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // 2. ACK immediately. Delhivery requires a 200 in <500ms, so Express flushes
+  //    this response now — the awaited processing below keeps the serverless
+  //    function alive until it finishes WITHOUT delaying the ACK to Delhivery.
+  res.status(200).json({ received: true });
+
+  // 3. Process the scan (idempotent — safe if Delhivery retries).
+  await processDelhiveryScan(req.body);
+}
+
+// All Scan-Push status processing. Runs after the 200 ACK; logs + returns on
+// any skip condition (it has no `res`). Never throws — errors are logged.
+async function processDelhiveryScan(body: any): Promise<void> {
+  const startTime = Date.now();
+  try {
+    console.log('[Delhivery Webhook] Processing scan:', JSON.stringify(body).substring(0, 500));
+
+    // TEMPORARY raw-payload capture (non-fatal). Remove once keys confirmed.
     try {
-      const capturedAwb =
-        req.body?.Shipment?.AWB ||
-        req.body?.AWB ||
-        req.body?.awb ||
-        req.body?.waybill ||
-        "unknown";
+      const capturedAwb = body?.Shipment?.AWB || body?.AWB || body?.awb || body?.waybill || 'unknown';
       await storage.createInboundWebhookLog({
-        source: "delhivery",
+        source: 'delhivery',
         eventType: String(capturedAwb).slice(0, 80),
-        payload: req.body ?? null,
+        payload: body ?? null,
       });
     } catch (captureErr) {
-      console.warn("[Delhivery Webhook] raw-body capture failed (non-fatal):", captureErr);
+      console.warn('[Delhivery Webhook] raw-body capture failed (non-fatal):', captureErr);
     }
 
-    const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
-    
-    if (!delhiveryWebhookSecret) {
-      console.error('[Delhivery Webhook] No webhook secret configured (DELHIVERY_WEBHOOK_SECRET or DELHIVERY_API_TOKEN)');
-      return res.status(200).json({ success: false, error: 'Webhook secret not configured' });
-    }
-
-    const token = req.headers['x-delhivery-token'] as string;
-
-    if (!verifyDelhiveryToken(token, delhiveryWebhookSecret)) {
-      console.error('[Delhivery Webhook] Invalid or missing token');
-      return res.status(200).json({ success: false, error: 'Invalid token' });
-    }
-
-    console.log('[Delhivery Webhook] Token verified successfully');
-
-    const { awb, status, statusCode, remarks, statusDateTime, nslCode, statusType } = extractPayloadFields(req.body);
+    const { awb, status, statusCode, remarks, statusDateTime, nslCode, statusType } = extractPayloadFields(body);
 
     if (!awb) {
       console.error('[Delhivery Webhook] No AWB found in payload');
-      return res.status(200).json({ success: false, error: 'No AWB found in payload' });
+      return;
     }
 
-    // Extract Instructions field for OFD detection
-    // Delhivery sends Status: "Dispatched" but Instructions: "Out for delivery"
-    const rawInstructions = 
-      req.body.Shipment?.Status?.Instructions || 
-      req.body.Instructions || 
-      req.body.instructions || 
+    // Delhivery sends Status: "Dispatched" but Instructions: "Out for delivery".
+    const rawInstructions =
+      body.Shipment?.Status?.Instructions ||
+      body.Instructions ||
+      body.instructions ||
       '';
-    
-    // Check if Instructions indicates "Out for Delivery" (case-insensitive)
+
     const isOFDByInstructions = rawInstructions.toLowerCase().includes('out for delivery');
-    
-    // Determine effective status - prioritize OFD detection over generic "Dispatched"
     let effectiveStatus = status || statusCode || '';
-    
+
     if (isOFDByInstructions && effectiveStatus.toLowerCase() === 'dispatched') {
-      console.log(`[Delhivery Webhook] Overriding "Dispatched" → "Out for Delivery" based on Instructions field`);
+      console.log('[Delhivery Webhook] Overriding "Dispatched" → "Out for Delivery" via Instructions');
       effectiveStatus = 'Out for Delivery';
     }
-    
+
     if (!effectiveStatus) {
       console.log(`[Delhivery Webhook] Ignoring event with no status for AWB ${awb}`);
-      return res.status(200).json({ success: true, message: 'No status to process' });
+      return;
     }
 
     // Primary lookup: Find order by tracking_number in orders table
@@ -249,7 +247,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
     
     if (!order) {
       console.warn(`[Delhivery Webhook] Order not found for AWB: ${awb}`);
-      return res.status(200).json({ success: false, error: 'Order not found for AWB' });
+      return;
     }
 
     // GLOBAL → STORE ROUTING: both stores share one Delhivery account,
@@ -266,10 +264,10 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
 
     // Build payload for normalizeDelhivery function
     // Include all possible Instructions sources for accurate OFD detection
-    const allInstructions = rawInstructions || 
-      req.body.Shipment?.Status?.Instructions || 
-      req.body.Instructions || 
-      req.body.instructions || 
+    const allInstructions = rawInstructions ||
+      body.Shipment?.Status?.Instructions ||
+      body.Instructions ||
+      body.instructions ||
       '';
     
     const delhiveryPayload: DelhiveryPayload = {
@@ -423,7 +421,7 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
         ndrStatus: ndrStatusValue,
         ndrReason: remarks || effectiveStatus,
         ndrDate: statusDateTime ? new Date(statusDateTime) : new Date(),
-        rawNdrData: req.body,
+        rawNdrData: body,
       });
       
       console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
@@ -487,22 +485,20 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       });
     }
 
-    const elapsedTime = Date.now() - startTime;
-    console.log('[Delhivery Webhook] Webhook processed successfully:', {
+    console.log('[Delhivery Webhook] Processed successfully:', {
       awb,
       status: effectiveStatus,
+      unifiedStatus,
       isNDR,
       isRTO,
       isDelivered,
       isOutForDelivery,
       isInTransit,
-      elapsedMs: elapsedTime,
+      elapsedMs: Date.now() - startTime,
     });
-
-    res.status(200).json({ success: true, message: 'Webhook processed successfully' });
   } catch (error: any) {
-    const elapsedTime = Date.now() - startTime;
-    console.error('[Delhivery Webhook] Error processing webhook:', error, { elapsedMs: elapsedTime });
-    res.status(200).json({ success: false, error: 'Failed to process webhook' });
+    console.error('[Delhivery Webhook] Error in processDelhiveryScan:', error, {
+      elapsedMs: Date.now() - startTime,
+    });
   }
 }

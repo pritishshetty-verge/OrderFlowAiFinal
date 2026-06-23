@@ -42,72 +42,103 @@ const ACTIONABLE_CODES = [
   "EOD-6",   // Out of Delivery Area
 ];
 
+// Maps Delhivery's official Scan-Push (StatusType, Status) combinations to our
+// canonical statuses. From the Delhivery webhook docs:
+//
+//   FORWARD                 RETURN (RTO)            REVERSE (RVP / customer return)
+//   UD / Manifested          RT / In Transit         PP / Open|Scheduled|Dispatched
+//   UD / Not Picked          RT / Pending            PU / In Transit|Pending|Dispatched
+//   UD / In Transit          RT / Dispatched         DL / DTO (Delivered To Origin)
+//   UD / Pending             DL / RTO                 CN / Canceled|Closed
+//   UD / Dispatched
+//   DL / Delivered
+//
+// The StatusType macro (UD/DL/RT/PP/PU/CN) decides the leg; the Status sub-word
+// decides the stage. Critically, DL covers THREE different outcomes — Delivered
+// (real), RTO (returned to seller), DTO (reverse pickup received at origin) —
+// so the Status word MUST be inspected, never assumed "delivered".
 export function normalizeDelhivery(payload: DelhiveryPayload): NormalizedStatus {
-  // Normalize StatusType to uppercase for consistent matching
-  const type = (payload.Shipment?.Status?.StatusType || '').toUpperCase();
+  const rawType = (payload.Shipment?.Status?.StatusType || '').toUpperCase().trim();
   const statusText = payload.Shipment?.Status?.Status || '';
-  const statusLower = statusText.toLowerCase();
+  const s = statusText.toLowerCase().trim();
   const instr = (payload.Shipment?.Status?.Instructions || '').toLowerCase();
   const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || '';
 
-  // "Lost"/"Damaged"/"Untraceable" can surface under several StatusTypes, so
-  // check it before the per-type branches.
-  const looksLost = (s: string) =>
-    s.includes('lost') || s.includes('untraceable') || s.includes('damaged');
-  if (looksLost(statusLower) || looksLost(instr)) {
+  // Accept both the 2-letter codes Delhivery sends and their expanded forms.
+  // Order matters: "UNDELIVERED" contains "DELIVER", so resolve UD before DL.
+  const isUD = rawType === 'UD' || rawType.includes('UNDELIVER');
+  const isRT = rawType === 'RT' || rawType.includes('RETURN');
+  const isPP = rawType === 'PP' || rawType.includes('MANIFEST') || rawType.includes('PENDING PICKUP');
+  const isPU = rawType === 'PU' || (rawType.includes('PICK') && rawType.includes('UP'));
+  const isCN = rawType === 'CN' || rawType.includes('CANCEL');
+  const isDL = rawType === 'DL' || (rawType.includes('DELIVER') && !isUD);
+
+  // Lost / damaged / untraceable can surface under any StatusType.
+  const looksLost = (x: string) => x.includes('lost') || x.includes('untraceable') || x.includes('damaged');
+  if (looksLost(s) || looksLost(instr)) {
     return { status: 'lost', isActionable: false };
   }
 
-  // 1. Handle RTO Delivered (The "DL" Trap)
-  if (type === 'DL') {
-    if (statusLower.includes('rto') || instr.includes('return')) {
+  // DL — disambiguate the three delivery outcomes by the Status word.
+  if (isDL) {
+    // DTO = Delivered To Origin (reverse pickup received) and RTO = Returned
+    // To Origin both mean "back at the warehouse" → rto_delivered (NOT delivered).
+    if (s.includes('dto') || s.includes('rto') || s.includes('return') || instr.includes('return')) {
       return { status: 'rto_delivered', isActionable: false };
     }
     return { status: 'delivered', isActionable: false };
   }
 
-  // 2. Handle RTO lifecycle — split out RTO Out-for-Delivery from RTO transit.
-  if (type === 'RT') {
-    if (instr.includes('out for delivery') || statusLower.includes('out for delivery')) {
-      return { status: 'rto_ofd', isActionable: false };
+  // RT — RTO leg moving back to the seller.
+  if (isRT) {
+    if (s.includes('dispatch') || s.includes('out for delivery') || instr.includes('out for delivery')) {
+      return { status: 'rto_ofd', isActionable: false }; // RT / Dispatched
     }
-    return { status: 'rto_initiated', isActionable: false };
+    return { status: 'rto_initiated', isActionable: false }; // RT / In Transit | Pending
   }
 
-  // 3. Pickup lifecycle
-  if (type === 'PU') {
+  // PP — reverse pickup pending/scheduled (Open / Scheduled / Dispatched).
+  if (isPP) {
+    return { status: 'ready_for_pickup', isActionable: false };
+  }
+
+  // PU — reverse parcel picked up from the customer (In Transit / Pending / Dispatched).
+  if (isPU) {
     return { status: 'picked_up', isActionable: false };
   }
-  // Manifested / pending-pickup — AWB created, parcel not yet collected.
-  if (type === 'PP' || type === 'MN' || statusLower.includes('manifest')) {
-    if (statusLower.includes('pickup') || instr.includes('pickup')) {
-      return { status: 'ready_for_pickup', isActionable: false };
-    }
-    return { status: 'awb_assigned', isActionable: false };
-  }
 
-  // 4. Explicit cancellation
-  if (type === 'CN' || statusLower.includes('cancel')) {
+  // CN — cancelled / closed.
+  if (isCN) {
     return { status: 'cancelled', isActionable: false };
   }
 
-  // 5. Handle UD (The "Catch-All" Status)
-  if (type === 'UD') {
-    // A. Check for Out for Delivery (Priority)
-    if (instr.includes('out for delivery')) {
-      return { status: 'out_for_delivery', isActionable: false };
+  // UD — forward leg.
+  if (isUD) {
+    if (s.includes('manifest')) {
+      return { status: 'awb_assigned', isActionable: false }; // UD / Manifested
     }
-
-    // B. Check for Actionable NDR (Strict Whitelist)
+    if (s.includes('not picked')) {
+      return { status: 'ready_for_pickup', isActionable: false }; // UD / Not Picked
+    }
+    if (s.includes('dispatch') || instr.includes('out for delivery')) {
+      return { status: 'out_for_delivery', isActionable: false }; // UD / Dispatched
+    }
+    if (s.includes('pending')) {
+      // UD / Pending = a failed/undelivered attempt (NDR). Actionable when the
+      // NSL code matches a known customer-action reason.
+      return { status: 'ndr', isActionable: ACTIONABLE_CODES.includes(nsl) };
+    }
+    if (s.includes('in transit') || s.includes('in-transit')) {
+      return { status: 'in_transit', isActionable: false }; // UD / In Transit
+    }
+    // Fallback: an actionable NSL still means NDR; otherwise treat as transit.
     if (ACTIONABLE_CODES.includes(nsl)) {
       return { status: 'ndr', isActionable: true };
     }
-
-    // C. Non-Actionable Failure / Transit Scan
     return { status: 'in_transit', isActionable: false };
   }
 
-  // 6. Default Fallback for other status types (IT, etc.)
+  // Unknown type — safe default (never 'delivered').
   return { status: 'in_transit', isActionable: false };
 }
 
