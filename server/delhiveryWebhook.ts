@@ -165,6 +165,29 @@ export async function handleDelhiveryWebhook(req: Request, res: Response) {
       body: JSON.stringify(req.body).substring(0, 500),
     });
 
+    // ── TEMPORARY raw-payload capture ────────────────────────────────────
+    // We currently persist NO raw Delhivery webhook body anywhere, so we
+    // can't confirm the exact JSON keys (StatusType / Status / Current
+    // Status / NSLCode) before rebuilding the status mapping. Store the full
+    // req.body in inbound_webhook_logs (source="delhivery") for the next few
+    // webhooks. Safe + non-fatal; runs even if the token check below fails so
+    // we still capture the real structure. REMOVE once the keys are confirmed.
+    try {
+      const capturedAwb =
+        req.body?.Shipment?.AWB ||
+        req.body?.AWB ||
+        req.body?.awb ||
+        req.body?.waybill ||
+        "unknown";
+      await storage.createInboundWebhookLog({
+        source: "delhivery",
+        eventType: String(capturedAwb).slice(0, 80),
+        payload: req.body ?? null,
+      });
+    } catch (captureErr) {
+      console.warn("[Delhivery Webhook] raw-body capture failed (non-fatal):", captureErr);
+    }
+
     const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
     
     if (!delhiveryWebhookSecret) {

@@ -3627,8 +3627,7 @@ var init_storage = __esm({
       async isAutoLoggedOutToday(userId, dateStr) {
         const [row] = await db.select({
           autoClosedAt: attendance.autoClosedAt,
-          autoCloseReason: attendance.autoCloseReason,
-          reactivatedAt: attendance.reactivatedAt
+          autoCloseReason: attendance.autoCloseReason
         }).from(attendance).where(
           and(
             eq(attendance.userId, userId),
@@ -3636,9 +3635,6 @@ var init_storage = __esm({
           )
         );
         if (!row || !row.autoClosedAt) {
-          return { isLoggedOut: false, autoClosedAt: null, reason: null };
-        }
-        if (row.reactivatedAt) {
           return { isLoggedOut: false, autoClosedAt: null, reason: null };
         }
         return {
@@ -5506,6 +5502,16 @@ async function handleDelhiveryWebhook(req, res) {
       },
       body: JSON.stringify(req.body).substring(0, 500)
     });
+    try {
+      const capturedAwb = req.body?.Shipment?.AWB || req.body?.AWB || req.body?.awb || req.body?.waybill || "unknown";
+      await storage.createInboundWebhookLog({
+        source: "delhivery",
+        eventType: String(capturedAwb).slice(0, 80),
+        payload: req.body ?? null
+      });
+    } catch (captureErr) {
+      console.warn("[Delhivery Webhook] raw-body capture failed (non-fatal):", captureErr);
+    }
     const delhiveryWebhookSecret = process.env.DELHIVERY_WEBHOOK_SECRET || process.env.DELHIVERY_API_TOKEN;
     if (!delhiveryWebhookSecret) {
       console.error("[Delhivery Webhook] No webhook secret configured (DELHIVERY_WEBHOOK_SECRET or DELHIVERY_API_TOKEN)");
