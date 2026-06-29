@@ -7587,14 +7587,20 @@ async function runSync(year, month, triggeredBy) {
     report = await previewSync(year, month);
   } else {
     const { records, skipped } = await buildRecords(year, month);
+    const CONCURRENCY = 8;
     const results = [];
-    for (const rec of records) {
-      const res = await attModify(rec.payload);
-      results.push({
-        ...rec,
-        outcome: res.ok ? "ok" : "failed",
-        detail: res.ok ? res.body : { status: res.status, body: res.body }
-      });
+    for (let i = 0; i < records.length; i += CONCURRENCY) {
+      const batch = await Promise.all(
+        records.slice(i, i + CONCURRENCY).map(async (rec) => {
+          const res = await attModify(rec.payload);
+          return {
+            ...rec,
+            outcome: res.ok ? "ok" : "failed",
+            detail: res.ok ? res.body : { status: res.status, body: res.body }
+          };
+        })
+      );
+      results.push(...batch);
     }
     report = summarize(year, month, "live", results, skipped);
   }

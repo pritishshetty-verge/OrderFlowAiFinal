@@ -195,14 +195,24 @@ export async function runSync(year: number, month: number, triggeredBy?: string)
     report = await previewSync(year, month);
   } else {
     const { records, skipped } = await buildRecords(year, month);
+    // Push in small concurrent batches. A full month (~100 records) pushed
+    // one-at-a-time overruns Vercel's 30s function limit (→ 504); at 8-wide
+    // it finishes in a few seconds. attModify never throws (it returns
+    // {ok,status,body}), so a batch can't reject.
+    const CONCURRENCY = 8;
     const results: SyncRecordResult[] = [];
-    for (const rec of records) {
-      const res = await attModify(rec.payload);
-      results.push({
-        ...rec,
-        outcome: res.ok ? "ok" : "failed",
-        detail: res.ok ? res.body : { status: res.status, body: res.body },
-      });
+    for (let i = 0; i < records.length; i += CONCURRENCY) {
+      const batch = await Promise.all(
+        records.slice(i, i + CONCURRENCY).map(async (rec): Promise<SyncRecordResult> => {
+          const res = await attModify(rec.payload);
+          return {
+            ...rec,
+            outcome: res.ok ? "ok" : "failed",
+            detail: res.ok ? res.body : { status: res.status, body: res.body },
+          };
+        }),
+      );
+      results.push(...batch);
     }
     report = summarize(year, month, "live", results, skipped);
   }
