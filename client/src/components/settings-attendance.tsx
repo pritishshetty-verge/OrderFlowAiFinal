@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Clock, LogIn, LogOut, Calendar } from "lucide-react";
 import { format } from "date-fns";
 import type { Attendance } from "@shared/schema";
@@ -214,9 +215,12 @@ export function AttendanceSettings({ userRole }: AttendanceProps) {
               <Skeleton className="h-12 w-full" />
             </div>
           ) : !attendanceHistory || attendanceHistory.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground" data-testid="text-no-history">
-              <Calendar className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>No attendance records found</p>
+            <div data-testid="text-no-history">
+              <EmptyState
+                icon={Calendar}
+                title="No attendance records"
+                description="Once you start clocking in, your shift history will appear here."
+              />
             </div>
           ) : (
             <div className="space-y-2">

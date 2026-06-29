@@ -11,12 +11,13 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Save } from "lucide-react";
-import { useTheme } from "@/components/theme-provider";
+import { Save, Check } from "lucide-react";
+import { useTheme, ACCENTS } from "@/components/theme-provider";
+import { cn } from "@/lib/utils";
 
 export function PreferencesSettings() {
   const { toast } = useToast();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, accent, setAccent } = useTheme();
   const [preferences, setPreferences] = useState({
     language: "en",
     timezone: "Asia/Kolkata",
@@ -59,6 +60,35 @@ export function PreferencesSettings() {
                 <SelectItem value="system">System</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Accent color</Label>
+              <p className="text-sm text-muted-foreground">
+                Pick the brand accent used across the app
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.value}
+                  type="button"
+                  onClick={() => setAccent(a.value)}
+                  aria-label={a.label}
+                  aria-pressed={accent === a.value}
+                  title={a.label}
+                  className={cn(
+                    "h-7 w-7 rounded-full border border-black/10 dark:border-white/15 flex items-center justify-center transition-transform hover:scale-110 outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
+                    accent === a.value && "ring-2 ring-offset-2 ring-offset-background ring-foreground/60",
+                  )}
+                  style={{ backgroundImage: a.gradient }}
+                  data-testid={`accent-${a.value}`}
+                >
+                  {accent === a.value && <Check className="h-3.5 w-3.5 text-white" />}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center justify-between">

@@ -284,6 +284,11 @@ async function main() {
   );
 
   // ── 10. REGRESSION: normal clock-out still works ───────────────────
+  // Refresh activity first: step 4 aged last_active_at to 5 min ago for
+  // the auto-close test, and the live worker (running on this server)
+  // would otherwise re-close the now-reactivated shift in the gap. A
+  // real user clocking out IS active, so this models the true scenario.
+  await pool.query(`UPDATE users SET last_active_at = NOW() WHERE email = $1`, [AGENT_EMAIL]);
   r = await agent.req("POST", "/api/attendance/clock-out", {
     userId: agentUser?.id,
     localDate,
@@ -350,6 +355,58 @@ async function main() {
   } else {
     console.log("\n  (cron valid-secret check skipped — ATTENDANCE_CRON_SECRET not set)\n");
   }
+
+  // ── 12b. MONITORING-EXEMPT FLAG: per-user opt-out works ────────────
+  // Give the (still-agent) test user an open shift, then flip the
+  // monitoring_exempt flag and confirm the worker stops surfacing them.
+  await pool.query(
+    `DELETE FROM attendance WHERE user_id = (SELECT id FROM users WHERE email = $1)`,
+    [AGENT_EMAIL],
+  );
+  await pool.query(
+    `INSERT INTO attendance (user_id, date, clock_in_time, status)
+     VALUES ((SELECT id FROM users WHERE email = $1), NOW(), NOW(), 'present')`,
+    [AGENT_EMAIL],
+  );
+  await pool.query(
+    `UPDATE users SET last_active_at = NOW() - INTERVAL '5 minutes' WHERE email = $1`,
+    [AGENT_EMAIL],
+  );
+  // Monitored (exempt=false) → should be a candidate.
+  await storage.setMonitoringExempt(agentUser?.id, false);
+  const beforeExempt = await storage.findAutoLogoutCandidates(3);
+  logStep(
+    "monitored user IS a candidate (exempt=false)",
+    beforeExempt.some((c) => c.userId === agentUser?.id),
+  );
+  // Exempt (exempt=true) → must drop out of candidates.
+  await storage.setMonitoringExempt(agentUser?.id, true);
+  const afterExempt = await storage.findAutoLogoutCandidates(3);
+  logStep(
+    "EXEMPT user is NOT a candidate (exempt=true)",
+    !afterExempt.some((c) => c.userId === agentUser?.id),
+  );
+  // presence/me reports exempt (no banner) for the flagged user.
+  r = await agent.req("GET", "/api/presence/me");
+  body = await getJson(r);
+  logStep(
+    "presence/me reports exempt=true for monitoring-exempt user",
+    body?.exempt === true && body?.status === "active",
+    `exempt=${body?.exempt} status=${body?.status}`,
+  );
+  // SECURITY: the toggle endpoint is admin-only.
+  r = await fetch(`${BASE}/api/users/${agentUser?.id}/monitoring-exempt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ exempt: false }),
+  });
+  logStep(
+    "SECURITY: monitoring-exempt toggle without session → 401/403",
+    r.status === 401 || r.status === 403,
+    `status=${r.status}`,
+  );
+  // Reset the flag so it doesn't leak into later steps / cleanup.
+  await storage.setMonitoringExempt(agentUser?.id, false);
 
   // ── 13. EXEMPTION: full-control admins are never auto-logged-out ───
   // Promote the test agent to a full-control admin, clock in, age their

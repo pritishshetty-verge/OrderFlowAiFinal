@@ -23,15 +23,15 @@ export function PageLayout({ children, title, description, actions }: PageLayout
   const isOrdersPage = location === "/orders";
 
   return (
-    <div className="flex-1 overflow-hidden flex flex-col">
-      <header className="flex items-center justify-between gap-4 border-b border-border p-4">
+    <div className="flex-1 overflow-hidden flex flex-col bg-muted/30">
+      <header className="flex items-center justify-between gap-4 border-b border-border bg-card/30 px-5 py-3.5">
         <div className="flex items-center gap-3 flex-1">
           <SidebarTrigger data-testid="button-sidebar-toggle" />
           {title && (
             <div>
-              <h1 className="text-xl font-semibold">{title}</h1>
+              <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
               {description && (
-                <p className="text-sm text-muted-foreground">{description}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
               )}
             </div>
           )}

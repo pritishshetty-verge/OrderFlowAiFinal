@@ -200,7 +200,7 @@ export function ShiftController() {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Clock className="h-4 w-4" />
+            <Clock className="h-4 w-4 text-brand" />
             Shift Control
           </CardTitle>
           {getStatusBadge()}
@@ -213,24 +213,27 @@ export function ShiftController() {
           <div className="space-y-3">
             {/* Timer Display */}
             {isOnBreak && (
-              <div className="text-center py-2">
-                <div className="flex items-center justify-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Coffee className="h-3 w-3" />
+              <div className="rounded-xl bg-amber-500/10 py-3 text-center">
+                <div className="inline-flex items-center justify-center gap-1.5 text-amber-600 dark:text-amber-400 text-[11px] font-medium uppercase tracking-wider mb-1">
+                  <Coffee className="h-3.5 w-3.5" />
                   On Break
                 </div>
-                <div className="text-2xl font-mono font-bold tabular-nums" data-testid="text-break-time">
+                <div className="text-3xl font-semibold tabular-nums tracking-tight text-foreground" data-testid="text-break-time">
                   {formatElapsedTime(breakElapsedTime)}
                 </div>
               </div>
             )}
 
             {isWorking && (
-              <div className="text-center py-2">
-                <div className="flex items-center justify-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Timer className="h-3 w-3" />
+              <div className="rounded-xl bg-emerald-500/10 py-3 text-center">
+                <div className="inline-flex items-center justify-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-[11px] font-medium uppercase tracking-wider mb-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  </span>
                   Working
                 </div>
-                <div className="text-2xl font-mono font-bold tabular-nums" data-testid="text-elapsed-time">
+                <div className="text-3xl font-semibold tabular-nums tracking-tight text-foreground" data-testid="text-elapsed-time">
                   {formatElapsedTime(elapsedTime)}
                 </div>
               </div>
@@ -256,7 +259,8 @@ export function ShiftController() {
               {/* State: Offline - Show Clock In */}
               {!todayAttendance?.clockInTime && (
                 <Button
-                  className="w-full"
+                  className="w-full shadow-sm transition-shadow hover:shadow-md"
+                  style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
                   onClick={() => clockInMutation.mutate()}
                   disabled={clockInMutation.isPending}
                   data-testid="button-clock-in"

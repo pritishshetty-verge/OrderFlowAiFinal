@@ -176,13 +176,13 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
         <Card data-testid="card-online-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Online</CardTitle>
-            <UserCheck className="h-4 w-4 text-green-500" />
+            <UserCheck className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold text-green-500">{onlineCount}</div>
+              <div className="text-2xl font-bold text-emerald-500">{onlineCount}</div>
             )}
           </CardContent>
         </Card>
@@ -190,13 +190,13 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
         <Card data-testid="card-break-members">
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">On Break</CardTitle>
-            <Clock className="h-4 w-4 text-orange-500" />
+            <Clock className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold text-orange-500">{onBreakCount}</div>
+              <div className="text-2xl font-bold text-amber-500">{onBreakCount}</div>
             )}
           </CardContent>
         </Card>
@@ -323,21 +323,13 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                       {/* Live Status - derived from attendance.
                           Width sized to fit the widest badge ("Auto Clocked-Out")
                           without clipping into the Account Status column. */}
-                      <div className="w-40 shrink-0 text-center">
+                      <div className="w-40 shrink-0">
                         <p className="text-xs text-muted-foreground mb-1">Live Status</p>
-                        <div data-testid={`live-status-${member.id}`}>
-                          {liveStatus === "online" && (
-                            <Badge className="bg-green-500 text-white whitespace-nowrap">Online</Badge>
-                          )}
-                          {liveStatus === "break" && (
-                            <Badge className="bg-orange-500 text-white whitespace-nowrap">On Break</Badge>
-                          )}
-                          {liveStatus === "auto-closed" && (
-                            <Badge className="bg-blue-500 text-white whitespace-nowrap">Auto Clocked-Out</Badge>
-                          )}
-                          {liveStatus === "offline" && (
-                            <Badge variant="secondary" className="whitespace-nowrap">Offline</Badge>
-                          )}
+                        <div data-testid={`live-status-${member.id}`} className="inline-flex items-center gap-1.5 text-sm whitespace-nowrap">
+                          {liveStatus === "online" && (<><span className="h-2 w-2 rounded-full bg-emerald-500" />Online</>)}
+                          {liveStatus === "break" && (<><span className="h-2 w-2 rounded-full bg-amber-500" />On break</>)}
+                          {liveStatus === "auto-closed" && (<><span className="h-2 w-2 rounded-full bg-blue-500" />Auto clocked-out</>)}
+                          {liveStatus === "offline" && (<><span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-600" /><span className="text-muted-foreground">Offline</span></>)}
                         </div>
                       </div>
 
@@ -362,7 +354,7 @@ export function TeamPresence({ userRole }: TeamPresenceProps) {
                         ) : (
                           <div data-testid={`status-display-${member.id}`}>
                             {accountStatus === "present" && (
-                              <Badge className="bg-green-500/20 text-green-600 dark:text-green-400 border-green-500/30">Active</Badge>
+                              <Badge className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">Active</Badge>
                             )}
                             {accountStatus === "onleave" && (
                               <Badge variant="outline">On Leave</Badge>

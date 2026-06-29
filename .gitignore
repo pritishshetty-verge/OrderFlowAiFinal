@@ -59,3 +59,4 @@ vite.config.ts.*
 api/index.js.map
 .vercel
 .env*.local
+recon-test-data/

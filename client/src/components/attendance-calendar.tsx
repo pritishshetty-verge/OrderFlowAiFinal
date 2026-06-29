@@ -137,7 +137,7 @@ export function AttendanceCalendar() {
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Calendar className="h-4 w-4" />
+            <Calendar className="h-4 w-4 text-brand" />
             Attendance
           </CardTitle>
           <div className="flex items-center gap-1">
@@ -193,15 +193,15 @@ export function AttendanceCalendar() {
                   <Tooltip key={day.toISOString()}>
                     <TooltipTrigger asChild>
                       <div
-                        className={`h-6 flex items-center justify-center relative ${
-                          isTodayDate ? "font-bold" : ""
+                        className={`h-7 w-7 mx-auto flex items-center justify-center relative rounded-full transition-colors ${
+                          isTodayDate ? "bg-brand text-brand-foreground font-semibold" : "hover:bg-muted"
                         }`}
                         data-testid={`calendar-day-${format(day, "yyyy-MM-dd")}`}
                       >
                         <span className="text-xs">{format(day, "d")}</span>
-                        {dotColor && (
+                        {dotColor && !isTodayDate && (
                           <span
-                            className={`absolute bottom-0 w-1.5 h-1.5 rounded-full ${dotColor}`}
+                            className={`absolute -bottom-0.5 w-1.5 h-1.5 rounded-full ${dotColor}`}
                           />
                         )}
                       </div>
@@ -262,10 +262,10 @@ export function AttendanceCalendar() {
                   <span className="text-muted-foreground">Holiday</span>
                 </div>
               </div>
-              <div className="text-xs">
-                <span className="text-muted-foreground">Streak: </span>
-                <span className="font-medium">{getStreakCount()} days</span>
-              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+                <span className="h-1.5 w-1.5 rounded-full bg-brand" />
+                Streak {getStreakCount()}d
+              </span>
             </div>
           </>
         )}

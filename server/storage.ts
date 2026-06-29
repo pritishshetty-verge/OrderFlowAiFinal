@@ -111,6 +111,18 @@ import {
   payrollLedger,
   type PayrollLedger,
   type InsertPayrollLedger,
+  pgSettlements,
+  type PgSettlement,
+  type InsertPgSettlement,
+  type PgSettlementStatus,
+  type PgName,
+  reconUploads,
+  type ReconUpload,
+  type InsertReconUpload,
+  pgRateCards,
+  type PgRateCard,
+  type InsertPgRateCard,
+  type PgRateCardRules,
 } from "@shared/schema";
 
 /**
@@ -502,6 +514,73 @@ export interface IStorage {
   createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
   getInboundWebhookLogs(limit?: number): Promise<InboundWebhookLog[]>;
 
+  // ── PG Settlements (reconciliation) ────────────────────────────────
+  // The match engine writes here on every CSV ingest / cron run. The
+  // dashboard reads from here. New PG adapters land in
+  // server/pgs/<name>.ts but always speak this storage interface.
+  createPgSettlement(data: InsertPgSettlement): Promise<PgSettlement>;
+  bulkUpsertPgSettlements(rows: InsertPgSettlement[]): Promise<{ processed: number }>;
+  getPgSettlement(id: string): Promise<PgSettlement | undefined>;
+  // The bridge lookup: PayU CSV row -> Shopify order resolution goes
+  // through this method via the pgPaymentId (= mihpayid for PayU,
+  // stored back on the Shopify order as note_attribute PayU_txn_id).
+  getPgSettlementByPaymentId(
+    storeId: string | null,
+    pgName: PgName,
+    pgPaymentId: string,
+  ): Promise<PgSettlement | undefined>;
+  // Primary dashboard query. Server-side paginated.
+  listPgSettlements(filters: {
+    storeId?: string;
+    status?: PgSettlementStatus | PgSettlementStatus[];
+    pgName?: PgName;
+    utr?: string;
+    fromDate?: Date;
+    toDate?: Date;
+    /** Free-text search — matches pgPaymentId / pgOrderId / utrNumber via ILIKE. */
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ rows: PgSettlement[]; total: number }>;
+  // State-machine transitions (set by matcher and by admin "Confirm match").
+  updatePgSettlementStatus(
+    id: string,
+    status: PgSettlementStatus,
+  ): Promise<PgSettlement | undefined>;
+  // Matcher writes the resolved orderId + the Shopify-side amount it
+  // expected; status flip is separate so callers can chain.
+  linkPgSettlementToOrder(
+    id: string,
+    orderId: string,
+    orderAmount: string,
+  ): Promise<PgSettlement | undefined>;
+  // Powers KPI cards + the "Why orders are flagged" donut.
+  getPgSettlementStatusCounts(
+    storeId: string,
+    fromDate?: Date,
+    toDate?: Date,
+  ): Promise<Record<PgSettlementStatus, number>>;
+
+  // ── Recon uploads (audit + duplicate detection) ────────────────────
+  createReconUpload(data: InsertReconUpload): Promise<ReconUpload>;
+  /** Find a prior upload by content hash, scoped to the same store + PG. */
+  findReconUploadByHash(
+    storeId: string | null,
+    pgName: PgName,
+    fileHash: string,
+  ): Promise<ReconUpload | undefined>;
+  listRecentReconUploads(storeId: string, limit?: number): Promise<ReconUpload[]>;
+  /**
+   * Pre-flight insert/update split. Given the PayU IDs we're about to
+   * upsert, return the set already in the DB. Caller then computes
+   * `inserted = total - alreadyExisting.size`.
+   */
+  getExistingPgPaymentIds(
+    storeId: string | null,
+    pgName: PgName,
+    pgPaymentIds: string[],
+  ): Promise<Set<string>>;
+
   // ── Smart presence (idle + auto-logout) ────────────────────────────
   /**
    * Throttled `last_active_at` write. Only updates if existing value
@@ -515,6 +594,8 @@ export interface IStorage {
    * at the route). Returns the updated user.
    */
   setMonitoringExempt(userId: string, exempt: boolean): Promise<User | undefined>;
+  /** Set the user's RazorpayX payroll email (null clears it → falls back to work email). */
+  setPayrollEmail(userId: string, payrollEmail: string | null): Promise<User | undefined>;
   /**
    * Monthly idle/attendance rollup per agent. Aggregates all attendance
    * rows in [year, month] (IST) into a single row per user. Used for
@@ -3753,6 +3834,387 @@ export class DbStorage implements IStorage {
       .limit(limit);
   }
 
+  // ============================================================================
+  // PG SETTLEMENTS (Reconciliation)
+  // ============================================================================
+  //
+  // Surface area kept deliberately small for V1. Each method maps to one
+  // call site (matcher, CSV ingester, dashboard read, drawer write). When
+  // a query gets repeated three times in different shapes elsewhere, we
+  // promote it here — not before.
+
+  async createPgSettlement(data: InsertPgSettlement): Promise<PgSettlement> {
+    const [row] = await db.insert(pgSettlements).values(data).returning();
+    return row;
+  }
+
+  /**
+   * Bulk-insert / upsert path for CSV ingestion. Re-uploading the same
+   * PayU settlement report is idempotent: the composite unique
+   * constraint (store_id, pg_name, pg_payment_id) catches duplicates,
+   * and ON CONFLICT updates the mutable amount / fee / source-file
+   * fields in case PayU re-issued a corrected line. Status is NOT
+   * touched on update — the matcher owns the state machine, not the
+   * ingester.
+   */
+  async bulkUpsertPgSettlements(
+    rows: InsertPgSettlement[],
+  ): Promise<{ processed: number }> {
+    if (rows.length === 0) return { processed: 0 };
+
+    // Chunked to keep individual statements under Postgres' parameter
+    // limit (~32k params, ~17 cols per row -> ~1900 rows max per batch).
+    // 500 is a generous safety margin and well within Neon's payload caps.
+    const BATCH = 500;
+    let processed = 0;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const chunk = rows.slice(i, i + BATCH);
+      const result = await db
+        .insert(pgSettlements)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: [
+            pgSettlements.storeId,
+            pgSettlements.pgName,
+            pgSettlements.pgPaymentId,
+          ],
+          set: {
+            settledAmount: sql`EXCLUDED.settled_amount`,
+            grossAmount: sql`EXCLUDED.gross_amount`,
+            feeDeducted: sql`EXCLUDED.fee_deducted`,
+            taxOnFee: sql`EXCLUDED.tax_on_fee`,
+            utrNumber: sql`EXCLUDED.utr_number`,
+            settledAt: sql`EXCLUDED.settled_at`,
+            pgTransactionAt: sql`EXCLUDED.pg_transaction_at`,
+            rawPayload: sql`EXCLUDED.raw_payload`,
+            sourceFile: sql`EXCLUDED.source_file`,
+            updatedAt: sql`NOW()`,
+          },
+        })
+        .returning({ id: pgSettlements.id });
+      processed += result.length;
+    }
+    return { processed };
+  }
+
+  async getPgSettlement(id: string): Promise<PgSettlement | undefined> {
+    const [row] = await db
+      .select()
+      .from(pgSettlements)
+      .where(eq(pgSettlements.id, id));
+    return row;
+  }
+
+  /**
+   * Bridge lookup used by the matcher: given a PayU mihpayid (from the
+   * settlement CSV), find any pg_settlement we've already recorded for
+   * this (storeId, pgName, pgPaymentId) triple. NULL storeId is
+   * intentionally supported because the Phase-1 multi-store backfill
+   * leaves some legacy rows with storeId = NULL.
+   */
+  async getPgSettlementByPaymentId(
+    storeId: string | null,
+    pgName: PgName,
+    pgPaymentId: string,
+  ): Promise<PgSettlement | undefined> {
+    const [row] = await db
+      .select()
+      .from(pgSettlements)
+      .where(
+        and(
+          storeId === null
+            ? isNull(pgSettlements.storeId)
+            : eq(pgSettlements.storeId, storeId),
+          eq(pgSettlements.pgName, pgName),
+          eq(pgSettlements.pgPaymentId, pgPaymentId),
+        ),
+      );
+    return row;
+  }
+
+  async listPgSettlements(filters: {
+    storeId?: string;
+    status?: PgSettlementStatus | PgSettlementStatus[];
+    pgName?: PgName;
+    utr?: string;
+    fromDate?: Date;
+    toDate?: Date;
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ rows: PgSettlement[]; total: number }> {
+    const page = Math.max(1, filters.page ?? 1);
+    const pageSize = Math.min(500, Math.max(1, filters.pageSize ?? 50));
+
+    // Build the WHERE clause. We collect into an array and AND it
+    // together at the end so optional filters don't require nested
+    // ternaries.
+    const conds = [];
+    if (filters.storeId) conds.push(eq(pgSettlements.storeId, filters.storeId));
+    if (filters.status) {
+      conds.push(
+        Array.isArray(filters.status)
+          ? inArray(pgSettlements.status, filters.status)
+          : eq(pgSettlements.status, filters.status),
+      );
+    }
+    if (filters.pgName) conds.push(eq(pgSettlements.pgName, filters.pgName));
+    if (filters.utr) conds.push(eq(pgSettlements.utrNumber, filters.utr));
+    if (filters.fromDate)
+      conds.push(gte(pgSettlements.settledAt, filters.fromDate.toISOString()));
+    if (filters.toDate)
+      conds.push(lte(pgSettlements.settledAt, filters.toDate.toISOString()));
+
+    // Free-text search — case-insensitive partial match across the
+    // three columns admins actually search by. We sanitize the LIKE
+    // pattern to prevent users smuggling % or _ wildcards into
+    // someone else's data (probably overkill but defensive is cheap).
+    if (filters.q && filters.q.trim().length > 0) {
+      const safe = filters.q.trim().replace(/[%_\\]/g, (m) => "\\" + m);
+      const pattern = `%${safe}%`;
+      conds.push(
+        sql`(
+          ${pgSettlements.pgPaymentId} ILIKE ${pattern}
+          OR ${pgSettlements.pgOrderId} ILIKE ${pattern}
+          OR ${pgSettlements.utrNumber} ILIKE ${pattern}
+        )`,
+      );
+    }
+
+    const where = conds.length > 0 ? and(...conds) : undefined;
+
+    const [{ count: total }] = await db
+      .select({ count: count() })
+      .from(pgSettlements)
+      .where(where);
+
+    const rows = await db
+      .select()
+      .from(pgSettlements)
+      .where(where)
+      // settled_at DESC puts the freshest UTRs first; NULL settled_at
+      // (pending rows) tucks behind via NULLS LAST.
+      .orderBy(sql`${pgSettlements.settledAt} DESC NULLS LAST`)
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+
+    return { rows, total: Number(total) };
+  }
+
+  async updatePgSettlementStatus(
+    id: string,
+    status: PgSettlementStatus,
+  ): Promise<PgSettlement | undefined> {
+    const [row] = await db
+      .update(pgSettlements)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(pgSettlements.id, id))
+      .returning();
+    return row;
+  }
+
+  async linkPgSettlementToOrder(
+    id: string,
+    orderId: string,
+    orderAmount: string,
+  ): Promise<PgSettlement | undefined> {
+    const [row] = await db
+      .update(pgSettlements)
+      .set({
+        orderId,
+        orderAmount,
+        updatedAt: new Date(),
+      })
+      .where(eq(pgSettlements.id, id))
+      .returning();
+    return row;
+  }
+
+  /**
+   * Headline numbers for the dashboard KPIs and the donut breakdown.
+   * Single GROUP BY query → one round-trip instead of four
+   * count-by-status queries. Returns zeros for any status not yet
+   * present in the data so the consumer doesn't need to coalesce.
+   */
+  async getPgSettlementStatusCounts(
+    storeId: string,
+    fromDate?: Date,
+    toDate?: Date,
+  ): Promise<Record<PgSettlementStatus, number>> {
+    const conds = [eq(pgSettlements.storeId, storeId)];
+    if (fromDate)
+      conds.push(gte(pgSettlements.settledAt, fromDate.toISOString()));
+    if (toDate) conds.push(lte(pgSettlements.settledAt, toDate.toISOString()));
+
+    const rows = await db
+      .select({
+        status: pgSettlements.status,
+        count: count(),
+      })
+      .from(pgSettlements)
+      .where(and(...conds))
+      .groupBy(pgSettlements.status);
+
+    const out: Record<PgSettlementStatus, number> = {
+      pending: 0,
+      overdue: 0,
+      mismatch: 0,
+      settled: 0,
+    };
+    for (const r of rows) {
+      // Defensive: only count statuses we know about. Anything else
+      // (corrupted data, unmigrated old row) gets ignored rather than
+      // crashing the dashboard.
+      if (r.status in out) {
+        out[r.status as PgSettlementStatus] = Number(r.count);
+      }
+    }
+    return out;
+  }
+
+  // ── Recon uploads ─────────────────────────────────────────────────
+
+  async createReconUpload(data: InsertReconUpload): Promise<ReconUpload> {
+    const [row] = await db.insert(reconUploads).values(data).returning();
+    return row;
+  }
+
+  async findReconUploadByHash(
+    storeId: string | null,
+    pgName: PgName,
+    fileHash: string,
+  ): Promise<ReconUpload | undefined> {
+    const [row] = await db
+      .select()
+      .from(reconUploads)
+      .where(
+        and(
+          storeId === null
+            ? isNull(reconUploads.storeId)
+            : eq(reconUploads.storeId, storeId),
+          eq(reconUploads.pgName, pgName),
+          eq(reconUploads.fileHash, fileHash),
+          // Skip "duplicate" status rows so re-warning doesn't compound —
+          // we only care about the original successful ingest.
+          sql`${reconUploads.status} != 'duplicate'`,
+        ),
+      )
+      .orderBy(desc(reconUploads.createdAt))
+      .limit(1);
+    return row;
+  }
+
+  async listRecentReconUploads(
+    storeId: string,
+    limit: number = 10,
+  ): Promise<ReconUpload[]> {
+    return await db
+      .select()
+      .from(reconUploads)
+      .where(eq(reconUploads.storeId, storeId))
+      .orderBy(desc(reconUploads.createdAt))
+      .limit(limit);
+  }
+
+  async getExistingPgPaymentIds(
+    storeId: string | null,
+    pgName: PgName,
+    pgPaymentIds: string[],
+  ): Promise<Set<string>> {
+    if (pgPaymentIds.length === 0) return new Set();
+    const rows = await db
+      .select({ pgPaymentId: pgSettlements.pgPaymentId })
+      .from(pgSettlements)
+      .where(
+        and(
+          storeId === null
+            ? isNull(pgSettlements.storeId)
+            : eq(pgSettlements.storeId, storeId),
+          eq(pgSettlements.pgName, pgName),
+          inArray(pgSettlements.pgPaymentId, pgPaymentIds),
+        ),
+      );
+    return new Set(rows.map((r) => r.pgPaymentId));
+  }
+
+  // ── PG rate cards ─────────────────────────────────────────────────
+
+  /**
+   * Resolve the active rate card for this (store, PG). Returns null
+   * when no card is configured — callers fall back to the adapter's
+   * built-in default. Validity-windowed: only cards whose
+   * (validFrom..validTo) covers `now` count.
+   */
+  async getActivePgRateCard(
+    storeId: string,
+    pgName: PgName,
+  ): Promise<PgRateCard | undefined> {
+    const now = new Date();
+    const [card] = await db
+      .select()
+      .from(pgRateCards)
+      .where(
+        and(
+          eq(pgRateCards.storeId, storeId),
+          eq(pgRateCards.pgName, pgName),
+          eq(pgRateCards.isActive, true),
+          sql`(${pgRateCards.validFrom} IS NULL OR ${pgRateCards.validFrom} <= ${now.toISOString()})`,
+          sql`(${pgRateCards.validTo} IS NULL OR ${pgRateCards.validTo} >= ${now.toISOString()})`,
+        ),
+      )
+      .orderBy(desc(pgRateCards.createdAt))
+      .limit(1);
+    return card;
+  }
+
+  async listPgRateCards(
+    storeId: string,
+    pgName?: PgName,
+  ): Promise<PgRateCard[]> {
+    const conds = [eq(pgRateCards.storeId, storeId)];
+    if (pgName) conds.push(eq(pgRateCards.pgName, pgName));
+    return await db
+      .select()
+      .from(pgRateCards)
+      .where(and(...conds))
+      .orderBy(desc(pgRateCards.createdAt));
+  }
+
+  /**
+   * Save a rate card. When `isActive: true`, deactivates every other
+   * card for the same (storeId, pgName) first — only one active card
+   * per gateway at a time.
+   */
+  async upsertPgRateCard(data: InsertPgRateCard): Promise<PgRateCard> {
+    if (data.isActive !== false && data.storeId) {
+      await db
+        .update(pgRateCards)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(pgRateCards.storeId, data.storeId),
+            eq(pgRateCards.pgName, data.pgName),
+            eq(pgRateCards.isActive, true),
+          ),
+        );
+    }
+    // `data` matches InsertPgRateCard but drizzle-zod's inferred type
+    // doesn't preserve the `$type<PgRateCardRules>()` cast on the JSONB
+    // column, so we re-narrow here for the Drizzle insert.
+    const [row] = await db
+      .insert(pgRateCards)
+      .values({
+        ...data,
+        rules: data.rules as PgRateCardRules,
+      })
+      .returning();
+    return row;
+  }
+
+  async deletePgRateCard(id: string): Promise<void> {
+    await db.delete(pgRateCards).where(eq(pgRateCards.id, id));
+  }
+
   // ── Smart presence helpers (idle + auto-logout) ───────────────────
 
   async getMonthlyAttendanceReport(
@@ -3869,6 +4331,15 @@ export class DbStorage implements IStorage {
     const [row] = await db
       .update(users)
       .set({ monitoringExempt: exempt, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
+  }
+
+  async setPayrollEmail(userId: string, payrollEmail: string | null): Promise<User | undefined> {
+    const [row] = await db
+      .update(users)
+      .set({ payrollEmail: payrollEmail || null, updatedAt: new Date() })
       .where(eq(users.id, userId))
       .returning();
     return row;

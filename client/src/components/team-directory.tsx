@@ -26,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye, KeyRound } from "lucide-react";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
+import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ConfigurePermissionsModal } from "@/components/configure-permissions-modal";
@@ -622,9 +623,9 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const getStatusColor = (status: TeamMember["status"]) => {
     switch (status) {
       case "active":
-        return "bg-green-500";
+        return "bg-emerald-500";
       case "on-leave":
-        return "bg-yellow-500";
+        return "bg-amber-500";
       case "offline":
         return "bg-gray-400";
     }
@@ -633,13 +634,13 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const getLiveStatusColor = (status: LiveStatus) => {
     switch (status) {
       case "active":
-        return "bg-green-500";
+        return "bg-emerald-500";
       case "idle":
-        return "bg-yellow-500";
+        return "bg-amber-500";
       case "auto-closed":
         return "bg-blue-500";
       case "on-leave":
-        return "bg-yellow-500";
+        return "bg-amber-500";
       case "offline":
         return "bg-gray-400";
     }
@@ -655,7 +656,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
             member.minutesSinceActive != null
               ? `Idle ${member.minutesSinceActive} min`
               : "Idle",
-          color: "text-yellow-600 dark:text-yellow-400",
+          color: "text-amber-600 dark:text-amber-400",
         };
       case "auto-closed":
         return {
@@ -753,7 +754,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                           className="object-cover"
                         />
                       )}
-                      <AvatarFallback className="text-sm font-semibold">
+                      <AvatarFallback className="text-sm font-semibold bg-brand/10 text-brand">
                         {getInitials(member.name)}
                       </AvatarFallback>
                     </Avatar>
@@ -775,13 +776,22 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     })()}
                   </div>
                 </div>
-                <Badge variant={getRoleBadgeVariant(member.role)}>
+                <span className={cn(
+                  "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium border-transparent",
+                  member.role === "admin"
+                    ? "bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                    : member.role === "recovery_agent"
+                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      : member.role === "chat_support"
+                        ? "bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                        : "bg-brand/10 text-brand",
+                )}>
                   {member.role === "admin" && member.adminType
                     ? member.adminType === "full_control"
                       ? "Full Control Admin"
                       : "Partial Control Admin"
                     : formatRoleLabel(member.role)}
-                </Badge>
+                </span>
               </div>
             </CardHeader>
 

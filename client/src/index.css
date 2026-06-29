@@ -81,6 +81,15 @@
                                         bg so cards still feel layered */
   --accent-foreground: 240 6% 10%;
 
+  /* Brand accent — indigo. Anchors the payroll redesign: KPI tiles,
+   * active tabs, primary sync action. Distinct from the neutral
+   * --primary and from the semantic status colors. */
+  --brand: 243 75% 59%;              /* indigo-600 (#4f46e5) */
+  --brand-2: 262 83% 58%;            /* violet-600 — gradient partner */
+  --brand-soft-1: 235 85% 75%;       /* gradient start (lighter) */
+  --brand-soft-2: 258 90% 78%;       /* gradient end (lighter) */
+  --brand-foreground: 0 0% 100%;     /* white — text on the brand gradient */
+
   /* Destructive finally returns a real red instead of pure black.
    * Tailwind red-500 (#ef4444) — bright enough to signal danger,
    * desaturated enough not to scream. */
@@ -126,24 +135,24 @@
   /* Border radius dropped from 0.8rem (~13px) to 0.5rem (8px).
    * Single biggest "feels premium" lever — buttons, cards, inputs,
    * dropdowns all inherit. */
-  --radius: 0.5rem;
+  --radius: 0.75rem;
 
   /* Shadows: light mode shadows in v1 had alpha=0 and never
    * rendered. These use zinc-900 as the shadow color (cooler than
    * pure black) with very low alphas — the "soft depth" Linear and
    * Stripe cards have. */
-  --shadow-2xs: 0 1px 2px 0 hsl(240 6% 10% / 0.04);
-  --shadow-xs:  0 1px 2px 0 hsl(240 6% 10% / 0.05);
-  --shadow-sm:  0 1px 3px 0 hsl(240 6% 10% / 0.05),
-                0 1px 2px 0 hsl(240 6% 10% / 0.03);
-  --shadow:     0 4px 6px -1px hsl(240 6% 10% / 0.05),
-                0 2px 4px -1px hsl(240 6% 10% / 0.03);
-  --shadow-md:  0 10px 15px -3px hsl(240 6% 10% / 0.05),
-                0 4px 6px -2px hsl(240 6% 10% / 0.04);
-  --shadow-lg:  0 20px 25px -5px hsl(240 6% 10% / 0.08),
-                0 10px 10px -5px hsl(240 6% 10% / 0.03);
-  --shadow-xl:  0 25px 50px -12px hsl(240 6% 10% / 0.15);
-  --shadow-2xl: 0 25px 50px -12px hsl(240 6% 10% / 0.25);
+  --shadow-2xs: 0 1px 2px 0 hsl(240 8% 30% / 0.05);
+  --shadow-xs:  0 1px 2px 0 hsl(240 8% 30% / 0.06);
+  --shadow-sm:  0 1px 2px 0 hsl(240 8% 30% / 0.06),
+                0 2px 6px -1px hsl(240 8% 30% / 0.08);
+  --shadow:     0 2px 4px -1px hsl(240 8% 30% / 0.07),
+                0 6px 14px -2px hsl(240 8% 30% / 0.10);
+  --shadow-md:  0 4px 8px -2px hsl(240 8% 30% / 0.08),
+                0 12px 24px -4px hsl(240 8% 30% / 0.12);
+  --shadow-lg:  0 8px 16px -4px hsl(240 8% 30% / 0.10),
+                0 20px 36px -8px hsl(240 8% 30% / 0.16);
+  --shadow-xl:  0 24px 48px -12px hsl(240 8% 30% / 0.22);
+  --shadow-2xl: 0 32px 64px -16px hsl(240 8% 30% / 0.30);
 
   --tracking-normal: 0em;
   --spacing: 0.25rem;
@@ -196,6 +205,13 @@
   --accent: 240 4% 16%;
   --accent-foreground: 240 5% 96%;
 
+  /* Brand accent — indigo, a touch brighter so it reads on near-black. */
+  --brand: 239 84% 67%;              /* indigo-500 (#6366f1) */
+  --brand-2: 258 90% 66%;            /* violet-500 — gradient partner */
+  --brand-soft-1: 235 85% 70%;
+  --brand-soft-2: 258 90% 72%;
+  --brand-foreground: 0 0% 100%;
+
   /* Slightly darker red than light mode so it doesn't burn out
    * against the near-black background. */
   --destructive: 0 72% 51%;          /* red-600 */
@@ -237,6 +253,91 @@
   --shadow-xl:  0 20px 25px -5px hsl(0 0% 0% / 0.45),
                 0 10px 10px -5px hsl(0 0% 0% / 0.25);
   --shadow-2xl: 0 25px 50px -12px hsl(0 0% 0% / 0.60);
+}
+
+/* ── Accent presets ─────────────────────────────────────────────────
+ * The brand accent is switchable at runtime via `data-accent` on <html>
+ * (set by ThemeProvider, persisted to localStorage). Each preset sets
+ * three things:
+ *   --brand          single primary color (used for text, dots, borders,
+ *                    soft 10%-tint pills — the "solid" face of the brand)
+ *   --brand-2        a paired secondary color, deliberately a hue-step
+ *                    away from --brand so they form a vibrant gradient
+ *   --brand-gradient the canonical 135° gradient that fills hero cards,
+ *                    primary buttons, big call-to-actions, etc.
+ *
+ * .dark variants are a touch brighter so they read on the near-black
+ * surface. No attribute set → the :root/.dark indigo default applies. */
+/* Each accent defines:
+ *   --brand        primary solid (used for text-brand / icons / dots)
+ *   --brand-2      gradient partner — visibly hue-shifted from --brand
+ *   --brand-soft-1 / --brand-soft-2  the lighter, less-saturated stops
+ *                                    that the actual gradient uses (so
+ *                                    the gradient looks airy & premium,
+ *                                    not heavy & saturated)
+ *   --brand-foreground  text color on top of the gradient (white for
+ *                       colored accents; dark for Pearl). */
+[data-accent="indigo"]  { --brand: 243 75% 59%; --brand-2: 262 83% 58%; --brand-soft-1: 235 85% 75%; --brand-soft-2: 258 90% 78%; }
+[data-accent="violet"]  { --brand: 262 83% 58%; --brand-2: 292 84% 61%; --brand-soft-1: 268 85% 78%; --brand-soft-2: 320 80% 80%; }
+[data-accent="blue"]    { --brand: 217 91% 60%; --brand-2: 188 94% 43%; --brand-soft-1: 213 95% 78%; --brand-soft-2: 188 90% 72%; }
+[data-accent="emerald"] { --brand: 160 84% 39%; --brand-2: 174 65% 51%; --brand-soft-1: 155 70% 70%; --brand-soft-2: 175 75% 75%; }
+[data-accent="rose"]    { --brand: 347 77% 50%; --brand-2: 25 95% 53%;  --brand-soft-1: 350 90% 78%; --brand-soft-2: 25 95% 78%;  }
+[data-accent="amber"]   { --brand: 32 95% 44%;  --brand-2: 25 95% 53%;  --brand-soft-1: 38 95% 72%;  --brand-soft-2: 25 95% 75%;  }
+[data-accent="pearl"]   { --brand: 240 6% 35%;  --brand-2: 240 5% 65%;  --brand-soft-1: 0 0% 100%;   --brand-soft-2: 240 5% 91%;  --brand-foreground: 240 6% 10%; }
+
+.dark[data-accent="indigo"]  { --brand: 239 84% 67%; --brand-2: 258 90% 66%; --brand-soft-1: 235 85% 70%; --brand-soft-2: 258 90% 72%; }
+.dark[data-accent="violet"]  { --brand: 258 90% 66%; --brand-2: 292 91% 73%; --brand-soft-1: 268 90% 72%; --brand-soft-2: 320 85% 75%; }
+.dark[data-accent="blue"]    { --brand: 213 94% 68%; --brand-2: 188 86% 53%; --brand-soft-1: 213 95% 72%; --brand-soft-2: 188 90% 65%; }
+.dark[data-accent="emerald"] { --brand: 158 64% 52%; --brand-2: 173 80% 60%; --brand-soft-1: 158 65% 60%; --brand-soft-2: 173 75% 65%; }
+.dark[data-accent="rose"]    { --brand: 350 89% 66%; --brand-2: 25 95% 63%;  --brand-soft-1: 350 90% 72%; --brand-soft-2: 25 95% 70%;  }
+.dark[data-accent="amber"]   { --brand: 38 92% 50%;  --brand-2: 25 95% 53%;  --brand-soft-1: 38 92% 65%;  --brand-soft-2: 25 95% 65%;  }
+.dark[data-accent="pearl"]   { --brand: 240 5% 75%;  --brand-2: 240 5% 50%;  --brand-soft-1: 240 5% 28%;  --brand-soft-2: 240 5% 18%;  --brand-foreground: 240 5% 96%; }
+
+/* The canonical brand gradient. Uses the SOFT stops so the gradient
+ * itself reads airy/premium even when the brand solid (text/icons) is
+ * fully saturated. Auto-updates whenever the accent (or theme) changes. */
+:root      { --brand-gradient: linear-gradient(135deg, hsl(var(--brand-soft-1)), hsl(var(--brand-soft-2))); }
+.dark      { --brand-gradient: linear-gradient(135deg, hsl(var(--brand-soft-1)), hsl(var(--brand-soft-2))); }
+
+/* ── Portaled-surface backgrounds (radix) ───────────────────────────
+ * Belt-and-suspenders fallback: force every radix Popper-content wrapper
+ * AND every directly-portaled radix surface to a solid background,
+ * regardless of the Tailwind class chain. Fixes a popover/dialog/select/
+ * tooltip "see-through" issue caused by Tailwind's <alpha-value>
+ * placeholder not resolving in some builds.
+ *
+ * Targets every observed radix data-attribute that a portaled surface
+ * lands on — covers HoverCard, Popover, DropdownMenu, Select, Tooltip,
+ * Dialog, AlertDialog. */
+[data-radix-popper-content-wrapper] > *,
+[data-radix-hover-card-content],
+[data-radix-popover-content],
+[data-radix-dropdown-menu-content],
+[data-radix-select-content],
+[role="dialog"][data-state="open"],
+[role="menu"][data-state="open"],
+[role="listbox"][data-state="open"],
+[role="tooltip"][data-state="delayed-open"],
+[role="tooltip"][data-state="instant-open"] {
+  background-color: #ffffff !important;
+}
+.dark [data-radix-popper-content-wrapper] > *,
+.dark [data-radix-hover-card-content],
+.dark [data-radix-popover-content],
+.dark [data-radix-dropdown-menu-content],
+.dark [data-radix-select-content],
+.dark [role="dialog"][data-state="open"],
+.dark [role="menu"][data-state="open"],
+.dark [role="listbox"][data-state="open"],
+.dark [role="tooltip"][data-state="delayed-open"],
+.dark [role="tooltip"][data-state="instant-open"] {
+  background-color: #18181b !important;
+}
+
+/* Skeleton shimmer — used by ui/skeleton.tsx to overlay a sweeping
+ * highlight bar on the muted base. Modern loading look. */
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
 }
 
 @layer base {

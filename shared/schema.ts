@@ -95,6 +95,12 @@ export const users = pgTable("users", {
   // per-user from the Team page. Full-control admins are also exempt
   // implicitly (see findAutoLogoutCandidates), independent of this flag.
   monitoringExempt: boolean("monitoring_exempt").notNull().default(false),
+  // RazorpayX Payroll identity. Employees are keyed by email in RazorpayX,
+  // but most agents are registered there under a PERSONAL email that
+  // differs from their OrderFlow work email. Admins set this per-user so
+  // the payroll sync resolves the right RazorpayX employee. NULL = fall
+  // back to the work email (`email`).
+  payrollEmail: text("payroll_email"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -808,6 +814,26 @@ export const insertLeaveRequestSchema = createInsertSchema(leaveRequests)
   });
 export type InsertLeaveRequest = z.infer<typeof insertLeaveRequestSchema>;
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
+
+// ── RazorpayX Payroll sync audit log ────────────────────────────────
+// One row per sync run (preview or live) so admins have a history of what
+// was pushed to RazorpayX, when, by whom, and the per-record outcomes.
+export const payrollSyncRuns = pgTable("payroll_sync_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  year: integer("year").notNull(),
+  month: integer("month").notNull(),
+  mode: text("mode").notNull(), // "preview" | "live"
+  attendanceDays: integer("attendance_days").notNull().default(0),
+  leaveDays: integer("leave_days").notNull().default(0),
+  okCount: integer("ok_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  triggeredBy: varchar("triggered_by").references(() => users.id, { onDelete: "set null" }),
+  // Compact per-record outcomes (email/date/status/outcome) for drill-in.
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type PayrollSyncRun = typeof payrollSyncRuns.$inferSelect;
 
 // ============================================================================
 // TEAM MESSAGES
@@ -1712,3 +1738,277 @@ export const insertInboundWebhookLogSchema = createInsertSchema(inboundWebhookLo
 export type InsertInboundWebhookLog = z.infer<typeof insertInboundWebhookLogSchema>;
 export type InboundWebhookLog = typeof inboundWebhookLogs.$inferSelect;
 
+
+// ============================================================================
+// PG SETTLEMENTS (Payment-Gateway settlement reconciliation)
+// ============================================================================
+//
+// One row per gateway-side settlement record (per-txn or per-batch line). The
+// matcher joins these against `orders` via the bridge:
+//
+//     orders.noteAttributes."PayU_txn_id"  ↔  pg_settlements.pgPaymentId
+//
+// for PayU (the only gateway live today). The schema is intentionally
+// gateway-agnostic — `pgName` discriminates, every per-PG quirk lives in
+// `server/pgs/<name>.ts` adapters. Adding Razorpay / Cashfree / PhonePe
+// is a new adapter file + a `pgName` value, no schema changes.
+//
+// Multi-store: `storeId` is nullable to match the Phase-1 backfill pattern
+// used by every other tenant-scoped table in this file. Production should
+// flip it NOT NULL after the first backfill pass.
+//
+// orderId is also nullable: we ingest settlements before we've matched them
+// (we may receive a settlement for a txn whose order hasn't synced yet, or
+// the bridge field may be missing on older orders). NULL = "received from
+// PG, not yet linked to a Shopify order."
+export const pgSettlements = pgTable(
+  "pg_settlements",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+    // Multi-store scope (Phase-1 nullable pattern).
+    storeId: varchar("store_id").references(() => stores.id),
+
+    // Link to Shopify order. NULL until matcher resolves it; ON DELETE
+    // SET NULL because losing the order shouldn't lose the settlement
+    // record (we still need it for the UTR rollup).
+    orderId: varchar("order_id").references(() => orders.id, { onDelete: "set null" }),
+
+    // Which PG produced this row. Discriminator for the adapter
+    // registry in server/pgs/. Lowercase by codebase convention:
+    // 'payu' | 'razorpay' | 'cashfree' | 'phonepe'.
+    pgName: text("pg_name").notNull(),
+
+    // Merchant-supplied txn id from the PG. For PayU this is the
+    // Fastrr checkout token (e.g. "Shexkrew1780656552958"); we keep
+    // it for traceability but it's NOT the join key for Glow & Me /
+    // OLB because Fastrr sits between Shopify and PayU.
+    pgOrderId: text("pg_order_id"),
+
+    // PG-internal payment id. For PayU this is the `mihpayid` — the
+    // value Shopify stores back into the order's note_attribute
+    // `PayU_txn_id`. THIS is the bridge key for our matcher.
+    pgPaymentId: text("pg_payment_id").notNull(),
+
+    // ── Amounts ────────────────────────────────────────────────────
+    // What Shopify thinks the order is worth. Populated by the
+    // matcher once it links to an order; NULL until then.
+    orderAmount: decimal("order_amount", { precision: 12, scale: 2 }),
+    // What actually hit the bank. Always set (we ingest it from the
+    // PG report). This is the canonical "deposited" number.
+    settledAmount: decimal("settled_amount", { precision: 12, scale: 2 }).notNull(),
+    // Gross before fees. Useful for fee-mismatch detection.
+    grossAmount: decimal("gross_amount", { precision: 12, scale: 2 }),
+    // PG's MDR (fee). PRD calls this `feeDeducted`.
+    feeDeducted: decimal("fee_deducted", { precision: 12, scale: 2 }),
+    // GST on the fee (Indian PG convention).
+    taxOnFee: decimal("tax_on_fee", { precision: 12, scale: 2 }),
+
+    // ── Settlement identification ──────────────────────────────────
+    // Bank UTR — every PG payout has one. Multiple settlement lines
+    // share the same UTR for batch payouts; we group on this for
+    // the Settlements rollup view.
+    utrNumber: text("utr_number"),
+    // When the deposit hit the bank (PG-reported). Timestamptz so
+    // IST bucketing math is correct.
+    settledAt: timestamp("settled_at", { mode: "string", withTimezone: true }),
+    // When the gateway processed the original txn. Useful for T+2
+    // window math and matching by date.
+    pgTransactionAt: timestamp("pg_transaction_at", { mode: "string", withTimezone: true }),
+
+    // ── Reconciliation state machine (PRD's 4 statuses) ────────────
+    //   'pending'  — within T+2 window, settlement not yet due
+    //   'overdue'  — past T+2 window, no PG row found
+    //   'mismatch' — found settlement but amount differs from expected
+    //   'settled'  — matched & amounts agree (within tolerance)
+    status: text("status").notNull().default("pending"),
+
+    // ── Audit / debugging ──────────────────────────────────────────
+    // Original row from the PG (CSV row or API JSON). Lets us
+    // recompute / re-ingest without re-fetching.
+    rawPayload: jsonb("raw_payload"),
+    // Filename when ingested via CSV upload. NULL for API-ingested rows.
+    sourceFile: text("source_file"),
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    // No duplicate (storeId, pgName, pgPaymentId) combinations —
+    // re-ingesting the same CSV twice should be a no-op upsert,
+    // not a duplicate row.
+    uniqStorePayment: unique("pg_settlements_store_payment_key").on(
+      table.storeId,
+      table.pgName,
+      table.pgPaymentId,
+    ),
+    // Hot path: "show me everything that's overdue/mismatched for
+    // this store" — the dashboard's primary query.
+    statusIdx: index("pg_settlements_status_idx").on(table.storeId, table.status),
+    // Hot path: settlement-date rollup view (per-UTR list).
+    settledAtIdx: index("pg_settlements_settled_at_idx").on(table.storeId, table.settledAt),
+    // Hot path: reverse lookup from an order to its settlement(s).
+    orderIdIdx: index("pg_settlements_order_id_idx").on(table.orderId),
+    // Hot path: matcher lookup by PG's payment id (the bridge key).
+    paymentIdIdx: index("pg_settlements_payment_id_idx").on(table.pgName, table.pgPaymentId),
+  }),
+);
+
+export const insertPgSettlementSchema = createInsertSchema(pgSettlements).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPgSettlement = z.infer<typeof insertPgSettlementSchema>;
+export type PgSettlement = typeof pgSettlements.$inferSelect;
+
+// Canonical status set — both the matcher and the UI import this so
+// drift between code paths is impossible. Use the const tuple for
+// runtime checks; use the type for compile-time exhaustiveness.
+export const PG_SETTLEMENT_STATUSES = ["pending", "overdue", "mismatch", "settled"] as const;
+export type PgSettlementStatus = typeof PG_SETTLEMENT_STATUSES[number];
+
+// Canonical PG name set. Add new adapters here AND register the
+// adapter in server/pgs/index.ts — both lists must stay in sync.
+export const PG_NAMES = ["payu", "razorpay", "cashfree", "phonepe"] as const;
+export type PgName = typeof PG_NAMES[number];
+
+// ============================================================================
+// RECON UPLOADS (audit + duplicate detection)
+// ============================================================================
+//
+// One row per CSV upload attempt. Stores the SHA-256 of the file content so
+// we can detect "user accidentally uploaded the same file twice" before
+// re-processing, plus a per-row insert/update split so the UI can tell
+// the admin whether the upload actually changed anything.
+//
+// We never delete rows here — recon_uploads is an audit trail. A "force
+// re-process" of an already-seen file produces a NEW row, with a marker
+// in `notes` saying it was re-processed deliberately.
+export const reconUploads = pgTable(
+  "recon_uploads",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id").references(() => stores.id),
+    pgName: text("pg_name").notNull(),
+    fileName: text("file_name"),
+    // SHA-256 hex (64 chars). Indexed for fast "have I seen this exact
+    // bytes-for-bytes file?" lookup.
+    fileHash: text("file_hash").notNull(),
+    fileSize: integer("file_size"),
+    uploadedBy: varchar("uploaded_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    // ── Per-row outcome counts ────────────────────────────────────
+    parsedRows: integer("parsed_rows").notNull().default(0),
+    rowsInserted: integer("rows_inserted").notNull().default(0),
+    rowsUpdated: integer("rows_updated").notNull().default(0),
+    rowsSkipped: integer("rows_skipped").notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    // Snapshot of the auto-matcher result (if it ran).
+    autoMatched: jsonb("auto_matched"),
+    // success | partial (some errors) | duplicate (skipped, no DB writes) | error
+    status: text("status").notNull().default("success"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    // Hash dedup lookup.
+    hashIdx: index("recon_uploads_hash_idx").on(table.fileHash),
+    // "Recent uploads for this store" — for the Upload tab list.
+    storeRecentIdx: index("recon_uploads_store_recent_idx").on(
+      table.storeId,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const insertReconUploadSchema = createInsertSchema(reconUploads).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertReconUpload = z.infer<typeof insertReconUploadSchema>;
+export type ReconUpload = typeof reconUploads.$inferSelect;
+
+// ============================================================================
+// PG RATE CARDS — contracted fee structure per (store, PG)
+// ============================================================================
+//
+// Drives the matcher's mismatch detection. Without this, V1 used a
+// hardcoded 1.20% MDR + 18% GST default, which produced spurious
+// "mismatch" classifications on merchants who actually pay 2% on
+// credit cards or 0% on UPI. The rate card replaces guess-the-rate
+// with the merchant's actual contract.
+//
+// `rules` is JSONB to keep the surface flexible — most merchants
+// just need {default: {mdrPct, gstPct}}, but some have per-payment-
+// mode overrides (UPI free, cards 2%) or tier brackets. Future
+// adapters can extend the shape without a migration.
+//
+// Multiple cards per (store, pgName) are allowed (you'd have a
+// "Standard" card and a "Premium Settlement" card), but only one
+// is_active at a time. Validity windows let you stage a rate-change
+// in advance.
+export type PgRateCardRules = {
+  /** Flat fallback rate applied when nothing else matches. */
+  default: { mdrPct: number; gstPct: number };
+  /**
+   * Optional per-payment-mode override. Matched case-insensitively
+   * against PayU's `Payment Type` column ("Credit Card", "UPI",
+   * "Net Banking", "Debit Card", etc.).
+   */
+  byPaymentMode?: Record<string, { mdrPct: number; gstPct: number }>;
+  /**
+   * Optional tier table — useful for "1.5% on orders < ₹2000, 1.0%
+   * above." Applied AFTER paymentMode lookup, so a tier can stack on
+   * a mode-specific base rate.
+   */
+  byAmountTier?: Array<{
+    minAmount: number;
+    maxAmount?: number;
+    mdrPct: number;
+    gstPct: number;
+  }>;
+  /** Free-text notes the admin attached. Surfaced in the UI. */
+  notes?: string;
+};
+
+export const pgRateCards = pgTable(
+  "pg_rate_cards",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id").references(() => stores.id),
+    pgName: text("pg_name").notNull(),
+    /** Human-readable label, e.g. "Standard 2026" or "Premium Settlement Q4". */
+    name: text("name").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    /** When this rate took effect. Nullable = "since whenever". */
+    validFrom: timestamp("valid_from"),
+    /** When this rate stops applying. Nullable = "indefinitely". */
+    validTo: timestamp("valid_to"),
+    rules: jsonb("rules").notNull().$type<PgRateCardRules>(),
+    /** Optional source filename if the card was uploaded as CSV. */
+    sourceFile: text("source_file"),
+    createdBy: varchar("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    activeIdx: index("pg_rate_cards_active_idx").on(
+      table.storeId,
+      table.pgName,
+      table.isActive,
+    ),
+  }),
+);
+
+export const insertPgRateCardSchema = createInsertSchema(pgRateCards).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPgRateCard = z.infer<typeof insertPgRateCardSchema>;
+export type PgRateCard = typeof pgRateCards.$inferSelect;

@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw, CloudUpload, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,6 +13,8 @@ import {
   SidebarMenuSubButton,
   SidebarHeader,
   SidebarFooter,
+  SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Collapsible,
@@ -78,6 +80,11 @@ const adminMenuItems: MenuItem[] = [
     title: "Pare",
     url: "/pare",
     icon: Activity,
+  },
+  {
+    title: "Reconciliation",
+    url: "/reconciliation",
+    icon: Wallet,
   },
   {
     title: "Orders",
@@ -257,6 +264,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
     "/pare",
     "/integrations",
     "/payroll",
+    "/payroll-sync",
     "/api-logs",
   ]);
   // The logged-in user's granted module keys. Prefer the freshly-fetched
@@ -309,8 +317,8 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   };
 
   return (
-    <Sidebar data-testid="sidebar-main">
-      <SidebarHeader className="border-b border-sidebar-border p-3">
+    <Sidebar collapsible="icon" data-testid="sidebar-main">
+      <SidebarHeader className="border-b border-sidebar-border/60 px-3 py-3 group-data-[collapsible=icon]:px-2">
         {/* Phase 3: the static logo + wordmark is replaced by the
             multi-store switcher. Renders as static text for users
             with exactly one store (the steady state during rollout)
@@ -353,8 +361,8 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                                     asChild 
                                     data-testid={`link-${subItem.title.toLowerCase().replace(/\s+/g, '-')}`}
                                     className={`hover:bg-sidebar-accent/50 ${
-                                      isActive 
-                                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium" 
+                                      isActive
+                                        ? "bg-brand/10 text-brand font-medium hover:bg-brand/15"
                                         : "text-muted-foreground"
                                     }`}
                                   >
@@ -432,7 +440,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
                           item.comingSoon
                             ? "cursor-not-allowed opacity-70"
                             : isPathActive(item.url!)
-                              ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                              ? "bg-brand/10 text-brand font-medium hover:bg-brand/15"
                               : "text-muted-foreground",
                         )}
                       >
@@ -477,14 +485,49 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border p-2">
-        <ProfileDropdown 
-          userRole={userRole} 
+      <SidebarFooter className="border-t border-sidebar-border/60 p-2 group-data-[collapsible=icon]:p-1">
+        <ProfileDropdown
+          userRole={userRole}
           userName={currentUser?.fullName || currentUser?.username}
           userEmail={currentUser?.email}
           avatarImage={currentUser?.avatarImage ?? undefined}
         />
+        <CollapseButton />
       </SidebarFooter>
+      {/* Thin draggable rail on the outside edge of the sidebar — clicking
+          or dragging it toggles between expanded and icon-only states.
+          Standard shadcn collapsible affordance. */}
+      <SidebarRail />
     </Sidebar>
+  );
+}
+
+/**
+ * Visible collapse/expand button. Sits at the very bottom of the sidebar
+ * footer, below the profile chunk. Replaces the hidden Ctrl+B shortcut as
+ * the discoverable affordance — shows "Collapse" + chevron when expanded,
+ * just the chevron-right icon when in icon-collapsed mode.
+ */
+function CollapseButton() {
+  const { state, toggleSidebar } = useSidebar();
+  const expanded = state === "expanded";
+  return (
+    <button
+      type="button"
+      onClick={toggleSidebar}
+      aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+      title={expanded ? "Collapse sidebar (Ctrl+B)" : "Expand sidebar (Ctrl+B)"}
+      className="mt-1 flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-colors group-data-[collapsible=icon]:justify-center"
+      data-testid="button-collapse-sidebar"
+    >
+      {expanded ? (
+        <>
+          <PanelLeftClose className="h-3.5 w-3.5" />
+          <span>Collapse</span>
+        </>
+      ) : (
+        <PanelLeftOpen className="h-3.5 w-3.5" />
+      )}
+    </button>
   );
 }

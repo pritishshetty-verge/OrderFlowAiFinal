@@ -96,6 +96,16 @@ function parsePostgresArray(value: unknown): string[] {
   return result;
 }
 
+/** Two-letter initials for the small avatar chips in the customer / agent
+ *  cells. Falls back to "?" so we never render an empty circle. */
+function initialsOf(name?: string | null): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export interface Order {
   id: string;
   shopifyOrderId: string;
@@ -541,7 +551,7 @@ export function OrdersTable({
   // instead of bg-card so the header→body distinction comes
   // from background contrast, not the prior `shadow-sm` hack.
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
       <div className="relative">
         <Table>
           {/* Tighter header height + uppercase tracking-wide labels.
@@ -621,19 +631,35 @@ export function OrdersTable({
                 <span className="text-foreground">{order.shopifyOrderId}</span>
               </TableCell>
               <TableCell>
-                <div className="flex flex-col leading-tight">
-                  <span className="font-medium text-foreground">{order.customerName}</span>
-                  <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
-                    {order.customerPhone}
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand"
+                    aria-hidden
+                  >
+                    {initialsOf(order.customerName)}
                   </span>
+                  <div className="flex flex-col leading-tight min-w-0">
+                    <span className="font-medium text-foreground truncate">{order.customerName}</span>
+                    <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+                      {order.customerPhone}
+                    </span>
+                  </div>
                 </div>
               </TableCell>
               {showAgentColumn && (
                 <TableCell className="text-sm" data-testid={`agent-${order.id}`} onClick={(e) => e.stopPropagation()}>
                   {order.assignedToUser ? (
-                    <span className="font-medium">{order.assignedToUser.fullName || order.assignedToUser.username}</span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-[10px] font-semibold text-violet-600 dark:text-violet-400"
+                        aria-hidden
+                      >
+                        {initialsOf(order.assignedToUser.fullName || order.assignedToUser.username)}
+                      </span>
+                      <span className="font-medium truncate">{order.assignedToUser.fullName || order.assignedToUser.username}</span>
+                    </div>
                   ) : (
-                    <span className="text-muted-foreground">Unassigned</span>
+                    <span className="text-xs text-muted-foreground italic">Unassigned</span>
                   )}
                 </TableCell>
               )}
@@ -684,8 +710,9 @@ export function OrdersTable({
                   (₹890 / ₹1,250 / ₹12,400) aligns on the rupee
                   symbol. The single biggest "looks pro" signal on a
                   data table. */}
-              <TableCell className="text-right font-medium tabular-nums">
-                ₹{order.total.toLocaleString("en-IN")}
+              <TableCell className="text-right tabular-nums">
+                <span className="text-muted-foreground text-[11px] mr-0.5">₹</span>
+                <span className="font-semibold text-foreground">{order.total.toLocaleString("en-IN")}</span>
               </TableCell>
               <TableCell>
                 <PaymentBadge method={order.paymentMethod} financialStatus={order.financialStatus} />

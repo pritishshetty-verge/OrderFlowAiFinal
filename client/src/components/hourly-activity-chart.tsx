@@ -35,6 +35,31 @@ interface HourlyActivityChartProps {
   };
 }
 
+// The three series this chart plots — un-stacked, each drawn from the
+// baseline so they read as a true 3-way comparison.
+const SERIES: { key: "confirmed" | "cancelled" | "followUp"; label: string; color: string }[] = [
+  { key: "confirmed", label: "Confirmed", color: "#10b981" },
+  { key: "cancelled", label: "Cancelled", color: "#f43f5e" },
+  { key: "followUp", label: "Follow-up", color: "#3b82f6" },
+];
+
+const formatHour = (h: number): string =>
+  h === 0 ? "12 AM" : h === 12 ? "12 PM" : h < 12 ? `${h} AM` : `${h - 12} PM`;
+
+// TEMP: placeholder activity so the 3-way chart is visible before the DB
+// has real orders. Shown only when there's zero real activity, with a
+// "Sample" tag in the header. Remove (or it self-hides) once data flows.
+const DEMO_DATA: HourlyData[] = Array.from({ length: 24 }, (_, h) => {
+  const peak = Math.max(0, 1 - Math.abs(h - 14) / 9); // bell, peaks ~2pm
+  const base = Math.round(peak * 30);
+  return {
+    hour: formatHour(h),
+    confirmed: Math.max(0, base + (h % 3)),
+    cancelled: Math.max(0, Math.round(base * 0.2) + (h % 2)),
+    followUp: Math.max(0, Math.round(base * 0.5) + (h % 4)),
+  };
+});
+
 export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   const userId = localStorage.getItem("userId");
   const userRole = localStorage.getItem("userRole");
@@ -78,22 +103,12 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
     refetchInterval: 60000,
   });
 
-  const chartData = useMemo(() => {
-    if (!hourlyData?.data) {
-      const formatHour = (h: number): string => {
-        if (h === 0) return '12 AM';
-        if (h === 12) return '12 PM';
-        if (h < 12) return `${h} AM`;
-        return `${h - 12} PM`;
-      };
-      return Array.from({ length: 24 }, (_, i) => ({
-        hour: formatHour(i),
-        confirmed: 0,
-        cancelled: 0,
-        followUp: 0,
-      }));
-    }
-    return hourlyData.data;
+  const { chartData, isSample } = useMemo(() => {
+    const real = hourlyData?.data;
+    const hasActivity = !!real && real.some((d) => d.confirmed + d.cancelled + d.followUp > 0);
+    return hasActivity
+      ? { chartData: real!, isSample: false }
+      : { chartData: DEMO_DATA, isSample: true };
   }, [hourlyData]);
 
   const totalActions = useMemo(() => {
@@ -110,51 +125,45 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   return (
     <Card data-testid="card-hourly-activity">
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <Activity className="h-4 w-4" />
+            <Activity className="h-4 w-4 text-brand" />
             Hourly Activity
+            {isSample && (
+              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                Sample
+              </span>
+            )}
           </CardTitle>
-          <div className="flex items-center gap-3 text-xs">
-            <div className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-muted-foreground">{totalActions.confirmed}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-muted-foreground">{totalActions.cancelled}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-muted-foreground">{totalActions.followUp}</span>
-            </div>
+          <div className="flex items-center gap-4 text-xs">
+            {SERIES.map((s) => (
+              <div key={s.key} className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+                <span className="text-muted-foreground">{s.label}</span>
+                <span className="font-medium tabular-nums text-foreground">{totalActions[s.key]}</span>
+              </div>
+            ))}
           </div>
         </div>
       </CardHeader>
       <CardContent className="pt-2">
         {isLoading ? (
-          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-40 w-full" />
         ) : (
-          <ResponsiveContainer width="100%" height={140}>
-            <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+          <ResponsiveContainer width="100%" height={170}>
+            <AreaChart data={chartData} margin={{ top: 8, right: 6, left: -18, bottom: 0 }}>
               <defs>
-                <linearGradient id="colorConfirmed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.8} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
-                </linearGradient>
-                <linearGradient id="colorCancelled" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8} />
-                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0.1} />
-                </linearGradient>
-                <linearGradient id="colorFollowUp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1} />
-                </linearGradient>
+                {SERIES.map((s) => (
+                  <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={s.color} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={s.color} stopOpacity={0} />
+                  </linearGradient>
+                ))}
               </defs>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
               <XAxis
                 dataKey="hour"
-                tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
+                tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
                 tickLine={false}
                 axisLine={false}
                 interval={3}
@@ -164,40 +173,34 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
                 tickLine={false}
                 axisLine={false}
                 allowDecimals={false}
+                width={40}
               />
               <Tooltip
                 contentStyle={{
                   backgroundColor: 'hsl(var(--card))',
                   borderColor: 'hsl(var(--border))',
-                  borderRadius: '6px',
+                  borderRadius: '10px',
                   fontSize: '12px',
+                  boxShadow: 'var(--shadow-md)',
                 }}
-                labelStyle={{ color: 'hsl(var(--foreground))' }}
+                labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 500, marginBottom: 4 }}
               />
-              <Area
-                type="monotone"
-                dataKey="confirmed"
-                stackId="1"
-                stroke="#10b981"
-                fill="url(#colorConfirmed)"
-                name="Confirmed"
-              />
-              <Area
-                type="monotone"
-                dataKey="cancelled"
-                stackId="1"
-                stroke="#ef4444"
-                fill="url(#colorCancelled)"
-                name="Cancelled"
-              />
-              <Area
-                type="monotone"
-                dataKey="followUp"
-                stackId="1"
-                stroke="#3b82f6"
-                fill="url(#colorFollowUp)"
-                name="Follow Up"
-              />
+              {SERIES.map((s) => (
+                <Area
+                  key={s.key}
+                  type="monotone"
+                  dataKey={s.key}
+                  name={s.label}
+                  stroke={s.color}
+                  strokeWidth={2.5}
+                  fill={`url(#grad-${s.key})`}
+                  fillOpacity={1}
+                  dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: 'hsl(var(--card))' }}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                />
+              ))}
             </AreaChart>
           </ResponsiveContainer>
         )}

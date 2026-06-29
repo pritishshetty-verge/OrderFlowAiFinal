@@ -5,6 +5,7 @@ import { useActiveStore } from "@/hooks/use-store";
 import { PageLayout } from "@/components/page-layout";
 import { ChartTooltip } from "@/components/chart-tooltip";
 import { DashboardStats } from "@/components/dashboard-stats";
+import { DashboardHero } from "@/components/dashboard-hero";
 import { DateRangeSelector } from "@/components/date-range-selector";
 import { AttendanceCalendar } from "@/components/attendance-calendar";
 import { HourlyActivityChart } from "@/components/hourly-activity-chart";
@@ -167,6 +168,12 @@ export default function AnalyticsPage() {
           </div>
 
           <TabsContent value="general" className="space-y-6">
+            <DashboardHero
+              assignedOrders={stats.assignedOrders}
+              confirmedOrders={stats.confirmedOrders}
+              aiConfirmedOrders={stats.aiConfirmedOrders}
+              isLoading={metricsLoading}
+            />
             <DashboardStats {...stats} isLoading={metricsLoading} />
             <div className="grid gap-4 md:grid-cols-3">
               <AttendanceCalendar />
@@ -178,61 +185,55 @@ export default function AnalyticsPage() {
           <TabsContent value="rto-insights" className="space-y-6">
             {/* KPI Cards Row */}
             <div className="grid gap-4 md:grid-cols-3" data-testid="rto-kpi-cards">
-              <Card data-testid="card-rto-rate">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-                  <CardTitle className="text-sm font-medium">RTO Rate</CardTitle>
-                  <TrendingDown className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  {rtoLoading ? (
-                    <Skeleton className="h-8 w-16" />
-                  ) : (
-                    <div className="text-2xl font-bold" data-testid="stat-rto-rate">
-                      {rtoInsights?.kpis.overall_rto_rate || 0}%
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    of {rtoInsights?.kpis.total_shipped || 0} shipped orders
+              <Card data-testid="card-rto-rate" className="p-5">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <TrendingDown className="h-[18px] w-[18px]" />
+                </span>
+                {rtoLoading ? (
+                  <Skeleton className="h-8 w-20 mt-3.5" />
+                ) : (
+                  <p className="mt-3.5 text-[32px] font-semibold tabular-nums leading-none tracking-tight text-foreground" data-testid="stat-rto-rate">
+                    {rtoInsights?.kpis.overall_rto_rate || 0}%
                   </p>
-                </CardContent>
+                )}
+                <p className="mt-2 text-[11px] uppercase tracking-wider text-muted-foreground font-medium">RTO Rate</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  of {rtoInsights?.kpis.total_shipped || 0} shipped orders
+                </p>
               </Card>
 
-              <Card data-testid="card-total-rto">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-                  <CardTitle className="text-sm font-medium">Total RTO Count</CardTitle>
-                  <Package className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  {rtoLoading ? (
-                    <Skeleton className="h-8 w-16" />
-                  ) : (
-                    <div className="text-2xl font-bold" data-testid="stat-total-rto">
-                      {rtoInsights?.kpis.total_rto_count || 0}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    {rtoInsights?.kpis.rto_in_transit_count || 0} returning, {rtoInsights?.kpis.rto_delivered_count || 0} returned
+              <Card data-testid="card-total-rto" className="p-5">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400">
+                  <Package className="h-[18px] w-[18px]" />
+                </span>
+                {rtoLoading ? (
+                  <Skeleton className="h-8 w-20 mt-3.5" />
+                ) : (
+                  <p className="mt-3.5 text-[32px] font-semibold tabular-nums leading-none tracking-tight text-foreground" data-testid="stat-total-rto">
+                    {(rtoInsights?.kpis.total_rto_count || 0).toLocaleString("en-IN")}
                   </p>
-                </CardContent>
+                )}
+                <p className="mt-2 text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Total RTO count</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {rtoInsights?.kpis.rto_in_transit_count || 0} returning, {rtoInsights?.kpis.rto_delivered_count || 0} returned
+                </p>
               </Card>
 
-              <Card className="border-destructive/50 bg-destructive/5" data-testid="card-revenue-loss">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-                  <CardTitle className="text-sm font-medium text-destructive">Revenue Loss</CardTitle>
-                  <IndianRupee className="h-4 w-4 text-destructive" />
-                </CardHeader>
-                <CardContent>
-                  {rtoLoading ? (
-                    <Skeleton className="h-8 w-24" />
-                  ) : (
-                    <div className="text-2xl font-bold text-destructive" data-testid="stat-revenue-loss">
-                      ₹{(rtoInsights?.kpis.rto_revenue_loss || 0).toLocaleString()}
-                    </div>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    Total value of all RTO orders
+              <Card data-testid="card-revenue-loss" className="p-5">
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                  <IndianRupee className="h-[18px] w-[18px]" />
+                </span>
+                {rtoLoading ? (
+                  <Skeleton className="h-8 w-32 mt-3.5" />
+                ) : (
+                  <p className="mt-3.5 text-[32px] font-semibold tabular-nums leading-none tracking-tight text-rose-600 dark:text-rose-400" data-testid="stat-revenue-loss">
+                    ₹{(rtoInsights?.kpis.rto_revenue_loss || 0).toLocaleString("en-IN")}
                   </p>
-                </CardContent>
+                )}
+                <p className="mt-2 text-[11px] uppercase tracking-wider text-muted-foreground font-medium">Revenue loss</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Total value of all RTO orders
+                </p>
               </Card>
             </div>
 

@@ -156,7 +156,7 @@ export function OrdersFilter({
   const activeCount = activeFilters.length;
 
   return (
-    <div className="space-y-3">
+    <div className="rounded-2xl border bg-card p-3 shadow-sm space-y-3">
       {/* ── Primary toolbar ──────────────────────────────────────── */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="relative flex-1 max-w-md">
@@ -164,7 +164,7 @@ export function OrdersFilter({
           <Input
             type="search"
             placeholder="Search by order ID, customer name, phone…"
-            className="pl-9"
+            className="pl-9 bg-background"
             value={searchValue}
             onChange={(e) => onSearch?.(e.target.value)}
             data-testid="input-search-orders"
@@ -334,23 +334,22 @@ export function OrdersFilter({
         >
           <span className="text-xs text-muted-foreground">Active filters:</span>
           {activeFilters.map((f) => (
-            <Badge
+            <span
               key={f.key}
-              variant="secondary"
-              className="gap-1 pl-2.5 pr-1 py-0.5 text-xs font-medium"
+              className="inline-flex items-center gap-1 rounded-full bg-brand/10 pl-2.5 pr-1 py-0.5 text-xs font-medium text-brand"
               data-testid={`chip-filter-${f.key}`}
             >
               {f.label}
               <button
                 type="button"
                 onClick={f.onClear}
-                className="ml-0.5 inline-flex items-center justify-center rounded-sm hover:bg-foreground/10 p-0.5"
+                className="ml-0.5 inline-flex items-center justify-center rounded-full hover:bg-brand/20 p-0.5"
                 aria-label={`Remove ${f.key} filter`}
                 data-testid={`chip-remove-${f.key}`}
               >
                 <X className="h-3 w-3" />
               </button>
-            </Badge>
+            </span>
           ))}
           {activeCount > 1 && (
             <button

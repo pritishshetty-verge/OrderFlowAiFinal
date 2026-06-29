@@ -504,10 +504,10 @@ export default function ReturnsPage() {
         </div>
 
         {/* Table */}
-        <div className="rounded-lg border bg-card overflow-hidden">
+        <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-muted/40">
+              <tr className="border-b bg-muted/30">
                 <th className="text-left font-medium text-muted-foreground px-4 py-3 w-[20%]">
                   RMA Number
                 </th>

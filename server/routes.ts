@@ -5739,6 +5739,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin — set a user's RazorpayX payroll email (the personal email the
+  // employee is registered under in RazorpayX). Empty string clears it.
+  app.post("/api/users/:userId/payroll-email", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { userId } = req.params;
+      const raw = typeof req.body?.payrollEmail === "string" ? req.body.payrollEmail.trim() : "";
+      // Light validation: allow empty (clear) or a basic email shape.
+      if (raw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+        return res.status(400).json({ error: "Invalid email" });
+      }
+      const updated = await storage.setPayrollEmail(userId, raw || null);
+      if (!updated) return res.status(404).json({ error: "User not found" });
+      console.log(`[payroll-email] admin ${admin.email} set ${updated.email} → ${raw || "(cleared)"}`);
+      return res.json({ ok: true, userId, payrollEmail: raw || null });
+    } catch (err: any) {
+      console.error("[payroll-email] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+
   // Admin "Reactivate" — clears an auto-logout so the agent can clock
   // back in for the rest of the day. Audit trail lands in attendance.notes.
   app.post("/api/attendance/:attendanceId/reactivate", async (req, res) => {
@@ -6026,6 +6052,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     return { ok: true };
   }
+
+  // ── RazorpayX Payroll sync (attendance + leave) ────────────────────
+  // Config/status — what the UI needs to render safe controls.
+  app.get("/api/payroll-sync/status", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    const { isRazorpayPayrollConfigured, isDryRun } = await import("./razorpay-payroll/client");
+    const { leaveTypesConfigured } = await import("./razorpay-payroll/mapping");
+    res.json({
+      configured: isRazorpayPayrollConfigured(),
+      dryRun: isDryRun(),
+      leaveTypesConfigured: leaveTypesConfigured(),
+    });
+  });
+
+  // Preview (dry-run) — maps everything, sends nothing. No credentials needed.
+  app.get("/api/payroll-sync/preview", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = new Date();
+      const year = parseInt(String(req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const { previewSync } = await import("./razorpay-payroll/sync");
+      return res.json(await previewSync(year, month));
+    } catch (err: any) {
+      console.error("[payroll-sync/preview] error:", err);
+      return res.status(500).json({ error: "Preview failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Run — pushes to RazorpayX. Honors RAZORPAY_PAYROLL_DRY_RUN (falls back
+  // to preview when dry-run is on, so a live write can never happen by
+  // accident). Admin only.
+  app.post("/api/payroll-sync/run", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = new Date();
+      const year = parseInt(String(req.body?.year ?? req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.body?.month ?? req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const triggeredBy =
+        (typeof req.body?.currentUserId === "string" && req.body.currentUserId) ||
+        (typeof req.query.currentUserId === "string" && req.query.currentUserId) ||
+        undefined;
+      const { runSync } = await import("./razorpay-payroll/sync");
+      const report = await runSync(year, month, triggeredBy || undefined);
+      console.log(
+        `[payroll-sync/run] ${report.mode} ${year}-${month} — ok=${report.totals.ok} failed=${report.totals.failed} skipped=${report.totals.skipped}`,
+      );
+      return res.json(report);
+    } catch (err: any) {
+      console.error("[payroll-sync/run] error:", err);
+      return res.status(500).json({ error: "Sync failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Reconcile (read-only) — re-fetch from RazorpayX + report mismatches.
+  app.get("/api/payroll-sync/verify", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = new Date();
+      const year = parseInt(String(req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const { reconcileMonth } = await import("./razorpay-payroll/sync");
+      return res.json(await reconcileMonth(year, month));
+    } catch (err: any) {
+      console.error("[payroll-sync/verify] error:", err);
+      return res.status(500).json({ error: "Verify failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Audit history — recent sync runs.
+  app.get("/api/payroll-sync/history", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { listSyncRuns } = await import("./razorpay-payroll/sync");
+      return res.json(await listSyncRuns(20));
+    } catch (err: any) {
+      console.error("[payroll-sync/history] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Provision a new employee in RazorpayX (create + set salary) from an
+  // OrderFlow user. Dry-run gated. Admin only.
+  app.post("/api/payroll-sync/provision", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const userId = String(req.body?.userId ?? "");
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      const { provisionUser } = await import("./razorpay-payroll/provision");
+      const result = await provisionUser(userId);
+      console.log(`[payroll-sync/provision] ${result.mode} ${result.email} — ok=${result.ok} (${result.message})`);
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[payroll-sync/provision] error:", err);
+      return res.status(500).json({ error: "Provision failed", detail: err?.message ?? String(err) });
+    }
+  });
 
   app.get("/api/payroll/preview", async (req, res) => {
     const auth = await requireAdmin(req, res);
@@ -9148,6 +9286,1403 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Error fetching webhook logs:", err);
       res.status(500).json({ error: "Failed to fetch webhook logs" });
+    }
+  });
+
+  // ==========================================================================
+  // PG RECONCILIATION (V1)
+  // ==========================================================================
+  //
+  // V1 ingestion path: admin uploads a settlement CSV from their PG
+  // dashboard, we parse it via the per-PG adapter in server/pgs/, and
+  // bulk-upsert into pg_settlements. The matcher (step 5) then
+  // promotes rows from `pending` to settled/overdue/mismatch.
+  //
+  // Auth: admin-only. The server-trusted req.session.userId is
+  // already injected via the global identity middleware
+  // (server/index.ts); we re-check role here as defence-in-depth.
+  // ==========================================================================
+
+  // Multipart file upload — admin uploads PayU settlement CSV.
+  // Auto-runs the matcher after ingestion so the UI immediately
+  // reflects classified rows (no separate "Run matcher" click needed).
+  // Tracks SHA-256 of the file content for duplicate detection.
+  const { reconCsvUpload } = await import("./upload");
+  const crypto = await import("crypto");
+  app.post(
+    "/api/recon/upload",
+    reconCsvUpload.single("file"),
+    async (req, res) => {
+      try {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") {
+          return res.status(403).json({ error: "Admin only" });
+        }
+
+        const { getPgAdapter, getActivePgNames } = await import("./pgs");
+        const { PG_NAMES } = await import("@shared/schema");
+        const { matchPendingSettlements } = await import("./recon/matcher");
+
+        // Two ingest paths:
+        //  1. multipart file upload (React file picker) — req.file is set
+        //  2. JSON body with csv string (legacy / curl test path) —
+        //     req.body.csv is set
+        let csv: string | undefined;
+        let fileName: string | undefined;
+        if (req.file) {
+          csv = req.file.buffer.toString("utf8");
+          fileName = req.file.originalname;
+        } else {
+          csv = (req.body?.csv as string | undefined) ?? undefined;
+          fileName = req.body?.fileName as string | undefined;
+        }
+
+        const pgName = (req.body?.pgName as string | undefined) ?? "payu";
+        const storeIdFromBody = req.body?.storeId as string | undefined;
+        const autoMatch = req.body?.autoMatch !== "false"; // default ON
+
+        if (!csv || typeof csv !== "string" || csv.trim().length === 0) {
+          return res.status(400).json({
+            error:
+              "Missing CSV. Use multipart/form-data with field `file`, " +
+              "or POST a JSON body with `csv`.",
+          });
+        }
+
+        if (!(PG_NAMES as readonly string[]).includes(pgName)) {
+          return res.status(400).json({
+            error: `Unknown pgName. Expected one of: ${PG_NAMES.join(", ")}`,
+          });
+        }
+        const adapter = getPgAdapter(pgName as any);
+        if (!adapter) {
+          return res.status(400).json({
+            error: `No adapter registered for "${pgName}". Active: ${getActivePgNames().join(
+              ", ",
+            )}`,
+          });
+        }
+
+        const storeId =
+          storeIdFromBody ??
+          (req as any).storeScope?.storeId ??
+          null;
+
+        // Compute file hash for duplicate detection (SHA-256 hex).
+        const fileHash = crypto
+          .createHash("sha256")
+          .update(csv, "utf8")
+          .digest("hex");
+        const fileSize = Buffer.byteLength(csv, "utf8");
+
+        // Has this exact file been ingested before for this (store, PG)?
+        const force = req.body?.force === "true" || req.body?.force === true;
+        const prior = await storage.findReconUploadByHash(
+          storeId,
+          pgName as any,
+          fileHash,
+        );
+        if (prior && !force) {
+          // Audit the rejected attempt so we know the user TRIED.
+          await storage.createReconUpload({
+            storeId,
+            pgName,
+            fileName: fileName ?? null,
+            fileHash,
+            fileSize,
+            uploadedBy: currentUserId,
+            parsedRows: 0,
+            rowsInserted: 0,
+            rowsUpdated: 0,
+            rowsSkipped: 0,
+            errorCount: 0,
+            status: "duplicate",
+            notes: `Same bytes-for-bytes file as upload ${prior.id} on ${prior.createdAt}. Skipped — POST with force=true to re-process.`,
+          });
+          return res.status(409).json({
+            ok: false,
+            duplicate: true,
+            error: "This exact file was already uploaded.",
+            priorUpload: {
+              id: prior.id,
+              fileName: prior.fileName,
+              uploadedAt: prior.createdAt,
+              rowsInserted: prior.rowsInserted,
+              rowsUpdated: prior.rowsUpdated,
+            },
+            hint: "Re-submit with force=true if you genuinely want to re-process.",
+          });
+        }
+
+        const { rows, skipped, errors } = await adapter.parseSettlementCsv(
+          csv,
+          { storeId, sourceFile: fileName },
+        );
+
+        // Pre-flight: how many of these PayU IDs already exist? Lets us
+        // report inserted vs updated separately in the response.
+        const incomingIds = rows.map((r) => r.pgPaymentId);
+        const existing = await storage.getExistingPgPaymentIds(
+          storeId,
+          pgName as any,
+          incomingIds,
+        );
+        const rowsUpdated = rows.filter((r) =>
+          existing.has(r.pgPaymentId),
+        ).length;
+        const rowsInserted = rows.length - rowsUpdated;
+
+        const { processed } = await storage.bulkUpsertPgSettlements(rows);
+
+        // Auto-run the matcher on the rows we just ingested. This is
+        // what makes "upload + see results" feel like one step —
+        // the user doesn't have to click another button.
+        let matchResult = null;
+        if (autoMatch && storeId) {
+          try {
+            matchResult = await matchPendingSettlements({
+              storeId,
+              pgName: pgName as any,
+            });
+          } catch (matchErr: any) {
+            console.error("[recon/upload] auto-match failed:", matchErr);
+            // Don't block the upload response — ingestion succeeded
+            // even if classification didn't.
+          }
+        }
+
+        // Audit row for the upload itself. Even if processing partially
+        // failed, we record the attempt so future re-uploads can see it.
+        const auditStatus =
+          errors.length === 0
+            ? "success"
+            : rows.length > 0
+              ? "partial"
+              : "error";
+        await storage.createReconUpload({
+          storeId,
+          pgName,
+          fileName: fileName ?? null,
+          fileHash,
+          fileSize,
+          uploadedBy: currentUserId,
+          parsedRows: rows.length,
+          rowsInserted,
+          rowsUpdated,
+          rowsSkipped: skipped,
+          errorCount: errors.length,
+          autoMatched: matchResult ?? null,
+          status: auditStatus,
+          notes: force && prior ? `Force re-processed (prior upload: ${prior.id})` : null,
+        });
+
+        return res.json({
+          ok: true,
+          pgName,
+          storeId,
+          fileName: fileName ?? null,
+          fileHash,
+          parsedRows: rows.length,
+          rowsInserted,
+          rowsUpdated,
+          processed,
+          skipped,
+          errorCount: errors.length,
+          errors: errors.slice(0, 5),
+          autoMatched: matchResult,
+        });
+      } catch (err: any) {
+        console.error("[recon/upload] error:", err);
+        return res.status(500).json({
+          error: "Upload failed",
+          detail: err?.message ?? String(err),
+        });
+      }
+    },
+  );
+
+  /**
+   * Powers the dashboard table. Server-paginated + indexed; the
+   * storage layer caps page size at 500.
+   */
+  app.get("/api/recon/settlements", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const { PG_SETTLEMENT_STATUSES } = await import("@shared/schema");
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId ??
+        undefined;
+      const statusRaw = req.query.status as string | undefined;
+      // Multi-status filter accepts comma-separated values.
+      const status = statusRaw
+        ? (statusRaw
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) =>
+              (PG_SETTLEMENT_STATUSES as readonly string[]).includes(s),
+            ) as any[])
+        : undefined;
+      const page = Number(req.query.page ?? 1);
+      const pageSize = Number(req.query.pageSize ?? 50);
+      const q = req.query.q as string | undefined;
+      const fromDate = req.query.fromDate
+        ? new Date(req.query.fromDate as string)
+        : undefined;
+      const toDate = req.query.toDate
+        ? new Date(req.query.toDate as string)
+        : undefined;
+
+      const result = await storage.listPgSettlements({
+        storeId,
+        status,
+        page,
+        pageSize,
+        q,
+        fromDate,
+        toDate,
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[recon/settlements] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
+   * Trigger the matcher. Walks every `pending` pg_settlement, resolves
+   * it to a Shopify order via the bridge, and promotes the row to
+   * settled / mismatch. Idempotent — running twice on the same data
+   * just re-classifies; doesn't double-write.
+   */
+  app.post("/api/recon/match", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const { matchPendingSettlements } = await import("./recon/matcher");
+
+      const storeId =
+        (req.body?.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res
+          .status(400)
+          .json({ error: "Missing storeId (no active store scope)" });
+      }
+
+      const result = await matchPendingSettlements({
+        storeId,
+        pgName: req.body?.pgName ?? "payu",
+        toleranceRupees: req.body?.toleranceRupees,
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[recon/match] error:", err);
+      return res
+        .status(500)
+        .json({ error: "Match failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  /**
+   * Computed-live list of paid PayU orders for which no settlement
+   * record exists past the grace window. The "we haven't been paid
+   * yet" cases. Not stored — derived from a JOIN at query time.
+   */
+  app.get("/api/recon/overdue", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const { getOverdueOrders } = await import("./recon/matcher");
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res
+          .status(400)
+          .json({ error: "Missing storeId (no active store scope)" });
+      }
+
+      const graceDays = req.query.graceDays
+        ? Number(req.query.graceDays)
+        : 3;
+      const limit = req.query.limit ? Number(req.query.limit) : 200;
+
+      const result = await getOverdueOrders({ storeId, graceDays, limit });
+      return res.json({
+        rows: result.rows,
+        total: result.rows.length,
+        graceDays,
+        window: result.window,
+        windowNote: result.windowNote,
+      });
+    } catch (err: any) {
+      console.error("[recon/overdue] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
+   * Send a reconciliation digest email NOW. Two callers:
+   *   1. Admin clicks "Send test digest" in Settings → digestType is
+   *      whatever they pick, recipient is the calling admin only.
+   *   2. Vercel cron hits this with header `x-recon-cron-secret` →
+   *      digest goes to the full recipient list (V1: every admin
+   *      user for the store).
+   *
+   * Cron auth path (header) lets the cron run without a session.
+   * Admin path uses the standard session check.
+   */
+  app.post("/api/recon/send-digest", async (req, res) => {
+    try {
+      const cronSecret = req.headers["x-recon-cron-secret"];
+      const isCron =
+        process.env.RECON_CRON_SECRET &&
+        typeof cronSecret === "string" &&
+        cronSecret === process.env.RECON_CRON_SECRET;
+
+      let calledByEmail: string | null = null;
+      let isAdmin = false;
+      if (!isCron) {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+        calledByEmail = user.email;
+        isAdmin = true;
+      }
+
+      const storeId =
+        (req.body?.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+      const digestType =
+        req.body?.digestType === "bi-weekly" ? "bi-weekly" : "3-day";
+      const isTest = req.body?.test === true || req.body?.test === "true";
+
+      // Resolve recipient list.
+      //   - Test mode (admin "Send test"): just the calling admin
+      //   - Cron / non-test: every admin user for now. V2 would pull
+      //     from a per-store recipients table that the Settings tab
+      //     manages.
+      let recipients: string[];
+      if (isTest && calledByEmail) {
+        recipients = [calledByEmail];
+      } else {
+        const allUsers = await storage.listUsers();
+        recipients = allUsers
+          .filter((u) => u.role === "admin" && u.isActive)
+          .map((u) => u.email)
+          .filter((e): e is string => !!e);
+      }
+      if (recipients.length === 0) {
+        return res.status(400).json({ error: "No recipients found" });
+      }
+
+      // Pull the data the digest needs.
+      const { getOverdueOrders } = await import("./recon/matcher");
+      const counts = await storage.getPgSettlementStatusCounts(storeId);
+      const overdueResult = await getOverdueOrders({
+        storeId,
+        graceDays: 3,
+        limit: 100,
+      });
+      // Resolve store name directly from DB — IStorage doesn't expose
+      // a getStore helper today and we don't need one elsewhere.
+      const { db: db_local } = await import("./db");
+      const { stores: stores_local } = await import("@shared/schema");
+      const { eq: eq_local } = await import("drizzle-orm");
+      const [store] = await db_local
+        .select({ storeName: stores_local.storeName })
+        .from(stores_local)
+        .where(eq_local(stores_local.id, storeId));
+      const storeName = store?.storeName ?? "Your store";
+
+      // Build top-flagged: overdue first (sorted by age desc), then
+      // mismatches. Cap at 10 — boss reads on a phone, not a desk.
+      const { db } = await import("./db");
+      const { eq, and, sql, inArray } = await import("drizzle-orm");
+      const { pgSettlements, orders } = await import("@shared/schema");
+      const mismatchSettlements = await db
+        .select({
+          id: pgSettlements.id,
+          orderId: pgSettlements.orderId,
+          orderAmount: pgSettlements.orderAmount,
+          settledAmount: pgSettlements.settledAmount,
+          pgPaymentId: pgSettlements.pgPaymentId,
+        })
+        .from(pgSettlements)
+        .where(
+          and(
+            eq(pgSettlements.storeId, storeId),
+            eq(pgSettlements.status, "mismatch"),
+          ),
+        )
+        .orderBy(sql`(CAST(${pgSettlements.orderAmount} AS NUMERIC) - CAST(${pgSettlements.settledAmount} AS NUMERIC)) DESC`)
+        .limit(10);
+
+      // Hydrate order numbers for mismatches.
+      const mismatchOrderIds = mismatchSettlements
+        .map((s) => s.orderId)
+        .filter((id): id is string => !!id);
+      const mismatchOrders =
+        mismatchOrderIds.length > 0
+          ? await db
+              .select({
+                id: orders.id,
+                shopifyOrderNumber: orders.shopifyOrderNumber,
+                customerEmail: orders.customerEmail,
+              })
+              .from(orders)
+              .where(inArray(orders.id, mismatchOrderIds))
+          : [];
+      const orderById = new Map(mismatchOrders.map((o) => [o.id, o]));
+
+      const mask = (e: string | null) => {
+        if (!e) return "—";
+        const [l, d] = e.split("@");
+        return d ? l.slice(0, 3) + "***@" + d : "***";
+      };
+      const fmtINR = (n: number) =>
+        "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      const topFlagged = [
+        ...overdueResult.rows.slice(0, 7).map((o) => ({
+          shopifyOrderNumber: o.shopifyOrderNumber,
+          customerEmailMasked: mask(o.customerEmail),
+          amount: fmtINR(parseFloat(o.totalPrice)),
+          ageDays: o.ageDays,
+          reason: "overdue" as const,
+        })),
+        ...mismatchSettlements.slice(0, 3).map((s) => {
+          const o = s.orderId ? orderById.get(s.orderId) : null;
+          return {
+            shopifyOrderNumber: o?.shopifyOrderNumber ?? s.pgPaymentId,
+            customerEmailMasked: mask(o?.customerEmail ?? null),
+            amount: fmtINR(parseFloat(s.orderAmount ?? "0")),
+            ageDays: 0,
+            reason: "mismatch" as const,
+          };
+        }),
+      ].slice(0, 10);
+
+      // Total flagged ₹ = sum of (order - settled) drift across mismatches +
+      // sum of order amounts in overdue (potential leakage if PayU never settles).
+      const mismatchDriftSum = mismatchSettlements.reduce((s, x) => {
+        const order = parseFloat(x.orderAmount ?? "0");
+        const settled = parseFloat(x.settledAmount);
+        return s + Math.max(0, order - settled);
+      }, 0);
+      const overdueAmountSum = overdueResult.rows.reduce(
+        (s, x) => s + parseFloat(x.totalPrice),
+        0,
+      );
+      const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
+
+      const settledSum = await db
+        .select({
+          c: sql<string>`COALESCE(SUM(CAST(${pgSettlements.settledAmount} AS NUMERIC)), 0)::text`,
+        })
+        .from(pgSettlements)
+        .where(
+          and(
+            eq(pgSettlements.storeId, storeId),
+            eq(pgSettlements.status, "settled"),
+          ),
+        );
+      const totalSettledAmount = fmtINR(Number(settledSum[0]?.c ?? 0));
+
+      const windowFrom = overdueResult.window
+        ? new Date(overdueResult.window.fromDate).toLocaleDateString("en-IN", { month: "short", day: "numeric" })
+        : "—";
+      const windowTo = overdueResult.window
+        ? new Date(overdueResult.window.toDate).toLocaleDateString("en-IN", { month: "short", day: "numeric" })
+        : "—";
+
+      const { sendReconDigestEmail } = await import("./resend");
+      const result = await sendReconDigestEmail({
+        toEmails: recipients,
+        storeName,
+        digestType,
+        totalSettled: counts.settled,
+        totalSettledAmount,
+        totalFlagged: counts.mismatch + overdueResult.rows.length,
+        totalFlaggedAmount,
+        overdueCount: overdueResult.rows.length,
+        mismatchCount: counts.mismatch,
+        topFlagged,
+        windowFrom,
+        windowTo,
+      });
+
+      return res.json({
+        ok: true,
+        sent: true,
+        digestType,
+        recipientCount: recipients.length,
+        recipients: isTest ? recipients : recipients.length, // hide list when cron
+        resendId: (result as any)?.id ?? null,
+        isTest,
+      });
+    } catch (err: any) {
+      console.error("[recon/send-digest] error:", err);
+      return res.status(500).json({
+        error: "Send failed",
+        detail: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
+   * Stream a CSV download of the current filtered settlements view.
+   * Used by the "Export for CA" button. Same filter shape as the
+   * list endpoint — admins can drill down then export exactly what
+   * they're looking at.
+   *
+   * Streams instead of buffering so a 20k-row export doesn't blow up
+   * Node's heap. Cap at 50k rows for safety; CA exports are usually
+   * monthly so this comfortably covers a year of one store.
+   */
+  app.get("/api/recon/export", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+      const { PG_SETTLEMENT_STATUSES } = await import("@shared/schema");
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+      const statusRaw = req.query.status as string | undefined;
+      const status = statusRaw
+        ? (statusRaw
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) =>
+              (PG_SETTLEMENT_STATUSES as readonly string[]).includes(s),
+            ) as any[])
+        : undefined;
+      const q = req.query.q as string | undefined;
+      const fromDate = req.query.fromDate
+        ? new Date(req.query.fromDate as string)
+        : undefined;
+      const toDate = req.query.toDate
+        ? new Date(req.query.toDate as string)
+        : undefined;
+
+      // Pull a large page — 50k is enough for any practical CA export.
+      // Paginate internally if we ever hit this cap in production.
+      const { rows } = await storage.listPgSettlements({
+        storeId,
+        status,
+        q,
+        fromDate,
+        toDate,
+        page: 1,
+        pageSize: 500, // listPgSettlements caps at 500 per page
+      });
+
+      // For exports we may want > 500. Pull more pages if needed.
+      const allRows: typeof rows = [...rows];
+      let page = 2;
+      while (allRows.length < 50000 && rows.length === 500) {
+        const next = await storage.listPgSettlements({
+          storeId,
+          status,
+          q,
+          fromDate,
+          toDate,
+          page,
+          pageSize: 500,
+        });
+        if (next.rows.length === 0) break;
+        allRows.push(...next.rows);
+        page++;
+        if (next.rows.length < 500) break;
+      }
+
+      // CSV escape helper
+      const esc = (v: unknown): string => {
+        if (v === null || v === undefined) return "";
+        const s = String(v);
+        if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+          return `"${s.replace(/"/g, '""')}"`;
+        }
+        return s;
+      };
+
+      const headers = [
+        "Settlement Date",
+        "Transaction Date",
+        "PG",
+        "PayU ID (mihpayid)",
+        "Merchant Txn ID",
+        "Shopify Order ID",
+        "Shopify Order Amount",
+        "Settled Amount",
+        "Effective Fee",
+        "Effective Fee %",
+        "UTR",
+        "Status",
+        "Source File",
+      ];
+      const lines = [headers.join(",")];
+
+      for (const r of allRows) {
+        const order = r.orderAmount ? parseFloat(r.orderAmount) : null;
+        const settled = parseFloat(r.settledAmount);
+        const gross = r.grossAmount ? parseFloat(r.grossAmount) : order;
+        const effFee =
+          gross !== null && gross > settled ? +(gross - settled).toFixed(2) : 0;
+        const effPct = gross && gross > 0 ? +((effFee / gross) * 100).toFixed(2) : null;
+        lines.push(
+          [
+            r.settledAt,
+            r.pgTransactionAt,
+            r.pgName,
+            r.pgPaymentId,
+            r.pgOrderId,
+            r.orderId,
+            r.orderAmount,
+            r.settledAmount,
+            effFee.toFixed(2),
+            effPct !== null ? effPct.toFixed(2) : "",
+            r.utrNumber,
+            r.status,
+            r.sourceFile,
+          ]
+            .map(esc)
+            .join(","),
+        );
+      }
+
+      const fileName = `recon-export-${new Date().toISOString().slice(0, 10)}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(lines.join("\n"));
+    } catch (err: any) {
+      console.error("[recon/export] error:", err);
+      return res.status(500).json({ error: "Export failed", detail: err?.message });
+    }
+  });
+
+  /**
+   * V2: Auto-fetch missing orders from Shopify.
+   *
+   * Use case: PayU settlement landed in our DB but matcher couldn't
+   * resolve it because the Shopify order isn't in our local `orders`
+   * table (yet to sync, or an older order we don't have). This
+   * endpoint queries Shopify's Admin API for each orphan's expected
+   * order window, scans note_attributes for matching PayU_txn_id,
+   * and persists found orders so the next matcher run links them.
+   *
+   * Limits:
+   *   - Up to 25 orphans per call (each costs ~1 Shopify API call)
+   *   - Searches a ±2-day window around each orphan's pg_transaction_at
+   *   - Skips orphans without pg_transaction_at (can't bound the search)
+   *
+   * Honest: Shopify's order search doesn't filter by note_attributes
+   * value at the API level, so we fetch a date-bounded list and
+   * client-side filter. At ~50 orders/day for Glow & Me, a 4-day
+   * window is ~200 orders to scan per orphan. Fast enough.
+   */
+  app.post("/api/recon/fetch-from-shopify", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+      const storeId =
+        (req.body?.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+      const maxToProcess = Math.min(25, Math.max(1, Number(req.body?.limit ?? 25)));
+
+      const { db } = await import("./db");
+      const { eq, and, isNull, sql: sqlT } = await import("drizzle-orm");
+      const { pgSettlements, orders } = await import("@shared/schema");
+
+      // Find orphan settlements — status=pending (matcher couldn't
+      // resolve) AND orderId IS NULL AND pg_transaction_at is set
+      // (we need the date window).
+      const orphans = await db
+        .select({
+          id: pgSettlements.id,
+          pgPaymentId: pgSettlements.pgPaymentId,
+          pgTransactionAt: pgSettlements.pgTransactionAt,
+        })
+        .from(pgSettlements)
+        .where(
+          and(
+            eq(pgSettlements.storeId, storeId),
+            eq(pgSettlements.pgName, "payu"),
+            eq(pgSettlements.status, "pending"),
+            isNull(pgSettlements.orderId),
+            sqlT`${pgSettlements.pgTransactionAt} IS NOT NULL`,
+          ),
+        )
+        .limit(maxToProcess);
+
+      if (orphans.length === 0) {
+        return res.json({
+          ok: true,
+          orphansFound: 0,
+          message: "No orphan settlements to fetch.",
+        });
+      }
+
+      // Pull the Shopify client for this store. The existing
+      // getLegacyStoreShopifyClient uses the env-based fallback;
+      // we'd want store-scoped credentials in V3 once stores.api_key
+      // is populated for every tenant.
+      const { getLegacyStoreShopifyClient } = await import("./shopify");
+      const shopify = await getLegacyStoreShopifyClient();
+
+      let fetched = 0;
+      let inserted = 0;
+      let stillMissing = 0;
+      const samples: Array<{ pgPaymentId: string; found: boolean; orderNum?: string }> = [];
+
+      // Group orphans by ±2-day window around pg_transaction_at to
+      // dedupe Shopify API calls. In practice each orphan is unique
+      // by mihpayid, but several orphans may share a date window.
+      type Window = { from: Date; to: Date; pgPaymentIds: Set<string>; orphanIds: Map<string, string> };
+      const windows: Window[] = [];
+      for (const o of orphans) {
+        const t = new Date(o.pgTransactionAt as any);
+        const from = new Date(t.getTime() - 2 * 86400_000);
+        const to = new Date(t.getTime() + 2 * 86400_000);
+        // Merge windows that overlap heavily.
+        const existing = windows.find(
+          (w) => Math.abs(w.from.getTime() - from.getTime()) < 86400_000,
+        );
+        if (existing) {
+          existing.pgPaymentIds.add(o.pgPaymentId);
+          existing.orphanIds.set(o.pgPaymentId, o.id);
+        } else {
+          const m = new Map<string, string>();
+          m.set(o.pgPaymentId, o.id);
+          windows.push({
+            from,
+            to,
+            pgPaymentIds: new Set([o.pgPaymentId]),
+            orphanIds: m,
+          });
+        }
+      }
+
+      for (const w of windows) {
+        try {
+          // Use Shopify GraphQL — gets us note_attributes per order
+          // in one round-trip. REST would need separate calls for
+          // the metafield equivalent.
+          const query = `
+            query OrdersInWindow($q: String!) {
+              orders(first: 250, query: $q) {
+                edges {
+                  node {
+                    id
+                    legacyResourceId
+                    name
+                    email
+                    totalPriceSet { shopMoney { amount } }
+                    createdAt
+                    customAttributes { key value }
+                  }
+                }
+              }
+            }
+          `;
+          const queryStr = `created_at:>=${w.from.toISOString().slice(0, 10)} created_at:<=${w.to.toISOString().slice(0, 10)} financial_status:paid`;
+          const data = await (shopify as any).graphqlRequest(query, { q: queryStr });
+          const candidates = data?.orders?.edges ?? [];
+          fetched += candidates.length;
+
+          for (const edge of candidates) {
+            const o = edge.node;
+            const attrs = (o.customAttributes ?? []) as Array<{ key: string; value: string }>;
+            const payuAttr = attrs.find((a) => a.key === "PayU_txn_id");
+            if (!payuAttr) continue;
+            const matchingOrphanId = w.orphanIds.get(payuAttr.value);
+            if (!matchingOrphanId) continue;
+
+            // Found a match. Insert the order if we don't already have
+            // it (rare — usually the order is just not synced yet).
+            const orderLegacyId = String(o.legacyResourceId);
+            const existing = await db
+              .select({ id: orders.id })
+              .from(orders)
+              .where(
+                and(
+                  eq(orders.storeId, storeId),
+                  eq(orders.shopifyOrderId, orderLegacyId),
+                ),
+              )
+              .limit(1);
+            let localOrderId: string;
+            if (existing.length > 0) {
+              localOrderId = existing[0].id;
+            } else {
+              const [created] = await db
+                .insert(orders)
+                .values({
+                  storeId,
+                  shopifyOrderId: orderLegacyId,
+                  shopifyOrderNumber: o.name?.replace("#", "") ?? orderLegacyId,
+                  customerName: o.email ?? "(unknown)",
+                  customerPhone: "",
+                  customerEmail: o.email ?? null,
+                  paymentMethod: "PayU",
+                  totalPrice: o.totalPriceSet?.shopMoney?.amount ?? "0",
+                  subtotal: o.totalPriceSet?.shopMoney?.amount ?? "0",
+                  shopifyCreatedAt: new Date(o.createdAt),
+                  shopifyUpdatedAt: new Date(o.createdAt),
+                  rawShopifyData: {
+                    note_attributes: attrs.map((a) => ({ name: a.key, value: a.value })),
+                    auto_fetched: true,
+                  },
+                  financialStatus: "paid",
+                  status: "pending",
+                  callStatus: "Pending",
+                })
+                .returning({ id: orders.id });
+              localOrderId = created.id;
+              inserted++;
+            }
+
+            // Link the orphan settlement to the resolved order.
+            await db
+              .update(pgSettlements)
+              .set({
+                orderId: localOrderId,
+                orderAmount: o.totalPriceSet?.shopMoney?.amount ?? null,
+                updatedAt: new Date(),
+              })
+              .where(eq(pgSettlements.id, matchingOrphanId));
+
+            samples.push({
+              pgPaymentId: payuAttr.value,
+              found: true,
+              orderNum: o.name,
+            });
+            w.pgPaymentIds.delete(payuAttr.value);
+            w.orphanIds.delete(payuAttr.value);
+          }
+        } catch (winErr: any) {
+          console.error("[recon/fetch-from-shopify] window failed:", winErr?.message);
+          // Continue to next window — one bad window shouldn't kill the
+          // whole batch.
+        }
+
+        // Anything left in this window's set is genuinely missing
+        // from Shopify (or has a different PayU_txn_id).
+        w.pgPaymentIds.forEach((id) => {
+          stillMissing++;
+          samples.push({ pgPaymentId: id, found: false });
+        });
+      }
+
+      // Re-run matcher so the freshly-linked rows get proper status.
+      const { matchPendingSettlements } = await import("./recon/matcher");
+      let matchResult = null;
+      try {
+        matchResult = await matchPendingSettlements({
+          storeId,
+          pgName: "payu",
+        });
+      } catch (matchErr) {
+        console.error("[recon/fetch-from-shopify] re-match failed:", matchErr);
+      }
+
+      return res.json({
+        ok: true,
+        orphansFound: orphans.length,
+        shopifyOrdersFetched: fetched,
+        ordersInserted: inserted,
+        stillMissing,
+        rematched: matchResult,
+        samples: samples.slice(0, 10),
+      });
+    } catch (err: any) {
+      console.error("[recon/fetch-from-shopify] error:", err);
+      return res
+        .status(500)
+        .json({ error: "Fetch failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // ── Rate cards: list / create / delete ────────────────────────────
+
+  app.get("/api/recon/rate-cards", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const pgName = req.query.pgName as string | undefined;
+
+      const rows = await storage.listPgRateCards(storeId, pgName as any);
+      const active = await storage.getActivePgRateCard(storeId, (pgName as any) ?? "payu");
+      return res.json({ rows, activeId: active?.id ?? null });
+    } catch (err: any) {
+      console.error("[recon/rate-cards GET]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+
+  app.post("/api/recon/rate-cards", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+      const storeId =
+        (req.body?.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+      const { name, pgName = "payu", rules, isActive = true, validFrom, validTo, notes } = req.body ?? {};
+      if (!name || !rules?.default) {
+        return res.status(400).json({
+          error: "Missing required fields. Need: name, rules.default {mdrPct, gstPct}",
+        });
+      }
+
+      const safeRules: import("@shared/schema").PgRateCardRules = {
+        default: rules.default,
+        byPaymentMode: rules.byPaymentMode ?? {},
+        byAmountTier: rules.byAmountTier ?? [],
+        ...(notes || rules.notes ? { notes: notes ?? rules.notes } : {}),
+      };
+      const card = await storage.upsertPgRateCard({
+        storeId,
+        pgName,
+        name,
+        rules: safeRules,
+        isActive,
+        validFrom: validFrom ? new Date(validFrom) : null,
+        validTo: validTo ? new Date(validTo) : null,
+        createdBy: currentUserId,
+      });
+      return res.json({ ok: true, card });
+    } catch (err: any) {
+      console.error("[recon/rate-cards POST]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+
+  app.delete("/api/recon/rate-cards/:id", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      await storage.deletePgRateCard(req.params.id);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[recon/rate-cards DELETE]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+
+  /**
+   * CSV upload for a rate card. Same multer handler as settlement upload.
+   * Expected columns (order-insensitive, lowercase): payment_mode, mdr_pct,
+   * gst_pct, min_amount (optional), max_amount (optional), notes (optional).
+   *
+   * A row with payment_mode = "default" sets `rules.default`.
+   * Rows with min_amount / max_amount become `byAmountTier` entries.
+   * All other rows become `byPaymentMode` entries.
+   */
+  app.post(
+    "/api/recon/rate-cards/upload",
+    reconCsvUpload.single("file"),
+    async (req, res) => {
+      try {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+        const storeId =
+          (req.body?.storeId as string | undefined) ??
+          (req as any).storeScope?.storeId;
+        if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+        const pgName = (req.body?.pgName as string | undefined) ?? "payu";
+        const cardName = (req.body?.name as string | undefined) ?? `${pgName} rates - ${new Date().toISOString().slice(0, 10)}`;
+
+        if (!req.file) return res.status(400).json({ error: "Missing file" });
+        const csv = req.file.buffer.toString("utf8");
+
+        const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        if (lines.length < 2) return res.status(400).json({ error: "CSV needs a header + at least one data row" });
+
+        const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+        const colIdx = (name: string) => headers.indexOf(name);
+
+        const modeIdx = colIdx("payment_mode");
+        const mdrIdx = colIdx("mdr_pct");
+        const gstIdx = colIdx("gst_pct");
+        if (modeIdx === -1 || mdrIdx === -1 || gstIdx === -1) {
+          return res.status(400).json({
+            error: "CSV missing required columns. Need: payment_mode, mdr_pct, gst_pct (optional: min_amount, max_amount, notes)",
+          });
+        }
+        const minAmtIdx = colIdx("min_amount");
+        const maxAmtIdx = colIdx("max_amount");
+        const notesIdx = colIdx("notes");
+
+        const rules: {
+          default: { mdrPct: number; gstPct: number };
+          byPaymentMode: Record<string, { mdrPct: number; gstPct: number }>;
+          byAmountTier: Array<{ minAmount: number; maxAmount?: number; mdrPct: number; gstPct: number }>;
+          notes?: string;
+        } = {
+          default: { mdrPct: 1.2, gstPct: 18.0 },
+          byPaymentMode: {},
+          byAmountTier: [],
+        };
+        const notesAcc: string[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const f = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
+          const mode = (f[modeIdx] ?? "").toLowerCase();
+          const mdr = parseFloat(f[mdrIdx]);
+          const gst = parseFloat(f[gstIdx]);
+          if (!Number.isFinite(mdr) || !Number.isFinite(gst)) continue;
+
+          const minAmt = minAmtIdx >= 0 ? parseFloat(f[minAmtIdx]) : NaN;
+          const maxAmt = maxAmtIdx >= 0 ? parseFloat(f[maxAmtIdx]) : NaN;
+          const note = notesIdx >= 0 ? f[notesIdx] : "";
+
+          if (mode === "default" || mode === "") {
+            rules.default = { mdrPct: mdr, gstPct: gst };
+          } else if (Number.isFinite(minAmt) || Number.isFinite(maxAmt)) {
+            rules.byAmountTier.push({
+              minAmount: Number.isFinite(minAmt) ? minAmt : 0,
+              ...(Number.isFinite(maxAmt) ? { maxAmount: maxAmt } : {}),
+              mdrPct: mdr,
+              gstPct: gst,
+            });
+          } else {
+            rules.byPaymentMode[f[modeIdx]] = { mdrPct: mdr, gstPct: gst };
+          }
+          if (note) notesAcc.push(`${f[modeIdx]}: ${note}`);
+        }
+        if (notesAcc.length > 0) rules.notes = notesAcc.join(" | ");
+
+        const card = await storage.upsertPgRateCard({
+          storeId,
+          pgName,
+          name: cardName,
+          rules,
+          isActive: true,
+          createdBy: currentUserId,
+          sourceFile: req.file.originalname,
+        });
+        return res.json({ ok: true, card });
+      } catch (err: any) {
+        console.error("[recon/rate-cards/upload]", err);
+        return res.status(500).json({ error: "Upload failed", detail: err?.message });
+      }
+    },
+  );
+
+  /**
+   * Recent uploads list — powers the Recent Uploads section on the
+   * Upload tab. Shows the audit trail of what's been ingested.
+   */
+  app.get("/api/recon/recent-uploads", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
+      const rows = await storage.listRecentReconUploads(storeId, limit);
+      return res.json({ rows, total: rows.length });
+    } catch (err: any) {
+      console.error("[recon/recent-uploads] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err),
+      });
+    }
+  });
+
+  /**
+   * Daily settlement trend over N days. Powers the area chart on
+   * the Overview tab. Returns `[{date, settled, count}, ...]` in
+   * settled-asc order.
+   */
+  app.get("/api/recon/trend", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
+
+      // Pure SQL — group by date in IST (settlement_date is timestamptz).
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`
+        SELECT
+          (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+          COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
+          COUNT(*) AS count
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND settled_at IS NOT NULL
+          AND settled_at >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY day
+        ORDER BY day ASC
+      `);
+
+      const rows = result.rows.map((r: any) => ({
+        date: r.day,
+        settled: Number(r.settled),
+        count: Number(r.count),
+      }));
+      return res.json({ rows, days });
+    } catch (err: any) {
+      console.error("[recon/trend] error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+
+  /**
+   * Settlements grouped by UTR — powers the Settlements tab. One row
+   * per (utr, settlement_date) with totals across that batch.
+   */
+  app.get("/api/recon/by-utr", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
+
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`
+        SELECT
+          utr_number AS utr,
+          (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
+          COUNT(*) AS order_count,
+          COALESCE(SUM(CAST(gross_amount AS NUMERIC)), 0) AS gross,
+          COALESCE(SUM(CAST(fee_deducted AS NUMERIC)), 0) AS fee,
+          COALESCE(SUM(CAST(tax_on_fee AS NUMERIC)), 0) AS gst,
+          COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS net,
+          COUNT(*) FILTER (WHERE status = 'mismatch') AS mismatch_count
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND utr_number IS NOT NULL
+          AND settled_at >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY utr, settlement_date
+        ORDER BY settlement_date DESC, utr DESC
+        LIMIT 200
+      `);
+
+      const rows = result.rows.map((r: any) => ({
+        utr: r.utr,
+        settlementDate: r.settlement_date,
+        orderCount: Number(r.order_count),
+        gross: Number(r.gross),
+        fee: Number(r.fee),
+        gst: Number(r.gst),
+        net: Number(r.net),
+        mismatchCount: Number(r.mismatch_count),
+      }));
+      return res.json({ rows, days });
+    } catch (err: any) {
+      console.error("[recon/by-utr] error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+
+  /**
+   * Daily counts per status for the last N days. Powers the
+   * sparkline bars under each KPI card.
+   */
+  app.get("/api/recon/sparklines", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
+
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      const result = await db.execute(sql`
+        SELECT
+          (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
+          status,
+          COUNT(*) AS c
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND COALESCE(settled_at, created_at) >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY day, status
+        ORDER BY day ASC
+      `);
+
+      // Pivot to {settled: [..], pending: [..], mismatch: [..]}
+      const byStatus: Record<string, Array<{ date: string; count: number }>> = {
+        settled: [],
+        pending: [],
+        mismatch: [],
+        overdue: [],
+      };
+      for (const r of result.rows) {
+        const row = r as any;
+        if (byStatus[row.status]) {
+          byStatus[row.status].push({ date: row.day, count: Number(row.c) });
+        }
+      }
+      return res.json({ days, byStatus });
+    } catch (err: any) {
+      console.error("[recon/sparklines] error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+
+  /**
+   * KPI counts — single GROUP BY query, powers the 4 KPI cards +
+   * the donut breakdown.
+   */
+  app.get("/api/recon/status-counts", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+
+      const storeId =
+        (req.query.storeId as string | undefined) ??
+        (req as any).storeScope?.storeId;
+      if (!storeId) {
+        return res
+          .status(400)
+          .json({ error: "Missing storeId (no active store scope)" });
+      }
+
+      const fromDate = req.query.fromDate
+        ? new Date(req.query.fromDate as string)
+        : undefined;
+      const toDate = req.query.toDate
+        ? new Date(req.query.toDate as string)
+        : undefined;
+
+      const counts = await storage.getPgSettlementStatusCounts(
+        storeId,
+        fromDate,
+        toDate,
+      );
+      return res.json(counts);
+    } catch (err: any) {
+      console.error("[recon/status-counts] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err),
+      });
     }
   });
 

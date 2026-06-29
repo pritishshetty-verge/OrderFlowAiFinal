@@ -668,10 +668,10 @@ export default function NDRPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-lg border bg-card">
+                    <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
                       <div className="relative">
                         <Table>
-                          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                          <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
                             <TableRow>
                               <TableHead className="bg-card" data-testid="header-awb">AWB</TableHead>
                               <TableHead className="bg-card" data-testid="header-ndr-date">Last Update</TableHead>
@@ -834,10 +834,10 @@ export default function NDRPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-lg border bg-card">
+                    <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
                       <div className="relative">
                         <Table>
-                          <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                          <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
                             <TableRow>
                               <TableHead className="bg-card" data-testid="header-ofd-customer">Customer</TableHead>
                               <TableHead className="bg-card" data-testid="header-ofd-phone">Phone</TableHead>

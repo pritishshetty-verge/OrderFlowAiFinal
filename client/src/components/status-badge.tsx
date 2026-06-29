@@ -14,19 +14,20 @@ interface StatusBadgeProps {
   className?: string;
 }
 
-// Colour families (light + dark). Greens = success, blues = in-motion,
+// Soft-tinted families (light + dark). Greens = success, blues = in-motion,
 // amber/yellow = needs-attention, reds = failure/return, slate = neutral.
+// Modern: 10% fill + matching text + a colored dot — no heavy borders.
 const FAMILY = {
-  green: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700",
-  blue: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-700",
-  indigo: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700",
-  cyan: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-700",
-  violet: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 border border-violet-200 dark:border-violet-700",
-  amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-700",
-  yellow: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700",
-  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border border-red-200 dark:border-red-700",
-  rose: "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300 border border-rose-200 dark:border-rose-700",
-  slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-600",
+  green:  { pill: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500" },
+  blue:   { pill: "bg-blue-500/10 text-blue-600 dark:text-blue-400",          dot: "bg-blue-500" },
+  indigo: { pill: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",    dot: "bg-indigo-500" },
+  cyan:   { pill: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",          dot: "bg-cyan-500" },
+  violet: { pill: "bg-violet-500/10 text-violet-600 dark:text-violet-400",    dot: "bg-violet-500" },
+  amber:  { pill: "bg-amber-500/10 text-amber-600 dark:text-amber-400",       dot: "bg-amber-500" },
+  yellow: { pill: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",    dot: "bg-yellow-500" },
+  red:    { pill: "bg-red-500/10 text-red-600 dark:text-red-400",             dot: "bg-red-500" },
+  rose:   { pill: "bg-rose-500/10 text-rose-600 dark:text-rose-400",          dot: "bg-rose-500" },
+  slate:  { pill: "bg-muted text-muted-foreground",                            dot: "bg-zinc-400" },
 } as const;
 
 type Family = keyof typeof FAMILY;
@@ -82,12 +83,18 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
     family = "slate";
   }
 
+  const f = FAMILY[family];
   return (
     <Badge
       variant="outline"
-      className={cn("rounded-full px-3 py-1 text-xs font-medium", FAMILY[family], className)}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border-transparent",
+        f.pill,
+        className,
+      )}
       data-testid={`badge-status-${key || "unknown"}`}
     >
+      <span className={cn("h-1.5 w-1.5 rounded-full", f.dot)} />
       {label}
     </Badge>
   );

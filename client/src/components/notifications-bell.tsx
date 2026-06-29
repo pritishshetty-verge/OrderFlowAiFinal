@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bell } from "lucide-react";
+import { Bell, BellOff } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -151,15 +153,25 @@ export function NotificationsBell() {
         >
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-600 text-white text-xs flex items-center justify-center font-semibold">
+            <span
+              className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center ring-2 ring-background shadow-sm"
+              style={{ backgroundImage: "var(--brand-gradient)" }}
+            >
               {unreadCount > 9 ? "9+" : unreadCount}
             </span>
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="end" data-testid="popover-notifications">
-        <div className="flex items-center justify-between border-b p-4">
-          <h3 className="font-semibold">Notifications</h3>
+      <PopoverContent className="w-[360px] p-0" align="end" data-testid="popover-notifications">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-sm">Notifications</h3>
+            {unreadCount > 0 && (
+              <span className="inline-flex items-center justify-center rounded-full bg-brand/10 text-brand text-[11px] font-semibold min-w-[20px] h-5 px-1.5">
+                {unreadCount}
+              </span>
+            )}
+          </div>
           {unreadCount > 0 && (
             <Button
               variant="ghost"
@@ -167,6 +179,7 @@ export function NotificationsBell() {
               onClick={handleMarkAllAsRead}
               disabled={markAllAsReadMutation.isPending}
               data-testid="button-mark-all-read"
+              className="text-xs text-brand hover:text-brand h-7"
             >
               Mark all as read
             </Button>
@@ -176,41 +189,47 @@ export function NotificationsBell() {
         <ScrollArea className="h-[400px]">
           {isLoading ? (
             <div className="p-4 text-center text-sm text-muted-foreground">
-              Loading notifications...
+              Loading notifications…
             </div>
           ) : notifications.length === 0 ? (
-            <div className="p-8 text-center">
-              <Bell className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-              <p className="text-sm font-medium mb-1">No notifications</p>
-              <p className="text-xs text-muted-foreground">
-                You're all caught up!
-              </p>
-            </div>
+            <EmptyState
+              icon={BellOff}
+              title="No notifications"
+              description="You're all caught up. New activity will show up here."
+            />
           ) : (
-            <div className="divide-y">
+            <div className="divide-y divide-border/60">
               {notifications.map((notification) => (
                 <button
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
-                  className={`w-full p-4 text-left hover-elevate transition-colors ${
-                    !notification.isRead ? "bg-accent/5" : ""
-                  }`}
+                  className={cn(
+                    "w-full text-left transition-colors relative pl-4 pr-3 py-3",
+                    "hover:bg-muted/50",
+                    !notification.isRead && "bg-brand/5",
+                  )}
                   data-testid={`notification-${notification.id}`}
                 >
-                  <div className="flex items-start gap-3">
+                  {!notification.isRead && (
+                    <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-brand" aria-hidden />
+                  )}
+                  <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="font-medium text-sm truncate">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className={cn(
+                          "text-sm truncate",
+                          !notification.isRead ? "font-semibold text-foreground" : "font-medium text-foreground",
+                        )}>
                           {notification.title}
                         </p>
                         {!notification.isRead && (
-                          <span className="h-2 w-2 rounded-full bg-blue-600 flex-shrink-0" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-brand shrink-0" />
                         )}
                       </div>
-                      <p className="text-sm text-muted-foreground mb-1 line-clamp-2">
+                      <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
                         {notification.message}
                       </p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="text-[11px] text-muted-foreground mt-1.5">
                         {formatDistanceToNow(new Date(notification.createdAt), {
                           addSuffix: true,
                         })}
@@ -224,11 +243,11 @@ export function NotificationsBell() {
         </ScrollArea>
 
         {notifications.length > 0 && (
-          <div className="border-t p-2">
+          <div className="border-t p-1.5 bg-muted/30">
             <Button
               variant="ghost"
               size="sm"
-              className="w-full"
+              className="w-full text-xs h-8"
               onClick={() => setOpen(false)}
               data-testid="button-view-all"
             >

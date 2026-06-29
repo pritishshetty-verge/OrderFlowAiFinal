@@ -236,7 +236,7 @@ export function PresenceBanner() {
           "border-b-2 transition-colors",
           isUrgent
             ? "bg-red-50 dark:bg-red-950/50 border-red-500/80"
-            : "bg-yellow-50 dark:bg-yellow-950/40 border-yellow-500/70",
+            : "bg-amber-50 dark:bg-amber-950/40 border-amber-500/70",
         )}
         data-testid="presence-banner-idle"
       >
@@ -246,13 +246,13 @@ export function PresenceBanner() {
               "shrink-0 w-11 h-11 rounded-full flex items-center justify-center ring-2",
               isUrgent
                 ? "bg-red-500/20 ring-red-500/30 animate-pulse"
-                : "bg-yellow-500/20 ring-yellow-500/25",
+                : "bg-amber-500/20 ring-amber-500/25",
             )}
           >
             {isUrgent ? (
               <AlertCircle className="w-5 h-5 text-red-700 dark:text-red-300" />
             ) : (
-              <Clock className="w-5 h-5 text-yellow-700 dark:text-yellow-300" />
+              <Clock className="w-5 h-5 text-amber-700 dark:text-amber-300" />
             )}
           </div>
 
@@ -262,7 +262,7 @@ export function PresenceBanner() {
                 "text-base sm:text-lg font-bold leading-tight",
                 isUrgent
                   ? "text-red-900 dark:text-red-100"
-                  : "text-yellow-900 dark:text-yellow-100",
+                  : "text-amber-900 dark:text-amber-100",
               )}
             >
               {isUrgent
@@ -274,7 +274,7 @@ export function PresenceBanner() {
                 "text-sm mt-0.5",
                 isUrgent
                   ? "text-red-700 dark:text-red-300/90"
-                  : "text-yellow-800 dark:text-yellow-300/90",
+                  : "text-amber-800 dark:text-amber-300/90",
               )}
             >
               {isUrgent
@@ -291,7 +291,7 @@ export function PresenceBanner() {
               "shrink-0 font-semibold shadow-sm",
               isUrgent
                 ? "bg-red-600 hover:bg-red-700 text-white"
-                : "bg-yellow-500 hover:bg-yellow-600 text-yellow-950 dark:text-yellow-50",
+                : "bg-amber-500 hover:bg-amber-600 text-amber-950 dark:text-amber-50",
             )}
             data-testid="banner-im-here"
           >
@@ -305,13 +305,13 @@ export function PresenceBanner() {
         <div
           className={cn(
             "h-1 w-full",
-            isUrgent ? "bg-red-200/70 dark:bg-red-900/40" : "bg-yellow-200/70 dark:bg-yellow-900/40",
+            isUrgent ? "bg-red-200/70 dark:bg-red-900/40" : "bg-amber-200/70 dark:bg-amber-900/40",
           )}
         >
           <div
             className={cn(
               "h-full transition-all duration-1000 ease-linear",
-              isUrgent ? "bg-red-600" : "bg-yellow-500",
+              isUrgent ? "bg-red-600" : "bg-amber-500",
             )}
             style={{ width: `${pctRemaining}%` }}
             aria-hidden="true"
