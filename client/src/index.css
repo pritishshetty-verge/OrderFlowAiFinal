@@ -283,7 +283,7 @@
 [data-accent="emerald"] { --brand: 160 84% 39%; --brand-2: 174 65% 51%; --brand-soft-1: 155 70% 70%; --brand-soft-2: 175 75% 75%; }
 [data-accent="rose"]    { --brand: 347 77% 50%; --brand-2: 25 95% 53%;  --brand-soft-1: 350 90% 78%; --brand-soft-2: 25 95% 78%;  }
 [data-accent="amber"]   { --brand: 32 95% 44%;  --brand-2: 25 95% 53%;  --brand-soft-1: 38 95% 72%;  --brand-soft-2: 25 95% 75%;  }
-[data-accent="pearl"]   { --brand: 240 6% 35%;  --brand-2: 240 5% 65%;  --brand-soft-1: 0 0% 100%;   --brand-soft-2: 240 5% 91%;  --brand-foreground: 240 6% 10%; }
+[data-accent="pearl"]   { --brand: 240 6% 30%;  --brand-2: 240 5% 65%;  --brand-soft-1: 0 0% 100%;   --brand-soft-2: 240 5% 91%;  --brand-foreground: 0 0% 100%; }
 
 .dark[data-accent="indigo"]  { --brand: 239 84% 67%; --brand-2: 258 90% 66%; --brand-soft-1: 235 85% 70%; --brand-soft-2: 258 90% 72%; }
 .dark[data-accent="violet"]  { --brand: 258 90% 66%; --brand-2: 292 91% 73%; --brand-soft-1: 268 90% 72%; --brand-soft-2: 320 85% 75%; }
@@ -291,13 +291,30 @@
 .dark[data-accent="emerald"] { --brand: 158 64% 52%; --brand-2: 173 80% 60%; --brand-soft-1: 158 65% 60%; --brand-soft-2: 173 75% 65%; }
 .dark[data-accent="rose"]    { --brand: 350 89% 66%; --brand-2: 25 95% 63%;  --brand-soft-1: 350 90% 72%; --brand-soft-2: 25 95% 70%;  }
 .dark[data-accent="amber"]   { --brand: 38 92% 50%;  --brand-2: 25 95% 53%;  --brand-soft-1: 38 92% 65%;  --brand-soft-2: 25 95% 65%;  }
-.dark[data-accent="pearl"]   { --brand: 240 5% 75%;  --brand-2: 240 5% 50%;  --brand-soft-1: 240 5% 28%;  --brand-soft-2: 240 5% 18%;  --brand-foreground: 240 5% 96%; }
+.dark[data-accent="pearl"]   { --brand: 240 5% 80%;  --brand-2: 240 5% 50%;  --brand-soft-1: 240 5% 28%;  --brand-soft-2: 240 5% 18%;  --brand-foreground: 240 6% 10%; }
 
 /* The canonical brand gradient. Uses the SOFT stops so the gradient
  * itself reads airy/premium even when the brand solid (text/icons) is
  * fully saturated. Auto-updates whenever the accent (or theme) changes. */
 :root      { --brand-gradient: linear-gradient(135deg, hsl(var(--brand-soft-1)), hsl(var(--brand-soft-2))); }
 .dark      { --brand-gradient: linear-gradient(135deg, hsl(var(--brand-soft-1)), hsl(var(--brand-soft-2))); }
+
+/* Text color that reads ON the soft gradient (hero cards / brand panels).
+ * The soft gradient is LIGHT for every colored accent in both modes, so
+ * dark text is correct — except Pearl-dark, whose gradient is dark and
+ * therefore needs light text. Distinct from --brand-foreground, which is
+ * for text on the SOLID saturated --brand (buttons, active tabs). */
+:root                        { --brand-gradient-fg: 222 47% 13%; }
+.dark                        { --brand-gradient-fg: 222 47% 13%; }
+.dark[data-accent="pearl"]   { --brand-gradient-fg: 0 0% 98%; }
+
+/* Saturated brand PANEL (login hero) — white text + white orbs/grid sit on
+ * top, so it must stay dark enough. Colored accents use the saturated
+ * --brand → --brand-2; Pearl is grey (light on one end), so it instead gets
+ * an elegant dark charcoal so the white logo/copy/decorations read cleanly. */
+:root                        { --brand-panel: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-2))); }
+[data-accent="pearl"]        { --brand-panel: linear-gradient(135deg, hsl(240 6% 18%), hsl(240 5% 36%)); }
+.dark[data-accent="pearl"]   { --brand-panel: linear-gradient(135deg, hsl(240 6% 12%), hsl(240 5% 28%)); }
 
 /* ── Portaled-surface backgrounds (radix) ───────────────────────────
  * Belt-and-suspenders fallback: force every radix Popper-content wrapper

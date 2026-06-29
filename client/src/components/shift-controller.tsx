@@ -259,8 +259,7 @@ export function ShiftController() {
               {/* State: Offline - Show Clock In */}
               {!todayAttendance?.clockInTime && (
                 <Button
-                  className="w-full shadow-sm transition-shadow hover:shadow-md"
-                  style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
+                  className="w-full bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm transition-shadow hover:shadow-md"
                   onClick={() => clockInMutation.mutate()}
                   disabled={clockInMutation.isPending}
                   data-testid="button-clock-in"

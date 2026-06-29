@@ -43,23 +43,6 @@ const SERIES: { key: "confirmed" | "cancelled" | "followUp"; label: string; colo
   { key: "followUp", label: "Follow-up", color: "#3b82f6" },
 ];
 
-const formatHour = (h: number): string =>
-  h === 0 ? "12 AM" : h === 12 ? "12 PM" : h < 12 ? `${h} AM` : `${h - 12} PM`;
-
-// TEMP: placeholder activity so the 3-way chart is visible before the DB
-// has real orders. Shown only when there's zero real activity, with a
-// "Sample" tag in the header. Remove (or it self-hides) once data flows.
-const DEMO_DATA: HourlyData[] = Array.from({ length: 24 }, (_, h) => {
-  const peak = Math.max(0, 1 - Math.abs(h - 14) / 9); // bell, peaks ~2pm
-  const base = Math.round(peak * 30);
-  return {
-    hour: formatHour(h),
-    confirmed: Math.max(0, base + (h % 3)),
-    cancelled: Math.max(0, Math.round(base * 0.2) + (h % 2)),
-    followUp: Math.max(0, Math.round(base * 0.5) + (h % 4)),
-  };
-});
-
 export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
   const userId = localStorage.getItem("userId");
   const userRole = localStorage.getItem("userRole");
@@ -103,12 +86,12 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
     refetchInterval: 60000,
   });
 
-  const { chartData, isSample } = useMemo(() => {
-    const real = hourlyData?.data;
-    const hasActivity = !!real && real.some((d) => d.confirmed + d.cancelled + d.followUp > 0);
-    return hasActivity
-      ? { chartData: real!, isSample: false }
-      : { chartData: DEMO_DATA, isSample: true };
+  const { chartData, hasActivity } = useMemo(() => {
+    const real = hourlyData?.data ?? [];
+    return {
+      chartData: real,
+      hasActivity: real.some((d) => d.confirmed + d.cancelled + d.followUp > 0),
+    };
   }, [hourlyData]);
 
   const totalActions = useMemo(() => {
@@ -129,11 +112,6 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <Activity className="h-4 w-4 text-brand" />
             Hourly Activity
-            {isSample && (
-              <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                Sample
-              </span>
-            )}
           </CardTitle>
           <div className="flex items-center gap-4 text-xs">
             {SERIES.map((s) => (
@@ -149,6 +127,10 @@ export function HourlyActivityChart({ dateRange }: HourlyActivityChartProps) {
       <CardContent className="pt-2">
         {isLoading ? (
           <Skeleton className="h-40 w-full" />
+        ) : !hasActivity ? (
+          <div className="flex h-[170px] items-center justify-center text-sm text-muted-foreground">
+            No call activity in this range yet.
+          </div>
         ) : (
           <ResponsiveContainer width="100%" height={170}>
             <AreaChart data={chartData} margin={{ top: 8, right: 6, left: -18, bottom: 0 }}>

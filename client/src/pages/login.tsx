@@ -112,10 +112,12 @@ export default function LoginPage() {
     <div className="h-screen w-full grid grid-cols-1 md:grid-cols-2 bg-background overflow-hidden">
       {/* ── Left: brand panel ── */}
       <aside
-        className="relative hidden md:flex flex-col justify-between overflow-hidden p-12"
+        className="relative hidden md:flex flex-col justify-between overflow-hidden p-12 text-white"
         style={{
-          backgroundImage: "var(--brand-gradient)",
-          color: "hsl(var(--brand-foreground))",
+          // Brand panel gradient (--brand-panel): saturated --brand→--brand-2
+          // for colored accents, dark charcoal for Pearl — always dark enough
+          // for the white logo tile, chips, orbs, and headline to read cleanly.
+          backgroundImage: "var(--brand-panel)",
         }}
       >
         {/* ── Ambient layers ── */}
@@ -343,8 +345,7 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full shadow-sm transition-shadow hover:shadow-md"
-              style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
+              className="w-full bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm transition-shadow hover:shadow-md"
               disabled={submitting}
               data-testid="button-login-submit"
             >

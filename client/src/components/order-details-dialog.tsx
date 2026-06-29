@@ -84,7 +84,7 @@ export function OrderDetailsDialog({
 
         {/* Total — hero number with a soft tinted backdrop */}
         <div className="rounded-2xl p-5 shadow-sm"
-          style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
+          style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-gradient-fg))" }}
         >
           <p className="text-xs opacity-80 uppercase tracking-wider font-medium">Order total</p>
           <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight">

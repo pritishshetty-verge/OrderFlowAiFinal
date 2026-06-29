@@ -32,10 +32,11 @@ export function DashboardHero({ assignedOrders, confirmedOrders, aiConfirmedOrde
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: "easeOut" }}
       className="relative overflow-hidden rounded-2xl p-6 shadow-lg"
-      style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
+      style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-gradient-fg))" }}
     >
-      <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-white/15 blur-2xl" aria-hidden />
-      <div className="pointer-events-none absolute -bottom-24 -left-10 h-56 w-56 rounded-full bg-black/10 blur-2xl" aria-hidden />
+      {/* Decorative blooms use currentColor so they read on any gradient. */}
+      <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-current opacity-[0.08] blur-2xl" aria-hidden />
+      <div className="pointer-events-none absolute -bottom-24 -left-10 h-56 w-56 rounded-full bg-current opacity-[0.06] blur-2xl" aria-hidden />
 
       <div className="relative flex items-center justify-between gap-6 flex-wrap">
         <div className="min-w-[220px]">
@@ -48,20 +49,22 @@ export function DashboardHero({ assignedOrders, confirmedOrders, aiConfirmedOrde
           <p className="mt-3 text-sm opacity-85">
             {confirmedOrders.toLocaleString("en-IN")} of {assignedOrders.toLocaleString("en-IN")} orders confirmed
           </p>
-          <span className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur-sm">
+          <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-current/25 px-3 py-1 text-xs font-medium">
             <Bot className="h-3.5 w-3.5" />
             {aiConfirmedOrders.toLocaleString("en-IN")} auto-confirmed by Scalysis
           </span>
         </div>
 
         <div className="relative shrink-0">
+          {/* Ring uses currentColor (= the gradient-fg) so it's visible on
+              both light and dark gradients. */}
           <svg width="124" height="124" viewBox="0 0 124 124" role="img" aria-label={`Confirmation rate ${disp.toFixed(1)} percent`}>
-            <circle cx="62" cy="62" r={R} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="10" />
+            <circle cx="62" cy="62" r={R} fill="none" stroke="currentColor" strokeOpacity="0.2" strokeWidth="10" />
             <circle
-              cx="62" cy="62" r={R} fill="none" stroke="white" strokeWidth="10" strokeLinecap="round"
+              cx="62" cy="62" r={R} fill="none" stroke="currentColor" strokeWidth="10" strokeLinecap="round"
               strokeDasharray={C} strokeDashoffset={offset} transform="rotate(-90 62 62)"
             />
-            <text x="62" y="68" textAnchor="middle" fill="white" fontSize="24" fontWeight="600">
+            <text x="62" y="68" textAnchor="middle" fill="currentColor" fontSize="24" fontWeight="600">
               {Math.round(disp)}%
             </text>
           </svg>

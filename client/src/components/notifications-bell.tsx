@@ -154,8 +154,7 @@ export function NotificationsBell() {
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
             <span
-              className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-semibold flex items-center justify-center ring-2 ring-background shadow-sm"
-              style={{ backgroundImage: "var(--brand-gradient)" }}
+              className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-brand text-brand-foreground text-[10px] font-semibold flex items-center justify-center ring-2 ring-background shadow-sm"
             >
               {unreadCount > 9 ? "9+" : unreadCount}
             </span>

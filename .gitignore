@@ -6,6 +6,7 @@ build/
 
 # Env / secrets — never commit. .env.example is tracked as a template.
 .env
+.env.bak
 .env.local
 .env.*.local
 
