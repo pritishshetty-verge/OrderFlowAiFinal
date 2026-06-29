@@ -15,6 +15,8 @@ __export(schema_exports, {
   ABANDONED_RECOVERY_STATUSES: () => ABANDONED_RECOVERY_STATUSES,
   ACCESS_MODULES: () => ACCESS_MODULES,
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
+  PG_NAMES: () => PG_NAMES,
+  PG_SETTLEMENT_STATUSES: () => PG_SETTLEMENT_STATUSES,
   REFUND_TYPES: () => REFUND_TYPES,
   RETURN_STATUSES: () => RETURN_STATUSES,
   SHIPPING_STATUSES: () => SHIPPING_STATUSES,
@@ -51,7 +53,10 @@ __export(schema_exports, {
   insertOrderSchema: () => insertOrderSchema,
   insertOrderStatusHistorySchema: () => insertOrderStatusHistorySchema,
   insertPayrollLedgerSchema: () => insertPayrollLedgerSchema,
+  insertPgRateCardSchema: () => insertPgRateCardSchema,
+  insertPgSettlementSchema: () => insertPgSettlementSchema,
   insertProductSchema: () => insertProductSchema,
+  insertReconUploadSchema: () => insertReconUploadSchema,
   insertResourceSchema: () => insertResourceSchema,
   insertReturnItemSchema: () => insertReturnItemSchema,
   insertReturnSchema: () => insertReturnSchema,
@@ -79,8 +84,12 @@ __export(schema_exports, {
   orderStatusHistory: () => orderStatusHistory,
   orders: () => orders,
   payrollLedger: () => payrollLedger,
+  payrollSyncRuns: () => payrollSyncRuns,
+  pgRateCards: () => pgRateCards,
+  pgSettlements: () => pgSettlements,
   pincodeTiers: () => pincodeTiers,
   products: () => products,
+  reconUploads: () => reconUploads,
   resources: () => resources,
   returnItems: () => returnItems,
   returns: () => returns,
@@ -102,7 +111,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema;
+var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, payrollSyncRuns, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema, pgSettlements, insertPgSettlementSchema, PG_SETTLEMENT_STATUSES, PG_NAMES, reconUploads, insertReconUploadSchema, pgRateCards, insertPgRateCardSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -179,6 +188,12 @@ var init_schema = __esm({
       // per-user from the Team page. Full-control admins are also exempt
       // implicitly (see findAutoLogoutCandidates), independent of this flag.
       monitoringExempt: boolean("monitoring_exempt").notNull().default(false),
+      // RazorpayX Payroll identity. Employees are keyed by email in RazorpayX,
+      // but most agents are registered there under a PERSONAL email that
+      // differs from their OrderFlow work email. Admins set this per-user so
+      // the payroll sync resolves the right RazorpayX employee. NULL = fall
+      // back to the work email (`email`).
+      payrollEmail: text("payroll_email"),
       createdAt: timestamp("created_at").notNull().defaultNow(),
       updatedAt: timestamp("updated_at").notNull().defaultNow()
     });
@@ -293,6 +308,9 @@ var init_schema = __esm({
       // tenant identifier. We use this to route inbound webhooks via the
       // X-Shopify-Shop-Domain header (Phase 5).
       storeUrl: text("store_url").notNull().unique(),
+      // Custom storefront domain (e.g. glowandme.in). Used to route inbound
+      // Fastrr abandoned-cart webhooks to the right store by checkout host.
+      primaryDomain: text("primary_domain"),
       // Optional workspace logo. Two accepted shapes (the route layer
       // validates):
       //   • base64 data URI ("data:image/png;base64,…") — what the
@@ -694,6 +712,22 @@ var init_schema = __esm({
     insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true, updatedAt: true }).extend({
       startDate: z.union([z.date(), z.string().transform((str) => new Date(str))]),
       endDate: z.union([z.date(), z.string().transform((str) => new Date(str))])
+    });
+    payrollSyncRuns = pgTable("payroll_sync_runs", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      year: integer("year").notNull(),
+      month: integer("month").notNull(),
+      mode: text("mode").notNull(),
+      // "preview" | "live"
+      attendanceDays: integer("attendance_days").notNull().default(0),
+      leaveDays: integer("leave_days").notNull().default(0),
+      okCount: integer("ok_count").notNull().default(0),
+      failedCount: integer("failed_count").notNull().default(0),
+      skippedCount: integer("skipped_count").notNull().default(0),
+      triggeredBy: varchar("triggered_by").references(() => users.id, { onDelete: "set null" }),
+      // Compact per-record outcomes (email/date/status/outcome) for drill-in.
+      details: jsonb("details"),
+      createdAt: timestamp("created_at").notNull().defaultNow()
     });
     teamMessages = pgTable("team_messages", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1355,6 +1389,171 @@ var init_schema = __esm({
     insertInboundWebhookLogSchema = createInsertSchema(inboundWebhookLogs).omit({
       id: true,
       createdAt: true
+    });
+    pgSettlements = pgTable(
+      "pg_settlements",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        // Multi-store scope (Phase-1 nullable pattern).
+        storeId: varchar("store_id").references(() => stores.id),
+        // Link to Shopify order. NULL until matcher resolves it; ON DELETE
+        // SET NULL because losing the order shouldn't lose the settlement
+        // record (we still need it for the UTR rollup).
+        orderId: varchar("order_id").references(() => orders.id, { onDelete: "set null" }),
+        // Which PG produced this row. Discriminator for the adapter
+        // registry in server/pgs/. Lowercase by codebase convention:
+        // 'payu' | 'razorpay' | 'cashfree' | 'phonepe'.
+        pgName: text("pg_name").notNull(),
+        // Merchant-supplied txn id from the PG. For PayU this is the
+        // Fastrr checkout token (e.g. "Shexkrew1780656552958"); we keep
+        // it for traceability but it's NOT the join key for Glow & Me /
+        // OLB because Fastrr sits between Shopify and PayU.
+        pgOrderId: text("pg_order_id"),
+        // PG-internal payment id. For PayU this is the `mihpayid` — the
+        // value Shopify stores back into the order's note_attribute
+        // `PayU_txn_id`. THIS is the bridge key for our matcher.
+        pgPaymentId: text("pg_payment_id").notNull(),
+        // ── Amounts ────────────────────────────────────────────────────
+        // What Shopify thinks the order is worth. Populated by the
+        // matcher once it links to an order; NULL until then.
+        orderAmount: decimal("order_amount", { precision: 12, scale: 2 }),
+        // What actually hit the bank. Always set (we ingest it from the
+        // PG report). This is the canonical "deposited" number.
+        settledAmount: decimal("settled_amount", { precision: 12, scale: 2 }).notNull(),
+        // Gross before fees. Useful for fee-mismatch detection.
+        grossAmount: decimal("gross_amount", { precision: 12, scale: 2 }),
+        // PG's MDR (fee). PRD calls this `feeDeducted`.
+        feeDeducted: decimal("fee_deducted", { precision: 12, scale: 2 }),
+        // GST on the fee (Indian PG convention).
+        taxOnFee: decimal("tax_on_fee", { precision: 12, scale: 2 }),
+        // ── Settlement identification ──────────────────────────────────
+        // Bank UTR — every PG payout has one. Multiple settlement lines
+        // share the same UTR for batch payouts; we group on this for
+        // the Settlements rollup view.
+        utrNumber: text("utr_number"),
+        // When the deposit hit the bank (PG-reported). Timestamptz so
+        // IST bucketing math is correct.
+        settledAt: timestamp("settled_at", { mode: "string", withTimezone: true }),
+        // When the gateway processed the original txn. Useful for T+2
+        // window math and matching by date.
+        pgTransactionAt: timestamp("pg_transaction_at", { mode: "string", withTimezone: true }),
+        // ── Reconciliation state machine (PRD's 4 statuses) ────────────
+        //   'pending'  — within T+2 window, settlement not yet due
+        //   'overdue'  — past T+2 window, no PG row found
+        //   'mismatch' — found settlement but amount differs from expected
+        //   'settled'  — matched & amounts agree (within tolerance)
+        status: text("status").notNull().default("pending"),
+        // ── Audit / debugging ──────────────────────────────────────────
+        // Original row from the PG (CSV row or API JSON). Lets us
+        // recompute / re-ingest without re-fetching.
+        rawPayload: jsonb("raw_payload"),
+        // Filename when ingested via CSV upload. NULL for API-ingested rows.
+        sourceFile: text("source_file"),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        // No duplicate (storeId, pgName, pgPaymentId) combinations —
+        // re-ingesting the same CSV twice should be a no-op upsert,
+        // not a duplicate row.
+        uniqStorePayment: unique("pg_settlements_store_payment_key").on(
+          table.storeId,
+          table.pgName,
+          table.pgPaymentId
+        ),
+        // Hot path: "show me everything that's overdue/mismatched for
+        // this store" — the dashboard's primary query.
+        statusIdx: index("pg_settlements_status_idx").on(table.storeId, table.status),
+        // Hot path: settlement-date rollup view (per-UTR list).
+        settledAtIdx: index("pg_settlements_settled_at_idx").on(table.storeId, table.settledAt),
+        // Hot path: reverse lookup from an order to its settlement(s).
+        orderIdIdx: index("pg_settlements_order_id_idx").on(table.orderId),
+        // Hot path: matcher lookup by PG's payment id (the bridge key).
+        paymentIdIdx: index("pg_settlements_payment_id_idx").on(table.pgName, table.pgPaymentId)
+      })
+    );
+    insertPgSettlementSchema = createInsertSchema(pgSettlements).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
+    PG_SETTLEMENT_STATUSES = ["pending", "overdue", "mismatch", "settled"];
+    PG_NAMES = ["payu", "razorpay", "cashfree", "phonepe"];
+    reconUploads = pgTable(
+      "recon_uploads",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").references(() => stores.id),
+        pgName: text("pg_name").notNull(),
+        fileName: text("file_name"),
+        // SHA-256 hex (64 chars). Indexed for fast "have I seen this exact
+        // bytes-for-bytes file?" lookup.
+        fileHash: text("file_hash").notNull(),
+        fileSize: integer("file_size"),
+        uploadedBy: varchar("uploaded_by").references(() => users.id, {
+          onDelete: "set null"
+        }),
+        // ── Per-row outcome counts ────────────────────────────────────
+        parsedRows: integer("parsed_rows").notNull().default(0),
+        rowsInserted: integer("rows_inserted").notNull().default(0),
+        rowsUpdated: integer("rows_updated").notNull().default(0),
+        rowsSkipped: integer("rows_skipped").notNull().default(0),
+        errorCount: integer("error_count").notNull().default(0),
+        // Snapshot of the auto-matcher result (if it ran).
+        autoMatched: jsonb("auto_matched"),
+        // success | partial (some errors) | duplicate (skipped, no DB writes) | error
+        status: text("status").notNull().default("success"),
+        notes: text("notes"),
+        createdAt: timestamp("created_at").notNull().defaultNow()
+      },
+      (table) => ({
+        // Hash dedup lookup.
+        hashIdx: index("recon_uploads_hash_idx").on(table.fileHash),
+        // "Recent uploads for this store" — for the Upload tab list.
+        storeRecentIdx: index("recon_uploads_store_recent_idx").on(
+          table.storeId,
+          table.createdAt
+        )
+      })
+    );
+    insertReconUploadSchema = createInsertSchema(reconUploads).omit({
+      id: true,
+      createdAt: true
+    });
+    pgRateCards = pgTable(
+      "pg_rate_cards",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").references(() => stores.id),
+        pgName: text("pg_name").notNull(),
+        /** Human-readable label, e.g. "Standard 2026" or "Premium Settlement Q4". */
+        name: text("name").notNull(),
+        isActive: boolean("is_active").notNull().default(true),
+        /** When this rate took effect. Nullable = "since whenever". */
+        validFrom: timestamp("valid_from"),
+        /** When this rate stops applying. Nullable = "indefinitely". */
+        validTo: timestamp("valid_to"),
+        rules: jsonb("rules").notNull().$type(),
+        /** Optional source filename if the card was uploaded as CSV. */
+        sourceFile: text("source_file"),
+        createdBy: varchar("created_by").references(() => users.id, {
+          onDelete: "set null"
+        }),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        activeIdx: index("pg_rate_cards_active_idx").on(
+          table.storeId,
+          table.pgName,
+          table.isActive
+        )
+      })
+    );
+    insertPgRateCardSchema = createInsertSchema(pgRateCards).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
     });
   }
 });
@@ -3426,6 +3625,28 @@ var init_storage = __esm({
         const [row] = await db.select({ id: stores.id }).from(stores).orderBy(asc(stores.createdAt)).limit(1);
         return row?.id ?? null;
       }
+      // Route an inbound checkout to its store by matching the URL host against
+      // each store's primary_domain (custom storefront domain, e.g. glowandme.in)
+      // or store_url (myshopify tenant domain). Falls back to the primary store
+      // when nothing matches, so a missing/odd URL still yields a store-scoped row.
+      async getStoreIdForCheckoutUrl(checkoutUrl) {
+        if (!checkoutUrl) return this.getPrimaryStoreId();
+        let host = "";
+        try {
+          host = new URL(checkoutUrl).hostname.toLowerCase().replace(/^www\./, "");
+        } catch {
+          return this.getPrimaryStoreId();
+        }
+        if (!host) return this.getPrimaryStoreId();
+        const rows = await db.select({ id: stores.id, primaryDomain: stores.primaryDomain, storeUrl: stores.storeUrl }).from(stores);
+        const norm2 = (d) => (d ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+        const match = rows.find((s) => norm2(s.primaryDomain) === host || norm2(s.storeUrl) === host);
+        if (!match) {
+          console.warn(`[stores] no store matched checkout host "${host}" \u2014 falling back to primary store.`);
+          return this.getPrimaryStoreId();
+        }
+        return match.id;
+      }
       async getAbandonedCheckouts() {
         const results = await db.select({
           id: abandonedCheckouts.id,
@@ -3461,6 +3682,230 @@ var init_storage = __esm({
       }
       async getInboundWebhookLogs(limit = 50) {
         return await db.select().from(inboundWebhookLogs).orderBy(desc(inboundWebhookLogs.createdAt)).limit(limit);
+      }
+      // ============================================================================
+      // PG SETTLEMENTS (Reconciliation)
+      // ============================================================================
+      //
+      // Surface area kept deliberately small for V1. Each method maps to one
+      // call site (matcher, CSV ingester, dashboard read, drawer write). When
+      // a query gets repeated three times in different shapes elsewhere, we
+      // promote it here — not before.
+      async createPgSettlement(data) {
+        const [row] = await db.insert(pgSettlements).values(data).returning();
+        return row;
+      }
+      /**
+       * Bulk-insert / upsert path for CSV ingestion. Re-uploading the same
+       * PayU settlement report is idempotent: the composite unique
+       * constraint (store_id, pg_name, pg_payment_id) catches duplicates,
+       * and ON CONFLICT updates the mutable amount / fee / source-file
+       * fields in case PayU re-issued a corrected line. Status is NOT
+       * touched on update — the matcher owns the state machine, not the
+       * ingester.
+       */
+      async bulkUpsertPgSettlements(rows) {
+        if (rows.length === 0) return { processed: 0 };
+        const BATCH = 500;
+        let processed = 0;
+        for (let i = 0; i < rows.length; i += BATCH) {
+          const chunk = rows.slice(i, i + BATCH);
+          const result = await db.insert(pgSettlements).values(chunk).onConflictDoUpdate({
+            target: [
+              pgSettlements.storeId,
+              pgSettlements.pgName,
+              pgSettlements.pgPaymentId
+            ],
+            set: {
+              settledAmount: sql2`EXCLUDED.settled_amount`,
+              grossAmount: sql2`EXCLUDED.gross_amount`,
+              feeDeducted: sql2`EXCLUDED.fee_deducted`,
+              taxOnFee: sql2`EXCLUDED.tax_on_fee`,
+              utrNumber: sql2`EXCLUDED.utr_number`,
+              settledAt: sql2`EXCLUDED.settled_at`,
+              pgTransactionAt: sql2`EXCLUDED.pg_transaction_at`,
+              rawPayload: sql2`EXCLUDED.raw_payload`,
+              sourceFile: sql2`EXCLUDED.source_file`,
+              updatedAt: sql2`NOW()`
+            }
+          }).returning({ id: pgSettlements.id });
+          processed += result.length;
+        }
+        return { processed };
+      }
+      async getPgSettlement(id) {
+        const [row] = await db.select().from(pgSettlements).where(eq(pgSettlements.id, id));
+        return row;
+      }
+      /**
+       * Bridge lookup used by the matcher: given a PayU mihpayid (from the
+       * settlement CSV), find any pg_settlement we've already recorded for
+       * this (storeId, pgName, pgPaymentId) triple. NULL storeId is
+       * intentionally supported because the Phase-1 multi-store backfill
+       * leaves some legacy rows with storeId = NULL.
+       */
+      async getPgSettlementByPaymentId(storeId, pgName, pgPaymentId) {
+        const [row] = await db.select().from(pgSettlements).where(
+          and(
+            storeId === null ? isNull(pgSettlements.storeId) : eq(pgSettlements.storeId, storeId),
+            eq(pgSettlements.pgName, pgName),
+            eq(pgSettlements.pgPaymentId, pgPaymentId)
+          )
+        );
+        return row;
+      }
+      async listPgSettlements(filters) {
+        const page = Math.max(1, filters.page ?? 1);
+        const pageSize = Math.min(500, Math.max(1, filters.pageSize ?? 50));
+        const conds = [];
+        if (filters.storeId) conds.push(eq(pgSettlements.storeId, filters.storeId));
+        if (filters.status) {
+          conds.push(
+            Array.isArray(filters.status) ? inArray(pgSettlements.status, filters.status) : eq(pgSettlements.status, filters.status)
+          );
+        }
+        if (filters.pgName) conds.push(eq(pgSettlements.pgName, filters.pgName));
+        if (filters.utr) conds.push(eq(pgSettlements.utrNumber, filters.utr));
+        if (filters.fromDate)
+          conds.push(gte(pgSettlements.settledAt, filters.fromDate.toISOString()));
+        if (filters.toDate)
+          conds.push(lte(pgSettlements.settledAt, filters.toDate.toISOString()));
+        if (filters.q && filters.q.trim().length > 0) {
+          const safe = filters.q.trim().replace(/[%_\\]/g, (m) => "\\" + m);
+          const pattern = `%${safe}%`;
+          conds.push(
+            sql2`(
+          ${pgSettlements.pgPaymentId} ILIKE ${pattern}
+          OR ${pgSettlements.pgOrderId} ILIKE ${pattern}
+          OR ${pgSettlements.utrNumber} ILIKE ${pattern}
+        )`
+          );
+        }
+        const where = conds.length > 0 ? and(...conds) : void 0;
+        const [{ count: total }] = await db.select({ count: count() }).from(pgSettlements).where(where);
+        const rows = await db.select().from(pgSettlements).where(where).orderBy(sql2`${pgSettlements.settledAt} DESC NULLS LAST`).limit(pageSize).offset((page - 1) * pageSize);
+        return { rows, total: Number(total) };
+      }
+      async updatePgSettlementStatus(id, status) {
+        const [row] = await db.update(pgSettlements).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(pgSettlements.id, id)).returning();
+        return row;
+      }
+      async linkPgSettlementToOrder(id, orderId, orderAmount) {
+        const [row] = await db.update(pgSettlements).set({
+          orderId,
+          orderAmount,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq(pgSettlements.id, id)).returning();
+        return row;
+      }
+      /**
+       * Headline numbers for the dashboard KPIs and the donut breakdown.
+       * Single GROUP BY query → one round-trip instead of four
+       * count-by-status queries. Returns zeros for any status not yet
+       * present in the data so the consumer doesn't need to coalesce.
+       */
+      async getPgSettlementStatusCounts(storeId, fromDate, toDate) {
+        const conds = [eq(pgSettlements.storeId, storeId)];
+        if (fromDate)
+          conds.push(gte(pgSettlements.settledAt, fromDate.toISOString()));
+        if (toDate) conds.push(lte(pgSettlements.settledAt, toDate.toISOString()));
+        const rows = await db.select({
+          status: pgSettlements.status,
+          count: count()
+        }).from(pgSettlements).where(and(...conds)).groupBy(pgSettlements.status);
+        const out = {
+          pending: 0,
+          overdue: 0,
+          mismatch: 0,
+          settled: 0
+        };
+        for (const r of rows) {
+          if (r.status in out) {
+            out[r.status] = Number(r.count);
+          }
+        }
+        return out;
+      }
+      // ── Recon uploads ─────────────────────────────────────────────────
+      async createReconUpload(data) {
+        const [row] = await db.insert(reconUploads).values(data).returning();
+        return row;
+      }
+      async findReconUploadByHash(storeId, pgName, fileHash) {
+        const [row] = await db.select().from(reconUploads).where(
+          and(
+            storeId === null ? isNull(reconUploads.storeId) : eq(reconUploads.storeId, storeId),
+            eq(reconUploads.pgName, pgName),
+            eq(reconUploads.fileHash, fileHash),
+            // Skip "duplicate" status rows so re-warning doesn't compound —
+            // we only care about the original successful ingest.
+            sql2`${reconUploads.status} != 'duplicate'`
+          )
+        ).orderBy(desc(reconUploads.createdAt)).limit(1);
+        return row;
+      }
+      async listRecentReconUploads(storeId, limit = 10) {
+        return await db.select().from(reconUploads).where(eq(reconUploads.storeId, storeId)).orderBy(desc(reconUploads.createdAt)).limit(limit);
+      }
+      async getExistingPgPaymentIds(storeId, pgName, pgPaymentIds) {
+        if (pgPaymentIds.length === 0) return /* @__PURE__ */ new Set();
+        const rows = await db.select({ pgPaymentId: pgSettlements.pgPaymentId }).from(pgSettlements).where(
+          and(
+            storeId === null ? isNull(pgSettlements.storeId) : eq(pgSettlements.storeId, storeId),
+            eq(pgSettlements.pgName, pgName),
+            inArray(pgSettlements.pgPaymentId, pgPaymentIds)
+          )
+        );
+        return new Set(rows.map((r) => r.pgPaymentId));
+      }
+      // ── PG rate cards ─────────────────────────────────────────────────
+      /**
+       * Resolve the active rate card for this (store, PG). Returns null
+       * when no card is configured — callers fall back to the adapter's
+       * built-in default. Validity-windowed: only cards whose
+       * (validFrom..validTo) covers `now` count.
+       */
+      async getActivePgRateCard(storeId, pgName) {
+        const now = /* @__PURE__ */ new Date();
+        const [card] = await db.select().from(pgRateCards).where(
+          and(
+            eq(pgRateCards.storeId, storeId),
+            eq(pgRateCards.pgName, pgName),
+            eq(pgRateCards.isActive, true),
+            sql2`(${pgRateCards.validFrom} IS NULL OR ${pgRateCards.validFrom} <= ${now.toISOString()})`,
+            sql2`(${pgRateCards.validTo} IS NULL OR ${pgRateCards.validTo} >= ${now.toISOString()})`
+          )
+        ).orderBy(desc(pgRateCards.createdAt)).limit(1);
+        return card;
+      }
+      async listPgRateCards(storeId, pgName) {
+        const conds = [eq(pgRateCards.storeId, storeId)];
+        if (pgName) conds.push(eq(pgRateCards.pgName, pgName));
+        return await db.select().from(pgRateCards).where(and(...conds)).orderBy(desc(pgRateCards.createdAt));
+      }
+      /**
+       * Save a rate card. When `isActive: true`, deactivates every other
+       * card for the same (storeId, pgName) first — only one active card
+       * per gateway at a time.
+       */
+      async upsertPgRateCard(data) {
+        if (data.isActive !== false && data.storeId) {
+          await db.update(pgRateCards).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(
+            and(
+              eq(pgRateCards.storeId, data.storeId),
+              eq(pgRateCards.pgName, data.pgName),
+              eq(pgRateCards.isActive, true)
+            )
+          );
+        }
+        const [row] = await db.insert(pgRateCards).values({
+          ...data,
+          rules: data.rules
+        }).returning();
+        return row;
+      }
+      async deletePgRateCard(id) {
+        await db.delete(pgRateCards).where(eq(pgRateCards.id, id));
       }
       // ── Smart presence helpers (idle + auto-logout) ───────────────────
       async getMonthlyAttendanceReport(year, month) {
@@ -3549,6 +3994,10 @@ var init_storage = __esm({
       }
       async setMonitoringExempt(userId, exempt) {
         const [row] = await db.update(users).set({ monitoringExempt: exempt, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, userId)).returning();
+        return row;
+      }
+      async setPayrollEmail(userId, payrollEmail) {
+        const [row] = await db.update(users).set({ payrollEmail: payrollEmail || null, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, userId)).returning();
         return row;
       }
       async heartbeatUser(userId) {
@@ -3765,9 +4214,9 @@ async function updateShopifyClient() {
 async function loadShopifyConfigForStore(storeId) {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { eq: eq8 } = await import("drizzle-orm");
+  const { eq: eq9 } = await import("drizzle-orm");
   const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
-  const [row] = await db2.select().from(stores2).where(eq8(stores2.id, storeId)).limit(1);
+  const [row] = await db2.select().from(stores2).where(eq9(stores2.id, storeId)).limit(1);
   if (!row) {
     throw new Error(
       `[Shopify] getShopifyClient: no stores row for id ${storeId}`
@@ -4639,6 +5088,13 @@ var init_unifiedStatus = __esm({
 });
 
 // server/resend.ts
+var resend_exports = {};
+__export(resend_exports, {
+  getUncachableResendClient: () => getUncachableResendClient,
+  sendInvitationEmail: () => sendInvitationEmail,
+  sendPayrollAlertEmail: () => sendPayrollAlertEmail,
+  sendReconDigestEmail: () => sendReconDigestEmail
+});
 import { Resend } from "resend";
 function getResendConfig() {
   const apiKey = process.env.RESEND_API_KEY;
@@ -4657,6 +5113,36 @@ async function getUncachableResendClient() {
     client: new Resend(apiKey),
     fromEmail
   };
+}
+async function sendPayrollAlertEmail(params) {
+  const recipients = (process.env.PAYROLL_ALERT_EMAILS || "abinav@vergescales.com,nandakishore@vergescales.com").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!recipients.length) return;
+  let client;
+  let fromEmail;
+  try {
+    ({ client, fromEmail } = await getUncachableResendClient());
+  } catch (e) {
+    console.warn("[payroll-alert] Resend not configured; skipping email:", e?.message ?? e);
+    return;
+  }
+  const monthStr = `${params.year}-${String(params.month).padStart(2, "0")}`;
+  const esc = (s) => s.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]);
+  const subject = params.error ? `\u26A0\uFE0F OrderFlow payroll sync FAILED \u2014 ${monthStr}` : `\u26A0\uFE0F OrderFlow payroll sync: ${params.totals?.failed ?? 0} failed record(s) \u2014 ${monthStr}`;
+  const body = params.error ? `<p>The nightly RazorpayX payroll sync <b>errored</b> for <b>${monthStr}</b>.</p>
+       <pre style="background:#f6f6f7;padding:12px;border-radius:8px;white-space:pre-wrap">${esc(params.error)}</pre>` : `<p>The nightly RazorpayX payroll sync for <b>${monthStr}</b> finished with failures (mode: ${esc(params.mode ?? "?")}).</p>
+       <p>ok: ${params.totals?.ok ?? 0} &nbsp;\xB7&nbsp; <b style="color:#c0392b">failed: ${params.totals?.failed ?? 0}</b> &nbsp;\xB7&nbsp; skipped: ${params.totals?.skipped ?? 0}</p>
+       <p>See the <code>payroll_sync_runs</code> audit table / Vercel logs for per-record detail.</p>`;
+  try {
+    await client.emails.send({
+      from: fromEmail,
+      to: recipients,
+      subject,
+      html: `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;color:#1a1a1a">${body}<hr style="border:none;border-top:1px solid #eee;margin:20px 0"/><p style="color:#888;font-size:12px">OrderFlow \xB7 automated payroll-sync alert</p></div>`
+    });
+    console.log(`[payroll-alert] sent to ${recipients.join(", ")}`);
+  } catch (e) {
+    console.error("[payroll-alert] send failed:", e?.message ?? e);
+  }
 }
 async function sendInvitationEmail(params) {
   const { client, fromEmail } = await getUncachableResendClient();
@@ -4785,9 +5271,300 @@ If you didn't expect this invitation, you can safely ignore this email.
   }
   return data;
 }
+async function sendReconDigestEmail(params) {
+  const { client, fromEmail } = await getUncachableResendClient();
+  const envBase = typeof process.env.APP_BASE_URL === "string" ? process.env.APP_BASE_URL.trim() : "";
+  const isUsableEnvBase = envBase.length > 0 && !/placeholder/i.test(envBase);
+  const baseUrl = isUsableEnvBase ? envBase : process.env.NODE_ENV === "production" ? "https://www.orderflow.sbs" : "http://localhost:5001";
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const dashboardUrl = `${cleanBase}/reconciliation`;
+  const isTrouble = params.totalFlagged > 0;
+  const headlineColor = isTrouble ? "#dc2626" : "#059669";
+  const headlineEmoji = isTrouble ? "\u26A0\uFE0F" : "\u2713";
+  const subjectVerb = params.digestType === "bi-weekly" ? "Bi-weekly summary" : "Reconciliation digest";
+  const subject = isTrouble ? `[${params.storeName}] ${subjectVerb} \u2014 ${params.totalFlagged} ${params.totalFlagged === 1 ? "order needs" : "orders need"} attention (${params.totalFlaggedAmount})` : `[${params.storeName}] ${subjectVerb} \u2014 all settlements matched \u2713`;
+  const flaggedRowsHtml = params.topFlagged.length === 0 ? `<tr><td colspan="4" style="padding: 16px; text-align: center; color: #6b7280; font-size: 14px;">No orders need attention \u2014 all clear.</td></tr>` : params.topFlagged.map(
+    (r) => `
+            <tr>
+              <td style="padding: 12px 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; color: #111827;">#${r.shopifyOrderNumber}</td>
+              <td style="padding: 12px 8px; font-size: 13px; color: #6b7280;">${r.customerEmailMasked}</td>
+              <td style="padding: 12px 8px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; color: #111827; text-align: right;">${r.amount}</td>
+              <td style="padding: 12px 8px; text-align: right;">
+                <span style="display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background-color: ${r.reason === "overdue" ? "#fee2e2" : "#ffedd5"}; color: ${r.reason === "overdue" ? "#991b1b" : "#9a3412"};">
+                  ${r.reason === "overdue" ? `${r.ageDays}d overdue` : "mismatch"}
+                </span>
+              </td>
+            </tr>`
+  ).join("");
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f3f4f6;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f3f4f6; padding: 40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="padding: 32px 40px 24px 40px; border-bottom: 1px solid #e5e7eb;">
+              <div style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">
+                ${params.storeName} \xB7 ${params.digestType === "bi-weekly" ? "Bi-weekly summary" : "Reconciliation digest"}
+              </div>
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: ${headlineColor};">
+                ${headlineEmoji} ${isTrouble ? `${params.totalFlagged} ${params.totalFlagged === 1 ? "order needs" : "orders need"} attention` : "All settlements matched"}
+              </h1>
+              <div style="margin-top: 4px; font-size: 13px; color: #6b7280;">
+                Window: ${params.windowFrom} \u2013 ${params.windowTo}
+              </div>
+            </td>
+          </tr>
+
+          <!-- Headline numbers -->
+          <tr>
+            <td style="padding: 24px 40px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="33%" style="padding: 0 8px 0 0; vertical-align: top;">
+                    <div style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Settled</div>
+                    <div style="font-size: 22px; font-weight: 700; color: #111827; margin-top: 4px;">${params.totalSettled.toLocaleString("en-IN")}</div>
+                    <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">${params.totalSettledAmount}</div>
+                  </td>
+                  <td width="33%" style="padding: 0 8px; vertical-align: top;">
+                    <div style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Overdue</div>
+                    <div style="font-size: 22px; font-weight: 700; color: ${params.overdueCount > 0 ? "#dc2626" : "#111827"}; margin-top: 4px;">${params.overdueCount}</div>
+                    <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">past T+2</div>
+                  </td>
+                  <td width="33%" style="padding: 0 0 0 8px; vertical-align: top;">
+                    <div style="font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Mismatches</div>
+                    <div style="font-size: 22px; font-weight: 700; color: ${params.mismatchCount > 0 ? "#ea580c" : "#111827"}; margin-top: 4px;">${params.mismatchCount}</div>
+                    <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">PayU shaved more</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Total flagged amount callout -->
+          ${isTrouble ? `
+          <tr>
+            <td style="padding: 0 40px;">
+              <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 14px 16px; border-radius: 4px;">
+                <div style="font-size: 11px; font-weight: 600; color: #991b1b; text-transform: uppercase; letter-spacing: 0.05em;">Total flagged value</div>
+                <div style="font-size: 24px; font-weight: 700; color: #7f1d1d; margin-top: 2px;">${params.totalFlaggedAmount}</div>
+                <div style="font-size: 12px; color: #991b1b; margin-top: 4px;">Potential money missing \u2014 review and escalate to PayU support before write-off.</div>
+              </div>
+            </td>
+          </tr>` : ""}
+
+          <!-- Top flagged rows table -->
+          ${isTrouble ? `
+          <tr>
+            <td style="padding: 24px 40px 0 40px;">
+              <div style="font-size: 13px; font-weight: 600; color: #111827; margin-bottom: 10px;">
+                Top ${params.topFlagged.length} ${params.topFlagged.length === 1 ? "order" : "orders"} needing attention
+              </div>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                <thead>
+                  <tr style="border-bottom: 1px solid #e5e7eb;">
+                    <th style="padding: 8px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Order</th>
+                    <th style="padding: 8px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Customer</th>
+                    <th style="padding: 8px; text-align: right; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Amount</th>
+                    <th style="padding: 8px; text-align: right; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Issue</th>
+                  </tr>
+                </thead>
+                <tbody>${flaggedRowsHtml}</tbody>
+              </table>
+            </td>
+          </tr>` : ""}
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding: 32px 40px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="${dashboardUrl}" style="display: inline-block; padding: 12px 28px; background-color: #111827; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+                      Open dashboard
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; border-top: 1px solid #e5e7eb; background-color: #f9fafb; border-radius: 0 0 8px 8px;">
+              <p style="margin: 0; font-size: 11px; line-height: 16px; color: #6b7280; text-align: center;">
+                You're receiving this because you're a reconciliation recipient for ${params.storeName}.<br>
+                Manage recipients in the dashboard \u2192 Settings \u2192 Delivery channels.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+  const textContent = `
+${params.storeName} \xB7 ${params.digestType === "bi-weekly" ? "Bi-weekly summary" : "Reconciliation digest"}
+Window: ${params.windowFrom} \u2013 ${params.windowTo}
+
+${isTrouble ? `\u26A0\uFE0F ${params.totalFlagged} ${params.totalFlagged === 1 ? "order needs" : "orders need"} attention` : "\u2713 All settlements matched"}
+
+Settled: ${params.totalSettled.toLocaleString("en-IN")} orders (${params.totalSettledAmount})
+Overdue: ${params.overdueCount}
+Mismatches: ${params.mismatchCount}
+${isTrouble ? `
+Total flagged value: ${params.totalFlaggedAmount}
+` : ""}
+${params.topFlagged.length > 0 ? `
+Top orders needing attention:
+${params.topFlagged.map(
+    (r) => `  #${r.shopifyOrderNumber}  ${r.customerEmailMasked}  ${r.amount}  ${r.reason === "overdue" ? `${r.ageDays}d overdue` : "mismatch"}`
+  ).join("\n")}
+` : ""}
+
+Open the dashboard: ${dashboardUrl}
+
+\u2014 You're receiving this because you're a reconciliation recipient for ${params.storeName}.
+  `.trim();
+  const { data, error } = await client.emails.send({
+    from: fromEmail,
+    to: params.toEmails,
+    subject,
+    html: htmlContent,
+    text: textContent
+  });
+  if (error) {
+    console.error("Resend recon-digest error:", error);
+    throw new Error(`Failed to send recon digest: ${error.message}`);
+  }
+  return data;
+}
 var init_resend = __esm({
   "server/resend.ts"() {
     "use strict";
+  }
+});
+
+// server/upload.ts
+var upload_exports = {};
+__export(upload_exports, {
+  KYC_UPLOAD_DIR: () => KYC_UPLOAD_DIR,
+  kycUpload: () => kycUpload,
+  reconCsvUpload: () => reconCsvUpload,
+  resolveKycFilePath: () => resolveKycFilePath
+});
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto4 from "crypto";
+import multer from "multer";
+function resolveKycFilePath(filename) {
+  const resolved = path.resolve(KYC_UPLOAD_DIR, filename);
+  if (!resolved.startsWith(KYC_UPLOAD_DIR + path.sep)) return null;
+  if (!fs.existsSync(resolved)) return null;
+  return resolved;
+}
+var KYC_UPLOAD_DIR, ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, storage2, kycUpload, RECON_ALLOWED_CSV_EXTS, RECON_ALLOWED_CSV_MIMES, reconCsvUpload;
+var init_upload = __esm({
+  "server/upload.ts"() {
+    "use strict";
+    KYC_UPLOAD_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "orderflow-kyc") : path.resolve(import.meta.dirname, "..", "uploads", "kyc");
+    try {
+      fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true });
+    } catch (err) {
+      if (err?.code !== "EEXIST") {
+        console.warn(
+          `[kyc-upload] could not pre-create ${KYC_UPLOAD_DIR}: ${err?.message ?? err}`
+        );
+      }
+    }
+    ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".pdf"]);
+    ALLOWED_MIME_TYPES = /* @__PURE__ */ new Set([
+      "image/jpeg",
+      "image/png",
+      "image/jpg",
+      "application/pdf"
+    ]);
+    storage2 = multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        cb(null, KYC_UPLOAD_DIR);
+      },
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        const userId = (req.params.id ?? "unknown").replace(/[^a-zA-Z0-9-]/g, "");
+        const token = crypto4.randomBytes(12).toString("hex");
+        cb(null, `${userId}-${token}${ext}`);
+      }
+    });
+    kycUpload = multer({
+      storage: storage2,
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+        // 5 MB — generous for a passport/Aadhaar scan.
+        files: 1
+      },
+      fileFilter: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (!ALLOWED_EXTENSIONS.has(ext)) {
+          return cb(
+            new Error(
+              `Unsupported file extension (${ext}). Allowed: .jpg, .jpeg, .png, .pdf`
+            )
+          );
+        }
+        if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+          return cb(
+            new Error(
+              `Unsupported mime type (${file.mimetype}). Allowed: image/jpeg, image/png, application/pdf`
+            )
+          );
+        }
+        cb(null, true);
+      }
+    });
+    RECON_ALLOWED_CSV_EXTS = /* @__PURE__ */ new Set([".csv", ".txt"]);
+    RECON_ALLOWED_CSV_MIMES = /* @__PURE__ */ new Set([
+      "text/csv",
+      "text/plain",
+      "application/csv",
+      "application/octet-stream",
+      "application/vnd.ms-excel"
+      // some clients label .csv as this
+    ]);
+    reconCsvUpload = multer({
+      storage: multer.memoryStorage(),
+      limits: {
+        fileSize: 10 * 1024 * 1024,
+        // 10 MB hard cap
+        files: 1
+      },
+      fileFilter: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (!RECON_ALLOWED_CSV_EXTS.has(ext)) {
+          return cb(
+            new Error(
+              `Unsupported file extension (${ext}). Upload a .csv file (convert XLSX in Excel first).`
+            )
+          );
+        }
+        if (!RECON_ALLOWED_CSV_MIMES.has(file.mimetype)) {
+          console.warn(
+            `[recon-upload] unusual mime "${file.mimetype}" for ${file.originalname} \u2014 allowing`
+          );
+        }
+        cb(null, true);
+      }
+    });
   }
 });
 
@@ -6386,6 +7163,616 @@ var init_courier = __esm({
   }
 });
 
+// server/razorpay-payroll/client.ts
+var client_exports = {};
+__export(client_exports, {
+  RazorpayPayrollConfigError: () => RazorpayPayrollConfigError,
+  attFetch: () => attFetch,
+  attModify: () => attModify,
+  getRazorpayAuth: () => getRazorpayAuth,
+  isDryRun: () => isDryRun,
+  isRazorpayPayrollConfigured: () => isRazorpayPayrollConfigured,
+  peopleCreate: () => peopleCreate,
+  peopleDismiss: () => peopleDismiss,
+  peopleEdit: () => peopleEdit,
+  peopleSetSalary: () => peopleSetSalary,
+  peopleView: () => peopleView,
+  razorpayCall: () => razorpayCall
+});
+function getRazorpayAuth() {
+  const idRaw = process.env.RAZORPAY_PAYROLL_AUTH_ID?.trim();
+  const key = process.env.RAZORPAY_PAYROLL_AUTH_KEY?.trim();
+  if (!idRaw || !key || idRaw === "REPLACE_WITH_ID" || key === "REPLACE_WITH_KEY") {
+    throw new RazorpayPayrollConfigError(
+      "RazorpayX Payroll credentials missing \u2014 set RAZORPAY_PAYROLL_AUTH_ID and RAZORPAY_PAYROLL_AUTH_KEY in .env"
+    );
+  }
+  const id = /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw;
+  return { id, key };
+}
+function isRazorpayPayrollConfigured() {
+  try {
+    getRazorpayAuth();
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isDryRun() {
+  return process.env.RAZORPAY_PAYROLL_DRY_RUN !== "false";
+}
+async function razorpayCall(args) {
+  const auth = getRazorpayAuth();
+  const payload = {
+    auth: { id: auth.id, key: auth.key },
+    request: { type: args.type, "sub-type": args.subType },
+    data: args.data
+  };
+  const url = `${BASE_URL}/${args.resource}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: args.method ?? "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      body: { error: `Network error: ${err?.message ?? String(err)}` },
+      sentPayload: redactAuth(payload)
+    };
+  }
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  const ok = res.ok && !body?.error && (body?.status === void 0 || body?.status === "ok");
+  return { ok, status: res.status, body, sentPayload: redactAuth(payload) };
+}
+function redactAuth(payload) {
+  const clone = JSON.parse(JSON.stringify(payload));
+  if (clone?.auth?.key) clone.auth.key = "***redacted***";
+  return clone;
+}
+function attModify(data) {
+  return razorpayCall({
+    resource: "att",
+    type: "attendance",
+    subType: "modify",
+    data
+  });
+}
+function attFetch(data) {
+  return razorpayCall({ resource: "att", type: "attendance", subType: "fetch", data });
+}
+function peopleView(data) {
+  return razorpayCall({ resource: "people", type: "people", subType: "view", data });
+}
+function peopleCreate(data) {
+  return razorpayCall({
+    resource: "people",
+    type: "people",
+    subType: "create",
+    data
+  });
+}
+function peopleSetSalary(data) {
+  return razorpayCall({
+    resource: "people",
+    type: "people",
+    subType: "set-salary",
+    data: { "custom-salary-structure": false, ...data }
+  });
+}
+function peopleEdit(data) {
+  return razorpayCall({
+    resource: "people",
+    type: "people",
+    subType: "edit",
+    data
+  });
+}
+function peopleDismiss(data) {
+  return razorpayCall({
+    resource: "people",
+    type: "people",
+    subType: "dismiss",
+    data
+  });
+}
+var BASE_URL, RazorpayPayrollConfigError;
+var init_client = __esm({
+  "server/razorpay-payroll/client.ts"() {
+    "use strict";
+    BASE_URL = process.env.RAZORPAY_PAYROLL_BASE_URL?.replace(/\/$/, "") || "https://payroll.razorpay.com/api";
+    RazorpayPayrollConfigError = class extends Error {
+    };
+  }
+});
+
+// server/razorpay-payroll/mapping.ts
+var mapping_exports = {};
+__export(mapping_exports, {
+  LEAVE_TYPE_MAP: () => LEAVE_TYPE_MAP,
+  isSkipped: () => isSkipped,
+  istDate: () => istDate,
+  istTime: () => istTime,
+  leaveTypesConfigured: () => leaveTypesConfigured,
+  mapAttendanceRow: () => mapAttendanceRow,
+  mapLeaveRow: () => mapLeaveRow
+});
+function istDate(ts) {
+  return new Date(ts).toLocaleDateString("en-CA", { timeZone: IST });
+}
+function istTime(ts) {
+  return new Date(ts).toLocaleTimeString("en-GB", {
+    timeZone: IST,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+function leaveTypesConfigured() {
+  return Object.values(LEAVE_TYPE_MAP).some((m) => m.razorpayLeaveTypeId > 0);
+}
+function mapAttendanceRow(row) {
+  if (!row.email) {
+    return { reason: "user has no email", sourceId: row.id };
+  }
+  if (!row.clockInTime) {
+    return { reason: "no clock-in time", sourceId: row.id, email: row.email };
+  }
+  if (!row.clockOutTime) {
+    return { reason: "shift still open (no clock-out yet)", sourceId: row.id, email: row.email };
+  }
+  const date2 = istDate(row.date ?? row.clockInTime);
+  const payload = {
+    email: row.email,
+    "employee-type": "employee",
+    date: date2,
+    status: "present",
+    // RazorpayX requires leave-type on every att-modify. For a non-leave
+    // (present) day the sentinel is -1 ("no leave type"); 0 / omitted are
+    // rejected ("valid values for leave-type are: …"). Verified against
+    // the live API.
+    "leave-type": -1,
+    checkin: istTime(row.clockInTime),
+    checkout: istTime(row.clockOutTime),
+    remarks: "Synced from OrderFlow"
+  };
+  return { payload, source: "attendance", sourceId: row.id };
+}
+function mapLeaveRow(row) {
+  const mapped = [];
+  const skipped = [];
+  if (row.status !== "approved") {
+    skipped.push({ reason: `leave not approved (${row.status})`, sourceId: row.id, email: row.email ?? void 0 });
+    return { mapped, skipped };
+  }
+  if (!row.email) {
+    skipped.push({ reason: "user has no email", sourceId: row.id });
+    return { mapped, skipped };
+  }
+  const map = LEAVE_TYPE_MAP[row.leaveType?.toLowerCase?.()];
+  if (!map) {
+    skipped.push({ reason: `unmapped leave type "${row.leaveType}"`, sourceId: row.id, email: row.email });
+    return { mapped, skipped };
+  }
+  if (!map.razorpayLeaveTypeId || map.razorpayLeaveTypeId <= 0) {
+    skipped.push({ reason: `leave type "${row.leaveType}" not configured (set RazorpayX leave-type ID)`, sourceId: row.id, email: row.email });
+    return { mapped, skipped };
+  }
+  const status = map.paid ? "leave" : "unpaid-leave";
+  const start = /* @__PURE__ */ new Date(istDate(row.startDate) + "T00:00:00+05:30");
+  const end = /* @__PURE__ */ new Date(istDate(row.endDate) + "T00:00:00+05:30");
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const date2 = istDate(d);
+    mapped.push({
+      payload: {
+        email: row.email,
+        "employee-type": "employee",
+        date: date2,
+        status,
+        "leave-type": map.razorpayLeaveTypeId,
+        remarks: `OrderFlow leave (${row.leaveType})`
+      },
+      source: "leave",
+      sourceId: row.id
+    });
+  }
+  return { mapped, skipped };
+}
+function isSkipped(r) {
+  return r.reason !== void 0;
+}
+var IST, LEAVE_TYPE_MAP;
+var init_mapping = __esm({
+  "server/razorpay-payroll/mapping.ts"() {
+    "use strict";
+    IST = "Asia/Kolkata";
+    LEAVE_TYPE_MAP = {
+      sick: { razorpayLeaveTypeId: 0, paid: true },
+      casual: { razorpayLeaveTypeId: 0, paid: true },
+      vacation: { razorpayLeaveTypeId: 0, paid: true }
+    };
+  }
+});
+
+// server/razorpay-payroll/resolver.ts
+async function fetchRazorpayEmployees(opts) {
+  const maxId = opts?.maxId ?? 30;
+  const missCap = opts?.consecutiveMissThreshold ?? 6;
+  const out = [];
+  let consecMisses = 0;
+  for (let id = 1; id <= maxId && consecMisses < missCap; id++) {
+    const r = await peopleView({ "employee-id": id, "employee-type": "employee" });
+    if (!r.ok) {
+      consecMisses++;
+      continue;
+    }
+    consecMisses = 0;
+    const b = r.body ?? {};
+    if (b.is_active === false) continue;
+    out.push({
+      id,
+      name: b.name ?? "",
+      email: b.email ?? "",
+      active: !!b.is_active
+    });
+  }
+  return out;
+}
+function buildEmailResolver(roster) {
+  const exact = /* @__PURE__ */ new Map();
+  const byNameToken = /* @__PURE__ */ new Map();
+  const byEmailLocal = [];
+  for (const e of roster) {
+    const key = norm(e.name);
+    if (key && !exact.has(key)) exact.set(key, e.email);
+    for (const tok of e.name.split(/\s+/).filter(Boolean)) {
+      const t = norm(tok);
+      if (t.length >= 4 && !byNameToken.has(t)) byNameToken.set(t, e.email);
+    }
+    const local = (e.email ?? "").split("@")[0] ?? "";
+    const localLetters = local.toLowerCase().replace(/[^a-z]/g, "");
+    if (localLetters) byEmailLocal.push({ local: localLetters, email: e.email });
+  }
+  return (fullName) => {
+    const k = norm(fullName);
+    if (!k) return null;
+    const hit = exact.get(k);
+    if (hit) return hit;
+    const tokens = fullName.split(/\s+/).filter(Boolean).map((t) => norm(t)).filter((t) => t.length >= 4);
+    for (const t of tokens) {
+      const m = byNameToken.get(t);
+      if (m) return m;
+    }
+    for (const t of tokens) {
+      const hit2 = byEmailLocal.find((e) => e.local.includes(t));
+      if (hit2) return hit2.email;
+    }
+    return null;
+  };
+}
+var norm;
+var init_resolver = __esm({
+  "server/razorpay-payroll/resolver.ts"() {
+    "use strict";
+    init_client();
+    norm = (s) => s.toLowerCase().replace(/[^a-z]/g, "");
+  }
+});
+
+// server/razorpay-payroll/sync.ts
+var sync_exports = {};
+__export(sync_exports, {
+  listSyncRuns: () => listSyncRuns,
+  previewSync: () => previewSync,
+  reconcileMonth: () => reconcileMonth,
+  runSync: () => runSync
+});
+import { sql as sql5, desc as desc2 } from "drizzle-orm";
+async function buildRecords(year, month) {
+  const records = [];
+  const skipped = [];
+  let resolveRzpEmail = () => null;
+  if (isRazorpayPayrollConfigured()) {
+    try {
+      const roster = await fetchRazorpayEmployees();
+      resolveRzpEmail = buildEmailResolver(roster);
+    } catch (err) {
+      console.warn("[payroll-sync] failed to fetch RazorpayX roster:", err?.message ?? err);
+    }
+  }
+  const attRes = await db.execute(sql5`
+    SELECT a.id, u.email, u.full_name,
+           a.date, a.clock_in_time, a.clock_out_time, a.status, a.total_hours
+    FROM attendance a
+    JOIN users u ON u.id = a.user_id
+    WHERE a.clock_in_time IS NOT NULL
+      AND u.is_active = TRUE
+      AND EXTRACT(YEAR  FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${year}::int
+      AND EXTRACT(MONTH FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${month}::int
+    ORDER BY u.email, a.date
+  `);
+  for (const r of attRes.rows ?? attRes) {
+    const rzpEmail = resolveRzpEmail(r.full_name ?? "");
+    if (!rzpEmail) {
+      skipped.push({
+        sourceId: r.id,
+        reason: `No RazorpayX employee matching name "${r.full_name ?? r.email}" \u2014 add them in RazorpayX (or fix the name) and re-run.`,
+        email: r.email ?? void 0
+      });
+      continue;
+    }
+    const mapped = mapAttendanceRow({
+      id: r.id,
+      email: rzpEmail,
+      date: r.date,
+      clockInTime: r.clock_in_time,
+      clockOutTime: r.clock_out_time,
+      status: r.status,
+      totalHours: r.total_hours
+    });
+    if (isSkipped(mapped)) skipped.push(mapped);
+    else records.push(mapped);
+  }
+  const leaveRes = await db.execute(sql5`
+    SELECT l.id, u.email, u.full_name,
+           l.leave_type, l.start_date, l.end_date, l.status
+    FROM leave_requests l
+    JOIN users u ON u.id = l.user_id
+    WHERE l.status = 'approved'
+      AND u.is_active = TRUE
+      AND l.start_date <= (make_date(${year}::int, ${month}::int, 1) + INTERVAL '1 month')
+      AND l.end_date   >= make_date(${year}::int, ${month}::int, 1)
+    ORDER BY u.email, l.start_date
+  `);
+  for (const r of leaveRes.rows ?? leaveRes) {
+    const rzpEmail = resolveRzpEmail(r.full_name ?? "");
+    if (!rzpEmail) {
+      skipped.push({
+        sourceId: r.id,
+        reason: `No RazorpayX employee matching name "${r.full_name ?? r.email}" \u2014 add them in RazorpayX (or fix the name) and re-run.`,
+        email: r.email ?? void 0
+      });
+      continue;
+    }
+    const { mapped, skipped: sk } = mapLeaveRow({
+      id: r.id,
+      email: rzpEmail,
+      leaveType: r.leave_type,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      status: r.status
+    });
+    for (const m of mapped) {
+      const [yy, mm] = m.payload.date.split("-").map(Number);
+      if (yy === year && mm === month) records.push(m);
+    }
+    skipped.push(...sk);
+  }
+  return { records, skipped };
+}
+function summarize(year, month, mode, records, skipped) {
+  return {
+    year,
+    month,
+    mode,
+    configured: isRazorpayPayrollConfigured(),
+    leaveTypesConfigured: leaveTypesConfigured(),
+    totals: {
+      attendanceDays: records.filter((r) => r.source === "attendance").length,
+      leaveDays: records.filter((r) => r.source === "leave").length,
+      skipped: skipped.length,
+      ok: records.filter((r) => r.outcome === "ok").length,
+      failed: records.filter((r) => r.outcome === "failed").length
+    },
+    records,
+    skipped
+  };
+}
+async function previewSync(year, month) {
+  const { records, skipped } = await buildRecords(year, month);
+  const result = records.map((r) => ({ ...r, outcome: "preview" }));
+  return summarize(year, month, "preview", result, skipped);
+}
+async function runSync(year, month, triggeredBy) {
+  let report;
+  if (isDryRun()) {
+    report = await previewSync(year, month);
+  } else {
+    const { records, skipped } = await buildRecords(year, month);
+    const results = [];
+    for (const rec of records) {
+      const res = await attModify(rec.payload);
+      results.push({
+        ...rec,
+        outcome: res.ok ? "ok" : "failed",
+        detail: res.ok ? res.body : { status: res.status, body: res.body }
+      });
+    }
+    report = summarize(year, month, "live", results, skipped);
+  }
+  try {
+    await db.insert(payrollSyncRuns).values({
+      year,
+      month,
+      mode: report.mode,
+      attendanceDays: report.totals.attendanceDays,
+      leaveDays: report.totals.leaveDays,
+      okCount: report.totals.ok,
+      failedCount: report.totals.failed,
+      skippedCount: report.totals.skipped,
+      triggeredBy: triggeredBy ?? null,
+      details: {
+        records: report.records.map((r) => ({
+          email: r.payload.email,
+          date: r.payload.date,
+          status: r.payload.status,
+          source: r.source,
+          outcome: r.outcome
+        })),
+        skipped: report.skipped
+      }
+    });
+  } catch (err) {
+    console.warn("[payroll-sync] failed to write audit row:", err?.message ?? err);
+  }
+  return report;
+}
+async function listSyncRuns(limit = 20) {
+  return db.select().from(payrollSyncRuns).orderBy(desc2(payrollSyncRuns.createdAt)).limit(limit);
+}
+async function reconcileMonth(year, month) {
+  const built = await buildRecords(year, month);
+  const all = built.records;
+  const capped = all.length > RECONCILE_MAX;
+  const records = capped ? all.slice(0, RECONCILE_MAX) : all;
+  const issues = [];
+  let match = 0, mismatch = 0, missing = 0, notFound = 0;
+  const classify = (rec, f) => {
+    if (!f.ok) {
+      if (f.body?.error?.code === 12) {
+        missing++;
+        issues.push({ email: rec.payload.email, date: rec.payload.date, expected: rec.payload.status, actual: null, state: "missing", note: "not synced yet" });
+      } else {
+        notFound++;
+        issues.push({ email: rec.payload.email, date: rec.payload.date, expected: rec.payload.status, actual: null, state: "not-found", note: f.body?.error?.message });
+      }
+      return;
+    }
+    const actual = f.body?.data?.status?.description ?? null;
+    if (actual === rec.payload.status) match++;
+    else {
+      mismatch++;
+      issues.push({ email: rec.payload.email, date: rec.payload.date, expected: rec.payload.status, actual, state: "mismatch" });
+    }
+  };
+  for (let i = 0; i < records.length; i += RECONCILE_CONCURRENCY) {
+    const chunk = records.slice(i, i + RECONCILE_CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(
+        (rec) => attFetch({ email: rec.payload.email, "employee-type": "employee", date: rec.payload.date }).then((f) => ({ rec, f }))
+      )
+    );
+    for (const { rec, f } of results) classify(rec, f);
+  }
+  if (capped) {
+    issues.unshift({
+      email: "\u2014",
+      date: "\u2014",
+      expected: "\u2014",
+      actual: null,
+      state: "not-found",
+      note: `Only the first ${RECONCILE_MAX} of ${all.length} records were checked (limit).`
+    });
+  }
+  return {
+    year,
+    month,
+    configured: isRazorpayPayrollConfigured(),
+    totals: { checked: records.length, match, mismatch, missing, notFound },
+    issues
+  };
+}
+var RECONCILE_MAX, RECONCILE_CONCURRENCY;
+var init_sync = __esm({
+  "server/razorpay-payroll/sync.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_mapping();
+    init_client();
+    init_resolver();
+    RECONCILE_MAX = 500;
+    RECONCILE_CONCURRENCY = 8;
+  }
+});
+
+// server/razorpay-payroll/provision.ts
+var provision_exports = {};
+__export(provision_exports, {
+  provisionUser: () => provisionUser
+});
+async function provisionUser(userId) {
+  const user = await storage.getUser(userId);
+  if (!user) {
+    return { ok: false, mode: "preview", userId, email: "", name: "", annualCtc: null, steps: [], message: "User not found" };
+  }
+  const email = (user.payrollEmail?.trim() || user.email || "").trim();
+  const name = user.fullName || user.username || email;
+  const monthly = user.baseSalary != null && user.baseSalary !== "" ? Number(user.baseSalary) : null;
+  const annualCtc = monthly && Number.isFinite(monthly) && monthly > 0 ? Math.round(monthly * 12) : null;
+  const hireDate = new Date(user.createdAt ?? /* @__PURE__ */ new Date()).toLocaleDateString("en-GB", {
+    timeZone: "Asia/Kolkata"
+  });
+  if (!email) {
+    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "No email to provision" };
+  }
+  if (!isRazorpayPayrollConfigured()) {
+    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "RazorpayX not configured" };
+  }
+  if (isDryRun()) {
+    return {
+      ok: true,
+      mode: "preview",
+      userId,
+      email,
+      name,
+      annualCtc,
+      steps: [
+        { step: "create", ok: true, detail: { email, name, type: "employee", hire_date: hireDate } },
+        ...annualCtc ? [{ step: "set-salary", ok: true, detail: { "annual-ctc": annualCtc } }] : []
+      ],
+      message: `Dry-run: would create ${name} (${email}, hired ${hireDate})${annualCtc ? ` + set annual CTC \u20B9${annualCtc.toLocaleString("en-IN")}` : ""}`
+    };
+  }
+  const steps = [];
+  const created = await peopleCreate({ email, name, type: "employee", hire_date: hireDate });
+  steps.push({ step: "create", ok: created.ok, detail: created.body });
+  if (!created.ok) {
+    const denied = created.body?.error?.code === -1;
+    return {
+      ok: false,
+      mode: "live",
+      userId,
+      email,
+      name,
+      annualCtc,
+      steps,
+      message: denied ? "RazorpayX denied employee creation: this API key lacks People-module write permission. Add the new hire in the RazorpayX dashboard, or grant the key 'manage employees' permission." : created.body?.error?.message ?? "Create failed (may already exist)"
+    };
+  }
+  const employeeId = created.body?.["employee-id"];
+  if (annualCtc && employeeId != null) {
+    const sal = await peopleSetSalary({ "employee-id": Number(employeeId), "annual-ctc": annualCtc });
+    steps.push({ step: "set-salary", ok: sal.ok, detail: sal.body });
+  }
+  return {
+    ok: steps.every((s) => s.ok),
+    mode: "live",
+    userId,
+    email,
+    name,
+    annualCtc,
+    steps,
+    employeeId,
+    message: `Created ${name} (employee-id ${employeeId})${annualCtc ? ` + salary set` : ""}`
+  };
+}
+var init_provision = __esm({
+  "server/razorpay-payroll/provision.ts"() {
+    "use strict";
+    init_storage();
+    init_client();
+  }
+});
+
 // server/services/payroll.ts
 var payroll_exports = {};
 __export(payroll_exports, {
@@ -6530,7 +7917,7 @@ __export(payroll_metrics_exports, {
   getYtdPaidHolidaysUsed: () => getYtdPaidHolidaysUsed,
   monthRangeUtc: () => monthRangeUtc
 });
-import { sql as sql5 } from "drizzle-orm";
+import { sql as sql6 } from "drizzle-orm";
 function monthRangeUtc(year, month) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
@@ -6538,7 +7925,7 @@ function monthRangeUtc(year, month) {
 }
 async function getAttendanceMetrics(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql5`
+  const r = await db.execute(sql6`
     SELECT
       COUNT(DISTINCT DATE(date)) FILTER (WHERE clock_in_time IS NOT NULL)::int4 AS days_present,
       COUNT(DISTINCT DATE(date)) FILTER (WHERE status = 'leave')::int4         AS days_leave
@@ -6554,7 +7941,7 @@ async function getAttendanceMetrics(userId, year, month) {
   };
 }
 async function getAutoPaidHolidaysCount(state, year, month) {
-  const r = await db.execute(sql5`
+  const r = await db.execute(sql6`
     SELECT COUNT(*)::int4 AS n
     FROM holidays
     WHERE state = ${state}
@@ -6568,7 +7955,7 @@ async function getAutoPaidHolidaysCount(state, year, month) {
   return (r.rows ?? r)[0]?.n ?? 0;
 }
 async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
-  const r = await db.execute(sql5`
+  const r = await db.execute(sql6`
     SELECT COALESCE(SUM(paid_holidays_used), 0)::int4 AS n
     FROM payroll_ledger
     WHERE user_id = ${userId}
@@ -6579,7 +7966,7 @@ async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
 }
 async function getConfirmationDeliveryRatePct(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql5`
+  const r = await db.execute(sql6`
     SELECT
       COUNT(*)::int4                                              AS confirmed,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4          AS delivered
@@ -6594,7 +7981,7 @@ async function getConfirmationDeliveryRatePct(userId, year, month) {
 }
 async function getTeamDeliveryRatePct(year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql5`
+  const r = await db.execute(sql6`
     SELECT
       COUNT(*)::int4                                       AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4   AS delivered
@@ -7621,6 +9008,425 @@ var init_shiprocket = __esm({
   }
 });
 
+// server/pgs/payu.ts
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        out.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+  }
+  out.push(cur);
+  return out;
+}
+function parseAmount(raw) {
+  if (raw === void 0 || raw === null) return null;
+  const cleaned = String(raw).replace(/[₹$,\s]/g, "").trim();
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+function parseDate(raw) {
+  if (raw === void 0 || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return null;
+  if (/[+-]\d{2}:?\d{2}$|Z$/.test(trimmed)) {
+    const d2 = new Date(trimmed);
+    return Number.isNaN(d2.getTime()) ? null : d2.toISOString();
+  }
+  const iso = trimmed.replace(" ", "T") + "+05:30";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+var COLUMN_ALIASES, SUCCESS_STATUS_VALUES, DEFAULT_MDR_PCT, DEFAULT_GST_ON_FEE_PCT, payuAdapter;
+var init_payu = __esm({
+  "server/pgs/payu.ts"() {
+    "use strict";
+    COLUMN_ALIASES = {
+      // `mihpayid` — the bridge key. Always present, always 11 digits.
+      pgPaymentId: ["payu id", "payu payment id", "mihpayid"],
+      // Fastrr checkout token (e.g. `Shexkrew1780656552958`).
+      pgOrderId: ["merchant txn id", "merchant transaction id", "txn id"],
+      // Customer-paid amount BEFORE PG fees. The number Shopify expects.
+      grossAmount: ["amount(inr)", "amount (inr)", "amount", "gross amount"],
+      // What actually settles to the bank (gross − MDR − GST).
+      settledAmount: [
+        "net amount",
+        "amount(net)",
+        "amount (net)",
+        "net to merchant",
+        "settlement amount"
+      ],
+      // PG's processing fee (MDR). Sometimes empty per-row; we then
+      // derive it as `grossAmount − settledAmount − taxOnFee` if both
+      // sides have numbers.
+      feeDeducted: ["payment processing fee", "total processing fees", "mdr"],
+      taxOnFee: ["total service tax", "service tax", "gst on fee"],
+      settledAt: ["settlement date"],
+      // PayU's column for "when did the txn succeed at the gateway."
+      // Different from Settlement Date — settlement is T+2 after this.
+      pgTransactionAt: ["succeedon", "succeeded on", "transaction date"],
+      utrNumber: ["merchant utr", "utr number", "utr"]
+    };
+    SUCCESS_STATUS_VALUES = ["success", "captured", "1"];
+    DEFAULT_MDR_PCT = 1.2;
+    DEFAULT_GST_ON_FEE_PCT = 18;
+    payuAdapter = {
+      name: "payu",
+      displayName: "PayU India",
+      async parseSettlementCsv(csvText, opts) {
+        const rows = [];
+        const errors = [];
+        let skipped = 0;
+        const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        if (lines.length === 0) {
+          return { rows: [], skipped: 0, errors: [{ row: 0, reason: "empty file" }] };
+        }
+        const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+        const colIdx = {};
+        for (const key of Object.keys(COLUMN_ALIASES)) {
+          for (const alias of COLUMN_ALIASES[key]) {
+            const idx = header.indexOf(alias);
+            if (idx >= 0) {
+              colIdx[key] = idx;
+              break;
+            }
+          }
+        }
+        if (colIdx.pgPaymentId === void 0) {
+          return {
+            rows: [],
+            skipped: 0,
+            errors: [
+              {
+                row: 0,
+                reason: "could not find PayU ID column (tried: " + COLUMN_ALIASES.pgPaymentId.join(", ") + "). Is this actually a PayU settlement export?"
+              }
+            ]
+          };
+        }
+        if (colIdx.settledAmount === void 0) {
+          return {
+            rows: [],
+            skipped: 0,
+            errors: [
+              {
+                row: 0,
+                reason: "could not find Net Amount column (tried: " + COLUMN_ALIASES.settledAmount.join(", ") + ")"
+              }
+            ]
+          };
+        }
+        const statusIdx = header.indexOf("status");
+        for (let i = 1; i < lines.length; i++) {
+          const lineNo = i + 1;
+          const fields = splitCsvLine(lines[i]);
+          if (fields.length === 0) continue;
+          if (statusIdx >= 0) {
+            const status = (fields[statusIdx] ?? "").trim().toLowerCase();
+            if (status && !SUCCESS_STATUS_VALUES.includes(status)) {
+              skipped++;
+              continue;
+            }
+          }
+          const pgPaymentId = (fields[colIdx.pgPaymentId] ?? "").trim();
+          if (!pgPaymentId) {
+            errors.push({ row: lineNo, reason: "missing PayU ID" });
+            continue;
+          }
+          const grossAmount = parseAmount(fields[colIdx.grossAmount ?? -1]);
+          const settledAmount = parseAmount(fields[colIdx.settledAmount]);
+          if (settledAmount === null) {
+            errors.push({ row: lineNo, reason: "missing/unparseable Net Amount" });
+            continue;
+          }
+          let feeDeducted = parseAmount(fields[colIdx.feeDeducted ?? -1]);
+          let taxOnFee = parseAmount(fields[colIdx.taxOnFee ?? -1]);
+          if (grossAmount !== null && settledAmount !== null && grossAmount > settledAmount && (feeDeducted === null || feeDeducted === 0) && (taxOnFee === null || taxOnFee === 0)) {
+            feeDeducted = +(grossAmount - settledAmount).toFixed(2);
+          }
+          const rawPayload = {};
+          for (let h = 0; h < header.length; h++) {
+            rawPayload[header[h]] = fields[h] ?? "";
+          }
+          rows.push({
+            storeId: opts.storeId,
+            pgName: "payu",
+            pgPaymentId,
+            pgOrderId: (fields[colIdx.pgOrderId ?? -1] ?? "").trim() || null,
+            grossAmount: grossAmount !== null ? grossAmount.toFixed(2) : null,
+            settledAmount: settledAmount.toFixed(2),
+            feeDeducted: feeDeducted !== null ? feeDeducted.toFixed(2) : null,
+            taxOnFee: taxOnFee !== null ? taxOnFee.toFixed(2) : null,
+            settledAt: parseDate(fields[colIdx.settledAt ?? -1]),
+            pgTransactionAt: parseDate(fields[colIdx.pgTransactionAt ?? -1]),
+            utrNumber: (fields[colIdx.utrNumber ?? -1] ?? "").trim() || null,
+            status: "pending",
+            // matcher promotes this; ingester never sets settled/overdue/mismatch
+            rawPayload,
+            sourceFile: opts.sourceFile ?? null
+          });
+        }
+        const seenInBatch = /* @__PURE__ */ new Set();
+        const deduped = [];
+        for (const r of rows) {
+          if (seenInBatch.has(r.pgPaymentId)) {
+            skipped++;
+            errors.push({
+              row: -1,
+              reason: `Duplicate pgPaymentId ${r.pgPaymentId} within the same file \u2014 kept first occurrence, skipped rest.`
+            });
+            continue;
+          }
+          seenInBatch.add(r.pgPaymentId);
+          deduped.push(r);
+        }
+        return { rows: deduped, skipped, errors };
+      },
+      expectedFee(grossInRupees, ctx) {
+        const rules = ctx?.rules;
+        let mdrPct = DEFAULT_MDR_PCT;
+        let gstPct = DEFAULT_GST_ON_FEE_PCT;
+        if (rules) {
+          mdrPct = rules.default.mdrPct;
+          gstPct = rules.default.gstPct;
+          if (ctx?.paymentMode && rules.byPaymentMode) {
+            const modeKey = Object.keys(rules.byPaymentMode).find(
+              (k) => k.toLowerCase() === ctx.paymentMode.toLowerCase()
+            );
+            if (modeKey) {
+              mdrPct = rules.byPaymentMode[modeKey].mdrPct;
+              gstPct = rules.byPaymentMode[modeKey].gstPct;
+            }
+          }
+          if (rules.byAmountTier) {
+            const tier = rules.byAmountTier.find(
+              (t) => grossInRupees >= t.minAmount && (t.maxAmount === void 0 || grossInRupees < t.maxAmount)
+            );
+            if (tier) {
+              mdrPct = tier.mdrPct;
+              gstPct = tier.gstPct;
+            }
+          }
+        }
+        const fee = +(grossInRupees * (mdrPct / 100)).toFixed(2);
+        const gst = +(fee * (gstPct / 100)).toFixed(2);
+        return { fee, gst, totalDeduction: +(fee + gst).toFixed(2) };
+      }
+      // fetchSettlements deliberately not implemented — V2 ticket.
+    };
+  }
+});
+
+// server/pgs/index.ts
+var pgs_exports = {};
+__export(pgs_exports, {
+  getActivePgNames: () => getActivePgNames,
+  getPgAdapter: () => getPgAdapter
+});
+function getPgAdapter(name) {
+  return REGISTRY[name];
+}
+function getActivePgNames() {
+  return Object.keys(REGISTRY);
+}
+var REGISTRY;
+var init_pgs = __esm({
+  "server/pgs/index.ts"() {
+    "use strict";
+    init_payu();
+    REGISTRY = {
+      payu: payuAdapter
+      // razorpay: razorpayAdapter,  ← uncomment when server/pgs/razorpay.ts lands
+      // cashfree: cashfreeAdapter,
+      // phonepe:  phonepeAdapter,
+    };
+  }
+});
+
+// server/recon/matcher.ts
+var matcher_exports = {};
+__export(matcher_exports, {
+  getOverdueOrders: () => getOverdueOrders,
+  matchPendingSettlements: () => matchPendingSettlements
+});
+import { and as and4, eq as eq7, sql as sql7 } from "drizzle-orm";
+async function matchPendingSettlements(opts) {
+  const { storeId, pgName = "payu", toleranceRupees = 1 } = opts;
+  const adapter = getPgAdapter(pgName);
+  if (!adapter) {
+    throw new Error(`No PG adapter registered for "${pgName}"`);
+  }
+  const activeCard = await storage.getActivePgRateCard(storeId, pgName);
+  const rules = activeCard?.rules;
+  const pending = await db.select().from(pgSettlements).where(
+    and4(
+      eq7(pgSettlements.storeId, storeId),
+      eq7(pgSettlements.pgName, pgName),
+      eq7(pgSettlements.status, "pending")
+    )
+  );
+  const result = {
+    scanned: pending.length,
+    matched: 0,
+    classified: { settled: 0, mismatch: 0 },
+    orphan: 0,
+    errors: []
+  };
+  for (const s of pending) {
+    try {
+      const found = await db.execute(sql7`
+        SELECT o.id, o.total_price, o.shopify_order_number
+        FROM orders o
+        CROSS JOIN LATERAL jsonb_array_elements(
+          COALESCE(o.raw_shopify_data->'note_attributes', '[]'::jsonb)
+        ) attr
+        WHERE attr->>'name' = 'PayU_txn_id'
+          AND attr->>'value' = ${s.pgPaymentId}
+          AND o.store_id = ${storeId}
+        LIMIT 1
+      `);
+      if (found.rows.length === 0) {
+        result.orphan++;
+        continue;
+      }
+      const order = found.rows[0];
+      const orderAmount = parseFloat(order.total_price);
+      const settledAmount = parseFloat(s.settledAmount);
+      const paymentMode = s.rawPayload?.["payment type"] ?? s.rawPayload?.["payment_type"] ?? void 0;
+      const expected = adapter.expectedFee(orderAmount, {
+        rules,
+        paymentMode
+      });
+      const expectedSettled = orderAmount - expected.totalDeduction;
+      const drift = settledAmount - expectedSettled;
+      const status = drift >= -toleranceRupees ? "settled" : "mismatch";
+      await db.update(pgSettlements).set({
+        status,
+        orderId: order.id,
+        orderAmount: orderAmount.toFixed(2),
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq7(pgSettlements.id, s.id));
+      result.matched++;
+      if (status === "settled") result.classified.settled++;
+      else result.classified.mismatch++;
+    } catch (err) {
+      result.errors.push({
+        pgPaymentId: s.pgPaymentId,
+        reason: err?.message ?? String(err)
+      });
+    }
+  }
+  return result;
+}
+async function getOverdueOrders(opts) {
+  const { storeId, graceDays = 3, limit = 200 } = opts;
+  const windowQuery = await db.execute(sql7`
+    SELECT
+      MIN(settled_at)::timestamptz AS min_settled,
+      MAX(settled_at)::timestamptz AS max_settled,
+      COUNT(*)::int AS total
+    FROM pg_settlements
+    WHERE store_id = ${storeId}
+      AND settled_at IS NOT NULL
+  `);
+  const winRow = windowQuery.rows[0];
+  if (!winRow || !winRow.min_settled || Number(winRow.total) === 0) {
+    return {
+      rows: [],
+      window: null,
+      windowNote: "No settlement data loaded yet. Upload a PayU settlement CSV to compute overdue orders."
+    };
+  }
+  const minSettled = new Date(winRow.min_settled);
+  const maxSettled = new Date(winRow.max_settled);
+  const cutoff = new Date(maxSettled.getTime() - graceDays * 864e5);
+  const windowStart = new Date(minSettled.getTime() - graceDays * 864e5);
+  const result = await db.execute(sql7`
+    SELECT
+      o.id,
+      o.shopify_order_number,
+      o.customer_email,
+      o.total_price,
+      o.shopify_created_at,
+      attr->>'value' AS payu_txn_id,
+      EXTRACT(EPOCH FROM (NOW() - o.shopify_created_at)) / 86400 AS age_days
+    FROM orders o
+    CROSS JOIN LATERAL jsonb_array_elements(
+      COALESCE(o.raw_shopify_data->'note_attributes', '[]'::jsonb)
+    ) attr
+    LEFT JOIN pg_settlements p
+      ON p.pg_name = 'payu'
+      AND p.store_id = o.store_id
+      AND p.pg_payment_id = attr->>'value'
+    WHERE attr->>'name' = 'PayU_txn_id'
+      AND o.store_id = ${storeId}
+      AND o.financial_status = 'paid'
+      AND o.shopify_created_at >= ${windowStart.toISOString()}
+      AND o.shopify_created_at < ${cutoff.toISOString()}
+      AND p.id IS NULL
+    ORDER BY o.shopify_created_at ASC
+    LIMIT ${limit}
+  `);
+  const rows = result.rows.map((r) => {
+    const row = r;
+    return {
+      id: row.id,
+      shopifyOrderNumber: row.shopify_order_number,
+      customerEmail: row.customer_email,
+      totalPrice: row.total_price,
+      shopifyCreatedAt: row.shopify_created_at,
+      payUTxnId: row.payu_txn_id,
+      ageDays: Math.floor(Number(row.age_days))
+    };
+  });
+  const fmt = (d) => d.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" });
+  const windowDays = Math.max(
+    1,
+    Math.round(
+      (maxSettled.getTime() - minSettled.getTime()) / 864e5
+    )
+  );
+  return {
+    rows,
+    window: {
+      fromDate: windowStart.toISOString(),
+      toDate: cutoff.toISOString()
+    },
+    windowNote: `Computed against orders from ${fmt(windowStart)} \u2013 ${fmt(cutoff)} (${windowDays} ${windowDays === 1 ? "day" : "days"} of settlement data loaded). Older orders aren't flagged \u2014 upload more CSVs to extend coverage.`
+  };
+}
+var init_matcher = __esm({
+  "server/recon/matcher.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_pgs();
+    init_storage();
+  }
+});
+
 // server/index.ts
 import "dotenv/config";
 import express3 from "express";
@@ -7711,7 +9517,7 @@ function shouldWebhookAdvance(current) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq7, or as or2, sql as sql6, desc as desc2, gte as gte2, lte as lte2, and as and4, asc as asc3 } from "drizzle-orm";
+import { eq as eq8, or as or2, sql as sql8, desc as desc3, gte as gte2, lte as lte2, and as and5, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -8655,74 +10461,8 @@ init_schema();
 init_encryption();
 import { ZodError } from "zod";
 init_resend();
+init_upload();
 import axios3 from "axios";
-
-// server/upload.ts
-import fs from "fs";
-import os from "os";
-import path from "path";
-import crypto4 from "crypto";
-import multer from "multer";
-var KYC_UPLOAD_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "orderflow-kyc") : path.resolve(import.meta.dirname, "..", "uploads", "kyc");
-try {
-  fs.mkdirSync(KYC_UPLOAD_DIR, { recursive: true });
-} catch (err) {
-  if (err?.code !== "EEXIST") {
-    console.warn(
-      `[kyc-upload] could not pre-create ${KYC_UPLOAD_DIR}: ${err?.message ?? err}`
-    );
-  }
-}
-var ALLOWED_EXTENSIONS = /* @__PURE__ */ new Set([".jpg", ".jpeg", ".png", ".pdf"]);
-var ALLOWED_MIME_TYPES = /* @__PURE__ */ new Set([
-  "image/jpeg",
-  "image/png",
-  "image/jpg",
-  "application/pdf"
-]);
-var storage2 = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, KYC_UPLOAD_DIR);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const userId = (req.params.id ?? "unknown").replace(/[^a-zA-Z0-9-]/g, "");
-    const token = crypto4.randomBytes(12).toString("hex");
-    cb(null, `${userId}-${token}${ext}`);
-  }
-});
-var kycUpload = multer({
-  storage: storage2,
-  limits: {
-    fileSize: 5 * 1024 * 1024,
-    // 5 MB — generous for a passport/Aadhaar scan.
-    files: 1
-  },
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
-      return cb(
-        new Error(
-          `Unsupported file extension (${ext}). Allowed: .jpg, .jpeg, .png, .pdf`
-        )
-      );
-    }
-    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
-      return cb(
-        new Error(
-          `Unsupported mime type (${file.mimetype}). Allowed: image/jpeg, image/png, application/pdf`
-        )
-      );
-    }
-    cb(null, true);
-  }
-});
-function resolveKycFilePath(filename) {
-  const resolved = path.resolve(KYC_UPLOAD_DIR, filename);
-  if (!resolved.startsWith(KYC_UPLOAD_DIR + path.sep)) return null;
-  if (!fs.existsSync(resolved)) return null;
-  return resolved;
-}
 
 // server/services/analytics.ts
 init_db();
@@ -9251,7 +10991,7 @@ async function resolveUserScrub(req) {
 async function registerRoutes(app2) {
   app2.get("/api/health", async (_req, res) => {
     try {
-      const r = await db.execute(sql6`SELECT 1 AS ok`);
+      const r = await db.execute(sql8`SELECT 1 AS ok`);
       const ok = (r.rows ?? r)[0]?.ok === 1;
       res.status(ok ? 200 : 503).json({
         status: ok ? "ok" : "degraded",
@@ -9447,7 +11187,7 @@ async function registerRoutes(app2) {
         console.warn("[Faster Webhook] Skipped \u2014 no cart_id found in payload");
         return res.status(422).json({ error: "Missing cart identifier" });
       }
-      const storeId = await storage.getPrimaryStoreId();
+      const storeId = await storage.getStoreIdForCheckoutUrl(normalized.checkoutUrl);
       const checkout = await storage.upsertAbandonedCheckout({
         storeId: storeId ?? void 0,
         externalId: normalized.externalId,
@@ -9674,8 +11414,8 @@ async function registerRoutes(app2) {
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      const agentFilter = authResult.assignedTo ? sql6`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql6``;
-      const storeFilter = authResult.storeId ? sql6`AND ${orders.storeId} = ${authResult.storeId}` : sql6``;
+      const agentFilter = authResult.assignedTo ? sql8`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql8``;
+      const storeFilter = authResult.storeId ? sql8`AND ${orders.storeId} = ${authResult.storeId}` : sql8``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -9691,7 +11431,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt
       }).from(orders).where(
-        sql6`(
+        sql8`(
           -- STRICT MODE: Only match Out for Delivery statuses
           -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
@@ -9710,7 +11450,7 @@ async function registerRoutes(app2) {
         AND ${orders.shipmentStatus} != 'IT'
         ${agentFilter}
         ${storeFilter}`
-      ).orderBy(desc2(orders.createdAt)).limit(100);
+      ).orderBy(desc3(orders.createdAt)).limit(100);
       res.json({ orders: result, total: result.length });
     } catch (error) {
       console.error("Error fetching OFD orders:", error);
@@ -10396,7 +12136,7 @@ async function registerRoutes(app2) {
       const [store] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10415,7 +12155,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10441,11 +12181,11 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide accessToken and/or adAccountsConfig." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
       const [updated] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.metaAccessToken,
         adAccountsConfig: updated?.metaAdAccountsConfig ?? []
@@ -10464,7 +12204,7 @@ async function registerRoutes(app2) {
       const [row] = await db.select({
         delhiveryApiToken: stores.delhiveryApiToken,
         delhiveryClientName: stores.delhiveryClientName
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!row) {
         return res.status(404).json({ error: "Store not found" });
       }
@@ -10483,7 +12223,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10499,13 +12239,13 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide apiToken and/or clientName." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
       const { invalidateDelhiveryClient: invalidateDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
       invalidateDelhiveryClient2(storeId);
       const [updated] = await db.select({
         delhiveryApiToken: stores.delhiveryApiToken,
         delhiveryClientName: stores.delhiveryClientName
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.delhiveryApiToken,
         clientName: updated?.delhiveryClientName ?? null
@@ -10552,7 +12292,7 @@ async function registerRoutes(app2) {
       const [row] = await db.select({
         resendApiKey: stores.resendApiKey,
         resendFromEmail: stores.resendFromEmail
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!row) {
         return res.status(404).json({ error: "Store not found" });
       }
@@ -10571,7 +12311,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10587,11 +12327,11 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide apiKey and/or fromEmail." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq7(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
       const [updated] = await db.select({
         resendApiKey: stores.resendApiKey,
         resendFromEmail: stores.resendFromEmail
-      }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.resendApiKey,
         fromEmail: updated?.resendFromEmail ?? null
@@ -10607,7 +12347,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10640,7 +12380,7 @@ async function registerRoutes(app2) {
       if (!adAccountId) {
         return res.status(400).json({ error: "adAccountId query param is required." });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -10716,7 +12456,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and4(eq7(webhooks.eventType, "order.created"), eq7(webhooks.isActive, true))
+        and5(eq8(webhooks.eventType, "order.created"), eq8(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -11671,7 +13411,7 @@ async function registerRoutes(app2) {
       }
       const refundAmount = refundTotal.toFixed(2);
       const orderNum = (order.shopifyOrderNumber || "").replace(/^#/, "") || "ORD";
-      const rand = crypto7.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
+      const rand = crypto8.randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
       const rmaNumber = `RMA-${orderNum}-${rand}`;
       const summaryReason = Array.from(new Set(reasons)).join("; ") || null;
       const created = await storage.createReturnWithItems(
@@ -11976,7 +13716,7 @@ async function registerRoutes(app2) {
       if (isAdmin(user)) {
         rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq7(userStores.storeId, stores.id)).where(eq7(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq8(userStores.storeId, stores.id)).where(eq8(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -12017,7 +13757,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq7(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq8(stores.storeUrl, normalizedUrl)).limit(1);
       if (existing) {
         return res.status(409).json({
           error: "A store with this URL is already connected.",
@@ -12106,7 +13846,7 @@ async function registerRoutes(app2) {
         return res.status(403).json({ error: "Only admins can update store details." });
       }
       const storeId = req.params.id;
-      const [existing] = await db.select().from(stores).where(eq7(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12151,7 +13891,7 @@ async function registerRoutes(app2) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
       }
-      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq7(stores.id, storeId)).returning({
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(stores.id, storeId)).returning({
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
@@ -12183,7 +13923,7 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq7(userStores.userId, targetId));
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq8(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
@@ -12224,7 +13964,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq7(userStores.userId, targetId));
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq8(userStores.userId, targetId));
       const currentSet = new Set(current.map((r) => r.storeId));
       const currentIds = Array.from(currentSet);
       const toInsert = requestedIds.filter((id) => !currentSet.has(id));
@@ -12240,9 +13980,9 @@ async function registerRoutes(app2) {
       }
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
-          and4(
-            eq7(userStores.userId, targetId),
-            or2(...toDelete.map((id) => eq7(userStores.storeId, id)))
+          and5(
+            eq8(userStores.userId, targetId),
+            or2(...toDelete.map((id) => eq8(userStores.storeId, id)))
           )
         );
       }
@@ -12532,40 +14272,40 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "User not found" });
       }
       console.log(`Starting cleanup for user ${userId} (${user.email})`);
-      await db.update(orders).set({ assignedTo: null }).where(eq7(orders.assignedTo, userId));
-      await db.update(orders).set({ confirmedBy: null }).where(eq7(orders.confirmedBy, userId));
-      await db.update(orders).set({ cancelledBy: null }).where(eq7(orders.cancelledBy, userId));
+      await db.update(orders).set({ assignedTo: null }).where(eq8(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq8(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq8(orders.cancelledBy, userId));
       console.log("  - Orders unassigned");
       await db.delete(orderAssignments).where(
-        or2(eq7(orderAssignments.userId, userId), eq7(orderAssignments.assignedBy, userId))
+        or2(eq8(orderAssignments.userId, userId), eq8(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
       await db.delete(teamMessages).where(
-        or2(eq7(teamMessages.fromUserId, userId), eq7(teamMessages.toUserId, userId))
+        or2(eq8(teamMessages.fromUserId, userId), eq8(teamMessages.toUserId, userId))
       );
       console.log("  - Team messages deleted");
-      await db.delete(leaveRequests).where(eq7(leaveRequests.userId, userId));
-      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq7(leaveRequests.reviewedBy, userId));
+      await db.delete(leaveRequests).where(eq8(leaveRequests.userId, userId));
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq8(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
-      await db.delete(notifications).where(eq7(notifications.userId, userId));
+      await db.delete(notifications).where(eq8(notifications.userId, userId));
       console.log("  - Notifications deleted");
-      await db.delete(attendance).where(eq7(attendance.userId, userId));
+      await db.delete(attendance).where(eq8(attendance.userId, userId));
       console.log("  - Attendance records deleted");
-      await db.delete(calls).where(eq7(calls.agentId, userId));
+      await db.delete(calls).where(eq8(calls.agentId, userId));
       console.log("  - Call records deleted");
-      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq7(orderStatusHistory.changedBy, userId));
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq8(orderStatusHistory.changedBy, userId));
       console.log("  - Order status history updated");
-      await db.update(invites).set({ invitedBy: null }).where(eq7(invites.invitedBy, userId));
+      await db.update(invites).set({ invitedBy: null }).where(eq8(invites.invitedBy, userId));
       console.log("  - Invites updated");
-      await db.update(ndrEvents).set({ actionBy: null }).where(eq7(ndrEvents.actionBy, userId));
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq8(ndrEvents.actionBy, userId));
       console.log("  - NDR events updated");
-      await db.update(courses).set({ authorId: null }).where(eq7(courses.authorId, userId));
+      await db.update(courses).set({ authorId: null }).where(eq8(courses.authorId, userId));
       console.log("  - Courses updated");
-      await db.update(resources).set({ authorId: null }).where(eq7(resources.authorId, userId));
+      await db.update(resources).set({ authorId: null }).where(eq8(resources.authorId, userId));
       console.log("  - Resources updated");
-      await db.delete(userLessonProgress).where(eq7(userLessonProgress.userId, userId));
+      await db.delete(userLessonProgress).where(eq8(userLessonProgress.userId, userId));
       console.log("  - User lesson progress deleted");
-      await db.delete(userOnboardingProgress).where(eq7(userOnboardingProgress.userId, userId));
+      await db.delete(userOnboardingProgress).where(eq8(userOnboardingProgress.userId, userId));
       console.log("  - User onboarding progress deleted");
       await storage.deleteUser(userId);
       console.log(`User ${userId} deleted successfully`);
@@ -12763,6 +14503,28 @@ async function registerRoutes(app2) {
       return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
     }
   });
+  app2.post("/api/users/:userId/payroll-email", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const admin = await storage.getUser(currentUserId);
+      if (!admin || admin.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { userId } = req.params;
+      const raw = typeof req.body?.payrollEmail === "string" ? req.body.payrollEmail.trim() : "";
+      if (raw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+        return res.status(400).json({ error: "Invalid email" });
+      }
+      const updated = await storage.setPayrollEmail(userId, raw || null);
+      if (!updated) return res.status(404).json({ error: "User not found" });
+      console.log(`[payroll-email] admin ${admin.email} set ${updated.email} \u2192 ${raw || "(cleared)"}`);
+      return res.json({ ok: true, userId, payrollEmail: raw || null });
+    } catch (err) {
+      console.error("[payroll-email] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
   app2.post("/api/attendance/:attendanceId/reactivate", async (req, res) => {
     try {
       const currentUserId = req.session?.userId;
@@ -12952,6 +14714,142 @@ async function registerRoutes(app2) {
     }
     return { ok: true };
   }
+  app2.get("/api/payroll-sync/status", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    const { isRazorpayPayrollConfigured: isRazorpayPayrollConfigured2, isDryRun: isDryRun2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    const { leaveTypesConfigured: leaveTypesConfigured2 } = await Promise.resolve().then(() => (init_mapping(), mapping_exports));
+    res.json({
+      configured: isRazorpayPayrollConfigured2(),
+      dryRun: isDryRun2(),
+      leaveTypesConfigured: leaveTypesConfigured2()
+    });
+  });
+  app2.get("/api/payroll-sync/preview", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const year = parseInt(String(req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const { previewSync: previewSync2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      return res.json(await previewSync2(year, month));
+    } catch (err) {
+      console.error("[payroll-sync/preview] error:", err);
+      return res.status(500).json({ error: "Preview failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.post("/api/payroll-sync/run", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const year = parseInt(String(req.body?.year ?? req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.body?.month ?? req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const triggeredBy = typeof req.body?.currentUserId === "string" && req.body.currentUserId || typeof req.query.currentUserId === "string" && req.query.currentUserId || void 0;
+      const { runSync: runSync2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      const report = await runSync2(year, month, triggeredBy || void 0);
+      console.log(
+        `[payroll-sync/run] ${report.mode} ${year}-${month} \u2014 ok=${report.totals.ok} failed=${report.totals.failed} skipped=${report.totals.skipped}`
+      );
+      return res.json(report);
+    } catch (err) {
+      console.error("[payroll-sync/run] error:", err);
+      return res.status(500).json({ error: "Sync failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.all("/api/cron/payroll-sync", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.PAYROLL_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or PAYROLL_CRON_SECRET)"
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-payroll-cron-secret"];
+    const vercelOk = typeof auth === "string" && vercelSecret !== void 0 && auth === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHeader === "string" && customSecret !== void 0 && customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1e3;
+    const istYesterday = new Date(Date.now() + IST_OFFSET_MS - 24 * 60 * 60 * 1e3);
+    const year = istYesterday.getUTCFullYear();
+    const month = istYesterday.getUTCMonth() + 1;
+    try {
+      const { runSync: runSync2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      const report = await runSync2(year, month);
+      console.log(
+        `[cron/payroll-sync] ${report.mode} ${year}-${String(month).padStart(2, "0")} \u2014 ok=${report.totals.ok} failed=${report.totals.failed} skipped=${report.totals.skipped}`
+      );
+      if (report.totals.failed > 0) {
+        const { sendPayrollAlertEmail: sendPayrollAlertEmail2 } = await Promise.resolve().then(() => (init_resend(), resend_exports));
+        await sendPayrollAlertEmail2({ year, month, mode: report.mode, totals: report.totals }).catch(
+          (e) => console.error("[cron/payroll-sync] alert email error:", e?.message ?? e)
+        );
+      }
+      return res.json({ ok: true, year, month, mode: report.mode, totals: report.totals });
+    } catch (err) {
+      console.error("[cron/payroll-sync] error:", err?.message ?? err);
+      try {
+        const { sendPayrollAlertEmail: sendPayrollAlertEmail2 } = await Promise.resolve().then(() => (init_resend(), resend_exports));
+        await sendPayrollAlertEmail2({ year, month, error: err?.message ?? String(err) });
+      } catch (e) {
+        console.error("[cron/payroll-sync] alert email error:", e?.message ?? e);
+      }
+      return res.status(500).json({ ok: false, error: "Payroll sync failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/payroll-sync/verify", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const year = parseInt(String(req.query.year ?? now.getFullYear()), 10);
+      const month = parseInt(String(req.query.month ?? now.getMonth() + 1), 10);
+      if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "year, month required (month 1-12)" });
+      }
+      const { reconcileMonth: reconcileMonth2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      return res.json(await reconcileMonth2(year, month));
+    } catch (err) {
+      console.error("[payroll-sync/verify] error:", err);
+      return res.status(500).json({ error: "Verify failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/payroll-sync/history", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { listSyncRuns: listSyncRuns2 } = await Promise.resolve().then(() => (init_sync(), sync_exports));
+      return res.json(await listSyncRuns2(20));
+    } catch (err) {
+      console.error("[payroll-sync/history] error:", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.post("/api/payroll-sync/provision", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const userId = String(req.body?.userId ?? "");
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      const { provisionUser: provisionUser2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
+      const result = await provisionUser2(userId);
+      console.log(`[payroll-sync/provision] ${result.mode} ${result.email} \u2014 ok=${result.ok} (${result.message})`);
+      return res.json(result);
+    } catch (err) {
+      console.error("[payroll-sync/provision] error:", err);
+      return res.status(500).json({ error: "Provision failed", detail: err?.message ?? String(err) });
+    }
+  });
   app2.get("/api/payroll/preview", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
@@ -13320,7 +15218,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.startBreak(attendance2.id);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq7(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq8(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error starting break:", error);
@@ -13345,7 +15243,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.endBreak(activeBreak.id, now);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq7(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq8(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error ending break:", error);
@@ -14429,7 +16327,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const token = crypto7.randomBytes(32).toString("hex");
+      const token = crypto8.randomBytes(32).toString("hex");
       const expiresAt = /* @__PURE__ */ new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       const existingInvite = await storage.getInviteByEmail(validatedData.email);
@@ -15092,7 +16990,7 @@ async function registerRoutes(app2) {
       const endDateParsed = endDate && typeof endDate === "string" && endDate.trim() ? new Date(endDate) : null;
       const conditions = [];
       if (req.storeScope?.storeId) {
-        conditions.push(eq7(orders.storeId, req.storeScope.storeId));
+        conditions.push(eq8(orders.storeId, req.storeScope.storeId));
       }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte2(orders.createdAt, startDateParsed));
@@ -15111,7 +17009,7 @@ async function registerRoutes(app2) {
         createdAt: orders.createdAt,
         fulfillmentStatus: orders.fulfillmentStatus
       }).from(orders);
-      const allOrders = conditions.length > 0 ? await baseSelect.where(and4(...conditions)) : await baseSelect;
+      const allOrders = conditions.length > 0 ? await baseSelect.where(and5(...conditions)) : await baseSelect;
       const shippedOrders = allOrders.filter(
         (o) => o.fulfillmentStatus === "fulfilled" || o.fulfillmentStatus === "partial" || o.shipmentStatus
       );
@@ -15180,7 +17078,7 @@ async function registerRoutes(app2) {
         }
       });
       const agentIds = Object.keys(agentCounts);
-      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql6`${users.id} = ANY(${agentIds})`) : [];
+      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql8`${users.id} = ANY(${agentIds})`) : [];
       const agentNameMap = new Map(agentUsers.map((u) => [u.id, u.name]));
       const topAgents = Object.entries(agentCounts).map(([agentId, count2]) => ({
         agent_id: agentId,
@@ -15238,7 +17136,7 @@ async function registerRoutes(app2) {
   checkDueFollowups();
   app2.get("/api/webhooks-config", async (_req, res) => {
     try {
-      const allWebhooks = await db.select().from(webhooks).orderBy(desc2(webhooks.createdAt));
+      const allWebhooks = await db.select().from(webhooks).orderBy(desc3(webhooks.createdAt));
       res.json(allWebhooks);
     } catch (error) {
       console.error("Error fetching webhooks:", error);
@@ -15262,7 +17160,7 @@ async function registerRoutes(app2) {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
-      await db.delete(webhooks).where(eq7(webhooks.id, id));
+      await db.delete(webhooks).where(eq8(webhooks.id, id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting webhook:", error);
@@ -15327,6 +17225,996 @@ TeleCRM: ${incomingNotes.trim()}`;
     } catch (err) {
       console.error("Error fetching webhook logs:", err);
       res.status(500).json({ error: "Failed to fetch webhook logs" });
+    }
+  });
+  const { reconCsvUpload: reconCsvUpload2 } = await Promise.resolve().then(() => (init_upload(), upload_exports));
+  const crypto8 = await import("crypto");
+  app2.post(
+    "/api/recon/upload",
+    reconCsvUpload2.single("file"),
+    async (req, res) => {
+      try {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") {
+          return res.status(403).json({ error: "Admin only" });
+        }
+        const { getPgAdapter: getPgAdapter2, getActivePgNames: getActivePgNames2 } = await Promise.resolve().then(() => (init_pgs(), pgs_exports));
+        const { PG_NAMES: PG_NAMES2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+        const { matchPendingSettlements: matchPendingSettlements2 } = await Promise.resolve().then(() => (init_matcher(), matcher_exports));
+        let csv;
+        let fileName;
+        if (req.file) {
+          csv = req.file.buffer.toString("utf8");
+          fileName = req.file.originalname;
+        } else {
+          csv = req.body?.csv ?? void 0;
+          fileName = req.body?.fileName;
+        }
+        const pgName = req.body?.pgName ?? "payu";
+        const storeIdFromBody = req.body?.storeId;
+        const autoMatch = req.body?.autoMatch !== "false";
+        if (!csv || typeof csv !== "string" || csv.trim().length === 0) {
+          return res.status(400).json({
+            error: "Missing CSV. Use multipart/form-data with field `file`, or POST a JSON body with `csv`."
+          });
+        }
+        if (!PG_NAMES2.includes(pgName)) {
+          return res.status(400).json({
+            error: `Unknown pgName. Expected one of: ${PG_NAMES2.join(", ")}`
+          });
+        }
+        const adapter = getPgAdapter2(pgName);
+        if (!adapter) {
+          return res.status(400).json({
+            error: `No adapter registered for "${pgName}". Active: ${getActivePgNames2().join(
+              ", "
+            )}`
+          });
+        }
+        const storeId = storeIdFromBody ?? req.storeScope?.storeId ?? null;
+        const fileHash = crypto8.createHash("sha256").update(csv, "utf8").digest("hex");
+        const fileSize = Buffer.byteLength(csv, "utf8");
+        const force = req.body?.force === "true" || req.body?.force === true;
+        const prior = await storage.findReconUploadByHash(
+          storeId,
+          pgName,
+          fileHash
+        );
+        if (prior && !force) {
+          await storage.createReconUpload({
+            storeId,
+            pgName,
+            fileName: fileName ?? null,
+            fileHash,
+            fileSize,
+            uploadedBy: currentUserId,
+            parsedRows: 0,
+            rowsInserted: 0,
+            rowsUpdated: 0,
+            rowsSkipped: 0,
+            errorCount: 0,
+            status: "duplicate",
+            notes: `Same bytes-for-bytes file as upload ${prior.id} on ${prior.createdAt}. Skipped \u2014 POST with force=true to re-process.`
+          });
+          return res.status(409).json({
+            ok: false,
+            duplicate: true,
+            error: "This exact file was already uploaded.",
+            priorUpload: {
+              id: prior.id,
+              fileName: prior.fileName,
+              uploadedAt: prior.createdAt,
+              rowsInserted: prior.rowsInserted,
+              rowsUpdated: prior.rowsUpdated
+            },
+            hint: "Re-submit with force=true if you genuinely want to re-process."
+          });
+        }
+        const { rows, skipped, errors } = await adapter.parseSettlementCsv(
+          csv,
+          { storeId, sourceFile: fileName }
+        );
+        const incomingIds = rows.map((r) => r.pgPaymentId);
+        const existing = await storage.getExistingPgPaymentIds(
+          storeId,
+          pgName,
+          incomingIds
+        );
+        const rowsUpdated = rows.filter(
+          (r) => existing.has(r.pgPaymentId)
+        ).length;
+        const rowsInserted = rows.length - rowsUpdated;
+        const { processed } = await storage.bulkUpsertPgSettlements(rows);
+        let matchResult = null;
+        if (autoMatch && storeId) {
+          try {
+            matchResult = await matchPendingSettlements2({
+              storeId,
+              pgName
+            });
+          } catch (matchErr) {
+            console.error("[recon/upload] auto-match failed:", matchErr);
+          }
+        }
+        const auditStatus = errors.length === 0 ? "success" : rows.length > 0 ? "partial" : "error";
+        await storage.createReconUpload({
+          storeId,
+          pgName,
+          fileName: fileName ?? null,
+          fileHash,
+          fileSize,
+          uploadedBy: currentUserId,
+          parsedRows: rows.length,
+          rowsInserted,
+          rowsUpdated,
+          rowsSkipped: skipped,
+          errorCount: errors.length,
+          autoMatched: matchResult ?? null,
+          status: auditStatus,
+          notes: force && prior ? `Force re-processed (prior upload: ${prior.id})` : null
+        });
+        return res.json({
+          ok: true,
+          pgName,
+          storeId,
+          fileName: fileName ?? null,
+          fileHash,
+          parsedRows: rows.length,
+          rowsInserted,
+          rowsUpdated,
+          processed,
+          skipped,
+          errorCount: errors.length,
+          errors: errors.slice(0, 5),
+          autoMatched: matchResult
+        });
+      } catch (err) {
+        console.error("[recon/upload] error:", err);
+        return res.status(500).json({
+          error: "Upload failed",
+          detail: err?.message ?? String(err)
+        });
+      }
+    }
+  );
+  app2.get("/api/recon/settlements", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { PG_SETTLEMENT_STATUSES: PG_SETTLEMENT_STATUSES2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const storeId = req.query.storeId ?? req.storeScope?.storeId ?? void 0;
+      const statusRaw = req.query.status;
+      const status = statusRaw ? statusRaw.split(",").map((s) => s.trim()).filter(
+        (s) => PG_SETTLEMENT_STATUSES2.includes(s)
+      ) : void 0;
+      const page = Number(req.query.page ?? 1);
+      const pageSize = Number(req.query.pageSize ?? 50);
+      const q = req.query.q;
+      const fromDate = req.query.fromDate ? new Date(req.query.fromDate) : void 0;
+      const toDate = req.query.toDate ? new Date(req.query.toDate) : void 0;
+      const result = await storage.listPgSettlements({
+        storeId,
+        status,
+        page,
+        pageSize,
+        q,
+        fromDate,
+        toDate
+      });
+      return res.json(result);
+    } catch (err) {
+      console.error("[recon/settlements] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err)
+      });
+    }
+  });
+  app2.post("/api/recon/match", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { matchPendingSettlements: matchPendingSettlements2 } = await Promise.resolve().then(() => (init_matcher(), matcher_exports));
+      const storeId = req.body?.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId (no active store scope)" });
+      }
+      const result = await matchPendingSettlements2({
+        storeId,
+        pgName: req.body?.pgName ?? "payu",
+        toleranceRupees: req.body?.toleranceRupees
+      });
+      return res.json(result);
+    } catch (err) {
+      console.error("[recon/match] error:", err);
+      return res.status(500).json({ error: "Match failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/recon/overdue", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const { getOverdueOrders: getOverdueOrders2 } = await Promise.resolve().then(() => (init_matcher(), matcher_exports));
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId (no active store scope)" });
+      }
+      const graceDays = req.query.graceDays ? Number(req.query.graceDays) : 3;
+      const limit = req.query.limit ? Number(req.query.limit) : 200;
+      const result = await getOverdueOrders2({ storeId, graceDays, limit });
+      return res.json({
+        rows: result.rows,
+        total: result.rows.length,
+        graceDays,
+        window: result.window,
+        windowNote: result.windowNote
+      });
+    } catch (err) {
+      console.error("[recon/overdue] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err)
+      });
+    }
+  });
+  app2.post("/api/recon/send-digest", async (req, res) => {
+    try {
+      const cronSecret = req.headers["x-recon-cron-secret"];
+      const isCron = process.env.RECON_CRON_SECRET && typeof cronSecret === "string" && cronSecret === process.env.RECON_CRON_SECRET;
+      let calledByEmail = null;
+      let isAdmin2 = false;
+      if (!isCron) {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+        calledByEmail = user.email;
+        isAdmin2 = true;
+      }
+      const storeId = req.body?.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const digestType = req.body?.digestType === "bi-weekly" ? "bi-weekly" : "3-day";
+      const isTest = req.body?.test === true || req.body?.test === "true";
+      let recipients;
+      if (isTest && calledByEmail) {
+        recipients = [calledByEmail];
+      } else {
+        const allUsers = await storage.listUsers();
+        recipients = allUsers.filter((u) => u.role === "admin" && u.isActive).map((u) => u.email).filter((e) => !!e);
+      }
+      if (recipients.length === 0) {
+        return res.status(400).json({ error: "No recipients found" });
+      }
+      const { getOverdueOrders: getOverdueOrders2 } = await Promise.resolve().then(() => (init_matcher(), matcher_exports));
+      const counts = await storage.getPgSettlementStatusCounts(storeId);
+      const overdueResult = await getOverdueOrders2({
+        storeId,
+        graceDays: 3,
+        limit: 100
+      });
+      const { db: db_local } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { stores: stores_local } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const { eq: eq_local } = await import("drizzle-orm");
+      const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
+      const storeName = store?.storeName ?? "Your store";
+      const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { eq: eq9, and: and6, sql: sql9, inArray: inArray2 } = await import("drizzle-orm");
+      const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const mismatchSettlements = await db2.select({
+        id: pgSettlements2.id,
+        orderId: pgSettlements2.orderId,
+        orderAmount: pgSettlements2.orderAmount,
+        settledAmount: pgSettlements2.settledAmount,
+        pgPaymentId: pgSettlements2.pgPaymentId
+      }).from(pgSettlements2).where(
+        and6(
+          eq9(pgSettlements2.storeId, storeId),
+          eq9(pgSettlements2.status, "mismatch")
+        )
+      ).orderBy(sql9`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
+      const mismatchOrderIds = mismatchSettlements.map((s) => s.orderId).filter((id) => !!id);
+      const mismatchOrders = mismatchOrderIds.length > 0 ? await db2.select({
+        id: orders2.id,
+        shopifyOrderNumber: orders2.shopifyOrderNumber,
+        customerEmail: orders2.customerEmail
+      }).from(orders2).where(inArray2(orders2.id, mismatchOrderIds)) : [];
+      const orderById = new Map(mismatchOrders.map((o) => [o.id, o]));
+      const mask = (e) => {
+        if (!e) return "\u2014";
+        const [l, d] = e.split("@");
+        return d ? l.slice(0, 3) + "***@" + d : "***";
+      };
+      const fmtINR = (n) => "\u20B9" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const topFlagged = [
+        ...overdueResult.rows.slice(0, 7).map((o) => ({
+          shopifyOrderNumber: o.shopifyOrderNumber,
+          customerEmailMasked: mask(o.customerEmail),
+          amount: fmtINR(parseFloat(o.totalPrice)),
+          ageDays: o.ageDays,
+          reason: "overdue"
+        })),
+        ...mismatchSettlements.slice(0, 3).map((s) => {
+          const o = s.orderId ? orderById.get(s.orderId) : null;
+          return {
+            shopifyOrderNumber: o?.shopifyOrderNumber ?? s.pgPaymentId,
+            customerEmailMasked: mask(o?.customerEmail ?? null),
+            amount: fmtINR(parseFloat(s.orderAmount ?? "0")),
+            ageDays: 0,
+            reason: "mismatch"
+          };
+        })
+      ].slice(0, 10);
+      const mismatchDriftSum = mismatchSettlements.reduce((s, x) => {
+        const order = parseFloat(x.orderAmount ?? "0");
+        const settled = parseFloat(x.settledAmount);
+        return s + Math.max(0, order - settled);
+      }, 0);
+      const overdueAmountSum = overdueResult.rows.reduce(
+        (s, x) => s + parseFloat(x.totalPrice),
+        0
+      );
+      const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
+      const settledSum = await db2.select({
+        c: sql9`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
+      }).from(pgSettlements2).where(
+        and6(
+          eq9(pgSettlements2.storeId, storeId),
+          eq9(pgSettlements2.status, "settled")
+        )
+      );
+      const totalSettledAmount = fmtINR(Number(settledSum[0]?.c ?? 0));
+      const windowFrom = overdueResult.window ? new Date(overdueResult.window.fromDate).toLocaleDateString("en-IN", { month: "short", day: "numeric" }) : "\u2014";
+      const windowTo = overdueResult.window ? new Date(overdueResult.window.toDate).toLocaleDateString("en-IN", { month: "short", day: "numeric" }) : "\u2014";
+      const { sendReconDigestEmail: sendReconDigestEmail2 } = await Promise.resolve().then(() => (init_resend(), resend_exports));
+      const result = await sendReconDigestEmail2({
+        toEmails: recipients,
+        storeName,
+        digestType,
+        totalSettled: counts.settled,
+        totalSettledAmount,
+        totalFlagged: counts.mismatch + overdueResult.rows.length,
+        totalFlaggedAmount,
+        overdueCount: overdueResult.rows.length,
+        mismatchCount: counts.mismatch,
+        topFlagged,
+        windowFrom,
+        windowTo
+      });
+      return res.json({
+        ok: true,
+        sent: true,
+        digestType,
+        recipientCount: recipients.length,
+        recipients: isTest ? recipients : recipients.length,
+        // hide list when cron
+        resendId: result?.id ?? null,
+        isTest
+      });
+    } catch (err) {
+      console.error("[recon/send-digest] error:", err);
+      return res.status(500).json({
+        error: "Send failed",
+        detail: err?.message ?? String(err)
+      });
+    }
+  });
+  app2.get("/api/recon/export", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      const { PG_SETTLEMENT_STATUSES: PG_SETTLEMENT_STATUSES2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const statusRaw = req.query.status;
+      const status = statusRaw ? statusRaw.split(",").map((s) => s.trim()).filter(
+        (s) => PG_SETTLEMENT_STATUSES2.includes(s)
+      ) : void 0;
+      const q = req.query.q;
+      const fromDate = req.query.fromDate ? new Date(req.query.fromDate) : void 0;
+      const toDate = req.query.toDate ? new Date(req.query.toDate) : void 0;
+      const { rows } = await storage.listPgSettlements({
+        storeId,
+        status,
+        q,
+        fromDate,
+        toDate,
+        page: 1,
+        pageSize: 500
+        // listPgSettlements caps at 500 per page
+      });
+      const allRows = [...rows];
+      let page = 2;
+      while (allRows.length < 5e4 && rows.length === 500) {
+        const next = await storage.listPgSettlements({
+          storeId,
+          status,
+          q,
+          fromDate,
+          toDate,
+          page,
+          pageSize: 500
+        });
+        if (next.rows.length === 0) break;
+        allRows.push(...next.rows);
+        page++;
+        if (next.rows.length < 500) break;
+      }
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        const s = String(v);
+        if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+          return `"${s.replace(/"/g, '""')}"`;
+        }
+        return s;
+      };
+      const headers = [
+        "Settlement Date",
+        "Transaction Date",
+        "PG",
+        "PayU ID (mihpayid)",
+        "Merchant Txn ID",
+        "Shopify Order ID",
+        "Shopify Order Amount",
+        "Settled Amount",
+        "Effective Fee",
+        "Effective Fee %",
+        "UTR",
+        "Status",
+        "Source File"
+      ];
+      const lines = [headers.join(",")];
+      for (const r of allRows) {
+        const order = r.orderAmount ? parseFloat(r.orderAmount) : null;
+        const settled = parseFloat(r.settledAmount);
+        const gross = r.grossAmount ? parseFloat(r.grossAmount) : order;
+        const effFee = gross !== null && gross > settled ? +(gross - settled).toFixed(2) : 0;
+        const effPct = gross && gross > 0 ? +(effFee / gross * 100).toFixed(2) : null;
+        lines.push(
+          [
+            r.settledAt,
+            r.pgTransactionAt,
+            r.pgName,
+            r.pgPaymentId,
+            r.pgOrderId,
+            r.orderId,
+            r.orderAmount,
+            r.settledAmount,
+            effFee.toFixed(2),
+            effPct !== null ? effPct.toFixed(2) : "",
+            r.utrNumber,
+            r.status,
+            r.sourceFile
+          ].map(esc).join(",")
+        );
+      }
+      const fileName = `recon-export-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(lines.join("\n"));
+    } catch (err) {
+      console.error("[recon/export] error:", err);
+      return res.status(500).json({ error: "Export failed", detail: err?.message });
+    }
+  });
+  app2.post("/api/recon/fetch-from-shopify", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      const storeId = req.body?.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const maxToProcess = Math.min(25, Math.max(1, Number(req.body?.limit ?? 25)));
+      const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { eq: eq9, and: and6, isNull: isNull2, sql: sqlT } = await import("drizzle-orm");
+      const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const orphans = await db2.select({
+        id: pgSettlements2.id,
+        pgPaymentId: pgSettlements2.pgPaymentId,
+        pgTransactionAt: pgSettlements2.pgTransactionAt
+      }).from(pgSettlements2).where(
+        and6(
+          eq9(pgSettlements2.storeId, storeId),
+          eq9(pgSettlements2.pgName, "payu"),
+          eq9(pgSettlements2.status, "pending"),
+          isNull2(pgSettlements2.orderId),
+          sqlT`${pgSettlements2.pgTransactionAt} IS NOT NULL`
+        )
+      ).limit(maxToProcess);
+      if (orphans.length === 0) {
+        return res.json({
+          ok: true,
+          orphansFound: 0,
+          message: "No orphan settlements to fetch."
+        });
+      }
+      const { getLegacyStoreShopifyClient: getLegacyStoreShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const shopify = await getLegacyStoreShopifyClient2();
+      let fetched = 0;
+      let inserted = 0;
+      let stillMissing = 0;
+      const samples = [];
+      const windows = [];
+      for (const o of orphans) {
+        const t = new Date(o.pgTransactionAt);
+        const from = new Date(t.getTime() - 2 * 864e5);
+        const to = new Date(t.getTime() + 2 * 864e5);
+        const existing = windows.find(
+          (w) => Math.abs(w.from.getTime() - from.getTime()) < 864e5
+        );
+        if (existing) {
+          existing.pgPaymentIds.add(o.pgPaymentId);
+          existing.orphanIds.set(o.pgPaymentId, o.id);
+        } else {
+          const m = /* @__PURE__ */ new Map();
+          m.set(o.pgPaymentId, o.id);
+          windows.push({
+            from,
+            to,
+            pgPaymentIds: /* @__PURE__ */ new Set([o.pgPaymentId]),
+            orphanIds: m
+          });
+        }
+      }
+      for (const w of windows) {
+        try {
+          const query = `
+            query OrdersInWindow($q: String!) {
+              orders(first: 250, query: $q) {
+                edges {
+                  node {
+                    id
+                    legacyResourceId
+                    name
+                    email
+                    totalPriceSet { shopMoney { amount } }
+                    createdAt
+                    customAttributes { key value }
+                  }
+                }
+              }
+            }
+          `;
+          const queryStr = `created_at:>=${w.from.toISOString().slice(0, 10)} created_at:<=${w.to.toISOString().slice(0, 10)} financial_status:paid`;
+          const data = await shopify.graphqlRequest(query, { q: queryStr });
+          const candidates = data?.orders?.edges ?? [];
+          fetched += candidates.length;
+          for (const edge of candidates) {
+            const o = edge.node;
+            const attrs = o.customAttributes ?? [];
+            const payuAttr = attrs.find((a) => a.key === "PayU_txn_id");
+            if (!payuAttr) continue;
+            const matchingOrphanId = w.orphanIds.get(payuAttr.value);
+            if (!matchingOrphanId) continue;
+            const orderLegacyId = String(o.legacyResourceId);
+            const existing = await db2.select({ id: orders2.id }).from(orders2).where(
+              and6(
+                eq9(orders2.storeId, storeId),
+                eq9(orders2.shopifyOrderId, orderLegacyId)
+              )
+            ).limit(1);
+            let localOrderId;
+            if (existing.length > 0) {
+              localOrderId = existing[0].id;
+            } else {
+              const [created] = await db2.insert(orders2).values({
+                storeId,
+                shopifyOrderId: orderLegacyId,
+                shopifyOrderNumber: o.name?.replace("#", "") ?? orderLegacyId,
+                customerName: o.email ?? "(unknown)",
+                customerPhone: "",
+                customerEmail: o.email ?? null,
+                paymentMethod: "PayU",
+                totalPrice: o.totalPriceSet?.shopMoney?.amount ?? "0",
+                subtotal: o.totalPriceSet?.shopMoney?.amount ?? "0",
+                shopifyCreatedAt: new Date(o.createdAt),
+                shopifyUpdatedAt: new Date(o.createdAt),
+                rawShopifyData: {
+                  note_attributes: attrs.map((a) => ({ name: a.key, value: a.value })),
+                  auto_fetched: true
+                },
+                financialStatus: "paid",
+                status: "pending",
+                callStatus: "Pending"
+              }).returning({ id: orders2.id });
+              localOrderId = created.id;
+              inserted++;
+            }
+            await db2.update(pgSettlements2).set({
+              orderId: localOrderId,
+              orderAmount: o.totalPriceSet?.shopMoney?.amount ?? null,
+              updatedAt: /* @__PURE__ */ new Date()
+            }).where(eq9(pgSettlements2.id, matchingOrphanId));
+            samples.push({
+              pgPaymentId: payuAttr.value,
+              found: true,
+              orderNum: o.name
+            });
+            w.pgPaymentIds.delete(payuAttr.value);
+            w.orphanIds.delete(payuAttr.value);
+          }
+        } catch (winErr) {
+          console.error("[recon/fetch-from-shopify] window failed:", winErr?.message);
+        }
+        w.pgPaymentIds.forEach((id) => {
+          stillMissing++;
+          samples.push({ pgPaymentId: id, found: false });
+        });
+      }
+      const { matchPendingSettlements: matchPendingSettlements2 } = await Promise.resolve().then(() => (init_matcher(), matcher_exports));
+      let matchResult = null;
+      try {
+        matchResult = await matchPendingSettlements2({
+          storeId,
+          pgName: "payu"
+        });
+      } catch (matchErr) {
+        console.error("[recon/fetch-from-shopify] re-match failed:", matchErr);
+      }
+      return res.json({
+        ok: true,
+        orphansFound: orphans.length,
+        shopifyOrdersFetched: fetched,
+        ordersInserted: inserted,
+        stillMissing,
+        rematched: matchResult,
+        samples: samples.slice(0, 10)
+      });
+    } catch (err) {
+      console.error("[recon/fetch-from-shopify] error:", err);
+      return res.status(500).json({ error: "Fetch failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/recon/rate-cards", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const pgName = req.query.pgName;
+      const rows = await storage.listPgRateCards(storeId, pgName);
+      const active = await storage.getActivePgRateCard(storeId, pgName ?? "payu");
+      return res.json({ rows, activeId: active?.id ?? null });
+    } catch (err) {
+      console.error("[recon/rate-cards GET]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+  app2.post("/api/recon/rate-cards", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      const storeId = req.body?.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const { name, pgName = "payu", rules, isActive = true, validFrom, validTo, notes } = req.body ?? {};
+      if (!name || !rules?.default) {
+        return res.status(400).json({
+          error: "Missing required fields. Need: name, rules.default {mdrPct, gstPct}"
+        });
+      }
+      const safeRules = {
+        default: rules.default,
+        byPaymentMode: rules.byPaymentMode ?? {},
+        byAmountTier: rules.byAmountTier ?? [],
+        ...notes || rules.notes ? { notes: notes ?? rules.notes } : {}
+      };
+      const card = await storage.upsertPgRateCard({
+        storeId,
+        pgName,
+        name,
+        rules: safeRules,
+        isActive,
+        validFrom: validFrom ? new Date(validFrom) : null,
+        validTo: validTo ? new Date(validTo) : null,
+        createdBy: currentUserId
+      });
+      return res.json({ ok: true, card });
+    } catch (err) {
+      console.error("[recon/rate-cards POST]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+  app2.delete("/api/recon/rate-cards/:id", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      await storage.deletePgRateCard(req.params.id);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("[recon/rate-cards DELETE]", err);
+      return res.status(500).json({ error: "Failed", detail: err?.message });
+    }
+  });
+  app2.post(
+    "/api/recon/rate-cards/upload",
+    reconCsvUpload2.single("file"),
+    async (req, res) => {
+      try {
+        const currentUserId = req.session?.userId;
+        if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+        const user = await storage.getUser(currentUserId);
+        if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+        const storeId = req.body?.storeId ?? req.storeScope?.storeId;
+        if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+        const pgName = req.body?.pgName ?? "payu";
+        const cardName = req.body?.name ?? `${pgName} rates - ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`;
+        if (!req.file) return res.status(400).json({ error: "Missing file" });
+        const csv = req.file.buffer.toString("utf8");
+        const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        if (lines.length < 2) return res.status(400).json({ error: "CSV needs a header + at least one data row" });
+        const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+        const colIdx = (name) => headers.indexOf(name);
+        const modeIdx = colIdx("payment_mode");
+        const mdrIdx = colIdx("mdr_pct");
+        const gstIdx = colIdx("gst_pct");
+        if (modeIdx === -1 || mdrIdx === -1 || gstIdx === -1) {
+          return res.status(400).json({
+            error: "CSV missing required columns. Need: payment_mode, mdr_pct, gst_pct (optional: min_amount, max_amount, notes)"
+          });
+        }
+        const minAmtIdx = colIdx("min_amount");
+        const maxAmtIdx = colIdx("max_amount");
+        const notesIdx = colIdx("notes");
+        const rules = {
+          default: { mdrPct: 1.2, gstPct: 18 },
+          byPaymentMode: {},
+          byAmountTier: []
+        };
+        const notesAcc = [];
+        for (let i = 1; i < lines.length; i++) {
+          const f = lines[i].split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
+          const mode = (f[modeIdx] ?? "").toLowerCase();
+          const mdr = parseFloat(f[mdrIdx]);
+          const gst = parseFloat(f[gstIdx]);
+          if (!Number.isFinite(mdr) || !Number.isFinite(gst)) continue;
+          const minAmt = minAmtIdx >= 0 ? parseFloat(f[minAmtIdx]) : NaN;
+          const maxAmt = maxAmtIdx >= 0 ? parseFloat(f[maxAmtIdx]) : NaN;
+          const note = notesIdx >= 0 ? f[notesIdx] : "";
+          if (mode === "default" || mode === "") {
+            rules.default = { mdrPct: mdr, gstPct: gst };
+          } else if (Number.isFinite(minAmt) || Number.isFinite(maxAmt)) {
+            rules.byAmountTier.push({
+              minAmount: Number.isFinite(minAmt) ? minAmt : 0,
+              ...Number.isFinite(maxAmt) ? { maxAmount: maxAmt } : {},
+              mdrPct: mdr,
+              gstPct: gst
+            });
+          } else {
+            rules.byPaymentMode[f[modeIdx]] = { mdrPct: mdr, gstPct: gst };
+          }
+          if (note) notesAcc.push(`${f[modeIdx]}: ${note}`);
+        }
+        if (notesAcc.length > 0) rules.notes = notesAcc.join(" | ");
+        const card = await storage.upsertPgRateCard({
+          storeId,
+          pgName,
+          name: cardName,
+          rules,
+          isActive: true,
+          createdBy: currentUserId,
+          sourceFile: req.file.originalname
+        });
+        return res.json({ ok: true, card });
+      } catch (err) {
+        console.error("[recon/rate-cards/upload]", err);
+        return res.status(500).json({ error: "Upload failed", detail: err?.message });
+      }
+    }
+  );
+  app2.get("/api/recon/recent-uploads", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) return res.status(400).json({ error: "Missing storeId" });
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
+      const rows = await storage.listRecentReconUploads(storeId, limit);
+      return res.json({ rows, total: rows.length });
+    } catch (err) {
+      console.error("[recon/recent-uploads] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err)
+      });
+    }
+  });
+  app2.get("/api/recon/trend", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
+      const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { sql: sql9 } = await import("drizzle-orm");
+      const result = await db2.execute(sql9`
+        SELECT
+          (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+          COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
+          COUNT(*) AS count
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND settled_at IS NOT NULL
+          AND settled_at >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY day
+        ORDER BY day ASC
+      `);
+      const rows = result.rows.map((r) => ({
+        date: r.day,
+        settled: Number(r.settled),
+        count: Number(r.count)
+      }));
+      return res.json({ rows, days });
+    } catch (err) {
+      console.error("[recon/trend] error:", err);
+      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/recon/by-utr", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
+      const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { sql: sql9 } = await import("drizzle-orm");
+      const result = await db2.execute(sql9`
+        SELECT
+          utr_number AS utr,
+          (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
+          COUNT(*) AS order_count,
+          COALESCE(SUM(CAST(gross_amount AS NUMERIC)), 0) AS gross,
+          COALESCE(SUM(CAST(fee_deducted AS NUMERIC)), 0) AS fee,
+          COALESCE(SUM(CAST(tax_on_fee AS NUMERIC)), 0) AS gst,
+          COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS net,
+          COUNT(*) FILTER (WHERE status = 'mismatch') AS mismatch_count
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND utr_number IS NOT NULL
+          AND settled_at >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY utr, settlement_date
+        ORDER BY settlement_date DESC, utr DESC
+        LIMIT 200
+      `);
+      const rows = result.rows.map((r) => ({
+        utr: r.utr,
+        settlementDate: r.settlement_date,
+        orderCount: Number(r.order_count),
+        gross: Number(r.gross),
+        fee: Number(r.fee),
+        gst: Number(r.gst),
+        net: Number(r.net),
+        mismatchCount: Number(r.mismatch_count)
+      }));
+      return res.json({ rows, days });
+    } catch (err) {
+      console.error("[recon/by-utr] error:", err);
+      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/recon/sparklines", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId" });
+      }
+      const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
+      const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      const { sql: sql9 } = await import("drizzle-orm");
+      const result = await db2.execute(sql9`
+        SELECT
+          (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
+          status,
+          COUNT(*) AS c
+        FROM pg_settlements
+        WHERE store_id = ${storeId}
+          AND COALESCE(settled_at, created_at) >= (NOW() AT TIME ZONE 'Asia/Kolkata' - (${days}::int * INTERVAL '1 day'))
+        GROUP BY day, status
+        ORDER BY day ASC
+      `);
+      const byStatus = {
+        settled: [],
+        pending: [],
+        mismatch: [],
+        overdue: []
+      };
+      for (const r of result.rows) {
+        const row = r;
+        if (byStatus[row.status]) {
+          byStatus[row.status].push({ date: row.day, count: Number(row.c) });
+        }
+      }
+      return res.json({ days, byStatus });
+    } catch (err) {
+      console.error("[recon/sparklines] error:", err);
+      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.get("/api/recon/status-counts", async (req, res) => {
+    try {
+      const currentUserId = req.session?.userId;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const user = await storage.getUser(currentUserId);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin only" });
+      }
+      const storeId = req.query.storeId ?? req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Missing storeId (no active store scope)" });
+      }
+      const fromDate = req.query.fromDate ? new Date(req.query.fromDate) : void 0;
+      const toDate = req.query.toDate ? new Date(req.query.toDate) : void 0;
+      const counts = await storage.getPgSettlementStatusCounts(
+        storeId,
+        fromDate,
+        toDate
+      );
+      return res.json(counts);
+    } catch (err) {
+      console.error("[recon/status-counts] error:", err);
+      return res.status(500).json({
+        error: "Failed to fetch",
+        detail: err?.message ?? String(err)
+      });
     }
   });
   const httpServer = createServer(app2);

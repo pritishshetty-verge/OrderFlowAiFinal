@@ -6118,6 +6118,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Nightly automated payroll sync. Vercel cron hits this (~3 AM IST). Auth
+  // mirrors the attendance cron: Vercel sends `Authorization: Bearer
+  // ${CRON_SECRET}`; a manual run can use `x-payroll-cron-secret:
+  // ${PAYROLL_CRON_SECRET}`. Targets the month of "yesterday IST" — the day
+  // that just completed — so the whole current month stays synced day-to-day
+  // AND a month finalises on the 1st (when yesterday rolls into the previous
+  // month). runSync inherits the RAZORPAY_PAYROLL_DRY_RUN gate, so this writes
+  // nothing live until that env is explicitly "false". Emails the ops admins
+  // on failed records or a hard error.
+  app.all("/api/cron/payroll-sync", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.PAYROLL_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or PAYROLL_CRON_SECRET)",
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-payroll-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" && vercelSecret !== undefined && auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" && customSecret !== undefined && customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // Month of "yesterday" in IST (UTC+5:30).
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const istYesterday = new Date(Date.now() + IST_OFFSET_MS - 24 * 60 * 60 * 1000);
+    const year = istYesterday.getUTCFullYear();
+    const month = istYesterday.getUTCMonth() + 1;
+
+    try {
+      const { runSync } = await import("./razorpay-payroll/sync");
+      // Pass no triggeredBy — payroll_sync_runs.triggered_by FKs to users.id,
+      // so a system run records null (a label string would fail the FK).
+      const report = await runSync(year, month);
+      console.log(
+        `[cron/payroll-sync] ${report.mode} ${year}-${String(month).padStart(2, "0")} — ok=${report.totals.ok} failed=${report.totals.failed} skipped=${report.totals.skipped}`,
+      );
+      if (report.totals.failed > 0) {
+        const { sendPayrollAlertEmail } = await import("./resend");
+        await sendPayrollAlertEmail({ year, month, mode: report.mode, totals: report.totals }).catch(
+          (e) => console.error("[cron/payroll-sync] alert email error:", e?.message ?? e),
+        );
+      }
+      return res.json({ ok: true, year, month, mode: report.mode, totals: report.totals });
+    } catch (err: any) {
+      console.error("[cron/payroll-sync] error:", err?.message ?? err);
+      try {
+        const { sendPayrollAlertEmail } = await import("./resend");
+        await sendPayrollAlertEmail({ year, month, error: err?.message ?? String(err) });
+      } catch (e: any) {
+        console.error("[cron/payroll-sync] alert email error:", e?.message ?? e);
+      }
+      return res
+        .status(500)
+        .json({ ok: false, error: "Payroll sync failed", detail: err?.message ?? String(err) });
+    }
+  });
+
   // Reconcile (read-only) — re-fetch from RazorpayX + report mismatches.
   app.get("/api/payroll-sync/verify", async (req, res) => {
     const auth = await requireAdmin(req, res);

@@ -158,36 +158,6 @@ export default function LoginPage() {
           transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1.2 }}
         />
 
-        {/* ── Hero logo tile (top-right, fully visible) ────────────────
-            A large rounded frosted-glass tile containing the OrderFlow
-            mark. Sits in the upper-right, framed by a soft white bloom
-            and a faint outer ring. Slow breath + drift sells motion
-            without bleeding off the canvas. */}
-        <motion.div
-          aria-hidden
-          className="pointer-events-none absolute top-12 right-12 h-56 w-56"
-          initial={{ opacity: 0, scale: 0.85, y: -10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
-        >
-          {/* Soft bloom behind */}
-          <div className="absolute -inset-10 rounded-full bg-white/25 blur-3xl" />
-          {/* Faint outer ring — adds the "designed" feel */}
-          <motion.div
-            className="absolute -inset-6 rounded-3xl border border-white/20"
-            animate={{ scale: [1, 1.03, 1], opacity: [0.5, 0.8, 0.5] }}
-            transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
-          />
-          {/* Frosted glass tile holding the logo */}
-          <motion.div
-            className="relative h-full w-full rounded-3xl bg-white/95 shadow-2xl flex items-center justify-center backdrop-blur-sm"
-            animate={{ y: [0, -8, 0] }}
-            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-          >
-            <img src={logoUrl} alt="" className="h-32 w-32 object-contain" />
-          </motion.div>
-        </motion.div>
-
         {/* ── Foreground content (staggered entrance) ── */}
         <motion.div
           variants={stagger}

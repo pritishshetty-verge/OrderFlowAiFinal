@@ -35,8 +35,6 @@ import TeamsPlaceholder from "@/pages/Teams";
 import WebhooksSettingsPage from "@/pages/webhooks-settings";
 import WebhookLogsPage from "@/pages/webhook-logs";
 import IntegrationsPage from "@/pages/integrations";
-import PayrollPage from "@/pages/payroll";
-import PayrollSyncPage from "@/pages/payroll-sync";
 import ProductsPage from "@/pages/products";
 import ReturnsPage from "@/pages/returns";
 import AttendanceReportPage from "@/pages/attendance-report";
@@ -97,7 +95,7 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
 //
 // /profile, /login, /signup remain reachable so the user can manage
 // their own account / accept invites / reauth without a redirect
-// loop. Routes wrapped in AdminOnlyGuard (e.g. /payroll) already
+// loop. Routes wrapped in AdminOnlyGuard (e.g. /integrations) already
 // reject chat_support — no extra coverage needed there.
 const CHAT_SUPPORT_ALLOWED_PATHS = [
   "/",
@@ -228,12 +226,6 @@ function Router() {
       </Route>
       <Route path="/integrations">
         {() => <AdminOnlyGuard component={IntegrationsPage} />}
-      </Route>
-      <Route path="/payroll">
-        {() => <AdminOnlyGuard component={PayrollPage} />}
-      </Route>
-      <Route path="/payroll-sync">
-        {() => <AdminOnlyGuard component={PayrollSyncPage} />}
       </Route>
       <Route path="/products">
         {() => <AdminOnlyGuard component={ProductsPage} />}

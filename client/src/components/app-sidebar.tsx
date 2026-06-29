@@ -163,11 +163,6 @@ const adminMenuItems: MenuItem[] = [
     icon: Users,
   },
   {
-    title: "Payroll",
-    url: "/payroll",
-    icon: Wallet,
-  },
-  {
     title: "Integrations",
     url: "/integrations",
     icon: Plug,
@@ -263,8 +258,6 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   const ADMIN_ONLY_URLS = new Set([
     "/pare",
     "/integrations",
-    "/payroll",
-    "/payroll-sync",
     "/api-logs",
   ]);
   // The logged-in user's granted module keys. Prefer the freshly-fetched

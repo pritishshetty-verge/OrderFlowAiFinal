@@ -81,6 +81,7 @@ async function buildRecords(year: number, month: number): Promise<{
     FROM attendance a
     JOIN users u ON u.id = a.user_id
     WHERE a.clock_in_time IS NOT NULL
+      AND u.is_active = TRUE
       AND EXTRACT(YEAR  FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${year}::int
       AND EXTRACT(MONTH FROM (a.date AT TIME ZONE 'Asia/Kolkata')) = ${month}::int
     ORDER BY u.email, a.date
@@ -117,6 +118,7 @@ async function buildRecords(year: number, month: number): Promise<{
     FROM leave_requests l
     JOIN users u ON u.id = l.user_id
     WHERE l.status = 'approved'
+      AND u.is_active = TRUE
       AND l.start_date <= (make_date(${year}::int, ${month}::int, 1) + INTERVAL '1 month')
       AND l.end_date   >= make_date(${year}::int, ${month}::int, 1)
     ORDER BY u.email, l.start_date

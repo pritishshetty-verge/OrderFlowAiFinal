@@ -16,6 +16,10 @@
     {
       "path": "/api/cron/attendance-auto-logout",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/payroll-sync",
+      "schedule": "30 21 * * *"
     }
   ]
 }

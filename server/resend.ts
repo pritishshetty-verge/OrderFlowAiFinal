@@ -22,6 +22,64 @@ export async function getUncachableResendClient() {
   };
 }
 
+/**
+ * Alert admins about a failed / failing nightly payroll sync. Best-effort:
+ * if Resend isn't configured it logs and returns rather than throwing, so an
+ * alert failure can never mask the underlying sync error. Recipients come
+ * from PAYROLL_ALERT_EMAILS (comma-separated), defaulting to the two ops
+ * admins.
+ */
+export async function sendPayrollAlertEmail(params: {
+  year: number;
+  month: number;
+  mode?: string;
+  totals?: { ok: number; failed: number; skipped: number };
+  error?: string;
+}): Promise<void> {
+  const recipients = (
+    process.env.PAYROLL_ALERT_EMAILS ||
+    "abinav@vergescales.com,nandakishore@vergescales.com"
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!recipients.length) return;
+
+  let client: Resend;
+  let fromEmail: string;
+  try {
+    ({ client, fromEmail } = await getUncachableResendClient());
+  } catch (e: any) {
+    console.warn("[payroll-alert] Resend not configured; skipping email:", e?.message ?? e);
+    return;
+  }
+
+  const monthStr = `${params.year}-${String(params.month).padStart(2, "0")}`;
+  const esc = (s: string) =>
+    s.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string));
+  const subject = params.error
+    ? `⚠️ OrderFlow payroll sync FAILED — ${monthStr}`
+    : `⚠️ OrderFlow payroll sync: ${params.totals?.failed ?? 0} failed record(s) — ${monthStr}`;
+  const body = params.error
+    ? `<p>The nightly RazorpayX payroll sync <b>errored</b> for <b>${monthStr}</b>.</p>
+       <pre style="background:#f6f6f7;padding:12px;border-radius:8px;white-space:pre-wrap">${esc(params.error)}</pre>`
+    : `<p>The nightly RazorpayX payroll sync for <b>${monthStr}</b> finished with failures (mode: ${esc(params.mode ?? "?")}).</p>
+       <p>ok: ${params.totals?.ok ?? 0} &nbsp;·&nbsp; <b style="color:#c0392b">failed: ${params.totals?.failed ?? 0}</b> &nbsp;·&nbsp; skipped: ${params.totals?.skipped ?? 0}</p>
+       <p>See the <code>payroll_sync_runs</code> audit table / Vercel logs for per-record detail.</p>`;
+
+  try {
+    await client.emails.send({
+      from: fromEmail,
+      to: recipients,
+      subject,
+      html: `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;color:#1a1a1a">${body}<hr style="border:none;border-top:1px solid #eee;margin:20px 0"/><p style="color:#888;font-size:12px">OrderFlow · automated payroll-sync alert</p></div>`,
+    });
+    console.log(`[payroll-alert] sent to ${recipients.join(", ")}`);
+  } catch (e: any) {
+    console.error("[payroll-alert] send failed:", e?.message ?? e);
+  }
+}
+
 export async function sendInvitationEmail(params: {
   toEmail: string;
   inviterName: string;
