@@ -295,6 +295,9 @@ export const stores = pgTable("stores", {
   // tenant identifier. We use this to route inbound webhooks via the
   // X-Shopify-Shop-Domain header (Phase 5).
   storeUrl: text("store_url").notNull().unique(),
+  // Custom storefront domain (e.g. glowandme.in). Used to route inbound
+  // Fastrr abandoned-cart webhooks to the right store by checkout host.
+  primaryDomain: text("primary_domain"),
   // Optional workspace logo. Two accepted shapes (the route layer
   // validates):
   //   • base64 data URI ("data:image/png;base64,…") — what the

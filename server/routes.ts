@@ -703,9 +703,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(422).json({ error: "Missing cart identifier" });
       }
 
-      // Single-tenant for now: stamp the primary (oldest) store so the row is
-      // store-scoped. Replace with a per-domain lookup when multi-store lands.
-      const storeId = await storage.getPrimaryStoreId();
+      // Route the cart to the store whose storefront domain matches the
+      // checkout URL host (e.g. glowandme.in → Glow & Me). Falls back to the
+      // primary store if the host doesn't match any store. Previously this
+      // always stamped the oldest store, which mislabeled every glowandme.in
+      // cart as the older store.
+      const storeId = await storage.getStoreIdForCheckoutUrl(normalized.checkoutUrl);
 
       // UPSERT on cart_id: Shiprocket fires one webhook per checkout stage, so
       // a cart advances (e.g. CART_CREATED → PAYMENT_INITIATED) in a single row.

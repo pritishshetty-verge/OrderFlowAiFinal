@@ -509,6 +509,7 @@ export interface IStorage {
   getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
   updateAbandonedCheckoutStatus(id: number, status: string): Promise<AbandonedCheckout | undefined>;
   getPrimaryStoreId(): Promise<string | null>;
+  getStoreIdForCheckoutUrl(checkoutUrl?: string | null): Promise<string | null>;
 
   // Inbound Webhook Logs
   createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
@@ -3777,6 +3778,32 @@ export class DbStorage implements IStorage {
       .orderBy(asc(stores.createdAt))
       .limit(1);
     return row?.id ?? null;
+  }
+
+  // Route an inbound checkout to its store by matching the URL host against
+  // each store's primary_domain (custom storefront domain, e.g. glowandme.in)
+  // or store_url (myshopify tenant domain). Falls back to the primary store
+  // when nothing matches, so a missing/odd URL still yields a store-scoped row.
+  async getStoreIdForCheckoutUrl(checkoutUrl?: string | null): Promise<string | null> {
+    if (!checkoutUrl) return this.getPrimaryStoreId();
+    let host = "";
+    try {
+      host = new URL(checkoutUrl).hostname.toLowerCase().replace(/^www\./, "");
+    } catch {
+      return this.getPrimaryStoreId();
+    }
+    if (!host) return this.getPrimaryStoreId();
+    const rows = await db
+      .select({ id: stores.id, primaryDomain: stores.primaryDomain, storeUrl: stores.storeUrl })
+      .from(stores);
+    const norm = (d?: string | null) =>
+      (d ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    const match = rows.find((s) => norm(s.primaryDomain) === host || norm(s.storeUrl) === host);
+    if (!match) {
+      console.warn(`[stores] no store matched checkout host "${host}" — falling back to primary store.`);
+      return this.getPrimaryStoreId();
+    }
+    return match.id;
   }
 
   async getAbandonedCheckouts(): Promise<(AbandonedCheckout & { assignedAgentName: string | null })[]> {
