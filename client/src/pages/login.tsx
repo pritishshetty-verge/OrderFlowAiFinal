@@ -112,12 +112,10 @@ export default function LoginPage() {
     <div className="h-screen w-full grid grid-cols-1 md:grid-cols-2 bg-background overflow-hidden">
       {/* ── Left: brand panel ── */}
       <aside
-        className="relative hidden md:flex flex-col justify-between overflow-hidden p-12 text-white"
+        className="relative hidden md:flex flex-col justify-between overflow-hidden p-12"
         style={{
-          // Brand panel gradient (--brand-panel): saturated --brand→--brand-2
-          // for colored accents, dark charcoal for Pearl — always dark enough
-          // for the white logo tile, chips, orbs, and headline to read cleanly.
-          backgroundImage: "var(--brand-panel)",
+          backgroundImage: "var(--brand-gradient)",
+          color: "hsl(var(--brand-foreground))",
         }}
       >
         {/* ── Ambient layers ── */}
@@ -157,6 +155,36 @@ export default function LoginPage() {
           animate={{ scale: [1, 1.15, 1], opacity: [0.4, 0.7, 0.4] }}
           transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1.2 }}
         />
+
+        {/* ── Hero logo tile (top-right, fully visible) ────────────────
+            A large rounded frosted-glass tile containing the OrderFlow
+            mark. Sits in the upper-right, framed by a soft white bloom
+            and a faint outer ring. Slow breath + drift sells motion
+            without bleeding off the canvas. */}
+        <motion.div
+          aria-hidden
+          className="pointer-events-none absolute top-12 right-12 h-56 w-56"
+          initial={{ opacity: 0, scale: 0.85, y: -10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
+        >
+          {/* Soft bloom behind */}
+          <div className="absolute -inset-10 rounded-full bg-white/25 blur-3xl" />
+          {/* Faint outer ring — adds the "designed" feel */}
+          <motion.div
+            className="absolute -inset-6 rounded-3xl border border-white/20"
+            animate={{ scale: [1, 1.03, 1], opacity: [0.5, 0.8, 0.5] }}
+            transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+          />
+          {/* Frosted glass tile holding the logo */}
+          <motion.div
+            className="relative h-full w-full rounded-3xl bg-white/95 shadow-2xl flex items-center justify-center backdrop-blur-sm"
+            animate={{ y: [0, -8, 0] }}
+            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+          >
+            <img src={logoUrl} alt="" className="h-32 w-32 object-contain" />
+          </motion.div>
+        </motion.div>
 
         {/* ── Foreground content (staggered entrance) ── */}
         <motion.div
@@ -315,7 +343,8 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm transition-shadow hover:shadow-md"
+              className="w-full shadow-sm transition-shadow hover:shadow-md"
+              style={{ backgroundImage: "var(--brand-gradient)", color: "hsl(var(--brand-foreground))" }}
               disabled={submitting}
               data-testid="button-login-submit"
             >
