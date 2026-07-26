@@ -5,7 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarWithHover } from "@/components/sidebar-with-hover";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
@@ -264,7 +264,7 @@ export default function App() {
                 know about stores. */}
             <StoreProvider>
               <ScopeProvider>
-                <SidebarProvider style={style as React.CSSProperties}>
+                <SidebarWithHover style={style as React.CSSProperties}>
                   <div className="flex h-screen w-full">
                     {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
                     <div className="flex flex-col flex-1 min-w-0">
@@ -272,7 +272,7 @@ export default function App() {
                       <Router />
                     </div>
                   </div>
-                </SidebarProvider>
+                </SidebarWithHover>
                 <Toaster />
               </ScopeProvider>
             </StoreProvider>
