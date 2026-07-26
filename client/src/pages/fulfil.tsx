@@ -19,7 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Package, PackageCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
@@ -231,23 +230,23 @@ export default function FulfilPage() {
 
             {filteredOrders.length === 0 ? (
               <Card>
-                <CardContent className="p-0">
-                  <EmptyState
-                    icon={PackageCheck}
-                    title="No confirmed orders"
-                    description={confirmedOrders.length === 0
-                      ? "Confirmed orders will appear here once your team starts fulfilling."
-                      : "No orders match your filters — try widening the date range or clearing the search."}
-                  />
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <PackageCheck className="h-12 w-12 text-muted-foreground mb-4" />
+                  <p className="text-lg font-medium">No confirmed orders</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {confirmedOrders.length === 0
+                      ? "Confirmed orders will appear here"
+                      : "No orders match your filters"}
+                  </p>
                 </CardContent>
               </Card>
             ) : (
               <div className="flex flex-col gap-4">
                 {/* Table Container with Sticky Header and Footer */}
-                <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
+                <div className="rounded-lg border bg-card">
                   <div className="relative">
                     <Table>
-                      <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
+                      <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                         <TableRow>
                           <TableHead className="w-[50px] bg-card">
                             <Checkbox
@@ -287,20 +286,7 @@ export default function FulfilPage() {
                               #{order.shopifyOrderNumber}
                             </TableCell>
                             <TableCell>
-                              <div className="flex items-center gap-2.5">
-                                <span
-                                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand"
-                                  aria-hidden
-                                >
-                                  {(() => {
-                                    const parts = order.customerName.trim().split(/\s+/).filter(Boolean);
-                                    if (!parts.length) return "?";
-                                    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-                                    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-                                  })()}
-                                </span>
-                                <span className="font-medium text-sm truncate">{order.customerName}</span>
-                              </div>
+                              <span className="font-medium text-sm">{order.customerName}</span>
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               {order.customerPhone}

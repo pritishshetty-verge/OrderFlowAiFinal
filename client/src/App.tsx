@@ -5,7 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
-import { SidebarWithHover } from "@/components/sidebar-with-hover";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
@@ -95,7 +95,7 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
 //
 // /profile, /login, /signup remain reachable so the user can manage
 // their own account / accept invites / reauth without a redirect
-// loop. Routes wrapped in AdminOnlyGuard (e.g. /integrations) already
+// loop. Routes wrapped in AdminOnlyGuard (e.g. /payroll) already
 // reject chat_support — no extra coverage needed there.
 const CHAT_SUPPORT_ALLOWED_PATHS = [
   "/",
@@ -173,9 +173,6 @@ function Router() {
       <Route path="/pare">
         {() => <AdminOnlyGuard component={ParePage} />}
       </Route>
-      <Route path="/reconciliation">
-        {() => <AdminOnlyGuard component={ReconciliationPage} />}
-      </Route>
       <Route path="/profile">
         {() => <ProtectedRoute component={ProfilePage} />}
       </Route>
@@ -227,6 +224,9 @@ function Router() {
       <Route path="/integrations">
         {() => <AdminOnlyGuard component={IntegrationsPage} />}
       </Route>
+      <Route path="/reconciliation">
+        {() => <AdminOnlyGuard component={ReconciliationPage} />}
+      </Route>
       <Route path="/products">
         {() => <AdminOnlyGuard component={ProductsPage} />}
       </Route>
@@ -268,7 +268,7 @@ export default function App() {
                 know about stores. */}
             <StoreProvider>
               <ScopeProvider>
-                <SidebarWithHover style={style as React.CSSProperties}>
+                <SidebarProvider style={style as React.CSSProperties}>
                   <div className="flex h-screen w-full">
                     {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
                     <div className="flex flex-col flex-1 min-w-0">
@@ -276,7 +276,7 @@ export default function App() {
                       <Router />
                     </div>
                   </div>
-                </SidebarWithHover>
+                </SidebarProvider>
                 <Toaster />
               </ScopeProvider>
             </StoreProvider>

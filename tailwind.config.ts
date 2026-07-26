@@ -6,16 +6,9 @@ export default {
   theme: {
     extend: {
       borderRadius: {
-        lg: ".75rem",   /* 12px */
-        md: ".5rem",    /* 8px */
-        sm: ".375rem",  /* 6px */
-      },
-      boxShadow: {
-        sm: "var(--shadow-sm)",
-        DEFAULT: "var(--shadow)",
-        md: "var(--shadow-md)",
-        lg: "var(--shadow-lg)",
-        xl: "var(--shadow-xl)",
+        lg: ".5625rem", /* 9px */
+        md: ".375rem", /* 6px */
+        sm: ".1875rem", /* 3px */
       },
       colors: {
         // Flat / base colors (regular buttons)
@@ -52,10 +45,6 @@ export default {
           DEFAULT: "hsl(var(--accent) / <alpha-value>)",
           foreground: "hsl(var(--accent-foreground) / <alpha-value>)",
           border: "var(--accent-border)",
-        },
-        brand: {
-          DEFAULT: "hsl(var(--brand) / <alpha-value>)",
-          foreground: "hsl(var(--brand-foreground) / <alpha-value>)",
         },
         destructive: {
           DEFAULT: "hsl(var(--destructive) / <alpha-value>)",
