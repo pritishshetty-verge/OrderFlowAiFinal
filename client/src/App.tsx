@@ -38,7 +38,6 @@ import IntegrationsPage from "@/pages/integrations";
 import ProductsPage from "@/pages/products";
 import ReturnsPage from "@/pages/returns";
 import AttendanceReportPage from "@/pages/attendance-report";
-import ReconciliationPage from "@/pages/reconciliation";
 import NotFound from "@/pages/not-found";
 import { PresenceBanner } from "@/components/presence-banner";
 import { useEffect } from "react";
@@ -223,9 +222,6 @@ function Router() {
       </Route>
       <Route path="/integrations">
         {() => <AdminOnlyGuard component={IntegrationsPage} />}
-      </Route>
-      <Route path="/reconciliation">
-        {() => <AdminOnlyGuard component={ReconciliationPage} />}
       </Route>
       <Route path="/products">
         {() => <AdminOnlyGuard component={ProductsPage} />}
