@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarIcon } from "lucide-react";
-import { format, startOfDay, endOfDay, subDays, startOfMonth, isSameDay } from "date-fns";
+import { format, startOfDay, endOfDay, subDays, subMonths, startOfMonth, endOfMonth, isSameDay } from "date-fns";
 import type { DateRange as CalendarDateRange } from "react-day-picker";
 
-type DatePreset = "allTime" | "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "custom";
+type DatePreset = "allTime" | "today" | "yesterday" | "last7days" | "last30days" | "thisMonth" | "lastMonth" | "custom";
 
 export interface DateRangeOutput {
   startDate: Date | null;
@@ -25,6 +25,7 @@ const presets: { key: DatePreset; label: string }[] = [
   { key: "last7days", label: "Last 7 Days" },
   { key: "last30days", label: "Last 30 Days" },
   { key: "thisMonth", label: "This Month" },
+  { key: "lastMonth", label: "Last Month" },
 ];
 
 const getPresetRange = (preset: DatePreset): DateRangeOutput => {
@@ -46,6 +47,10 @@ const getPresetRange = (preset: DatePreset): DateRangeOutput => {
       return { startDate: subDays(today, 29), endDate: endOfToday };
     case "thisMonth":
       return { startDate: startOfMonth(now), endDate: endOfToday };
+    case "lastMonth": {
+      const lastMonth = subMonths(now, 1);
+      return { startDate: startOfMonth(lastMonth), endDate: endOfMonth(lastMonth) };
+    }
     default:
       return { startDate: today, endDate: endOfToday };
   }

@@ -24,6 +24,10 @@ import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
 import { EmptyState } from "@/components/empty-state";
 import { OrderQuickPreview } from "@/components/order-quick-preview";
+import {
+  DateRangeSelector,
+  type DateRangeOutput,
+} from "@/components/date-range-selector";
 import type { Order as UIOrder } from "@/components/orders-table";
 import { cn } from "@/lib/utils";
 import {
@@ -220,6 +224,10 @@ export default function MyConvertedOrdersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState<"all" | "cod" | "prepaid">("all");
   const [shippingFilter, setShippingFilter] = useState<string>("all");
+  const [dateRange, setDateRange] = useState<DateRangeOutput>({
+    startDate: null,
+    endDate: null,
+  });
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -232,7 +240,7 @@ export default function MyConvertedOrdersPage() {
   // stranded on an empty page.
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, paymentFilter, shippingFilter, pageSize]);
+  }, [debouncedSearch, paymentFilter, shippingFilter, dateRange, pageSize]);
 
   const filteredOrders = useMemo(() => {
     const shippingMatchSet = (() => {
@@ -240,10 +248,17 @@ export default function MyConvertedOrdersPage() {
       const found = SHIPPING_FILTER_OPTIONS.find((o) => o.value === shippingFilter);
       return found ? new Set<string>(found.matches) : null;
     })();
+    const startMs = dateRange.startDate ? dateRange.startDate.getTime() : null;
+    const endMs = dateRange.endDate ? dateRange.endDate.getTime() : null;
     return uiOrders.filter((row) => {
       if (paymentFilter !== "all" && classifyPayment(row) !== paymentFilter) return false;
       if (shippingMatchSet && !shippingMatchSet.has((row.status || "").toLowerCase())) {
         return false;
+      }
+      if (startMs !== null || endMs !== null) {
+        const placed = row.createdAt.getTime();
+        if (startMs !== null && placed < startMs) return false;
+        if (endMs !== null && placed > endMs) return false;
       }
       if (debouncedSearch) {
         const digits = debouncedSearch.replace(/\D/g, "");
@@ -269,7 +284,7 @@ export default function MyConvertedOrdersPage() {
       }
       return true;
     });
-  }, [uiOrders, paymentFilter, shippingFilter, debouncedSearch]);
+  }, [uiOrders, paymentFilter, shippingFilter, debouncedSearch, dateRange]);
 
   const totalFiltered = filteredOrders.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -279,7 +294,11 @@ export default function MyConvertedOrdersPage() {
   const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
 
   const hasActiveFilters =
-    debouncedSearch !== "" || paymentFilter !== "all" || shippingFilter !== "all";
+    debouncedSearch !== "" ||
+    paymentFilter !== "all" ||
+    shippingFilter !== "all" ||
+    dateRange.startDate !== null ||
+    dateRange.endDate !== null;
 
   // Quick-preview state.
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -419,6 +438,7 @@ export default function MyConvertedOrdersPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
               {hasActiveFilters && (
                 <Button
                   variant="ghost"
@@ -427,6 +447,7 @@ export default function MyConvertedOrdersPage() {
                     setSearchInput("");
                     setPaymentFilter("all");
                     setShippingFilter("all");
+                    setDateRange({ startDate: null, endDate: null });
                   }}
                   data-testid="button-clear-filters"
                 >
