@@ -6,7 +6,7 @@ import { canManuallySetStatus, canSchedulePickup, shouldWebhookAdvance } from ".
 import { storage } from "./storage";
 import { db } from "./db";
 import {
-  orders, leaveRequests, orderStatusHistory, teamMessages, invites,
+  orders, leaveRequests, orderStatusHistory, invites,
   attendance, orderAssignments, calls, notifications, ndrEvents,
   courses, resources, userLessonProgress, userOnboardingProgress, users,
   webhooks, insertWebhookSchema, stores, userStores,
@@ -5560,13 +5560,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       console.log("  - Order assignments deleted");
 
-      // 3. Delete team messages (sent or received)
-      await db.delete(teamMessages).where(
-        or(eq(teamMessages.fromUserId, userId), eq(teamMessages.toUserId, userId))
-      );
-      console.log("  - Team messages deleted");
-
-      // 4. Delete leave requests
+      // 3. Delete leave requests
       await db.delete(leaveRequests).where(eq(leaveRequests.userId, userId));
       // Set reviewedBy to null for requests reviewed by this user
       await db.update(leaveRequests).set({ reviewedBy: null }).where(eq(leaveRequests.reviewedBy, userId));
@@ -8676,58 +8670,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting leave request:", error);
       res.status(500).json({ error: "Failed to delete leave request" });
-    }
-  });
-
-  // ============================================================================
-  // TEAM MESSAGES API
-  // ============================================================================
-
-  app.get("/api/messages/:userId/:otherUserId", async (req, res) => {
-    try {
-      const messages = await storage.getConversation(
-        req.params.userId,
-        req.params.otherUserId,
-      );
-      res.json(messages);
-    } catch (error) {
-      console.error("Error fetching messages:", error);
-      res.status(500).json({ error: "Failed to fetch messages" });
-    }
-  });
-
-  app.post("/api/messages", async (req, res) => {
-    try {
-      const { fromUserId, toUserId, message } = req.body;
-      const newMessage = await storage.createMessage({
-        fromUserId,
-        toUserId,
-        message,
-      });
-      res.status(201).json(newMessage);
-    } catch (error) {
-      console.error("Error sending message:", error);
-      res.status(500).json({ error: "Failed to send message" });
-    }
-  });
-
-  app.patch("/api/messages/:id/read", async (req, res) => {
-    try {
-      await storage.markMessageAsRead(req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error marking message as read:", error);
-      res.status(500).json({ error: "Failed to mark message as read" });
-    }
-  });
-
-  app.get("/api/messages/unread/:userId", async (req, res) => {
-    try {
-      const count = await storage.getUnreadCount(req.params.userId);
-      res.json({ count });
-    } catch (error) {
-      console.error("Error fetching unread count:", error);
-      res.status(500).json({ error: "Failed to fetch unread count" });
     }
   });
 

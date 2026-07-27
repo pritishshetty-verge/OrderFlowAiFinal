@@ -851,24 +851,6 @@ export const payrollSyncRuns = pgTable("payroll_sync_runs", {
 export type PayrollSyncRun = typeof payrollSyncRuns.$inferSelect;
 
 // ============================================================================
-// TEAM MESSAGES
-// ============================================================================
-
-export const teamMessages = pgTable("team_messages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  fromUserId: varchar("from_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  toUserId: varchar("to_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  message: text("message").notNull(),
-  isRead: boolean("is_read").notNull().default(false),
-  readAt: timestamp("read_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
-
-export const insertTeamMessageSchema = createInsertSchema(teamMessages).omit({ id: true, createdAt: true });
-export type InsertTeamMessage = z.infer<typeof insertTeamMessageSchema>;
-export type TeamMessage = typeof teamMessages.$inferSelect;
-
-// ============================================================================
 // SHOPIFY WEBHOOKS LOG
 // ============================================================================
 

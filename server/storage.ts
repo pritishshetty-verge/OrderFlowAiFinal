@@ -26,8 +26,6 @@ import {
   type InsertOrderStatusHistory,
   type LeaveRequest,
   type InsertLeaveRequest,
-  type TeamMessage,
-  type InsertTeamMessage,
   type WebhookLog,
   type InsertWebhookLog,
   type ShopifyCredentials,
@@ -78,7 +76,6 @@ import {
   orderAssignments,
   orderStatusHistory,
   leaveRequests,
-  teamMessages,
   webhookLogs,
   shopifyCredentials,
   attendance,
@@ -307,12 +304,6 @@ export interface IStorage {
   updateLeaveRequest(id: string, data: Partial<InsertLeaveRequest>): Promise<LeaveRequest | undefined>;
   listLeaveRequests(filters?: { userId?: string; status?: string }): Promise<LeaveRequest[]>;
   deleteLeaveRequest(id: string): Promise<void>;
-
-  // Team Messages
-  getConversation(user1Id: string, user2Id: string): Promise<TeamMessage[]>;
-  createMessage(message: InsertTeamMessage): Promise<TeamMessage>;
-  markMessageAsRead(messageId: string): Promise<void>;
-  getUnreadCount(userId: string): Promise<number>;
 
   // Webhook Logs
   createWebhookLog(log: InsertWebhookLog): Promise<WebhookLog>;
@@ -1697,57 +1688,6 @@ export class DbStorage implements IStorage {
 
   async deleteLeaveRequest(id: string): Promise<void> {
     await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
-  }
-
-  // ============================================================================
-  // TEAM MESSAGES
-  // ============================================================================
-
-  async getConversation(user1Id: string, user2Id: string): Promise<TeamMessage[]> {
-    return await db
-      .select()
-      .from(teamMessages)
-      .where(
-        or(
-          and(
-            eq(teamMessages.fromUserId, user1Id),
-            eq(teamMessages.toUserId, user2Id),
-          ),
-          and(
-            eq(teamMessages.fromUserId, user2Id),
-            eq(teamMessages.toUserId, user1Id),
-          ),
-        ),
-      )
-      .orderBy(asc(teamMessages.createdAt));
-  }
-
-  async createMessage(message: InsertTeamMessage): Promise<TeamMessage> {
-    const [newMessage] = await db
-      .insert(teamMessages)
-      .values(message)
-      .returning();
-    return newMessage;
-  }
-
-  async markMessageAsRead(messageId: string): Promise<void> {
-    await db
-      .update(teamMessages)
-      .set({ isRead: true, readAt: new Date() })
-      .where(eq(teamMessages.id, messageId));
-  }
-
-  async getUnreadCount(userId: string): Promise<number> {
-    const [{ value }] = await db
-      .select({ value: count() })
-      .from(teamMessages)
-      .where(
-        and(
-          eq(teamMessages.toUserId, userId),
-          eq(teamMessages.isRead, false),
-        ),
-      );
-    return value;
   }
 
   // ============================================================================

@@ -2,7 +2,6 @@ import { PageLayout } from "@/components/page-layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TeamDirectory } from "@/components/team-directory";
 import { LeaveRequests } from "@/components/leave-requests";
-import { TeamMessages } from "@/components/team-messages";
 import { TeamPresence } from "@/components/team-presence";
 import { AttendanceReportContent } from "@/pages/attendance-report";
 import { PayrollSyncContent } from "@/pages/payroll-sync";
@@ -83,9 +82,6 @@ export default function TeamPage() {
                 Payroll
               </TabsTrigger>
             )}
-            <TabsTrigger value="messages" data-testid="tab-messages">
-              Messages
-            </TabsTrigger>
             <TabsTrigger value="leave" data-testid="tab-leave">
               Leave Requests
             </TabsTrigger>
@@ -108,10 +104,6 @@ export default function TeamPage() {
               <PayrollSyncContent />
             </TabsContent>
           )}
-
-          <TabsContent value="messages">
-            <TeamMessages userRole={userRole} />
-          </TabsContent>
 
           <TabsContent value="leave">
             <LeaveRequests userRole={userRole} />

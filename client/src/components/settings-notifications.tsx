@@ -13,7 +13,6 @@ export function NotificationsSettings() {
     newOrders: true,
     orderUpdates: true,
     orderCancellations: true,
-    teamMessages: true,
     leaveRequests: false,
     systemUpdates: true,
     pushNotifications: false,
@@ -124,23 +123,6 @@ export function NotificationsSettings() {
           <CardDescription>Notifications for team activities</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="team-messages">Team Messages</Label>
-              <p className="text-sm text-muted-foreground">
-                New messages from team members
-              </p>
-            </div>
-            <Switch
-              id="team-messages"
-              checked={notifications.teamMessages}
-              onCheckedChange={(checked) =>
-                setNotifications({ ...notifications, teamMessages: checked })
-              }
-              data-testid="switch-team-messages"
-            />
-          </div>
-
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label htmlFor="leave-requests">Leave Requests</Label>

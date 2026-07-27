@@ -41,7 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, KeyRound, ShieldAlert, MoreHorizontal, MessageSquare, PhoneCall, Search } from "lucide-react";
+import { Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, KeyRound, ShieldAlert, MoreHorizontal, PhoneCall, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
@@ -1166,12 +1166,6 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                               {member.name}
                             </DropdownMenuLabel>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              data-testid={`button-message-${member.id}`}
-                            >
-                              <MessageSquare className="h-4 w-4 mr-2" />
-                              Message
-                            </DropdownMenuItem>
                             <DropdownMenuItem
                               data-testid={`button-call-${member.id}`}
                             >

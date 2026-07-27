@@ -64,7 +64,6 @@ __export(schema_exports, {
   insertShopifyCredentialsSchema: () => insertShopifyCredentialsSchema,
   insertShopifySyncLogSchema: () => insertShopifySyncLogSchema,
   insertStoreSchema: () => insertStoreSchema,
-  insertTeamMessageSchema: () => insertTeamMessageSchema,
   insertUserLessonProgressSchema: () => insertUserLessonProgressSchema,
   insertUserOnboardingProgressSchema: () => insertUserOnboardingProgressSchema,
   insertUserSchema: () => insertUserSchema,
@@ -98,7 +97,6 @@ __export(schema_exports, {
   shopifyCredentials: () => shopifyCredentials,
   shopifySyncLogs: () => shopifySyncLogs,
   stores: () => stores,
-  teamMessages: () => teamMessages,
   updateUserSchema: () => updateUserSchema,
   userLessonProgress: () => userLessonProgress,
   userOnboardingProgress: () => userOnboardingProgress,
@@ -111,7 +109,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, payrollSyncRuns, teamMessages, insertTeamMessageSchema, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema, pgSettlements, insertPgSettlementSchema, PG_SETTLEMENT_STATUSES, PG_NAMES, reconUploads, insertReconUploadSchema, pgRateCards, insertPgRateCardSchema;
+var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, payrollSyncRuns, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema, pgSettlements, insertPgSettlementSchema, PG_SETTLEMENT_STATUSES, PG_NAMES, reconUploads, insertReconUploadSchema, pgRateCards, insertPgRateCardSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -742,16 +740,6 @@ var init_schema = __esm({
       details: jsonb("details"),
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
-    teamMessages = pgTable("team_messages", {
-      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-      fromUserId: varchar("from_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-      toUserId: varchar("to_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-      message: text("message").notNull(),
-      isRead: boolean("is_read").notNull().default(false),
-      readAt: timestamp("read_at"),
-      createdAt: timestamp("created_at").notNull().defaultNow()
-    });
-    insertTeamMessageSchema = createInsertSchema(teamMessages).omit({ id: true, createdAt: true });
     webhookLogs = pgTable("webhook_logs", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // Which store this webhook payload was resolved to. Phase 5 reads
@@ -2393,39 +2381,6 @@ var init_storage = __esm({
       }
       async deleteLeaveRequest(id) {
         await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
-      }
-      // ============================================================================
-      // TEAM MESSAGES
-      // ============================================================================
-      async getConversation(user1Id, user2Id) {
-        return await db.select().from(teamMessages).where(
-          or(
-            and(
-              eq(teamMessages.fromUserId, user1Id),
-              eq(teamMessages.toUserId, user2Id)
-            ),
-            and(
-              eq(teamMessages.fromUserId, user2Id),
-              eq(teamMessages.toUserId, user1Id)
-            )
-          )
-        ).orderBy(asc(teamMessages.createdAt));
-      }
-      async createMessage(message) {
-        const [newMessage] = await db.insert(teamMessages).values(message).returning();
-        return newMessage;
-      }
-      async markMessageAsRead(messageId) {
-        await db.update(teamMessages).set({ isRead: true, readAt: /* @__PURE__ */ new Date() }).where(eq(teamMessages.id, messageId));
-      }
-      async getUnreadCount(userId) {
-        const [{ value }] = await db.select({ value: count() }).from(teamMessages).where(
-          and(
-            eq(teamMessages.toUserId, userId),
-            eq(teamMessages.isRead, false)
-          )
-        );
-        return value;
       }
       // ============================================================================
       // WEBHOOK LOGS
@@ -14520,10 +14475,6 @@ async function registerRoutes(app2) {
         or2(eq8(orderAssignments.userId, userId), eq8(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
-      await db.delete(teamMessages).where(
-        or2(eq8(teamMessages.fromUserId, userId), eq8(teamMessages.toUserId, userId))
-      );
-      console.log("  - Team messages deleted");
       await db.delete(leaveRequests).where(eq8(leaveRequests.userId, userId));
       await db.update(leaveRequests).set({ reviewedBy: null }).where(eq8(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
@@ -16839,50 +16790,6 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error deleting leave request:", error);
       res.status(500).json({ error: "Failed to delete leave request" });
-    }
-  });
-  app2.get("/api/messages/:userId/:otherUserId", async (req, res) => {
-    try {
-      const messages = await storage.getConversation(
-        req.params.userId,
-        req.params.otherUserId
-      );
-      res.json(messages);
-    } catch (error) {
-      console.error("Error fetching messages:", error);
-      res.status(500).json({ error: "Failed to fetch messages" });
-    }
-  });
-  app2.post("/api/messages", async (req, res) => {
-    try {
-      const { fromUserId, toUserId, message } = req.body;
-      const newMessage = await storage.createMessage({
-        fromUserId,
-        toUserId,
-        message
-      });
-      res.status(201).json(newMessage);
-    } catch (error) {
-      console.error("Error sending message:", error);
-      res.status(500).json({ error: "Failed to send message" });
-    }
-  });
-  app2.patch("/api/messages/:id/read", async (req, res) => {
-    try {
-      await storage.markMessageAsRead(req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error marking message as read:", error);
-      res.status(500).json({ error: "Failed to mark message as read" });
-    }
-  });
-  app2.get("/api/messages/unread/:userId", async (req, res) => {
-    try {
-      const count2 = await storage.getUnreadCount(req.params.userId);
-      res.json({ count: count2 });
-    } catch (error) {
-      console.error("Error fetching unread count:", error);
-      res.status(500).json({ error: "Failed to fetch unread count" });
     }
   });
   app2.get("/api/notifications", async (req, res) => {
