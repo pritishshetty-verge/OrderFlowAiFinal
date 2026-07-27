@@ -41,7 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, KeyRound, ShieldAlert, MoreHorizontal, MessageSquare, PhoneCall } from "lucide-react";
+import { Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, KeyRound, ShieldAlert, MoreHorizontal, MessageSquare, PhoneCall, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
@@ -173,6 +173,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [editCompensationDialogOpen, setEditCompensationDialogOpen] = useState(false);
   const [editRoleDialogOpen, setEditRoleDialogOpen] = useState(false);
   const [userToEditRole, setUserToEditRole] = useState<TeamMember | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
   const [pendingInviteId, setPendingInviteId] = useState<string | null>(null);
   const [pendingInviteEmail, setPendingInviteEmail] = useState<string | null>(null);
@@ -744,6 +745,18 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     });
   }, [users, ordersResponse, attendanceByUser, idleThresholdMin]);
 
+  // Client-side member search — name, email, phone, or role. Team sizes are
+  // small, so no debounce needed.
+  const visibleMembers = useMemo(() => {
+    const q = memberSearch.trim().toLowerCase();
+    if (!q) return teamMembers;
+    return teamMembers.filter((m) =>
+      [m.name, m.email, m.phone, m.role].some((v) =>
+        String(v ?? "").toLowerCase().includes(q),
+      ),
+    );
+  }, [teamMembers, memberSearch]);
+
   const getInitials = (name: string) => {
     return name
       .split(" ")
@@ -862,29 +875,43 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Team Members</h2>
-          <p className="text-muted-foreground">
-            {teamMembers.length} total members
+          <h2 className="text-xl font-semibold tracking-tight">Team Members</h2>
+          <p className="text-sm text-muted-foreground">
+            {teamMembers.length} {teamMembers.length === 1 ? "member" : "members"}
           </p>
         </div>
-        {userRole === "admin" && (
-          <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-member">
-            <UserPlus className="h-4 w-4 mr-2" />
-            Invite User
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="relative w-56">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="search"
+              placeholder="Search members…"
+              value={memberSearch}
+              onChange={(e) => setMemberSearch(e.target.value)}
+              className="pl-9 h-9"
+              data-testid="input-search-members"
+            />
+          </div>
+          {userRole === "admin" && (
+            <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-member">
+              <UserPlus className="h-4 w-4 mr-2" />
+              Invite User
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Table layout — density-optimised to match the Orders page. Every
-          per-row action (message / call / edit role / edit extension /
-          edit compensation / store access / page access / reactivate /
-          delete) lives in a single Actions dropdown so the row scans as
-          six or seven columns of information, not a mosaic of buttons.
-          Auto clock-out toggle stays inline (it's a stateful control the
-          admin flips repeatedly). Non-admin viewers see a shorter table
-          with Compensation and Auto clock-out columns hidden. */}
+      {/* Table layout — density-optimised to match the Orders page. Rows are
+          pure data; EVERY per-row action (message / call / change role /
+          edit extension / edit compensation / store access / page access /
+          reactivate shift / delete) lives in the single Actions dropdown at
+          the row's end. The one inline control is the Auto clock-out toggle,
+          which renders on every row for visual consistency (admins: off +
+          disabled with a tooltip, since they're always exempt by policy).
+          Non-admin viewers see a shorter table with the Compensation and
+          Auto clock-out columns hidden. */}
       <div className="rounded-lg border bg-card">
         <div className="relative overflow-x-auto">
           <Table>
@@ -903,17 +930,19 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
               </TableRow>
             </TableHeader>
             <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px] [&_td]:align-middle">
-              {teamMembers.length === 0 ? (
+              {visibleMembers.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={isAdminViewer ? 8 : 6}
                     className="h-24 text-center text-sm text-muted-foreground"
                   >
-                    No team members yet.
+                    {memberSearch.trim()
+                      ? `No members match "${memberSearch.trim()}".`
+                      : "No team members yet."}
                   </TableCell>
                 </TableRow>
               ) : (
-                teamMembers.map((member) => {
+                visibleMembers.map((member) => {
                   const liveLabel = getLiveStatusLabel(member);
                   const isSelf = member.id === currentUserId;
                   const roleLabel =
@@ -968,28 +997,15 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         </div>
                       </TableCell>
 
-                      {/* Role — badge + inline edit pencil (admin, non-self) */}
+                      {/* Role — badge only. Changing the role lives in the
+                          Actions dropdown with every other action. */}
                       <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Badge
-                            variant={getRoleBadgeVariant(member.role)}
-                            className="whitespace-nowrap"
-                          >
-                            {roleLabel}
-                          </Badge>
-                          {isAdminViewer && !isSelf && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => handleEditRole(member)}
-                              title="Change role"
-                              data-testid={`button-edit-role-${member.id}`}
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                          )}
-                        </div>
+                        <Badge
+                          variant={getRoleBadgeVariant(member.role)}
+                          className="whitespace-nowrap"
+                        >
+                          {roleLabel}
+                        </Badge>
                       </TableCell>
 
                       {/* Contact — email + phone stacked; extension chip for agents */}
@@ -999,14 +1015,18 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                             {member.email}
                           </span>
                           <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5 flex items-center gap-1.5">
-                            <span>{member.phone}</span>
-                            {member.role === "agent" && (
+                            <span>
+                              {member.phone && member.phone.toUpperCase() !== "N/A"
+                                ? member.phone
+                                : "—"}
+                            </span>
+                            {member.role === "agent" && member.agentExtension && (
                               <span
                                 className="inline-flex items-center gap-0.5 font-mono"
                                 data-testid={`text-extension-${member.id}`}
                               >
                                 <Hash className="h-2.5 w-2.5" />
-                                {member.agentExtension || "—"}
+                                {member.agentExtension}
                               </span>
                             )}
                           </span>
@@ -1014,19 +1034,37 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                       </TableCell>
 
                       {/* Compensation — admin only. Full string is in the
-                          edit dialog; the row shows the summary. */}
+                          edit dialog; the row shows the summary. Members
+                          with no payroll setup get a quiet em dash instead
+                          of icon + placeholder copy. */}
                       {isAdminViewer && (
                         <TableCell>
-                          <div className="flex items-center gap-1.5 text-muted-foreground min-w-0">
-                            <MapPin className="h-3 w-3 flex-shrink-0" />
-                            <span
-                              className="truncate text-[12px]"
-                              data-testid={`text-compensation-${member.id}`}
-                              title={summarizeCompensation(member)}
-                            >
-                              {summarizeCompensation(member)}
-                            </span>
-                          </div>
+                          {(() => {
+                            const summary = summarizeCompensation(member);
+                            if (summary === "No payroll setup") {
+                              return (
+                                <span
+                                  className="text-[12px] text-muted-foreground/60"
+                                  data-testid={`text-compensation-${member.id}`}
+                                  title="No payroll setup"
+                                >
+                                  —
+                                </span>
+                              );
+                            }
+                            return (
+                              <div className="flex items-center gap-1.5 text-muted-foreground min-w-0">
+                                <MapPin className="h-3 w-3 flex-shrink-0" />
+                                <span
+                                  className="truncate text-[12px]"
+                                  data-testid={`text-compensation-${member.id}`}
+                                  title={summary}
+                                >
+                                  {summary}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                       )}
 
@@ -1047,9 +1085,11 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         {member.joinedDate}
                       </TableCell>
 
-                      {/* Auto clock-out — inline stateful toggle (admin
-                          only, hidden for other admins who are always
-                          exempt). Empty cell keeps column alignment. */}
+                      {/* Auto clock-out — a toggle on EVERY row for visual
+                          consistency (on = monitored, off = exempt). Admin
+                          members are always exempt by policy, so their
+                          toggle renders off + disabled with a tooltip
+                          explaining why instead of disappearing. */}
                       {isAdminViewer && (
                         <TableCell>
                           {member.role !== "admin" ? (
@@ -1067,127 +1107,138 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                                 aria-label="Toggle auto clock-out monitoring"
                               />
                               <span className="text-[11px] text-muted-foreground">
-                                {member.monitoringExempt ? "Exempt" : "Monitored"}
+                                {member.monitoringExempt ? "Off" : "On"}
                               </span>
                             </div>
                           ) : (
-                            <span className="text-[11px] text-muted-foreground">
-                              Exempt
-                            </span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="flex items-center gap-2">
+                                  <Switch
+                                    checked={false}
+                                    disabled
+                                    data-testid={`switch-monitoring-${member.id}`}
+                                    aria-label="Admins are always exempt from auto clock-out"
+                                  />
+                                  <span className="text-[11px] text-muted-foreground">
+                                    Off
+                                  </span>
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent side="left">
+                                Admins are always exempt from auto clock-out
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                         </TableCell>
                       )}
 
-                      {/* Actions — everything else consolidated behind one
-                          kebab. Reactivate-shift surfaces as a leading
-                          inline button only when it's actionable, so
-                          admins don't hunt for it in the dropdown. */}
+                      {/* Actions — every per-row action lives here, and only
+                          here: one kebab per row, no inline buttons anywhere
+                          else in the table. */}
                       <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {isAdminViewer &&
-                            member.autoClosedAttendanceId && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="icon"
-                                    className="h-8 w-8 border-blue-500/40 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              data-testid={`button-actions-${member.id}`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                              <span className="sr-only">Open actions</span>
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel className="truncate">
+                              {member.name}
+                            </DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              data-testid={`button-message-${member.id}`}
+                            >
+                              <MessageSquare className="h-4 w-4 mr-2" />
+                              Message
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              data-testid={`button-call-${member.id}`}
+                            >
+                              <PhoneCall className="h-4 w-4 mr-2" />
+                              Call
+                            </DropdownMenuItem>
+                            {isAdminViewer && (
+                              <>
+                                <DropdownMenuSeparator />
+                                {member.autoClosedAttendanceId && (
+                                  <DropdownMenuItem
                                     disabled={reactivateMutation.isPending}
-                                    onClick={() =>
+                                    onSelect={() =>
                                       reactivateMutation.mutate(
                                         member.autoClosedAttendanceId!,
                                       )
                                     }
                                     data-testid={`button-reactivate-${member.id}`}
                                   >
-                                    <RotateCcw className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="left">
-                                  Reactivate shift
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                data-testid={`button-actions-${member.id}`}
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Open actions</span>
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-52">
-                              <DropdownMenuLabel>
-                                {member.name.split(" ")[0]}
-                              </DropdownMenuLabel>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                data-testid={`button-message-${member.id}`}
-                              >
-                                <MessageSquare className="h-4 w-4 mr-2" />
-                                Message
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                data-testid={`button-call-${member.id}`}
-                              >
-                                <PhoneCall className="h-4 w-4 mr-2" />
-                                Call
-                              </DropdownMenuItem>
-                              {isAdminViewer && (
-                                <>
-                                  <DropdownMenuSeparator />
-                                  {member.role === "agent" && (
+                                    <RotateCcw className="h-4 w-4 mr-2" />
+                                    Reactivate shift
+                                  </DropdownMenuItem>
+                                )}
+                                {!isSelf && (
+                                  <DropdownMenuItem
+                                    onSelect={() => handleEditRole(member)}
+                                    data-testid={`button-edit-role-${member.id}`}
+                                  >
+                                    <Pencil className="h-4 w-4 mr-2" />
+                                    Change role
+                                  </DropdownMenuItem>
+                                )}
+                                {member.role === "agent" && (
+                                  <DropdownMenuItem
+                                    onSelect={() => handleEditExtension(member)}
+                                    data-testid={`button-edit-extension-${member.id}`}
+                                  >
+                                    <Hash className="h-4 w-4 mr-2" />
+                                    Edit extension
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  onSelect={() => handleEditCompensation(member)}
+                                  data-testid={`button-edit-compensation-${member.id}`}
+                                >
+                                  <MapPin className="h-4 w-4 mr-2" />
+                                  Edit compensation
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => setUserForStoreAccess(member)}
+                                  data-testid={`button-manage-store-access-${member.id}`}
+                                >
+                                  <Store className="h-4 w-4 mr-2" />
+                                  Manage store access
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => setUserForModuleAccess(member)}
+                                  data-testid={`button-manage-page-access-${member.id}`}
+                                >
+                                  <KeyRound className="h-4 w-4 mr-2" />
+                                  Manage page access
+                                </DropdownMenuItem>
+                                {!isSelf && (
+                                  <>
+                                    <DropdownMenuSeparator />
                                     <DropdownMenuItem
-                                      onSelect={() => handleEditExtension(member)}
-                                      data-testid={`button-edit-extension-${member.id}`}
+                                      onSelect={() => handleDeleteUser(member)}
+                                      className="text-destructive focus:text-destructive"
+                                      data-testid={`button-delete-${member.id}`}
                                     >
-                                      <Hash className="h-4 w-4 mr-2" />
-                                      Edit extension
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete member
                                     </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem
-                                    onSelect={() => handleEditCompensation(member)}
-                                    data-testid={`button-edit-compensation-${member.id}`}
-                                  >
-                                    <MapPin className="h-4 w-4 mr-2" />
-                                    Edit compensation
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => setUserForStoreAccess(member)}
-                                    data-testid={`button-manage-store-access-${member.id}`}
-                                  >
-                                    <Store className="h-4 w-4 mr-2" />
-                                    Manage store access
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onSelect={() => setUserForModuleAccess(member)}
-                                    data-testid={`button-manage-page-access-${member.id}`}
-                                  >
-                                    <KeyRound className="h-4 w-4 mr-2" />
-                                    Manage page access
-                                  </DropdownMenuItem>
-                                  {!isSelf && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onSelect={() => handleDeleteUser(member)}
-                                        className="text-destructive focus:text-destructive"
-                                        data-testid={`button-delete-${member.id}`}
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Delete member
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                </>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   );
