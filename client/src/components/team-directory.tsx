@@ -24,7 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye, KeyRound } from "lucide-react";
+import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye, KeyRound, ShieldAlert } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -138,11 +139,23 @@ const editCompensationSchema = z.object({
 
 type EditCompensationFormData = z.infer<typeof editCompensationSchema>;
 
+// Edit-role form. Two fields: role (always required) and adminType (only
+// meaningful when role === "admin"). Kept as a plain enum "NONE" for the
+// non-admin cases so we don't have to make the form field conditionally
+// required — we coerce on submit.
+const editRoleSchema = z.object({
+  role: z.enum(["admin", "agent", "recovery_agent", "chat_support"]),
+  adminType: z.enum(["full_control", "partial_control", "NONE"]),
+});
+type EditRoleFormData = z.infer<typeof editRoleSchema>;
+
 export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editExtensionDialogOpen, setEditExtensionDialogOpen] = useState(false);
   const [editCompensationDialogOpen, setEditCompensationDialogOpen] = useState(false);
+  const [editRoleDialogOpen, setEditRoleDialogOpen] = useState(false);
+  const [userToEditRole, setUserToEditRole] = useState<TeamMember | null>(null);
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
   const [pendingInviteId, setPendingInviteId] = useState<string | null>(null);
   const [pendingInviteEmail, setPendingInviteEmail] = useState<string | null>(null);
@@ -313,6 +326,17 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
+  // Form for changing an existing member's role. Ships behind the admin-only
+  // pencil next to the role badge on each card.
+  const roleForm = useForm<EditRoleFormData>({
+    resolver: zodResolver(editRoleSchema),
+    defaultValues: {
+      role: "agent",
+      adminType: "NONE",
+    },
+  });
+  const roleWatch = roleForm.watch("role");
+
   // Mutation for sending invites
   const inviteUserMutation = useMutation({
     mutationFn: async (data: InviteUserFormData) => {
@@ -472,6 +496,61 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
     },
   });
 
+  // Mutation for changing an existing member's role (and, when the new role
+  // is admin, their admin type). Server-side guards: promoting to admin
+  // requires full-control admin, and you can't change your own role.
+  const updateRoleMutation = useMutation({
+    mutationFn: async ({
+      userId,
+      role,
+      adminType,
+    }: {
+      userId: string;
+      role: EditRoleFormData["role"];
+      adminType: EditRoleFormData["adminType"];
+    }) => {
+      const currentUserId = localStorage.getItem("userId");
+      // Only send adminType when the new role is admin — for any other role,
+      // the field is meaningless and we want the DB column cleared.
+      const adminTypePayload =
+        role === "admin" ? (adminType === "NONE" ? "full_control" : adminType) : null;
+      const res = await apiRequest("PATCH", `/api/users/${userId}`, {
+        role,
+        adminType: adminTypePayload,
+        currentUserId,
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      setEditRoleDialogOpen(false);
+      setUserToEditRole(null);
+      roleForm.reset();
+      queryClient.invalidateQueries({ predicate: (q) => {
+        const k = q.queryKey?.[0];
+        return typeof k === "string" && k.startsWith("/api/users");
+      }});
+      toast({
+        title: "Role updated",
+        description:
+          "Applies on their next page load. If you changed their own account, they may need to sign out and back in.",
+      });
+    },
+    onError: (error: any) => {
+      const raw = error?.message ?? "Failed to update role";
+      // Strip the leading "<status>: " prefix apiRequest adds.
+      const stripped = String(raw).replace(/^\d+:\s*/, "");
+      let msg = stripped;
+      try {
+        msg = JSON.parse(stripped)?.error ?? stripped;
+      } catch {}
+      toast({
+        title: "Error",
+        description: msg,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleInviteUser = (data: InviteUserFormData) => {
     inviteUserMutation.mutate(data);
   };
@@ -524,6 +603,30 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         baseSalary: data.baseSalary,
         compensationProfile: data.compensationProfile,
         couponCode: data.couponCode,
+      });
+    }
+  };
+
+  const handleEditRole = (member: TeamMember) => {
+    setUserToEditRole(member);
+    roleForm.reset({
+      role: member.role,
+      adminType:
+        member.role === "admin"
+          ? member.adminType === "partial_control"
+            ? "partial_control"
+            : "full_control"
+          : "NONE",
+    });
+    setEditRoleDialogOpen(true);
+  };
+
+  const handleUpdateRole = (data: EditRoleFormData) => {
+    if (userToEditRole) {
+      updateRoleMutation.mutate({
+        userId: userToEditRole.id,
+        role: data.role,
+        adminType: data.adminType,
       });
     }
   };
@@ -788,13 +891,27 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     })()}
                   </div>
                 </div>
-                <Badge variant={getRoleBadgeVariant(member.role)}>
-                  {member.role === "admin" && member.adminType
-                    ? member.adminType === "full_control"
-                      ? "Full Control Admin"
-                      : "Partial Control Admin"
-                    : formatRoleLabel(member.role)}
-                </Badge>
+                <div className="flex items-center gap-1">
+                  <Badge variant={getRoleBadgeVariant(member.role)}>
+                    {member.role === "admin" && member.adminType
+                      ? member.adminType === "full_control"
+                        ? "Full Control Admin"
+                        : "Partial Control Admin"
+                      : formatRoleLabel(member.role)}
+                  </Badge>
+                  {userRole === "admin" && member.id !== currentUserId && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => handleEditRole(member)}
+                      title="Change role"
+                      data-testid={`button-edit-role-${member.id}`}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
 
@@ -1352,6 +1469,153 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                   data-testid="button-submit-compensation"
                 >
                   {updateCompensationMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit role — per-member. Admin-only, and the pencil that opens this
+          is hidden on your own card so an admin can't accidentally demote
+          themselves (matching the server-side self-role-change block). */}
+      <Dialog
+        open={editRoleDialogOpen}
+        onOpenChange={(open) => {
+          setEditRoleDialogOpen(open);
+          if (!open) {
+            setUserToEditRole(null);
+            roleForm.reset();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change role</DialogTitle>
+            <DialogDescription>
+              Update the role for{" "}
+              <span className="font-medium text-foreground">
+                {userToEditRole?.name}
+              </span>
+              . Applies on their next page load.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Form {...roleForm}>
+            <form
+              onSubmit={roleForm.handleSubmit(handleUpdateRole)}
+              className="space-y-4"
+            >
+              <FormField
+                control={roleForm.control}
+                name="role"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Role *</FormLabel>
+                    <Select
+                      onValueChange={(v) => {
+                        field.onChange(v);
+                        // Reset adminType when role flips away from admin so we
+                        // don't submit a stale value the server will ignore anyway.
+                        if (v !== "admin") {
+                          roleForm.setValue("adminType", "NONE");
+                        } else if (roleForm.getValues("adminType") === "NONE") {
+                          roleForm.setValue("adminType", "full_control");
+                        }
+                      }}
+                      value={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-edit-role">
+                          <SelectValue placeholder="Select role" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="agent">Agent</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="recovery_agent">
+                          Inside Sales Executive (ISE)
+                        </SelectItem>
+                        <SelectItem value="chat_support">Chat Support</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {roleWatch === "admin" && (
+                <>
+                  <FormField
+                    control={roleForm.control}
+                    name="adminType"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Admin type *</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value === "NONE" ? "full_control" : field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger data-testid="select-edit-admin-type">
+                              <SelectValue placeholder="Select admin type" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="full_control">
+                              Full control
+                            </SelectItem>
+                            <SelectItem value="partial_control">
+                              Partial control
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Full-control admins have every admin capability
+                          (payroll, integrations, invites, role changes).
+                          Partial admins are limited to what you grant them.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Alert>
+                    <ShieldAlert className="h-4 w-4" />
+                    <AlertDescription>
+                      Promoting to admin grants elevated access. Only full-control
+                      admins can create other admins.
+                    </AlertDescription>
+                  </Alert>
+                </>
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setEditRoleDialogOpen(false);
+                    setUserToEditRole(null);
+                    roleForm.reset();
+                  }}
+                  disabled={updateRoleMutation.isPending}
+                  data-testid="button-cancel-role"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={updateRoleMutation.isPending}
+                  data-testid="button-submit-role"
+                >
+                  {updateRoleMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                       Saving...

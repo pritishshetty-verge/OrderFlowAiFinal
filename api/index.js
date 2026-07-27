@@ -14323,6 +14323,17 @@ async function registerRoutes(app2) {
           return res.status(403).json({ error: "Only full control admins can edit admin permissions" });
         }
       }
+      if (validatedData.role !== void 0) {
+        const target = await storage.getUser(req.params.id);
+        if (target && validatedData.role !== target.role) {
+          if (req.params.id === currentUserId) {
+            return res.status(403).json({ error: "You cannot change your own role" });
+          }
+          if (validatedData.role === "admin" && !canInviteAdmins(currentUser)) {
+            return res.status(403).json({ error: "Only full control admins can promote users to admin" });
+          }
+        }
+      }
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });

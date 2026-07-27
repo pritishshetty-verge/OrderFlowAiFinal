@@ -5249,7 +5249,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ error: "Only full control admins can edit admin permissions" });
         }
       }
-      
+
+      // Guard role changes. Two rules, tightened together with the new Edit-role
+      // UI so partial-control admins can't self-escalate:
+      //   1. You cannot change your own role — prevents both self-escalation
+      //      and accidental lockout (admin demoting themselves to agent).
+      //   2. Promoting anyone TO admin requires a full-control admin — mirrors
+      //      the invite guard (canInviteAdmins). Otherwise a partial admin
+      //      with teamManagement.editProfiles could mint new admins via PATCH.
+      if (validatedData.role !== undefined) {
+        const target = await storage.getUser(req.params.id);
+        if (target && validatedData.role !== target.role) {
+          if (req.params.id === currentUserId) {
+            return res.status(403).json({ error: "You cannot change your own role" });
+          }
+          if (validatedData.role === "admin" && !canInviteAdmins(currentUser)) {
+            return res.status(403).json({ error: "Only full control admins can promote users to admin" });
+          }
+        }
+      }
+
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
