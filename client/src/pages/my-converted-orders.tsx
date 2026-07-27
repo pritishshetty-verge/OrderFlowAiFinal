@@ -17,8 +17,6 @@ import { PaymentBadge } from "@/components/payment-badge";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
-  Banknote,
-  CreditCard,
   Info,
   Package,
   PackageCheck,
@@ -237,7 +235,7 @@ export default function MyConvertedOrdersPage() {
         </div>
 
         <div className="rounded-lg border bg-card">
-          <div className="border-b p-4">
+          <div className="border-b px-4 py-3">
             <h2 className="text-sm font-semibold">Orders</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Rows highlighted in amber are still in-network or in NDR — good
@@ -246,8 +244,8 @@ export default function MyConvertedOrdersPage() {
           </div>
           {isLoading ? (
             <div className="p-4 space-y-2">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full" />
               ))}
             </div>
           ) : orderedRows.length === 0 ? (
@@ -261,54 +259,54 @@ export default function MyConvertedOrdersPage() {
               }
             />
           ) : (
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Order</TableHead>
+                <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
+                  <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
+                    <TableHead className="w-[110px]">Order ID</TableHead>
                     <TableHead>Customer</TableHead>
                     <TableHead>Payment</TableHead>
-                    <TableHead>Shipping status</TableHead>
+                    <TableHead>Shipping Status</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead>Placed</TableHead>
+                    <TableHead>Date</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px]">
                   {orderedRows.map((row) => {
-                    const isCod = (row.paymentMethod || "").toLowerCase() === "cod";
                     const highlight = row.isAtRisk;
                     return (
                       <TableRow
                         key={row.id}
                         className={cn(
+                          "group hover-elevate",
                           highlight &&
                             "bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-500/5 dark:hover:bg-amber-500/10",
                         )}
                         data-testid={`converted-order-row-${row.id}`}
                       >
-                        <TableCell className="font-medium">
-                          #{row.shopifyOrderNumber}
+                        <TableCell className="font-mono tabular-nums text-xs font-medium text-muted-foreground">
+                          <span className="text-muted-foreground/70">#</span>
+                          <span className="text-foreground">{row.shopifyOrderNumber}</span>
                         </TableCell>
                         <TableCell>
-                          <div className="flex flex-col">
-                            <span className="text-sm">{row.customerName}</span>
-                            <span className="text-xs text-muted-foreground">
+                          <div className="flex flex-col leading-tight">
+                            <span className="font-medium text-foreground">
+                              {row.customerName}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
                               {row.customerPhone}
                             </span>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <PaymentBadge
-                              method={(row.paymentMethod as "cod" | "prepaid") || "prepaid"}
-                              financialStatus={row.financialStatus}
-                            />
-                            {isCod ? (
-                              <Banknote className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                            ) : (
-                              <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
-                            )}
-                          </div>
+                          <PaymentBadge
+                            method={
+                              (row.paymentMethod || "").toLowerCase() === "cod"
+                                ? "cod"
+                                : "prepaid"
+                            }
+                            financialStatus={row.financialStatus}
+                          />
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -327,7 +325,7 @@ export default function MyConvertedOrdersPage() {
                         <TableCell className="text-right font-medium tabular-nums">
                           {currency(parseFloat(row.totalPrice ?? "0") || 0)}
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                        <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
                           {row.createdAt
                             ? new Date(row.createdAt).toLocaleDateString("en-IN", {
                                 day: "numeric",

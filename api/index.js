@@ -13804,8 +13804,16 @@ async function registerRoutes(app2) {
           deliveredCount += 1;
           deliveredGmv += price;
         }
-        if ((o.paymentMethod || "").toLowerCase() === "cod") codCount += 1;
-        else prepaidCount += 1;
+        const fs6 = (o.financialStatus || "").toLowerCase();
+        const pm = (o.paymentMethod || "").toLowerCase();
+        if (fs6 === "voided" || fs6 === "refunded") {
+        } else if (fs6 === "paid") {
+          prepaidCount += 1;
+        } else if (fs6 === "pending" || pm === "cod") {
+          codCount += 1;
+        } else {
+          prepaidCount += 1;
+        }
       }
       const convertedCount = orders2.length;
       const deliveryRatePct = convertedCount > 0 ? Math.round(deliveredCount / convertedCount * 100) : 0;

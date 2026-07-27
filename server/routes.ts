@@ -4331,6 +4331,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let deliveredGmv = 0;
       let codCount = 0;
       let prepaidCount = 0;
+      // Match the exact classification the UI's PaymentBadge uses
+      // (client/src/components/payment-badge.tsx) so the metric tile
+      // never disagrees with the row-level chips a user is looking at
+      // on the same page. Merchants configure COD through many gateway
+      // names (Razorpay-COD, Shiprocket, "manual"), so paymentMethod
+      // alone under-counts COD — financial_status = "pending" is the
+      // reliable signal that money hasn't been collected yet. Voided/
+      // refunded rows are excluded from both counts.
       for (const o of orders) {
         const price = num(o.totalPrice);
         gmv += price;
@@ -4338,8 +4346,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           deliveredCount += 1;
           deliveredGmv += price;
         }
-        if ((o.paymentMethod || "").toLowerCase() === "cod") codCount += 1;
-        else prepaidCount += 1;
+        const fs = (o.financialStatus || "").toLowerCase();
+        const pm = (o.paymentMethod || "").toLowerCase();
+        if (fs === "voided" || fs === "refunded") {
+          // exclude from split
+        } else if (fs === "paid") {
+          prepaidCount += 1;
+        } else if (fs === "pending" || pm === "cod") {
+          codCount += 1;
+        } else {
+          prepaidCount += 1;
+        }
       }
       const convertedCount = orders.length;
       const deliveryRatePct =
