@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw, TrendingUp } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -165,11 +165,9 @@ const adminMenuItems: MenuItem[] = [
     url: "/team",
     icon: Users,
   },
-  {
-    title: "Payroll",
-    url: "/payroll",
-    icon: Wallet,
-  },
+  // Payroll page removed — RazorpayX sync now lives as an admin tab
+  // under Team (see client/src/pages/team.tsx). Reconciliation (PG
+  // settlements) is still WIP — page exists but is unrouted/unlisted.
   {
     title: "Integrations",
     url: "/integrations",
@@ -271,7 +269,6 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   const ADMIN_ONLY_URLS = new Set([
     "/pare",
     "/integrations",
-    "/payroll",
     "/api-logs",
   ]);
   // The logged-in user's granted module keys. Prefer the freshly-fetched
@@ -324,7 +321,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   };
 
   return (
-    <Sidebar data-testid="sidebar-main">
+    <Sidebar collapsible="icon" data-testid="sidebar-main">
       <SidebarHeader className="border-b border-sidebar-border p-3">
         {/* Phase 3: the static logo + wordmark is replaced by the
             multi-store switcher. Renders as static text for users

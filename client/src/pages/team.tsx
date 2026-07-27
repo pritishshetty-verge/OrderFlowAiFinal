@@ -5,6 +5,7 @@ import { LeaveRequests } from "@/components/leave-requests";
 import { TeamMessages } from "@/components/team-messages";
 import { TeamPresence } from "@/components/team-presence";
 import { AttendanceReportContent } from "@/pages/attendance-report";
+import { PayrollSyncContent } from "@/pages/payroll-sync";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
@@ -77,6 +78,11 @@ export default function TeamPage() {
             <TabsTrigger value="attendance-report" data-testid="tab-attendance-report">
               Attendance Report
             </TabsTrigger>
+            {userRole === "admin" && (
+              <TabsTrigger value="payroll" data-testid="tab-payroll">
+                Payroll
+              </TabsTrigger>
+            )}
             <TabsTrigger value="messages" data-testid="tab-messages">
               Messages
             </TabsTrigger>
@@ -96,6 +102,12 @@ export default function TeamPage() {
           <TabsContent value="attendance-report">
             <AttendanceReportContent />
           </TabsContent>
+
+          {userRole === "admin" && (
+            <TabsContent value="payroll">
+              <PayrollSyncContent />
+            </TabsContent>
+          )}
 
           <TabsContent value="messages">
             <TeamMessages userRole={userRole} />

@@ -246,22 +246,25 @@ export function StoreSwitcher() {
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "group flex w-full items-center gap-2.5 rounded-md px-1.5 py-1",
+            "group flex w-full min-w-0 items-center gap-2.5 overflow-hidden rounded-md px-1.5 py-1",
             "text-left transition-colors",
             "hover:bg-sidebar-accent/60",
+            // Collapsed (icon) sidebar: center the avatar, drop the gap/padding
+            // so the chevron + name don't spill past the narrow rail.
+            "group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           )}
           data-testid="store-switcher-trigger"
         >
           <StoreAvatar store={activeStore} />
           <span
-            className="flex-1 text-[15px] font-semibold truncate text-sidebar-foreground"
+            className="flex-1 truncate text-[15px] font-semibold text-sidebar-foreground group-data-[collapsible=icon]:hidden"
             title={displayName}
           >
             {displayName}
           </span>
           <ChevronsUpDown
-            className="h-4 w-4 text-muted-foreground shrink-0 transition-opacity group-hover:opacity-100 opacity-70"
+            className="h-4 w-4 shrink-0 text-muted-foreground opacity-70 transition-opacity group-hover:opacity-100 group-data-[collapsible=icon]:hidden"
             aria-hidden
           />
         </button>

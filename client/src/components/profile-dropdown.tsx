@@ -76,20 +76,20 @@ export function ProfileDropdown({ userRole, userName, userEmail, avatarImage }: 
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
-          className="flex items-center gap-3 w-full rounded-lg p-2 hover-elevate transition-colors cursor-pointer"
+          className="flex items-center gap-3 w-full min-w-0 overflow-hidden rounded-lg p-2 hover-elevate transition-colors cursor-pointer group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:p-1"
           data-testid="button-profile-dropdown"
         >
-          <Avatar className="h-9 w-9">
+          <Avatar className="h-9 w-9 shrink-0">
             {avatarSrc && <AvatarImage src={avatarSrc} alt={displayName} className="object-cover" />}
             <AvatarFallback className="text-xs bg-primary/10 text-primary">
               {initials}
             </AvatarFallback>
           </Avatar>
-          <div className="flex flex-col flex-1 min-w-0 text-left">
+          <div className="flex flex-col flex-1 min-w-0 text-left group-data-[collapsible=icon]:hidden">
             <span className="text-sm font-medium truncate">{displayName}</span>
             <span className="text-xs text-muted-foreground capitalize">{userRole}</span>
           </div>
-          <ChevronUp className="h-4 w-4 text-muted-foreground" />
+          <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
         </button>
       </PopoverTrigger>
       <PopoverContent

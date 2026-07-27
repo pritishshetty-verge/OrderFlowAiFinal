@@ -5,7 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarWithHover } from "@/components/sidebar-with-hover";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
@@ -36,7 +36,6 @@ import TeamsPlaceholder from "@/pages/Teams";
 import WebhooksSettingsPage from "@/pages/webhooks-settings";
 import WebhookLogsPage from "@/pages/webhook-logs";
 import IntegrationsPage from "@/pages/integrations";
-import PayrollPage from "@/pages/payroll";
 import ProductsPage from "@/pages/products";
 import ReturnsPage from "@/pages/returns";
 import AttendanceReportPage from "@/pages/attendance-report";
@@ -229,9 +228,6 @@ function Router() {
       <Route path="/integrations">
         {() => <AdminOnlyGuard component={IntegrationsPage} />}
       </Route>
-      <Route path="/payroll">
-        {() => <AdminOnlyGuard component={PayrollPage} />}
-      </Route>
       <Route path="/products">
         {() => <AdminOnlyGuard component={ProductsPage} />}
       </Route>
@@ -273,7 +269,7 @@ export default function App() {
                 know about stores. */}
             <StoreProvider>
               <ScopeProvider>
-                <SidebarProvider style={style as React.CSSProperties}>
+                <SidebarWithHover style={style as React.CSSProperties}>
                   <div className="flex h-screen w-full">
                     {isLoggedIn && !isLoginPage && !isSignupPage && <AppSidebar userRole={userRole} />}
                     <div className="flex flex-col flex-1 min-w-0">
@@ -281,7 +277,7 @@ export default function App() {
                       <Router />
                     </div>
                   </div>
-                </SidebarProvider>
+                </SidebarWithHover>
                 <Toaster />
               </ScopeProvider>
             </StoreProvider>

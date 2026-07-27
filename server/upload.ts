@@ -102,3 +102,48 @@ export function resolveKycFilePath(filename: string): string | null {
   if (!fs.existsSync(resolved)) return null;
   return resolved;
 }
+
+// ─── Reconciliation CSV uploader ──────────────────────────────────────────
+//
+// PG settlement reports are small (~100 KB for a daily batch) and we want
+// the file in memory so we can hand it straight to the adapter parser
+// without an intermediate disk write. memoryStorage + 10 MB cap is the
+// right shape: it handles ~10 years of settlement history per upload while
+// staying well within Node's default heap.
+//
+// We accept text/csv AND application/octet-stream because some browsers
+// don't set a mime for CSV files dragged from the OS picker.
+const RECON_ALLOWED_CSV_EXTS = new Set([".csv", ".txt"]);
+const RECON_ALLOWED_CSV_MIMES = new Set([
+  "text/csv",
+  "text/plain",
+  "application/csv",
+  "application/octet-stream",
+  "application/vnd.ms-excel", // some clients label .csv as this
+]);
+
+export const reconCsvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB hard cap
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!RECON_ALLOWED_CSV_EXTS.has(ext)) {
+      return cb(
+        new Error(
+          `Unsupported file extension (${ext}). Upload a .csv file (convert XLSX in Excel first).`,
+        ),
+      );
+    }
+    if (!RECON_ALLOWED_CSV_MIMES.has(file.mimetype)) {
+      // Tolerant: many client mime detectors are wrong. Log a warn,
+      // not an error.
+      console.warn(
+        `[recon-upload] unusual mime "${file.mimetype}" for ${file.originalname} — allowing`,
+      );
+    }
+    cb(null, true);
+  },
+});
