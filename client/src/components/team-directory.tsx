@@ -3,11 +3,28 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -24,7 +41,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, Eye, KeyRound, ShieldAlert } from "lucide-react";
+import { Phone, Calendar, UserPlus, Loader2, Trash2, Hash, Pencil, MapPin, Store, RotateCcw, KeyRound, ShieldAlert, MoreHorizontal, MessageSquare, PhoneCall } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { User, Order as BackendOrder, Attendance } from "@shared/schema";
 import { format } from "date-fns";
@@ -828,14 +845,20 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           <Skeleton className="h-10 w-64" data-testid="skeleton-title" />
           <Skeleton className="h-10 w-32" data-testid="skeleton-button" />
         </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-64" data-testid={`skeleton-member-${i}`} />
+        <div className="rounded-lg border bg-card p-4 space-y-2">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Skeleton
+              key={i}
+              className="h-11 w-full"
+              data-testid={`skeleton-member-${i}`}
+            />
           ))}
         </div>
       </div>
     );
   }
+
+  const isAdminViewer = userRole === "admin";
 
   return (
     <div className="space-y-6">
@@ -854,257 +877,325 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {teamMembers.map((member) => (
-          <Card key={member.id} data-testid={`card-member-${member.id}`}>
-            <CardHeader className="space-y-4">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <Avatar className="h-12 w-12">
-                      {member.avatarImage && (
-                        <AvatarImage 
-                          src={`/avatars/${member.avatarImage}`} 
-                          alt={member.name}
-                          className="object-cover"
-                        />
-                      )}
-                      <AvatarFallback className="text-sm font-semibold">
-                        {getInitials(member.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div
-                      className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-card ${getLiveStatusColor(
-                        member.liveStatus,
-                      )}`}
-                    />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">{member.name}</CardTitle>
-                    {(() => {
-                      const label = getLiveStatusLabel(member);
-                      return (
-                        <CardDescription className={`text-xs ${label.color ?? ""}`}>
-                          {label.text}
-                        </CardDescription>
-                      );
-                    })()}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Badge variant={getRoleBadgeVariant(member.role)}>
-                    {member.role === "admin" && member.adminType
+      {/* Table layout — density-optimised to match the Orders page. Every
+          per-row action (message / call / edit role / edit extension /
+          edit compensation / store access / page access / reactivate /
+          delete) lives in a single Actions dropdown so the row scans as
+          six or seven columns of information, not a mosaic of buttons.
+          Auto clock-out toggle stays inline (it's a stateful control the
+          admin flips repeatedly). Non-admin viewers see a shorter table
+          with Compensation and Auto clock-out columns hidden. */}
+      <div className="rounded-lg border bg-card">
+        <div className="relative overflow-x-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
+              <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
+                <TableHead className="w-[240px]">Member</TableHead>
+                <TableHead className="w-[180px]">Role</TableHead>
+                <TableHead>Contact</TableHead>
+                {isAdminViewer && <TableHead>Compensation</TableHead>}
+                <TableHead className="text-right w-[100px]">Orders</TableHead>
+                <TableHead className="w-[120px]">Joined</TableHead>
+                {isAdminViewer && (
+                  <TableHead className="w-[150px]">Auto clock-out</TableHead>
+                )}
+                <TableHead className="text-right w-[60px]">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px] [&_td]:align-middle">
+              {teamMembers.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={isAdminViewer ? 8 : 6}
+                    className="h-24 text-center text-sm text-muted-foreground"
+                  >
+                    No team members yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                teamMembers.map((member) => {
+                  const liveLabel = getLiveStatusLabel(member);
+                  const isSelf = member.id === currentUserId;
+                  const roleLabel =
+                    member.role === "admin" && member.adminType
                       ? member.adminType === "full_control"
                         ? "Full Control Admin"
                         : "Partial Control Admin"
-                      : formatRoleLabel(member.role)}
-                  </Badge>
-                  {userRole === "admin" && member.id !== currentUserId && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => handleEditRole(member)}
-                      title="Change role"
-                      data-testid={`button-edit-role-${member.id}`}
+                      : formatRoleLabel(member.role);
+                  return (
+                    <TableRow
+                      key={member.id}
+                      className="hover-elevate"
+                      data-testid={`row-member-${member.id}`}
                     >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </CardHeader>
+                      {/* Member — avatar + presence dot, name, live status */}
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="relative flex-shrink-0">
+                            <Avatar className="h-9 w-9">
+                              {member.avatarImage && (
+                                <AvatarImage
+                                  src={`/avatars/${member.avatarImage}`}
+                                  alt={member.name}
+                                  className="object-cover"
+                                />
+                              )}
+                              <AvatarFallback className="text-xs font-semibold">
+                                {getInitials(member.name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span
+                              className={cn(
+                                "absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card",
+                                getLiveStatusColor(member.liveStatus),
+                              )}
+                              aria-label={liveLabel.text}
+                            />
+                          </div>
+                          <div className="min-w-0 leading-tight">
+                            <div className="font-medium text-foreground truncate">
+                              {member.name}
+                            </div>
+                            <div
+                              className={cn(
+                                "text-[11px] mt-0.5 truncate",
+                                liveLabel.color ?? "text-muted-foreground",
+                              )}
+                            >
+                              {liveLabel.text}
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
 
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground text-xs truncate">
-                    {member.email}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground text-xs">{member.phone}</span>
-                </div>
-                {member.role === "agent" && (
-                  <div className="flex items-center gap-2 text-sm justify-between">
-                    <div className="flex items-center gap-2">
-                      <Hash className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-muted-foreground text-xs font-mono" data-testid={`text-extension-${member.id}`}>
-                        {member.agentExtension ? `Ext ${member.agentExtension}` : "No extension"}
-                      </span>
-                    </div>
-                    {userRole === "admin" && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => handleEditExtension(member)}
-                        data-testid={`button-edit-extension-${member.id}`}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center gap-2 text-sm">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-muted-foreground text-xs">
-                    Joined {member.joinedDate}
-                  </span>
-                </div>
-                {/* Compensation & Calendar — admin-only. This block
-                    leaks salary, compensation profile, and the
-                    holiday-calendar city of every team member, so we
-                    gate the entire row behind the admin role. The
-                    edit pencil was already admin-only, but the summary
-                    text was visible to agents prior to this fix —
-                    which both leaked compensation info and confused
-                    agents who read "Mumbai" as a physical office
-                    location rather than a holiday-calendar selection.
-                    See server/routes.ts /api/users for the matching
-                    server-side scrub if/when you decide to redact the
-                    raw fields from the agent-facing API response. */}
-                {userRole === "admin" && (
-                  <div className="flex items-center gap-2 text-sm justify-between">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <MapPin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                      <span
-                        className="text-muted-foreground text-xs truncate"
-                        data-testid={`text-compensation-${member.id}`}
-                      >
-                        {summarizeCompensation(member)}
-                      </span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => handleEditCompensation(member)}
-                      data-testid={`button-edit-compensation-${member.id}`}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                  </div>
-                )}
-              </div>
+                      {/* Role — badge + inline edit pencil (admin, non-self) */}
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Badge
+                            variant={getRoleBadgeVariant(member.role)}
+                            className="whitespace-nowrap"
+                          >
+                            {roleLabel}
+                          </Badge>
+                          {isAdminViewer && !isSelf && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => handleEditRole(member)}
+                              title="Change role"
+                              data-testid={`button-edit-role-${member.id}`}
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
 
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t">
-                <div className="space-y-1">
-                  <p className="text-2xl font-bold">{member.assignedOrders}</p>
-                  <p className="text-xs text-muted-foreground">Active Orders</p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-2xl font-bold">{member.completedOrders}</p>
-                  <p className="text-xs text-muted-foreground">Completed</p>
-                </div>
-              </div>
+                      {/* Contact — email + phone stacked; extension chip for agents */}
+                      <TableCell>
+                        <div className="flex flex-col leading-tight min-w-0">
+                          <span className="truncate text-[13px] text-foreground">
+                            {member.email}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground tabular-nums mt-0.5 flex items-center gap-1.5">
+                            <span>{member.phone}</span>
+                            {member.role === "agent" && (
+                              <span
+                                className="inline-flex items-center gap-0.5 font-mono"
+                                data-testid={`text-extension-${member.id}`}
+                              >
+                                <Hash className="h-2.5 w-2.5" />
+                                {member.agentExtension || "—"}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </TableCell>
 
-              {/* Reactivate auto-closed shift — admin only. Backend
-                  enforces the role check; we hide the UI to avoid
-                  confusion for non-admins. */}
-              {member.autoClosedAttendanceId && userRole === "admin" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full border-blue-500/40 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
-                  disabled={reactivateMutation.isPending}
-                  onClick={() =>
-                    reactivateMutation.mutate(member.autoClosedAttendanceId!)
-                  }
-                  data-testid={`button-reactivate-${member.id}`}
-                >
-                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                  Reactivate shift
-                </Button>
+                      {/* Compensation — admin only. Full string is in the
+                          edit dialog; the row shows the summary. */}
+                      {isAdminViewer && (
+                        <TableCell>
+                          <div className="flex items-center gap-1.5 text-muted-foreground min-w-0">
+                            <MapPin className="h-3 w-3 flex-shrink-0" />
+                            <span
+                              className="truncate text-[12px]"
+                              data-testid={`text-compensation-${member.id}`}
+                              title={summarizeCompensation(member)}
+                            >
+                              {summarizeCompensation(member)}
+                            </span>
+                          </div>
+                        </TableCell>
+                      )}
+
+                      {/* Orders — active / completed as one dense cell */}
+                      <TableCell className="text-right tabular-nums">
+                        <div className="leading-tight">
+                          <div className="text-[15px] font-semibold text-foreground">
+                            {member.assignedOrders}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {member.completedOrders} done
+                          </div>
+                        </div>
+                      </TableCell>
+
+                      {/* Joined */}
+                      <TableCell className="text-[12px] text-muted-foreground whitespace-nowrap">
+                        {member.joinedDate}
+                      </TableCell>
+
+                      {/* Auto clock-out — inline stateful toggle (admin
+                          only, hidden for other admins who are always
+                          exempt). Empty cell keeps column alignment. */}
+                      {isAdminViewer && (
+                        <TableCell>
+                          {member.role !== "admin" ? (
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={!member.monitoringExempt}
+                                disabled={monitoringExemptMutation.isPending}
+                                onCheckedChange={(on) =>
+                                  monitoringExemptMutation.mutate({
+                                    userId: member.id,
+                                    exempt: !on,
+                                  })
+                                }
+                                data-testid={`switch-monitoring-${member.id}`}
+                                aria-label="Toggle auto clock-out monitoring"
+                              />
+                              <span className="text-[11px] text-muted-foreground">
+                                {member.monitoringExempt ? "Exempt" : "Monitored"}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground">
+                              Exempt
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
+
+                      {/* Actions — everything else consolidated behind one
+                          kebab. Reactivate-shift surfaces as a leading
+                          inline button only when it's actionable, so
+                          admins don't hunt for it in the dropdown. */}
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {isAdminViewer &&
+                            member.autoClosedAttendanceId && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8 border-blue-500/40 text-blue-700 dark:text-blue-300 hover:bg-blue-500/10"
+                                    disabled={reactivateMutation.isPending}
+                                    onClick={() =>
+                                      reactivateMutation.mutate(
+                                        member.autoClosedAttendanceId!,
+                                      )
+                                    }
+                                    data-testid={`button-reactivate-${member.id}`}
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="left">
+                                  Reactivate shift
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                data-testid={`button-actions-${member.id}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                                <span className="sr-only">Open actions</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuLabel>
+                                {member.name.split(" ")[0]}
+                              </DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                data-testid={`button-message-${member.id}`}
+                              >
+                                <MessageSquare className="h-4 w-4 mr-2" />
+                                Message
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                data-testid={`button-call-${member.id}`}
+                              >
+                                <PhoneCall className="h-4 w-4 mr-2" />
+                                Call
+                              </DropdownMenuItem>
+                              {isAdminViewer && (
+                                <>
+                                  <DropdownMenuSeparator />
+                                  {member.role === "agent" && (
+                                    <DropdownMenuItem
+                                      onSelect={() => handleEditExtension(member)}
+                                      data-testid={`button-edit-extension-${member.id}`}
+                                    >
+                                      <Hash className="h-4 w-4 mr-2" />
+                                      Edit extension
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem
+                                    onSelect={() => handleEditCompensation(member)}
+                                    data-testid={`button-edit-compensation-${member.id}`}
+                                  >
+                                    <MapPin className="h-4 w-4 mr-2" />
+                                    Edit compensation
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() => setUserForStoreAccess(member)}
+                                    data-testid={`button-manage-store-access-${member.id}`}
+                                  >
+                                    <Store className="h-4 w-4 mr-2" />
+                                    Manage store access
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() => setUserForModuleAccess(member)}
+                                    data-testid={`button-manage-page-access-${member.id}`}
+                                  >
+                                    <KeyRound className="h-4 w-4 mr-2" />
+                                    Manage page access
+                                  </DropdownMenuItem>
+                                  {!isSelf && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        onSelect={() => handleDeleteUser(member)}
+                                        className="text-destructive focus:text-destructive"
+                                        data-testid={`button-delete-${member.id}`}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete member
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
-
-              {/* Auto clock-out monitoring toggle — admin only. Off =
-                  this member is exempt (never auto-clocked-out). Full-
-                  control admins are always exempt regardless, so we hide
-                  the toggle for them. */}
-              {userRole === "admin" && member.role !== "admin" && (
-                <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Eye className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium">Auto clock-out</p>
-                      <p className="text-[11px] text-muted-foreground truncate">
-                        {member.monitoringExempt ? "Exempt — not monitored" : "Monitored for inactivity"}
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    checked={!member.monitoringExempt}
-                    disabled={monitoringExemptMutation.isPending}
-                    onCheckedChange={(on) =>
-                      monitoringExemptMutation.mutate({ userId: member.id, exempt: !on })
-                    }
-                    data-testid={`switch-monitoring-${member.id}`}
-                    aria-label="Toggle auto clock-out monitoring"
-                  />
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  data-testid={`button-message-${member.id}`}
-                >
-                  Message
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1"
-                  data-testid={`button-call-${member.id}`}
-                >
-                  Call
-                </Button>
-                {/* Phase 4: per-user store access. Admin-only so
-                    agents can't see their own toggles. Surfaced on
-                    every role (including other admins) for audit —
-                    admins see a banner inside the modal explaining
-                    that they implicitly bypass via the role check. */}
-                {userRole === "admin" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setUserForStoreAccess(member)}
-                    data-testid={`button-manage-store-access-${member.id}`}
-                    title="Manage store access"
-                  >
-                    <Store className="h-4 w-4" />
-                  </Button>
-                )}
-                {userRole === "admin" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setUserForModuleAccess(member)}
-                    data-testid={`button-manage-page-access-${member.id}`}
-                    title="Manage page access"
-                  >
-                    <KeyRound className="h-4 w-4" />
-                  </Button>
-                )}
-                {userRole === "admin" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleDeleteUser(member)}
-                    data-testid={`button-delete-${member.id}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       {/* Invite User Dialog */}
