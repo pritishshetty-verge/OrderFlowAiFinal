@@ -317,6 +317,10 @@ export default function AbandonedCartsPage() {
 
   const { data: checkouts, isLoading } = useQuery<AbandonedCheckoutRow[]>({
     queryKey: ["/api/abandoned-checkouts"],
+    // Near-real-time so the "Converted" cue (set by the order-create listener
+    // when a customer orders outside the fast-checkout window) appears without a
+    // manual refresh, keeping agents off already-converted carts.
+    refetchInterval: 30_000,
   });
 
   // Fastrr visibility pattern: only carts with a real NAME and a SHIPPING
@@ -598,11 +602,21 @@ export default function AbandonedCartsPage() {
                           <StageBadge stage={checkout.checkoutStage} />
                         </TableCell>
                         <TableCell>
-                          <RecoveryStatusDropdown
-                            status={checkout.recoveryStatus ?? "PENDING"}
-                            onChange={(status) => statusMutation.mutate({ id: checkout.id, status })}
-                            disabled={statusMutation.isPending}
-                          />
+                          <div className="flex flex-col items-start gap-1">
+                            {checkout.convertedOrderId && (
+                              <Badge
+                                className="rounded-full border-0 bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400 no-default-hover-elevate"
+                                data-testid={`badge-converted-${checkout.id}`}
+                              >
+                                Converted
+                              </Badge>
+                            )}
+                            <RecoveryStatusDropdown
+                              status={checkout.recoveryStatus ?? "PENDING"}
+                              onChange={(status) => statusMutation.mutate({ id: checkout.id, status })}
+                              disabled={statusMutation.isPending}
+                            />
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">
                           <ActionIcons phone={checkout.customerPhone} checkoutUrl={checkout.checkoutUrl} onCopy={copyLink} />

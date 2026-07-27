@@ -57,6 +57,10 @@ export const users = pgTable("users", {
   department: text("department").default("Operations"),
   employeeId: text("employee_id").unique(),
   agentExtension: varchar("agent_extension", { length: 10 }), // IVR phone extension for agents
+  // Recovery agent's personal Shopify discount code. Orders carrying this code
+  // (orders.discountCodes) are attributed to this agent for their "My Converted
+  // Orders" list + commission. Admin-entered on the Team page. Unique.
+  couponCode: text("coupon_code").unique(),
   presenceStatus: text("presence_status").notNull().default("present"), // present, onleave, inactive
   // Which city's holiday calendar this employee follows. Drives the
   // purple "holiday" markers on /api/holidays + attendance calendar.
@@ -129,6 +133,7 @@ export const updateUserSchema = createInsertSchema(users, {
   department: true,
   employeeId: true,
   agentExtension: true,
+  couponCode: true,
   presenceStatus: true,
   holidayState: true,
   baseSalary: true,
@@ -511,7 +516,10 @@ export const orders = pgTable("orders", {
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   totalTax: decimal("total_tax", { precision: 12, scale: 2 }).default("0"),
   totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default("0"),
-  discountCode: text("discount_code"),
+  discountCode: text("discount_code"), // First Shopify discount code (legacy).
+  // All discount codes on the order (Shopify allows multiple). Used to attribute
+  // a converted order to the recovery agent whose personal coupon it carries.
+  discountCodes: jsonb("discount_codes").$type<string[]>(),
   shippingPrice: decimal("shipping_price", { precision: 12, scale: 2 }).default("0"),
   currency: text("currency").notNull().default("INR"),
   
@@ -579,7 +587,11 @@ export const orders = pgTable("orders", {
   ),
 }));
 
-export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertOrderSchema = createInsertSchema(orders, {
+  // jsonb columns infer loosely (unknown[]); pin discountCodes to string[] so it
+  // lines up with the Drizzle insert model ($type<string[]>()).
+  discountCodes: z.array(z.string()).nullable().optional(),
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
 
@@ -1648,6 +1660,11 @@ export const abandonedCheckouts = pgTable("abandoned_checkouts", {
   // Full raw Fastrr/Shiprocket Faster webhook payload — kept so the detailed
   // price breakdown (shipping, prepaid/coupon discounts) can be parsed in the UI.
   rawData: jsonb("raw_data"),
+  // Set by the order-create listener when a NEW order's phone/email matches this
+  // cart AFTER the provider's 20-min window closed. Drives the "Converted" badge
+  // so agents don't call an already-converted customer.
+  convertedOrderId: varchar("converted_order_id"),
+  convertedAt: timestamp("converted_at"),
   assignedTo: text("assigned_to"),
   isRecovered: boolean("is_recovered").notNull().default(false),
   // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).

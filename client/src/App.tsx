@@ -30,6 +30,7 @@ import AdminCourseForm from "@/pages/admin-course-form";
 import AdminLessonForm from "@/pages/admin-lesson-form";
 import CallLogsPage from "@/pages/call-logs";
 import AbandonedCartsPage from "@/pages/AbandonedCarts";
+import MyConvertedOrdersPage from "@/pages/my-converted-orders";
 import LearningCenterPlaceholder from "@/pages/LearningCenter";
 import TeamsPlaceholder from "@/pages/Teams";
 import WebhooksSettingsPage from "@/pages/webhooks-settings";
@@ -63,6 +64,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 const RECOVERY_AGENT_ALLOWED_PATHS = [
   "/orders",
   "/abandoned-carts",
+  "/my-converted-orders",
   "/learning-center",
   "/teams",
   "/profile",
@@ -208,6 +210,9 @@ function Router() {
       </Route>
       <Route path="/abandoned-carts">
         {() => <ChatSupportGuard component={AbandonedCartsPage} />}
+      </Route>
+      <Route path="/my-converted-orders">
+        {() => <ChatSupportGuard component={MyConvertedOrdersPage} />}
       </Route>
       <Route path="/learning-center">
         {() => <ChatSupportGuard component={LearningCenterPlaceholder} />}

@@ -496,6 +496,9 @@ export interface IStorage {
   upsertAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
   updateAbandonedCheckoutStatus(id: number, status: string): Promise<AbandonedCheckout | undefined>;
+  getAbandonedCheckoutByContact(phone?: string | null, email?: string | null): Promise<AbandonedCheckout | undefined>;
+  markAbandonedCheckoutConverted(id: number, orderId: string): Promise<void>;
+  getConvertedOrdersForCoupon(couponCode: string): Promise<Order[]>;
   getPrimaryStoreId(): Promise<string | null>;
 
   // Inbound Webhook Logs
@@ -3631,6 +3634,35 @@ export class DbStorage implements IStorage {
     await db.execute(sql`
       ALTER TABLE users
         ADD COLUMN IF NOT EXISTS module_access JSONB`);
+    // Agent recovery: coupon-based attribution + AC→order conversion link.
+    await db.execute(sql`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS coupon_code TEXT`);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_coupon_code_key
+        ON users (coupon_code) WHERE coupon_code IS NOT NULL`);
+    await db.execute(sql`
+      ALTER TABLE orders
+        ADD COLUMN IF NOT EXISTS discount_codes JSONB`);
+    // One-off backfill: populate discount_codes (all codes) from the stored raw
+    // Shopify payload for historical orders. Self-limiting — only touches rows
+    // still NULL, so it effectively runs once and is a no-op on later boots.
+    await db.execute(sql`
+      UPDATE orders
+      SET discount_codes = COALESCE(
+        (SELECT jsonb_agg(elem->>'code')
+         FROM jsonb_array_elements(raw_shopify_data->'discount_codes') elem
+         WHERE elem->>'code' IS NOT NULL),
+        '[]'::jsonb)
+      WHERE discount_codes IS NULL
+        AND raw_shopify_data ? 'discount_codes'
+        AND jsonb_typeof(raw_shopify_data->'discount_codes') = 'array'`);
+    await db.execute(sql`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS converted_order_id VARCHAR`);
+    await db.execute(sql`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS converted_at TIMESTAMP`);
   }
 
   async seedDefaultSettings(): Promise<void> {
@@ -3718,6 +3750,8 @@ export class DbStorage implements IStorage {
         isRecovered: abandonedCheckouts.isRecovered,
         recoveryStatus: abandonedCheckouts.recoveryStatus,
         rawData: abandonedCheckouts.rawData,
+        convertedOrderId: abandonedCheckouts.convertedOrderId,
+        convertedAt: abandonedCheckouts.convertedAt,
         createdAt: abandonedCheckouts.createdAt,
         assignedAgentName: users.fullName,
       })
@@ -3738,6 +3772,75 @@ export class DbStorage implements IStorage {
       .where(eq(abandonedCheckouts.id, id))
       .returning();
     return row;
+  }
+
+  /**
+   * Find the most recent NOT-yet-converted abandoned checkout matching a new
+   * order's contact details. Email is matched case-insensitively; phone by
+   * digits-only, last-10 (Shopify order phones are raw, AC phones are
+   * whitespace-stripped, so plain equality is unreliable — mirrors the
+   * order-tracking probe in routes.ts). Feeds the order→AC conversion listener.
+   */
+  async getAbandonedCheckoutByContact(
+    phone?: string | null,
+    email?: string | null,
+  ): Promise<AbandonedCheckout | undefined> {
+    const phoneDigits = (phone ?? "").replace(/\D/g, "");
+    const last10 = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : "";
+    const emailNorm = (email ?? "").trim().toLowerCase();
+    if (!last10 && !emailNorm) return undefined;
+
+    const conditions = [] as any[];
+    if (last10) {
+      conditions.push(sql`RIGHT(REGEXP_REPLACE(COALESCE(${abandonedCheckouts.customerPhone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`);
+    }
+    if (emailNorm) {
+      conditions.push(sql`LOWER(${abandonedCheckouts.customerEmail}) = ${emailNorm}`);
+    }
+    const [row] = await db
+      .select()
+      .from(abandonedCheckouts)
+      .where(and(eq(abandonedCheckouts.isRecovered, false), or(...conditions)))
+      .orderBy(desc(abandonedCheckouts.createdAt))
+      .limit(1);
+    return row;
+  }
+
+  /** Mark an abandoned checkout converted by a matched order (Feature 1). */
+  async markAbandonedCheckoutConverted(
+    id: number,
+    orderId: string,
+  ): Promise<void> {
+    await db
+      .update(abandonedCheckouts)
+      .set({
+        convertedOrderId: orderId,
+        convertedAt: new Date(),
+        recoveryStatus: "RECOVERED",
+        isRecovered: true,
+      })
+      .where(eq(abandonedCheckouts.id, id));
+  }
+
+  /**
+   * Orders attributed to an agent's coupon code (case-insensitive) — carried in
+   * orders.discountCodes (all codes) or the legacy orders.discountCode (first).
+   * Powers the "My Converted Orders" list. Returns full order rows (shipping
+   * status + payment method) newest first.
+   */
+  async getConvertedOrdersForCoupon(couponCode: string): Promise<Order[]> {
+    const code = couponCode.trim().toLowerCase();
+    if (!code) return [];
+    return await db
+      .select()
+      .from(orders)
+      .where(
+        or(
+          sql`LOWER(COALESCE(${orders.discountCode}, '')) = ${code}`,
+          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) c WHERE LOWER(c) = ${code})`,
+        ),
+      )
+      .orderBy(desc(orders.createdAt));
   }
 
   async createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog> {

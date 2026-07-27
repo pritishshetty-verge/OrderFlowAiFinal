@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, Wallet, LayoutGrid, RefreshCcw, TrendingUp } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -136,6 +136,16 @@ const adminMenuItems: MenuItem[] = [
     accessModule: "abandoned_carts",
   },
   {
+    // Per-agent view of the orders they've recovered (attributed by their
+    // Shopify coupon code), with live shipping status + commission stats.
+    // Admins keep it in the tree for oversight; plain agents / recovery
+    // agents see it in their own sidebars via the arrays below.
+    title: "My Converted Orders",
+    url: "/my-converted-orders",
+    icon: TrendingUp,
+    allowedRoles: ["admin", "recovery_agent"],
+  },
+  {
     title: "Products",
     url: "/products",
     icon: LayoutGrid,
@@ -185,6 +195,11 @@ const recoveryAgentMenuItems: MenuItem[] = [
     title: "Abandoned Carts",
     url: "/abandoned-carts",
     icon: ShoppingCart,
+  },
+  {
+    title: "My Converted Orders",
+    url: "/my-converted-orders",
+    icon: TrendingUp,
   },
   {
     title: "Learning Center",

@@ -2681,6 +2681,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalTax: shopifyOrder.total_tax || "0",
           totalDiscount: shopifyOrder.total_discounts || "0",
           discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+          discountCodes: Array.isArray(shopifyOrder.discount_codes)
+            ? shopifyOrder.discount_codes.map((d: any) => d?.code).filter(Boolean)
+            : [],
           shippingPrice:
             shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
           currency: shopifyOrder.currency || "INR",
@@ -4232,6 +4235,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         department: user.department,
         employeeId: user.employeeId,
         agentExtension: user.agentExtension,
+        couponCode: user.couponCode,
         presenceStatus: user.presenceStatus,
         isActive: user.isActive,
         createdAt: user.createdAt,
@@ -4240,6 +4244,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user by email:", error);
       res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
+
+  // ============================================================================
+  // Agent self-serve: converted orders + performance (Features 2 & 3)
+  //
+  // Attribution is by the agent's personal Shopify coupon code
+  // (users.coupon_code) matched against orders.discount_codes / discount_code.
+  // Identity resolves from the session first, then a `currentUserId` query
+  // fallback (mirrors the rest of this file's transitional auth). An admin may
+  // inspect another agent by passing `?userId=`.
+  // ============================================================================
+  const resolveAgentTarget = async (req: any): Promise<
+    | { ok: true; user: UserRecord }
+    | { ok: false; status: number; error: string }
+  > => {
+    const selfId: string | null =
+      req.session?.userId ??
+      (typeof req.query?.currentUserId === "string" ? req.query.currentUserId : null);
+    if (!selfId) return { ok: false, status: 401, error: "Not authenticated" };
+    const self = await storage.getUser(selfId);
+    if (!self) return { ok: false, status: 401, error: "Not authenticated" };
+
+    const requestedUserId =
+      typeof req.query?.userId === "string" ? req.query.userId : null;
+    if (requestedUserId && requestedUserId !== self.id) {
+      if (!isAdmin(self)) {
+        return { ok: false, status: 403, error: "Admins only may view another agent" };
+      }
+      const target = await storage.getUser(requestedUserId);
+      if (!target) return { ok: false, status: 404, error: "User not found" };
+      return { ok: true, user: target };
+    }
+    return { ok: true, user: self };
+  };
+
+  app.get("/api/agents/me/converted-orders", async (req, res) => {
+    try {
+      const resolved = await resolveAgentTarget(req);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error });
+      }
+      const couponCode = resolved.user.couponCode;
+      if (!couponCode) {
+        return res.json({ couponCode: null, orders: [] });
+      }
+      const orders = await storage.getConvertedOrdersForCoupon(couponCode);
+      res.json({ couponCode, orders });
+    } catch (error) {
+      console.error("Error fetching converted orders:", error);
+      res.status(500).json({ error: "Failed to fetch converted orders" });
+    }
+  });
+
+  app.get("/api/agents/me/performance", async (req, res) => {
+    try {
+      const resolved = await resolveAgentTarget(req);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error });
+      }
+      const couponCode = resolved.user.couponCode;
+      if (!couponCode) {
+        return res.json({
+          couponCode: null,
+          convertedCount: 0,
+          gmv: 0,
+          deliveredCount: 0,
+          deliveredGmv: 0,
+          deliveryRatePct: 0,
+          commission: 0,
+          codCount: 0,
+          prepaidCount: 0,
+        });
+      }
+      const orders = await storage.getConvertedOrdersForCoupon(couponCode);
+      const num = (v: any) => {
+        const n = parseFloat(v ?? "0");
+        return Number.isFinite(n) ? n : 0;
+      };
+      let gmv = 0;
+      let deliveredCount = 0;
+      let deliveredGmv = 0;
+      let codCount = 0;
+      let prepaidCount = 0;
+      for (const o of orders) {
+        const price = num(o.totalPrice);
+        gmv += price;
+        if (o.status === "delivered") {
+          deliveredCount += 1;
+          deliveredGmv += price;
+        }
+        if ((o.paymentMethod || "").toLowerCase() === "cod") codCount += 1;
+        else prepaidCount += 1;
+      }
+      const convertedCount = orders.length;
+      const deliveryRatePct =
+        convertedCount > 0 ? Math.round((deliveredCount / convertedCount) * 100) : 0;
+      const commission = Math.round(deliveredGmv * 0.1 * 100) / 100;
+      res.json({
+        couponCode,
+        convertedCount,
+        gmv: Math.round(gmv * 100) / 100,
+        deliveredCount,
+        deliveredGmv: Math.round(deliveredGmv * 100) / 100,
+        deliveryRatePct,
+        commission,
+        codCount,
+        prepaidCount,
+      });
+    } catch (error) {
+      console.error("Error computing agent performance:", error);
+      res.status(500).json({ error: "Failed to compute performance" });
     }
   });
 

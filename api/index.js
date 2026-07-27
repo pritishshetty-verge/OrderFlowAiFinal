@@ -140,6 +140,10 @@ var init_schema = __esm({
       employeeId: text("employee_id").unique(),
       agentExtension: varchar("agent_extension", { length: 10 }),
       // IVR phone extension for agents
+      // Recovery agent's personal Shopify discount code. Orders carrying this code
+      // (orders.discountCodes) are attributed to this agent for their "My Converted
+      // Orders" list + commission. Admin-entered on the Team page. Unique.
+      couponCode: text("coupon_code").unique(),
       presenceStatus: text("presence_status").notNull().default("present"),
       // present, onleave, inactive
       // Which city's holiday calendar this employee follows. Drives the
@@ -211,6 +215,7 @@ var init_schema = __esm({
       department: true,
       employeeId: true,
       agentExtension: true,
+      couponCode: true,
       presenceStatus: true,
       holidayState: true,
       baseSalary: true,
@@ -468,6 +473,10 @@ var init_schema = __esm({
       totalTax: decimal("total_tax", { precision: 12, scale: 2 }).default("0"),
       totalDiscount: decimal("total_discount", { precision: 12, scale: 2 }).default("0"),
       discountCode: text("discount_code"),
+      // First Shopify discount code (legacy).
+      // All discount codes on the order (Shopify allows multiple). Used to attribute
+      // a converted order to the recovery agent whose personal coupon it carries.
+      discountCodes: jsonb("discount_codes").$type(),
       shippingPrice: decimal("shipping_price", { precision: 12, scale: 2 }).default("0"),
       currency: text("currency").notNull().default("INR"),
       // Shipping address
@@ -534,7 +543,11 @@ var init_schema = __esm({
         table.shopifyOrderId
       )
     }));
-    insertOrderSchema = createInsertSchema(orders).omit({ id: true, createdAt: true, updatedAt: true });
+    insertOrderSchema = createInsertSchema(orders, {
+      // jsonb columns infer loosely (unknown[]); pin discountCodes to string[] so it
+      // lines up with the Drizzle insert model ($type<string[]>()).
+      discountCodes: z.array(z.string()).nullable().optional()
+    }).omit({ id: true, createdAt: true, updatedAt: true });
     orderItems = pgTable("order_items", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       // Denormalised from parent order. Saves a join on catalog/analytics
@@ -1317,6 +1330,11 @@ var init_schema = __esm({
       // Full raw Fastrr/Shiprocket Faster webhook payload — kept so the detailed
       // price breakdown (shipping, prepaid/coupon discounts) can be parsed in the UI.
       rawData: jsonb("raw_data"),
+      // Set by the order-create listener when a NEW order's phone/email matches this
+      // cart AFTER the provider's 20-min window closed. Drives the "Converted" badge
+      // so agents don't call an already-converted customer.
+      convertedOrderId: varchar("converted_order_id"),
+      convertedAt: timestamp("converted_at"),
       assignedTo: text("assigned_to"),
       isRecovered: boolean("is_recovered").notNull().default(false),
       // Telecalling recovery workflow state (PENDING → CONTACTED → RECOVERED/LOST).
@@ -3375,6 +3393,31 @@ var init_storage = __esm({
         await db.execute(sql2`
       ALTER TABLE users
         ADD COLUMN IF NOT EXISTS module_access JSONB`);
+        await db.execute(sql2`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS coupon_code TEXT`);
+        await db.execute(sql2`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_coupon_code_key
+        ON users (coupon_code) WHERE coupon_code IS NOT NULL`);
+        await db.execute(sql2`
+      ALTER TABLE orders
+        ADD COLUMN IF NOT EXISTS discount_codes JSONB`);
+        await db.execute(sql2`
+      UPDATE orders
+      SET discount_codes = COALESCE(
+        (SELECT jsonb_agg(elem->>'code')
+         FROM jsonb_array_elements(raw_shopify_data->'discount_codes') elem
+         WHERE elem->>'code' IS NOT NULL),
+        '[]'::jsonb)
+      WHERE discount_codes IS NULL
+        AND raw_shopify_data ? 'discount_codes'
+        AND jsonb_typeof(raw_shopify_data->'discount_codes') = 'array'`);
+        await db.execute(sql2`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS converted_order_id VARCHAR`);
+        await db.execute(sql2`
+      ALTER TABLE abandoned_checkouts
+        ADD COLUMN IF NOT EXISTS converted_at TIMESTAMP`);
       }
       async seedDefaultSettings() {
         const allStores = await db.select({ id: stores.id }).from(stores);
@@ -3445,6 +3488,8 @@ var init_storage = __esm({
           isRecovered: abandonedCheckouts.isRecovered,
           recoveryStatus: abandonedCheckouts.recoveryStatus,
           rawData: abandonedCheckouts.rawData,
+          convertedOrderId: abandonedCheckouts.convertedOrderId,
+          convertedAt: abandonedCheckouts.convertedAt,
           createdAt: abandonedCheckouts.createdAt,
           assignedAgentName: users.fullName
         }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).orderBy(desc(abandonedCheckouts.createdAt));
@@ -3454,6 +3499,53 @@ var init_storage = __esm({
       async updateAbandonedCheckoutStatus(id, status) {
         const [row] = await db.update(abandonedCheckouts).set({ recoveryStatus: status, isRecovered: status === "RECOVERED" }).where(eq(abandonedCheckouts.id, id)).returning();
         return row;
+      }
+      /**
+       * Find the most recent NOT-yet-converted abandoned checkout matching a new
+       * order's contact details. Email is matched case-insensitively; phone by
+       * digits-only, last-10 (Shopify order phones are raw, AC phones are
+       * whitespace-stripped, so plain equality is unreliable — mirrors the
+       * order-tracking probe in routes.ts). Feeds the order→AC conversion listener.
+       */
+      async getAbandonedCheckoutByContact(phone, email) {
+        const phoneDigits = (phone ?? "").replace(/\D/g, "");
+        const last10 = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : "";
+        const emailNorm = (email ?? "").trim().toLowerCase();
+        if (!last10 && !emailNorm) return void 0;
+        const conditions = [];
+        if (last10) {
+          conditions.push(sql2`RIGHT(REGEXP_REPLACE(COALESCE(${abandonedCheckouts.customerPhone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`);
+        }
+        if (emailNorm) {
+          conditions.push(sql2`LOWER(${abandonedCheckouts.customerEmail}) = ${emailNorm}`);
+        }
+        const [row] = await db.select().from(abandonedCheckouts).where(and(eq(abandonedCheckouts.isRecovered, false), or(...conditions))).orderBy(desc(abandonedCheckouts.createdAt)).limit(1);
+        return row;
+      }
+      /** Mark an abandoned checkout converted by a matched order (Feature 1). */
+      async markAbandonedCheckoutConverted(id, orderId) {
+        await db.update(abandonedCheckouts).set({
+          convertedOrderId: orderId,
+          convertedAt: /* @__PURE__ */ new Date(),
+          recoveryStatus: "RECOVERED",
+          isRecovered: true
+        }).where(eq(abandonedCheckouts.id, id));
+      }
+      /**
+       * Orders attributed to an agent's coupon code (case-insensitive) — carried in
+       * orders.discountCodes (all codes) or the legacy orders.discountCode (first).
+       * Powers the "My Converted Orders" list. Returns full order rows (shipping
+       * status + payment method) newest first.
+       */
+      async getConvertedOrdersForCoupon(couponCode) {
+        const code = couponCode.trim().toLowerCase();
+        if (!code) return [];
+        return await db.select().from(orders).where(
+          or(
+            sql2`LOWER(COALESCE(${orders.discountCode}, '')) = ${code}`,
+            sql2`EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) c WHERE LOWER(c) = ${code})`
+          )
+        ).orderBy(desc(orders.createdAt));
       }
       async createInboundWebhookLog(data) {
         const [log2] = await db.insert(inboundWebhookLogs).values(data).returning();
@@ -8165,6 +8257,7 @@ async function handleOrderCreated(req, res) {
       totalTax: shopifyOrder.total_tax || "0",
       totalDiscount: shopifyOrder.total_discounts || "0",
       discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+      discountCodes: Array.isArray(shopifyOrder.discount_codes) ? shopifyOrder.discount_codes.map((d) => d?.code).filter(Boolean) : [],
       shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
       currency: shopifyOrder.currency || "INR",
       paymentMethod: normalizedPaymentMethod,
@@ -8194,6 +8287,23 @@ async function handleOrderCreated(req, res) {
       processedAt: shopifyOrder.processed_at ?? shopifyOrder.created_at
     };
     const order = await storage.createOrder(orderData);
+    try {
+      const matchedAc = await storage.getAbandonedCheckoutByContact(
+        order.customerPhone,
+        order.customerEmail
+      );
+      if (matchedAc) {
+        await storage.markAbandonedCheckoutConverted(matchedAc.id, order.id);
+        console.log(
+          `\u2713 Abandoned checkout ${matchedAc.id} marked converted by order ${order.shopifyOrderNumber}`
+        );
+      }
+    } catch (acError) {
+      console.error(
+        `Error cross-referencing order ${order.shopifyOrderNumber} against abandoned checkouts:`,
+        acError
+      );
+    }
     if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
       const items = [];
       for (const item of shopifyOrder.line_items) {
@@ -8324,6 +8434,7 @@ async function handleOrderUpdated(req, res) {
       subtotal: shopifyOrder.subtotal_price || "0",
       totalDiscount: shopifyOrder.total_discounts || "0",
       discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+      discountCodes: Array.isArray(shopifyOrder.discount_codes) ? shopifyOrder.discount_codes.map((d) => d?.code).filter(Boolean) : [],
       shippingAddress: shopifyOrder.shipping_address || null,
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
@@ -10767,6 +10878,7 @@ async function registerRoutes(app2) {
           totalTax: shopifyOrder.total_tax || "0",
           totalDiscount: shopifyOrder.total_discounts || "0",
           discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+          discountCodes: Array.isArray(shopifyOrder.discount_codes) ? shopifyOrder.discount_codes.map((d) => d?.code).filter(Boolean) : [],
           shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
           currency: shopifyOrder.currency || "INR",
           paymentMethod: shopifyOrder.payment_gateway_names?.[0] || "Unknown",
@@ -11865,6 +11977,7 @@ async function registerRoutes(app2) {
         department: user.department,
         employeeId: user.employeeId,
         agentExtension: user.agentExtension,
+        couponCode: user.couponCode,
         presenceStatus: user.presenceStatus,
         isActive: user.isActive,
         createdAt: user.createdAt,
@@ -11873,6 +11986,98 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error fetching user by email:", error);
       res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
+  const resolveAgentTarget = async (req) => {
+    const selfId = req.session?.userId ?? (typeof req.query?.currentUserId === "string" ? req.query.currentUserId : null);
+    if (!selfId) return { ok: false, status: 401, error: "Not authenticated" };
+    const self = await storage.getUser(selfId);
+    if (!self) return { ok: false, status: 401, error: "Not authenticated" };
+    const requestedUserId = typeof req.query?.userId === "string" ? req.query.userId : null;
+    if (requestedUserId && requestedUserId !== self.id) {
+      if (!isAdmin(self)) {
+        return { ok: false, status: 403, error: "Admins only may view another agent" };
+      }
+      const target = await storage.getUser(requestedUserId);
+      if (!target) return { ok: false, status: 404, error: "User not found" };
+      return { ok: true, user: target };
+    }
+    return { ok: true, user: self };
+  };
+  app2.get("/api/agents/me/converted-orders", async (req, res) => {
+    try {
+      const resolved = await resolveAgentTarget(req);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error });
+      }
+      const couponCode = resolved.user.couponCode;
+      if (!couponCode) {
+        return res.json({ couponCode: null, orders: [] });
+      }
+      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode);
+      res.json({ couponCode, orders: orders2 });
+    } catch (error) {
+      console.error("Error fetching converted orders:", error);
+      res.status(500).json({ error: "Failed to fetch converted orders" });
+    }
+  });
+  app2.get("/api/agents/me/performance", async (req, res) => {
+    try {
+      const resolved = await resolveAgentTarget(req);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error });
+      }
+      const couponCode = resolved.user.couponCode;
+      if (!couponCode) {
+        return res.json({
+          couponCode: null,
+          convertedCount: 0,
+          gmv: 0,
+          deliveredCount: 0,
+          deliveredGmv: 0,
+          deliveryRatePct: 0,
+          commission: 0,
+          codCount: 0,
+          prepaidCount: 0
+        });
+      }
+      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode);
+      const num = (v) => {
+        const n = parseFloat(v ?? "0");
+        return Number.isFinite(n) ? n : 0;
+      };
+      let gmv = 0;
+      let deliveredCount = 0;
+      let deliveredGmv = 0;
+      let codCount = 0;
+      let prepaidCount = 0;
+      for (const o of orders2) {
+        const price = num(o.totalPrice);
+        gmv += price;
+        if (o.status === "delivered") {
+          deliveredCount += 1;
+          deliveredGmv += price;
+        }
+        if ((o.paymentMethod || "").toLowerCase() === "cod") codCount += 1;
+        else prepaidCount += 1;
+      }
+      const convertedCount = orders2.length;
+      const deliveryRatePct = convertedCount > 0 ? Math.round(deliveredCount / convertedCount * 100) : 0;
+      const commission = Math.round(deliveredGmv * 0.1 * 100) / 100;
+      res.json({
+        couponCode,
+        convertedCount,
+        gmv: Math.round(gmv * 100) / 100,
+        deliveredCount,
+        deliveredGmv: Math.round(deliveredGmv * 100) / 100,
+        deliveryRatePct,
+        commission,
+        codCount,
+        prepaidCount
+      });
+    } catch (error) {
+      console.error("Error computing agent performance:", error);
+      res.status(500).json({ error: "Failed to compute performance" });
     }
   });
   app2.get("/api/users", async (req, res) => {

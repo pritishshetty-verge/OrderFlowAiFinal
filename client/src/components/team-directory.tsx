@@ -77,6 +77,9 @@ interface TeamMember {
   holidayState?: HolidayState;
   baseSalary?: number;
   compensationProfile?: CompensationProfile;
+  // Agent's personal Shopify coupon code — attributes recovered orders to them
+  // for the "My Converted Orders" page and commission dashboard.
+  couponCode?: string;
   // Set only when today's attendance was auto-closed by the smart-presence
   // worker AND the admin hasn't reactivated yet. Drives the auto-closed
   // badge + Reactivate button on the card.
@@ -130,6 +133,7 @@ const editCompensationSchema = z.object({
       message: "Enter a non-negative number",
     }),
   compensationProfile: z.enum(["NONE", "ORDER_CONFIRMATION", "NDR_RTO", "CHAT_SUPPORT"]),
+  couponCode: z.string().max(60, "Coupon code too long"),
 });
 
 type EditCompensationFormData = z.infer<typeof editCompensationSchema>;
@@ -305,6 +309,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       holidayState: "MUMBAI",
       baseSalary: "0",
       compensationProfile: "NONE",
+      couponCode: "",
     },
   });
 
@@ -414,11 +419,13 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
       holidayState,
       baseSalary,
       compensationProfile,
+      couponCode,
     }: {
       userId: string;
       holidayState: HolidayState;
       baseSalary: string;
       compensationProfile: CompensationProfile | "NONE";
+      couponCode: string;
     }) => {
       const currentUserId = localStorage.getItem("userId");
       const trimmedSalary = baseSalary.trim();
@@ -426,10 +433,13 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         trimmedSalary === "" ? null : Number(trimmedSalary).toFixed(2);
       const profilePayload =
         compensationProfile === "NONE" ? null : compensationProfile;
+      const trimmedCoupon = couponCode.trim();
+      const couponPayload = trimmedCoupon === "" ? null : trimmedCoupon;
       const res = await apiRequest("PATCH", `/api/users/${userId}`, {
         holidayState,
         baseSalary: salaryPayload,
         compensationProfile: profilePayload,
+        couponCode: couponPayload,
         currentUserId,
       });
       return await res.json();
@@ -501,6 +511,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
           ? String(member.baseSalary)
           : "0",
       compensationProfile: member.compensationProfile ?? "NONE",
+      couponCode: member.couponCode ?? "",
     });
     setEditCompensationDialogOpen(true);
   };
@@ -512,6 +523,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         holidayState: data.holidayState,
         baseSalary: data.baseSalary,
         compensationProfile: data.compensationProfile,
+        couponCode: data.couponCode,
       });
     }
   };
@@ -604,6 +616,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
             : undefined,
         compensationProfile:
           (user.compensationProfile as CompensationProfile | null) ?? undefined,
+        couponCode: (user as any).couponCode ?? undefined,
         autoClosedAttendanceId: isAutoClosed ? att!.id : undefined,
         autoClosedAt: isAutoClosed ? new Date(att!.autoClosedAt!) : undefined,
         monitoringExempt: (user as any).monitoringExempt ?? false,
@@ -1251,6 +1264,36 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
                       Monthly gross. Drives the base-pay leg of payroll.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={compensationForm.control}
+                name="couponCode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Personal coupon code</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="text"
+                        placeholder="AGENT10"
+                        {...field}
+                        value={field.value ?? ""}
+                        data-testid="input-coupon-code"
+                        className="font-mono uppercase"
+                        autoCapitalize="characters"
+                        autoCorrect="off"
+                        spellCheck={false}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      The Shopify discount code this agent gives to customers.
+                      Orders carrying it are attributed to them on their
+                      "My Converted Orders" page and drive their commission.
+                      Leave blank if not applicable.
                     </p>
                     <FormMessage />
                   </FormItem>

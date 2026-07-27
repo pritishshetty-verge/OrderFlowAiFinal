@@ -236,6 +236,9 @@ export async function handleOrderCreated(req: Request, res: Response) {
       totalTax: shopifyOrder.total_tax || "0",
       totalDiscount: shopifyOrder.total_discounts || "0",
       discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+      discountCodes: Array.isArray(shopifyOrder.discount_codes)
+        ? shopifyOrder.discount_codes.map((d: any) => d?.code).filter(Boolean)
+        : [],
       shippingPrice: shopifyOrder.total_shipping_price_set?.shop_money?.amount || "0",
       currency: shopifyOrder.currency || "INR",
       paymentMethod: normalizedPaymentMethod,
@@ -266,6 +269,31 @@ export async function handleOrderCreated(req: Request, res: Response) {
     };
 
     const order = await storage.createOrder(orderData);
+
+    // Feature 1 — cross-reference this new order against the active abandoned
+    // checkouts. Our fast-checkout provider only marks a cart recovered inside a
+    // ~20-min window, so out-of-window conversions leave the AC looking "active"
+    // and agents waste calls on customers who already ordered. Match on phone
+    // (digits-only, last-10) or email and flag the AC as converted so the UI can
+    // show a "Converted" badge. Own try/catch — a lookup failure must never fail
+    // the order webhook.
+    try {
+      const matchedAc = await storage.getAbandonedCheckoutByContact(
+        order.customerPhone,
+        order.customerEmail,
+      );
+      if (matchedAc) {
+        await storage.markAbandonedCheckoutConverted(matchedAc.id, order.id);
+        console.log(
+          `✓ Abandoned checkout ${matchedAc.id} marked converted by order ${order.shopifyOrderNumber}`,
+        );
+      }
+    } catch (acError) {
+      console.error(
+        `Error cross-referencing order ${order.shopifyOrderNumber} against abandoned checkouts:`,
+        acError,
+      );
+    }
 
     // Create order items with product image lookup from local database
     if (shopifyOrder.line_items && shopifyOrder.line_items.length > 0) {
@@ -438,6 +466,9 @@ export async function handleOrderUpdated(req: Request, res: Response) {
       subtotal: shopifyOrder.subtotal_price || "0",
       totalDiscount: shopifyOrder.total_discounts || "0",
       discountCode: shopifyOrder.discount_codes?.[0]?.code || null,
+      discountCodes: Array.isArray(shopifyOrder.discount_codes)
+        ? shopifyOrder.discount_codes.map((d: any) => d?.code).filter(Boolean)
+        : [],
       shippingAddress: shopifyOrder.shipping_address || null,
       shippingAddressLine1: shopifyOrder.shipping_address?.address1 || null,
       shippingAddressLine2: shopifyOrder.shipping_address?.address2 || null,
