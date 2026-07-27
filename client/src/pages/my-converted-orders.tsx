@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Table,
   TableBody,
@@ -10,34 +10,27 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { PageLayout } from "@/components/page-layout";
 import { StatusBadge } from "@/components/status-badge";
 import { PaymentBadge } from "@/components/payment-badge";
 import { EmptyState } from "@/components/empty-state";
+import { OrderQuickPreview } from "@/components/order-quick-preview";
+import type { Order as UIOrder } from "@/components/orders-table";
 import { cn } from "@/lib/utils";
-import {
-  Info,
-  Package,
-  PackageCheck,
-  Percent,
-  TrendingUp,
-  Wallet,
-} from "lucide-react";
-import type { Order } from "@shared/schema";
+import { Info, Package, PackageCheck, Percent, TrendingUp, Wallet } from "lucide-react";
+import type { Order as BackendOrder } from "@shared/schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// My Converted Orders — per-agent view of the orders they recovered, attributed
-// by their personal Shopify coupon code. Combines Feature 2 ("live shipping
-// status so agents can call about transit delays") and Feature 3 ("self-serve
-// commission dashboard") behind a single sidebar entry.
+// My Converted Orders — per-agent view of the orders recovered by an agent,
+// attributed via their personal Shopify coupon code. Metrics header +
+// clickable orders table that opens the same Quick-Preview drawer as the
+// main Orders page so the interaction model matches everywhere else.
 //
 // Backend contract:
 //   GET /api/agents/me/converted-orders  → { couponCode, orders[] }
 //   GET /api/agents/me/performance       → { convertedCount, gmv, deliveredCount,
 //                                             deliveredGmv, deliveryRatePct,
 //                                             commission, codCount, prepaidCount }
-// Both self-scope to the signed-in user; admins may pass ?userId= to inspect.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Performance {
@@ -54,15 +47,50 @@ interface Performance {
 
 interface ConvertedOrdersResponse {
   couponCode: string | null;
-  orders: Order[];
+  orders: BackendOrder[];
 }
 
 const currency = (v: number) =>
   `₹${(Math.round(v * 100) / 100).toLocaleString("en-IN")}`;
 
-// Statuses that mean "still moving through the network" — agents may want to
-// proactively call the customer on these, esp. for COD.
+// Subtle amber tint on rows where the courier is still moving the parcel or
+// it's stuck in NDR — quiet visual signal, no explanatory copy needed.
 const AT_RISK_SHIPPING = new Set(["ndr", "rto_initiated", "rto_ofd", "lost"]);
+
+// Backend Order → the UI Order shape the shared components (OrdersTable /
+// OrderQuickPreview) expect. Mirrors the transformOrder in orders.tsx —
+// kept local (rather than shared) because that one pulls in the joined
+// assignedToUser which we don't fetch on this endpoint.
+function toUIOrder(o: BackendOrder): UIOrder {
+  const addressParts = [
+    o.shippingAddressLine1,
+    o.shippingAddressLine2,
+    o.shippingCity,
+    o.shippingState,
+    o.shippingPincode,
+  ].filter(Boolean);
+  return {
+    id: o.id,
+    shopifyOrderId: o.shopifyOrderNumber,
+    customerName: o.customerName,
+    customerPhone: o.customerPhone,
+    shippingAddress: addressParts.length > 0 ? addressParts.join(", ") : undefined,
+    shippingCity: o.shippingCity || undefined,
+    shippingState: o.shippingState || undefined,
+    shippingPincode: o.shippingPincode || undefined,
+    items: o.itemsSummary || "",
+    total: parseFloat(o.totalPrice ?? "0") || 0,
+    paymentMethod: (o.paymentMethod ?? "").toLowerCase().includes("cod") ? "cod" : "prepaid",
+    financialStatus: o.financialStatus,
+    status: o.status as UIOrder["status"],
+    callStatus: (o.callStatus as UIOrder["callStatus"]) || undefined,
+    assignedTo: o.assignedTo || undefined,
+    assignedToUser: null,
+    discountCode: o.discountCode || undefined,
+    tags: o.tags || undefined,
+    createdAt: new Date(o.shopifyCreatedAt),
+  };
+}
 
 function StatTile({
   title,
@@ -123,12 +151,12 @@ function StatTile({
 }
 
 export default function MyConvertedOrdersPage() {
+  const queryClient = useQueryClient();
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
   const currentUserParam = userId ? `?currentUserId=${encodeURIComponent(userId)}` : "";
 
   const perfQuery = useQuery<Performance>({
     queryKey: [`/api/agents/me/performance${currentUserParam}`],
-    // Poll — commission ticks up when the courier flips a status to delivered.
     refetchInterval: 60_000,
   });
   const ordersQuery = useQuery<ConvertedOrdersResponse>({
@@ -137,7 +165,7 @@ export default function MyConvertedOrdersPage() {
   });
 
   const performance = perfQuery.data;
-  const orders = ordersQuery.data?.orders ?? [];
+  const backendOrders = ordersQuery.data?.orders ?? [];
   const couponCode = perfQuery.data?.couponCode ?? ordersQuery.data?.couponCode ?? null;
   const isLoading = perfQuery.isLoading || ordersQuery.isLoading;
   const codPrepaidTotal = (performance?.codCount ?? 0) + (performance?.prepaidCount ?? 0);
@@ -146,12 +174,23 @@ export default function MyConvertedOrdersPage() {
       ? Math.round(((performance?.codCount ?? 0) / codPrepaidTotal) * 100)
       : 0;
 
-  const orderedRows = useMemo(() => {
-    return orders.map((o) => ({
-      ...o,
-      isAtRisk: AT_RISK_SHIPPING.has((o.status || "").toLowerCase()),
-    }));
-  }, [orders]);
+  const uiOrders = useMemo(() => backendOrders.map(toUIOrder), [backendOrders]);
+
+  // Quick-preview state — same interaction model as the main Orders page.
+  const [selectedIndex, setSelectedIndex] = useState<number>(-1);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const selectedOrder = selectedIndex >= 0 ? uiOrders[selectedIndex] ?? null : null;
+
+  const openPreviewAt = (index: number) => {
+    setSelectedIndex(index);
+    setIsPreviewOpen(true);
+  };
+  const navigatePreview = (direction: "prev" | "next") => {
+    if (uiOrders.length === 0) return;
+    const next = direction === "prev" ? selectedIndex - 1 : selectedIndex + 1;
+    if (next < 0 || next >= uiOrders.length) return;
+    setSelectedIndex(next);
+  };
 
   return (
     <PageLayout
@@ -183,9 +222,7 @@ export default function MyConvertedOrdersPage() {
           <StatTile
             title="Converted Orders"
             value={performance?.convertedCount ?? 0}
-            description={
-              performance ? `${currency(performance.gmv)} total GMV` : undefined
-            }
+            description={performance ? `${currency(performance.gmv)} total GMV` : undefined}
             icon={<Package className="h-4 w-4" />}
             isLoading={isLoading}
           />
@@ -221,9 +258,7 @@ export default function MyConvertedOrdersPage() {
           />
           <StatTile
             title="COD vs Prepaid"
-            value={
-              codPrepaidTotal > 0 ? `${codShare}% / ${100 - codShare}%` : "—"
-            }
+            value={codPrepaidTotal > 0 ? `${codShare}% / ${100 - codShare}%` : "—"}
             description={
               performance
                 ? `${performance.codCount} COD · ${performance.prepaidCount} Prepaid`
@@ -235,20 +270,13 @@ export default function MyConvertedOrdersPage() {
         </div>
 
         <div className="rounded-lg border bg-card">
-          <div className="border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Orders</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Rows highlighted in amber are still in-network or in NDR — good
-              candidates for a proactive call, especially for COD.
-            </p>
-          </div>
           {isLoading ? (
             <div className="p-4 space-y-2">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="h-9 w-full" />
               ))}
             </div>
-          ) : orderedRows.length === 0 ? (
+          ) : uiOrders.length === 0 ? (
             <EmptyState
               icon={Package}
               title="No converted orders yet"
@@ -272,21 +300,22 @@ export default function MyConvertedOrdersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px]">
-                  {orderedRows.map((row) => {
-                    const highlight = row.isAtRisk;
+                  {uiOrders.map((row, index) => {
+                    const highlight = AT_RISK_SHIPPING.has((row.status || "").toLowerCase());
                     return (
                       <TableRow
                         key={row.id}
                         className={cn(
-                          "group hover-elevate",
+                          "group hover-elevate cursor-pointer",
                           highlight &&
-                            "bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-500/5 dark:hover:bg-amber-500/10",
+                            "bg-amber-50/40 dark:bg-amber-500/5",
                         )}
+                        onClick={() => openPreviewAt(index)}
                         data-testid={`converted-order-row-${row.id}`}
                       >
                         <TableCell className="font-mono tabular-nums text-xs font-medium text-muted-foreground">
                           <span className="text-muted-foreground/70">#</span>
-                          <span className="text-foreground">{row.shopifyOrderNumber}</span>
+                          <span className="text-foreground">{row.shopifyOrderId}</span>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col leading-tight">
@@ -300,39 +329,22 @@ export default function MyConvertedOrdersPage() {
                         </TableCell>
                         <TableCell>
                           <PaymentBadge
-                            method={
-                              (row.paymentMethod || "").toLowerCase() === "cod"
-                                ? "cod"
-                                : "prepaid"
-                            }
+                            method={row.paymentMethod}
                             financialStatus={row.financialStatus}
                           />
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <StatusBadge status={row.status} />
-                            {highlight && (
-                              <Badge
-                                variant="outline"
-                                className="rounded-full border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400 no-default-hover-elevate"
-                                data-testid={`badge-at-risk-${row.id}`}
-                              >
-                                Call customer
-                              </Badge>
-                            )}
-                          </div>
+                          <StatusBadge status={row.status} />
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
-                          {currency(parseFloat(row.totalPrice ?? "0") || 0)}
+                          {currency(row.total)}
                         </TableCell>
                         <TableCell className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
-                          {row.createdAt
-                            ? new Date(row.createdAt).toLocaleDateString("en-IN", {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              })
-                            : "—"}
+                          {row.createdAt.toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
                         </TableCell>
                       </TableRow>
                     );
@@ -343,6 +355,28 @@ export default function MyConvertedOrdersPage() {
           )}
         </div>
       </div>
+
+      <OrderQuickPreview
+        order={selectedOrder}
+        open={isPreviewOpen}
+        onOpenChange={(open) => {
+          setIsPreviewOpen(open);
+          if (!open) setSelectedIndex(-1);
+        }}
+        currentIndex={selectedIndex}
+        totalOrders={uiOrders.length}
+        onNavigate={navigatePreview}
+        onStatusUpdate={() => {
+          // A status change from the drawer may flip an order into/out of
+          // delivered — refresh both the list and the metrics.
+          queryClient.invalidateQueries({
+            predicate: (q) => {
+              const k = q.queryKey?.[0];
+              return typeof k === "string" && k.startsWith("/api/agents/me/");
+            },
+          });
+        }}
+      />
     </PageLayout>
   );
 }
