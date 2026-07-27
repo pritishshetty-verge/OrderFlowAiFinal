@@ -213,7 +213,9 @@ export default function SignupPage() {
                 ? "Inside Sales Executive (ISE)"
                 : inviteData?.role === "chat_support"
                   ? "Chat Support"
-                  : "Agent"}
+                  : inviteData?.role === "ndr_rto"
+                    ? "NDR/RTO Executive"
+                    : "Order Confirmation Executive (OCE)"}
           </Badge>
         </div>
 

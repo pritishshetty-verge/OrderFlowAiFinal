@@ -124,7 +124,16 @@ export async function sendInvitationEmail(params: {
     minute: '2-digit',
   });
 
-  const roleDisplay = params.role === 'admin' ? 'Administrator' : 'Agent';
+  const roleDisplay =
+    params.role === 'admin'
+      ? 'Administrator'
+      : params.role === 'recovery_agent'
+        ? 'Inside Sales Executive (ISE)'
+        : params.role === 'chat_support'
+          ? 'Chat Support'
+          : params.role === 'ndr_rto'
+            ? 'NDR/RTO Executive'
+            : 'Order Confirmation Executive (OCE)';
 
   const htmlContent = `
 <!DOCTYPE html>

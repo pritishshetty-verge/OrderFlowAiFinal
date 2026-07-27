@@ -362,6 +362,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //                      org-wide order visibility on the Orders page,
   //                      write path still scoped to assigned/coupon-
   //                      attributed orders via canUserModifyOrder).
+  //   ndr_rto         — full read only (NDR/RTO Executive; works failed
+  //                      deliveries / returns across ALL orders and is
+  //                      NOT an auto-assignment target, so an assigned-
+  //                      only view would be empty. Read-only here; no
+  //                      write elevation).
+  //
+  // Note: `agent` (Order Confirmation Executive) is intentionally NOT
+  // here — OCEs work their auto-assigned queue and keep the assigned
+  // scope + Global View toggle.
   //
   // Add a new role here when it should have org-wide read scope on
   // /api/orders and /api/orders/:id without needing the Global View
@@ -370,6 +379,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "admin",
     "chat_support",
     "recovery_agent",
+    "ndr_rto",
   ]);
   const hasFullOrderReadAccess = (user: { role?: string } | null | undefined) =>
     !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);

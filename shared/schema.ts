@@ -252,7 +252,7 @@ export const insertInviteSchema = createInsertSchema(invites).pick({
   // client/src/components/team-directory.tsx, otherwise the form
   // either refuses to submit or the server refuses to accept it.
   role: z
-    .enum(["admin", "agent", "recovery_agent", "chat_support"])
+    .enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto"])
     .default("agent"),
   adminType: z.enum(["full_control", "partial_control"]).optional(),
   permissions: z.record(z.any()).optional(),

@@ -71,7 +71,7 @@ type LiveStatus = "active" | "idle" | "auto-closed" | "on-leave" | "offline";
 interface TeamMember {
   id: string;
   name: string;
-  role: "admin" | "agent" | "recovery_agent" | "chat_support";
+  role: "admin" | "agent" | "recovery_agent" | "chat_support" | "ndr_rto";
   adminType?: "full_control" | "partial_control";
   moduleAccess?: string[];
   email: string;
@@ -120,7 +120,7 @@ const inviteUserSchema = z.object({
   // in sync — drift here means the form rejects roles the server
   // accepts, or vice-versa.
   role: z
-    .enum(["admin", "agent", "recovery_agent", "chat_support"])
+    .enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto"])
     .default("agent"),
 });
 
@@ -161,7 +161,7 @@ type EditCompensationFormData = z.infer<typeof editCompensationSchema>;
 // non-admin cases so we don't have to make the form field conditionally
 // required — we coerce on submit.
 const editRoleSchema = z.object({
-  role: z.enum(["admin", "agent", "recovery_agent", "chat_support"]),
+  role: z.enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto"]),
   adminType: z.enum(["full_control", "partial_control", "NONE"]),
 });
 type EditRoleFormData = z.infer<typeof editRoleSchema>;
@@ -659,7 +659,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
 
     const now = Date.now();
 
-    return users.map((user) => {
+    const mapped: TeamMember[] = users.map((user) => {
       const userOrders = ordersList.filter((o) => o.assignedTo === user.id);
       const completedOrders = userOrders.filter(
         (o) => o.status === "delivered" || o.status === "confirmed"
@@ -743,6 +743,15 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         monitoringExempt: (user as any).monitoringExempt ?? false,
       };
     });
+
+    // Stable alphabetical order. GET /api/users has no ORDER BY, so after a
+    // row is UPDATEd (e.g. the auto clock-out toggle) Postgres returns it in
+    // a different heap position and the member visually jumps. Sorting by a
+    // key that the toggle does NOT change (name, id tiebreak) pins each row
+    // in place across refetches.
+    return mapped.sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    );
   }, [users, ordersResponse, attendanceByUser, idleThresholdMin]);
 
   // Client-side member search — name, email, phone, or role. Team sizes are
@@ -826,6 +835,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         return "default";
       case "recovery_agent":
       case "chat_support":
+      case "ndr_rto":
         return "secondary";
       case "agent":
       default:
@@ -843,11 +853,13 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         return "Inside Sales Executive (ISE)";
       case "chat_support":
         return "Chat Support";
+      case "ndr_rto":
+        return "NDR/RTO Executive";
       case "admin":
         return "Admin";
       case "agent":
       default:
-        return "Agent";
+        return "Order Confirmation Executive (OCE)";
     }
   };
 
@@ -1313,7 +1325,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="agent">Agent</SelectItem>
+                        <SelectItem value="agent">Order Confirmation Executive (OCE)</SelectItem>
+                        <SelectItem value="ndr_rto">NDR/RTO Executive</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="recovery_agent">Inside Sales Executive (ISE)</SelectItem>
                         <SelectItem value="chat_support">Chat Support</SelectItem>
@@ -1680,7 +1693,10 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="agent">Agent</SelectItem>
+                        <SelectItem value="agent">
+                          Order Confirmation Executive (OCE)
+                        </SelectItem>
+                        <SelectItem value="ndr_rto">NDR/RTO Executive</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="recovery_agent">
                           Inside Sales Executive (ISE)

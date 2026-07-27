@@ -244,6 +244,26 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
     }
   };
 
+  // Friendly role labels — keep in sync with team-directory.formatRoleLabel.
+  const formatRole = (role: string): string => {
+    switch (role) {
+      case "admin":
+        return "Admin";
+      case "manager":
+        return "Manager";
+      case "recovery_agent":
+        return "Inside Sales Executive (ISE)";
+      case "chat_support":
+        return "Chat Support";
+      case "ndr_rto":
+        return "NDR/RTO Executive";
+      case "agent":
+        return "Order Confirmation Executive (OCE)";
+      default:
+        return role;
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -326,8 +346,8 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                 <h3 className="text-lg font-semibold" data-testid="text-profile-name">
                   {form.watch("fullName") || "Your Name"}
                 </h3>
-                <Badge variant={getRoleBadgeVariant(user?.role || userRole)} className="capitalize" data-testid="badge-role">
-                  {user?.role || userRole}
+                <Badge variant={getRoleBadgeVariant(user?.role || userRole)} data-testid="badge-role">
+                  {formatRole(user?.role || userRole)}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground" data-testid="text-profile-email">
@@ -399,11 +419,11 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                 <FormItem>
                   <FormLabel>Role</FormLabel>
                   <FormControl>
-                    <Input 
-                      value={user?.role || userRole} 
-                      disabled 
-                      className="capitalize bg-muted" 
-                      data-testid="input-role" 
+                    <Input
+                      value={formatRole(user?.role || userRole)}
+                      disabled
+                      className="bg-muted"
+                      data-testid="input-role"
                     />
                   </FormControl>
                 </FormItem>

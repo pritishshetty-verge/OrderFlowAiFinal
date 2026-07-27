@@ -301,7 +301,7 @@ var init_schema = __esm({
       // matching frontend-side `inviteUserSchema` in
       // client/src/components/team-directory.tsx, otherwise the form
       // either refuses to submit or the server refuses to accept it.
-      role: z.enum(["admin", "agent", "recovery_agent", "chat_support"]).default("agent"),
+      role: z.enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto"]).default("agent"),
       adminType: z.enum(["full_control", "partial_control"]).optional(),
       permissions: z.record(z.any()).optional()
     });
@@ -4059,7 +4059,7 @@ var init_storage = __esm({
       FROM per_user pu
       JOIN users u           ON u.id = pu.user_id
       LEFT JOIN break_totals bt ON bt.user_id = pu.user_id
-      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support')
+      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support', 'ndr_rto')
       ORDER BY pu.clocked_hours DESC, u.full_name ASC
     `);
         const rows = result.rows ?? result;
@@ -5250,7 +5250,7 @@ async function sendInvitationEmail(params) {
     hour: "numeric",
     minute: "2-digit"
   });
-  const roleDisplay = params.role === "admin" ? "Administrator" : "Agent";
+  const roleDisplay = params.role === "admin" ? "Administrator" : params.role === "recovery_agent" ? "Inside Sales Executive (ISE)" : params.role === "chat_support" ? "Chat Support" : params.role === "ndr_rto" ? "NDR/RTO Executive" : "Order Confirmation Executive (OCE)";
   const htmlContent = `
 <!DOCTYPE html>
 <html>
@@ -11127,7 +11127,8 @@ async function registerRoutes(app2) {
   const ORDER_FULL_READ_ROLES = /* @__PURE__ */ new Set([
     "admin",
     "chat_support",
-    "recovery_agent"
+    "recovery_agent",
+    "ndr_rto"
   ]);
   const hasFullOrderReadAccess = (user) => !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
   async function buildOrderReadScope(requestingUserId, requestedScope, requestedAssignedTo, storeId) {

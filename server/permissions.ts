@@ -245,9 +245,18 @@ export function canEditAdminPermissions(user: User): boolean {
  */
 export function getPermissionLevelDisplay(user: User): string {
   if (user.role === "agent") {
-    return "Agent";
+    return "Order Confirmation Executive (OCE)";
   }
-  
+  if (user.role === "ndr_rto") {
+    return "NDR/RTO Executive";
+  }
+  if (user.role === "recovery_agent") {
+    return "Inside Sales Executive (ISE)";
+  }
+  if (user.role === "chat_support") {
+    return "Chat Support";
+  }
+
   if (user.adminType === "full_control") {
     return "Admin (Full Control)";
   }

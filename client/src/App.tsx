@@ -85,6 +85,40 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
     }
   }
 
+  return <OperationalGuard component={Component} />;
+}
+
+// Operational front-line roles — Order Confirmation Executive (OCE, stored as
+// `agent`) and NDR/RTO Executive (`ndr_rto`) — are restricted to exactly four
+// surfaces: Overview, Orders, Learning Center, Team. /profile, /login, /signup
+// stay reachable so they can manage their own account without a redirect loop.
+// Anything else (fulfilment, NDR ops, abandoned carts, settings, payroll, …)
+// bounces them to /orders, their primary workspace.
+const OPERATIONAL_ALLOWED_PATHS = [
+  "/",
+  "/orders",
+  "/learning",
+  "/team",
+  "/profile",
+  "/login",
+  "/signup",
+];
+
+function OperationalGuard({ component: Component }: { component: React.ComponentType }) {
+  const [location] = useLocation();
+  const userRole = localStorage.getItem("userRole");
+
+  if (userRole === "agent" || userRole === "ndr_rto") {
+    const isAllowed = OPERATIONAL_ALLOWED_PATHS.some(
+      (path) =>
+        location === path ||
+        (path !== "/" && location.startsWith(path + "/")),
+    );
+    if (!isAllowed) {
+      return <Redirect to="/orders" />;
+    }
+  }
+
   return <ProtectedRoute component={Component} />;
 }
 

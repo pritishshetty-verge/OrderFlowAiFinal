@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import { getGrantedModules } from "@/lib/access";
 import type { User } from "@shared/schema";
 
-type UserRole = "admin" | "agent" | "recovery_agent" | "chat_support";
+type UserRole = "admin" | "agent" | "recovery_agent" | "chat_support" | "ndr_rto";
 
 type MenuItem = {
   title: string;
@@ -211,6 +211,34 @@ const recoveryAgentMenuItems: MenuItem[] = [
   },
 ];
 
+// Operational front-line roles — Order Confirmation Executive (OCE, stored as
+// `agent`) and NDR/RTO Executive (stored as `ndr_rto`). Both work the order
+// queue and share the exact same tight nav: Overview, Orders, Learning Center,
+// Team. They point at the REAL Learning + Team pages (not the "coming soon"
+// placeholders the recovery-agent nav uses).
+const operationalMenuItems: MenuItem[] = [
+  {
+    title: "Overview",
+    url: "/",
+    icon: Home,
+  },
+  {
+    title: "Orders",
+    url: "/orders",
+    icon: Package,
+  },
+  {
+    title: "Learning Center",
+    url: "/learning",
+    icon: GraduationCap,
+  },
+  {
+    title: "Team",
+    url: "/team",
+    icon: Users,
+  },
+];
+
 // Chat Support sees a deliberately tiny surface: a glanceable order
 // list and a way to message the team. No fulfilment / NDR / call logs
 // / abandoned-carts / payroll / integrations. Orders is rendered as a
@@ -250,17 +278,20 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   const isRecoveryAgent = userRole === "recovery_agent";
   const isChatSupport = userRole === "chat_support";
   const isAdmin = userRole === "admin";
+  // OCE (stored as `agent`) and NDR/RTO Executive (`ndr_rto`) are the
+  // operational front-line roles, restricted to the 4-item nav.
+  const isOperational = userRole === "agent" || userRole === "ndr_rto";
 
   // Pick the per-role menu. Each role with a heavily-restricted nav
-  // (recovery_agent, chat_support) gets its own dedicated array so we
-  // never have to filter against a long admin-default list. The
-  // open-ended `agent` role still falls through to adminMenuItems and
-  // gets the ADMIN_ONLY_URLS filter applied below.
+  // (recovery_agent, chat_support, operational) gets its own dedicated
+  // array so we never filter against the long admin-default list.
   const baseMenuItems = isRecoveryAgent
     ? recoveryAgentMenuItems
     : isChatSupport
       ? chatSupportMenuItems
-      : adminMenuItems;
+      : isOperational
+        ? operationalMenuItems
+        : adminMenuItems;
 
   // URLs that should be hidden from the sidebar for any non-admin
   // role. These match the AdminOnlyGuard routes in App.tsx (server

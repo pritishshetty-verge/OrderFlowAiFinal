@@ -167,7 +167,10 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   // dropdowns (agent picker, callStatus picker) stay gated on `isAdmin`
   // itself so ISEs don't inherit admin config surfaces they don't own.
   const hasFullOrderRead =
-    userRole === "admin" || userRole === "chat_support" || userRole === "recovery_agent";
+    userRole === "admin" ||
+    userRole === "chat_support" ||
+    userRole === "recovery_agent" ||
+    userRole === "ndr_rto";
 
   // Type for API response with stats (orders include joined user data)
   interface OrdersApiResponse {

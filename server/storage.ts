@@ -4428,7 +4428,7 @@ export class DbStorage implements IStorage {
       FROM per_user pu
       JOIN users u           ON u.id = pu.user_id
       LEFT JOIN break_totals bt ON bt.user_id = pu.user_id
-      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support')
+      WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support', 'ndr_rto')
       ORDER BY pu.clocked_hours DESC, u.full_name ASC
     `);
 
