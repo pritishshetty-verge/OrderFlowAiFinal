@@ -566,6 +566,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     // DEFAULT: Personal view - verify agent owns this order
     if (order.assignedTo !== userId) {
+      // Coupon-attributed read. Agents (Inside Sales Executives) recover
+      // customers by giving them a personal Shopify discount code
+      // (users.coupon_code). Orders carrying that code appear on their
+      // "My Converted Orders" page and drive their commission, so the
+      // detail-drawer must be able to load /api/orders/:id (+ items /
+      // history / shipment) even when the order is not assignedTo them.
+      //
+      // The coupon on the order IS the security relationship — matches
+      // the same server-side attribution rule getConvertedOrdersForCoupon
+      // already uses (case-insensitive against discount_code or any
+      // element of discount_codes). Read-only; write gates unchanged.
+      const userCoupon = (user.couponCode ?? "").trim().toLowerCase();
+      if (userCoupon) {
+        const legacyCode = (order.discountCode ?? "").trim().toLowerCase();
+        const codes = Array.isArray(order.discountCodes)
+          ? (order.discountCodes as string[]).map((c) => (c ?? "").trim().toLowerCase())
+          : [];
+        if (legacyCode === userCoupon || codes.includes(userCoupon)) {
+          return { authorized: true, isAdmin: false };
+        }
+      }
       return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
     }
 

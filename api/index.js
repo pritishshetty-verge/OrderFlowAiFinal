@@ -11212,6 +11212,14 @@ async function registerRoutes(app2) {
       return { authorized: true, isAdmin: false };
     }
     if (order.assignedTo !== userId) {
+      const userCoupon = (user.couponCode ?? "").trim().toLowerCase();
+      if (userCoupon) {
+        const legacyCode = (order.discountCode ?? "").trim().toLowerCase();
+        const codes = Array.isArray(order.discountCodes) ? order.discountCodes.map((c) => (c ?? "").trim().toLowerCase()) : [];
+        if (legacyCode === userCoupon || codes.includes(userCoupon)) {
+          return { authorized: true, isAdmin: false };
+        }
+      }
       return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
     }
     return { authorized: true, isAdmin: false };
