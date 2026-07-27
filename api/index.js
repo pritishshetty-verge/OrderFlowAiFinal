@@ -11126,7 +11126,8 @@ async function registerRoutes(app2) {
   });
   const ORDER_FULL_READ_ROLES = /* @__PURE__ */ new Set([
     "admin",
-    "chat_support"
+    "chat_support",
+    "recovery_agent"
   ]);
   const hasFullOrderReadAccess = (user) => !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
   async function buildOrderReadScope(requestingUserId, requestedScope, requestedAssignedTo, storeId) {

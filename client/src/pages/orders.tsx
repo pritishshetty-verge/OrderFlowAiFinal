@@ -80,7 +80,11 @@ function transformOrder(order: BackendOrderWithUser): Order {
 }
 
 interface OrdersPageProps {
-  userRole?: "admin" | "manager" | "agent";
+  // App.tsx passes the raw role string from localStorage, which now includes
+  // recovery_agent (Inside Sales Executive) and chat_support in addition to
+  // the original admin / manager / agent trio. Kept as a string so future
+  // roles don't need a type sync.
+  userRole?: string;
 }
 
 export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
@@ -156,6 +160,14 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   }, [isGlobalView]);
   
   const isAdmin = userRole === "admin";
+  // Roles with org-wide order visibility (mirrors server's
+  // ORDER_FULL_READ_ROLES in routes.ts). These users see every order by
+  // default — the "Personal / Global" toggle and the client-side
+  // assignedTo=me filter are skipped for them. Admin-only *filter*
+  // dropdowns (agent picker, callStatus picker) stay gated on `isAdmin`
+  // itself so ISEs don't inherit admin config surfaces they don't own.
+  const hasFullOrderRead =
+    userRole === "admin" || userRole === "chat_support" || userRole === "recovery_agent";
 
   // Type for API response with stats (orders include joined user data)
   interface OrdersApiResponse {
@@ -229,10 +241,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
         params.append("currentUserId", localStorageUserId);
       }
       
-      // SAFE GLOBAL VIEW: Only send scope=global when agent explicitly toggles "All Orders"
-      // When scope is not sent (default), backend restricts agent to assigned orders only
-      // This fixes the Resume bug while preserving the Global View feature
-      if (!isAdmin && isGlobalView) {
+      // SAFE GLOBAL VIEW: Only send scope=global when an agent explicitly
+      // toggles "All Orders". Roles that already have full-read on the
+      // server (admin / chat_support / recovery_agent) don't need scope
+      // — the backend returns everything for them by default.
+      if (!hasFullOrderRead && isGlobalView) {
         params.append("scope", "global");
       }
       
@@ -509,8 +522,9 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       }
 
       // Apply same filters as the current view
-      // For agents: filter by their assigned orders if in Personal view
-      if (!isAdmin && localStorageUserId && !isGlobalView) {
+      // For plain agents in Personal view: filter by their assigned orders.
+      // Full-read roles skip this so their count matches the full list.
+      if (!hasFullOrderRead && localStorageUserId && !isGlobalView) {
         params.append("assignedTo", localStorageUserId);
       }
 
@@ -749,7 +763,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
               onViewDetails={handleViewDetails}
               onAssignOrder={handleAssignOrder}
               onCallStatusChange={handleCallStatusChange}
-              showAgentColumn={isAdmin}
+              showAgentColumn={hasFullOrderRead}
               currentPage={currentPage}
               pageSize={pageSize}
               onPageChange={handlePageChange}
@@ -783,7 +797,7 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
           // TODO: Implement edit order dialog
         }}
         // SAFE GLOBAL VIEW: Pass scope to allow agents to read any order's details when in global view
-        scope={!isAdmin && isGlobalView ? 'global' : undefined}
+        scope={!hasFullOrderRead && isGlobalView ? 'global' : undefined}
       />
 
       <AssignOrderDialog

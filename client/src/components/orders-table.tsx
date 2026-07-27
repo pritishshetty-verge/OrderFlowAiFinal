@@ -126,7 +126,10 @@ export interface Order {
 interface OrdersTableProps {
   orders: Order[];
   totalCount?: number; // Real total from API for pagination display
-  userRole?: "admin" | "manager" | "agent";
+  // Widened to accept every role the app may sign in with; the component
+  // gates its bulk-actions row on `userRole !== "agent"`, so the string
+  // literal set doesn't need to stay pinned here.
+  userRole?: string;
   onCallCustomer?: (order: Order) => void;
   onViewDetails?: (order: Order) => void;
   onAssignOrder?: (order: Order) => void;

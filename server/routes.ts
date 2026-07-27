@@ -355,9 +355,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // canUserAccessOrder (the modify gate) still requires assignment
   // ownership for these roles.
   //
-  //   admin         — full read + write
-  //   chat_support  — full read only (per role-brief: "view ALL
-  //                    orders, exactly like an Admin")
+  //   admin           — full read + write
+  //   chat_support    — full read only (per role-brief: "view ALL
+  //                      orders, exactly like an Admin")
+  //   recovery_agent  — full read only (Inside Sales Executive; needs
+  //                      org-wide order visibility on the Orders page,
+  //                      write path still scoped to assigned/coupon-
+  //                      attributed orders via canUserModifyOrder).
   //
   // Add a new role here when it should have org-wide read scope on
   // /api/orders and /api/orders/:id without needing the Global View
@@ -365,6 +369,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const ORDER_FULL_READ_ROLES: ReadonlySet<string> = new Set([
     "admin",
     "chat_support",
+    "recovery_agent",
   ]);
   const hasFullOrderReadAccess = (user: { role?: string } | null | undefined) =>
     !!user && typeof user.role === "string" && ORDER_FULL_READ_ROLES.has(user.role);
