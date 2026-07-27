@@ -210,7 +210,7 @@ export default function SignupPage() {
             {inviteData?.role === "admin"
               ? "Administrator"
               : inviteData?.role === "recovery_agent"
-                ? "Recovery Agent"
+                ? "Inside Sales Executive (ISE)"
                 : inviteData?.role === "chat_support"
                   ? "Chat Support"
                   : "Agent"}

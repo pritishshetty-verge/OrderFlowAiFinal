@@ -707,7 +707,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
   const formatRoleLabel = (role: TeamMember["role"]): string => {
     switch (role) {
       case "recovery_agent":
-        return "Recovery Agent";
+        return "Inside Sales Executive (ISE)";
       case "chat_support":
         return "Chat Support";
       case "admin":
@@ -1056,7 +1056,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                       <SelectContent>
                         <SelectItem value="agent">Agent</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="recovery_agent">Recovery Agent</SelectItem>
+                        <SelectItem value="recovery_agent">Inside Sales Executive (ISE)</SelectItem>
                         <SelectItem value="chat_support">Chat Support</SelectItem>
                       </SelectContent>
                     </Select>
