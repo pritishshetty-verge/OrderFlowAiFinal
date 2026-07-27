@@ -43,18 +43,20 @@ import {
 } from "lucide-react";
 import type { Order as BackendOrder } from "@shared/schema";
 import { SHIPPING_STATUS_LABELS, type ShippingStatus } from "@shared/schema";
+import { startOfMonth, endOfDay } from "date-fns";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // My Converted Orders — per-agent view of orders recovered by an agent,
 // attributed via their personal Shopify coupon code.
 //
-// Metric tiles = ALL coupon-matched orders (stable commission math).
-// Table       = filtered / paginated / searchable — same interaction model
-//                as the main Orders page (click a row → OrderQuickPreview).
+// The date-range selector (top-right, Overview-page pattern; defaults to
+// This Month) scopes BOTH the metric tiles and the table. Metrics are
+// computed client-side from the date-scoped order set — same rows the table
+// paginates — so the tiles and the rows can never disagree. Search/payment/
+// shipping filters below additionally narrow the table only.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Performance {
-  couponCode: string | null;
   convertedCount: number;
   gmv: number;
   deliveredCount: number;
@@ -198,24 +200,14 @@ export default function MyConvertedOrdersPage() {
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
   const currentUserParam = userId ? `?currentUserId=${encodeURIComponent(userId)}` : "";
 
-  const perfQuery = useQuery<Performance>({
-    queryKey: [`/api/agents/me/performance${currentUserParam}`],
-    refetchInterval: 60_000,
-  });
   const ordersQuery = useQuery<ConvertedOrdersResponse>({
     queryKey: [`/api/agents/me/converted-orders${currentUserParam}`],
     refetchInterval: 60_000,
   });
 
-  const performance = perfQuery.data;
   const backendOrders = ordersQuery.data?.orders ?? [];
-  const couponCode = perfQuery.data?.couponCode ?? ordersQuery.data?.couponCode ?? null;
-  const isLoading = perfQuery.isLoading || ordersQuery.isLoading;
-  const codPrepaidTotal = (performance?.codCount ?? 0) + (performance?.prepaidCount ?? 0);
-  const codShare =
-    codPrepaidTotal > 0
-      ? Math.round(((performance?.codCount ?? 0) / codPrepaidTotal) * 100)
-      : 0;
+  const couponCode = ordersQuery.data?.couponCode ?? null;
+  const isLoading = ordersQuery.isLoading;
 
   const uiOrders = useMemo(() => backendOrders.map(toUIOrder), [backendOrders]);
 
@@ -224,10 +216,12 @@ export default function MyConvertedOrdersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState<"all" | "cod" | "prepaid">("all");
   const [shippingFilter, setShippingFilter] = useState<string>("all");
-  const [dateRange, setDateRange] = useState<DateRangeOutput>({
-    startDate: null,
-    endDate: null,
-  });
+  // Date scope — Overview-page pattern: the selector sits top-right above
+  // the metric tiles and scopes BOTH tiles and table. Default: This Month.
+  const [dateRange, setDateRange] = useState<DateRangeOutput>(() => ({
+    startDate: startOfMonth(new Date()),
+    endDate: endOfDay(new Date()),
+  }));
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -242,23 +236,68 @@ export default function MyConvertedOrdersPage() {
     setCurrentPage(1);
   }, [debouncedSearch, paymentFilter, shippingFilter, dateRange, pageSize]);
 
+  // Date scope applies FIRST — this set feeds both the metric tiles and
+  // the table, so they always agree.
+  const dateScopedOrders = useMemo(() => {
+    const startMs = dateRange.startDate ? dateRange.startDate.getTime() : null;
+    const endMs = dateRange.endDate ? dateRange.endDate.getTime() : null;
+    if (startMs === null && endMs === null) return uiOrders;
+    return uiOrders.filter((row) => {
+      const placed = row.createdAt.getTime();
+      if (startMs !== null && placed < startMs) return false;
+      if (endMs !== null && placed > endMs) return false;
+      return true;
+    });
+  }, [uiOrders, dateRange]);
+
+  // Metrics computed client-side over the date-scoped set — identical math
+  // to the (still available) /api/agents/me/performance endpoint, but scoped
+  // to the selected period and guaranteed congruent with the rows below.
+  const performance = useMemo<Performance>(() => {
+    let gmv = 0;
+    let deliveredCount = 0;
+    let deliveredGmv = 0;
+    let codCount = 0;
+    let prepaidCount = 0;
+    for (const o of dateScopedOrders) {
+      gmv += o.total;
+      if ((o.status || "").toLowerCase() === "delivered") {
+        deliveredCount += 1;
+        deliveredGmv += o.total;
+      }
+      const cls = classifyPayment(o);
+      if (cls === "cod") codCount += 1;
+      else if (cls === "prepaid") prepaidCount += 1;
+      // "other" (voided/refunded) excluded from the split
+    }
+    const convertedCount = dateScopedOrders.length;
+    return {
+      convertedCount,
+      gmv: Math.round(gmv * 100) / 100,
+      deliveredCount,
+      deliveredGmv: Math.round(deliveredGmv * 100) / 100,
+      deliveryRatePct:
+        convertedCount > 0 ? Math.round((deliveredCount / convertedCount) * 100) : 0,
+      commission: Math.round(deliveredGmv * 0.1 * 100) / 100,
+      codCount,
+      prepaidCount,
+    };
+  }, [dateScopedOrders]);
+
+  const codPrepaidTotal = performance.codCount + performance.prepaidCount;
+  const codShare =
+    codPrepaidTotal > 0 ? Math.round((performance.codCount / codPrepaidTotal) * 100) : 0;
+
   const filteredOrders = useMemo(() => {
     const shippingMatchSet = (() => {
       if (shippingFilter === "all") return null;
       const found = SHIPPING_FILTER_OPTIONS.find((o) => o.value === shippingFilter);
       return found ? new Set<string>(found.matches) : null;
     })();
-    const startMs = dateRange.startDate ? dateRange.startDate.getTime() : null;
-    const endMs = dateRange.endDate ? dateRange.endDate.getTime() : null;
-    return uiOrders.filter((row) => {
+    return dateScopedOrders.filter((row) => {
       if (paymentFilter !== "all" && classifyPayment(row) !== paymentFilter) return false;
       if (shippingMatchSet && !shippingMatchSet.has((row.status || "").toLowerCase())) {
         return false;
-      }
-      if (startMs !== null || endMs !== null) {
-        const placed = row.createdAt.getTime();
-        if (startMs !== null && placed < startMs) return false;
-        if (endMs !== null && placed > endMs) return false;
       }
       if (debouncedSearch) {
         const digits = debouncedSearch.replace(/\D/g, "");
@@ -284,7 +323,7 @@ export default function MyConvertedOrdersPage() {
       }
       return true;
     });
-  }, [uiOrders, paymentFilter, shippingFilter, debouncedSearch, dateRange]);
+  }, [dateScopedOrders, paymentFilter, shippingFilter, debouncedSearch]);
 
   const totalFiltered = filteredOrders.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -293,12 +332,10 @@ export default function MyConvertedOrdersPage() {
   const endIndex = Math.min(startIndex + pageSize, totalFiltered);
   const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
 
+  // Date scope intentionally excluded — it's a dashboard-level control
+  // (top-right, like Overview), not a table filter, so Clear leaves it alone.
   const hasActiveFilters =
-    debouncedSearch !== "" ||
-    paymentFilter !== "all" ||
-    shippingFilter !== "all" ||
-    dateRange.startDate !== null ||
-    dateRange.endDate !== null;
+    debouncedSearch !== "" || paymentFilter !== "all" || shippingFilter !== "all";
 
   // Quick-preview state.
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
@@ -328,16 +365,26 @@ export default function MyConvertedOrdersPage() {
     >
       <div className="flex flex-col h-full">
         <div className="flex-1 overflow-auto p-6 space-y-6">
-          {couponCode ? (
-            <div
-              className="flex items-center gap-2 text-sm text-muted-foreground"
-              data-testid="coupon-code-label"
-            >
-              <Percent className="h-4 w-4" />
-              Coupon code:{" "}
-              <span className="font-mono font-semibold text-foreground">{couponCode}</span>
-            </div>
-          ) : (
+          {/* Top row — Overview-page pattern: context on the left, the
+              date-range scope on the right. The selector governs the metric
+              tiles AND the table below. */}
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            {couponCode ? (
+              <div
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+                data-testid="coupon-code-label"
+              >
+                <Percent className="h-4 w-4" />
+                Coupon code:{" "}
+                <span className="font-mono font-semibold text-foreground">{couponCode}</span>
+              </div>
+            ) : (
+              <div />
+            )}
+            <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
+          </div>
+
+          {!couponCode && !isLoading && (
             <Alert>
               <Info className="h-4 w-4" />
               <AlertTitle>No coupon code set</AlertTitle>
@@ -351,37 +398,29 @@ export default function MyConvertedOrdersPage() {
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             <StatTile
               title="Converted Orders"
-              value={performance?.convertedCount ?? 0}
-              description={performance ? `${currency(performance.gmv)} total GMV` : undefined}
+              value={performance.convertedCount}
+              description={`${currency(performance.gmv)} total GMV`}
               icon={<Package className="h-4 w-4" />}
               isLoading={isLoading}
             />
             <StatTile
               title="Delivery Rate"
-              value={`${performance?.deliveryRatePct ?? 0}%`}
-              description={
-                performance
-                  ? `${performance.deliveredCount}/${performance.convertedCount} delivered`
-                  : undefined
-              }
+              value={`${performance.deliveryRatePct}%`}
+              description={`${performance.deliveredCount}/${performance.convertedCount} delivered`}
               icon={<PackageCheck className="h-4 w-4" />}
               isLoading={isLoading}
               tone={
-                performance && performance.deliveryRatePct >= 70
+                performance.deliveryRatePct >= 70
                   ? "success"
-                  : performance && performance.convertedCount > 0
+                  : performance.convertedCount > 0
                     ? "warning"
                     : "default"
               }
             />
             <StatTile
               title="Earned Commission"
-              value={currency(performance?.commission ?? 0)}
-              description={
-                performance
-                  ? `10% × ${currency(performance.deliveredGmv)} delivered GMV`
-                  : undefined
-              }
+              value={currency(performance.commission)}
+              description={`10% × ${currency(performance.deliveredGmv)} delivered GMV`}
               icon={<Wallet className="h-4 w-4" />}
               isLoading={isLoading}
               tone="success"
@@ -389,11 +428,7 @@ export default function MyConvertedOrdersPage() {
             <StatTile
               title="COD vs Prepaid"
               value={codPrepaidTotal > 0 ? `${codShare}% / ${100 - codShare}%` : "—"}
-              description={
-                performance
-                  ? `${performance.codCount} COD · ${performance.prepaidCount} Prepaid`
-                  : undefined
-              }
+              description={`${performance.codCount} COD · ${performance.prepaidCount} Prepaid`}
               icon={<TrendingUp className="h-4 w-4" />}
               isLoading={isLoading}
             />
@@ -438,7 +473,6 @@ export default function MyConvertedOrdersPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />
               {hasActiveFilters && (
                 <Button
                   variant="ghost"
@@ -447,7 +481,6 @@ export default function MyConvertedOrdersPage() {
                     setSearchInput("");
                     setPaymentFilter("all");
                     setShippingFilter("all");
-                    setDateRange({ startDate: null, endDate: null });
                   }}
                   data-testid="button-clear-filters"
                 >
@@ -478,7 +511,7 @@ export default function MyConvertedOrdersPage() {
               <EmptyState
                 icon={Search}
                 title="No matches"
-                description="No orders match your current filters. Try clearing them."
+                description="No orders in this period match your filters. Try clearing them or widening the date range."
               />
             ) : (
               <div className="relative overflow-x-auto">
