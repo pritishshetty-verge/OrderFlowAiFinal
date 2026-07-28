@@ -61,6 +61,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 }
 
 const RECOVERY_AGENT_ALLOWED_PATHS = [
+  "/",
   "/orders",
   "/abandoned-carts",
   "/my-converted-orders",

@@ -185,6 +185,11 @@ const adminMenuItems: MenuItem[] = [
 
 const recoveryAgentMenuItems: MenuItem[] = [
   {
+    title: "Overview",
+    url: "/",
+    icon: Home,
+  },
+  {
     title: "Orders",
     url: "/orders",
     icon: Package,
