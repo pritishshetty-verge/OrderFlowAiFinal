@@ -3896,10 +3896,18 @@ export class DbStorage implements IStorage {
     // is the order_status_history row for the `→ delivered` transition.
     // Together these cover 100% of delivered orders (49 + 39 of 88 sampled);
     // shipments alone missed 44%. COALESCE picks shipments first.
+    //
+    // NOTE: the outer correlation MUST be written as the literal
+    // "orders"."id", NOT ${orders.id}. In this .select({...}) form Drizzle
+    // renders ${orders.id} as a BARE "id", which each subquery then binds to
+    // its OWN id column (shipments.id / order_status_history.id) — so the
+    // condition silently becomes s.order_id = s.id, matches nothing, and
+    // deliveredAt comes back null for every row. Table-qualifying the outer
+    // reference is what makes the subquery correlate to the orders row.
     const deliveredAt = sql<string | null>`COALESCE(
-      (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = ${orders.id}),
+      (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = "orders"."id"),
       (SELECT MAX(h.created_at) FROM ${orderStatusHistory} h
-         WHERE h.order_id = ${orders.id} AND h.status = 'delivered')
+         WHERE h.order_id = "orders"."id" AND h.status = 'delivered')
     )`.as("delivered_at");
     return await db
       .select({ ...getTableColumns(orders), deliveredAt })

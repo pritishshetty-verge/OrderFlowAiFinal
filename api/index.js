@@ -3726,9 +3726,9 @@ var init_storage = __esm({
         const code = couponCode.trim().toLowerCase();
         if (!code) return [];
         const deliveredAt = sql2`COALESCE(
-      (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = ${orders.id}),
+      (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = "orders"."id"),
       (SELECT MAX(h.created_at) FROM ${orderStatusHistory} h
-         WHERE h.order_id = ${orders.id} AND h.status = 'delivered')
+         WHERE h.order_id = "orders"."id" AND h.status = 'delivered')
     )`.as("delivered_at");
         return await db.select({ ...getTableColumns(orders), deliveredAt }).from(orders).where(
           or(
