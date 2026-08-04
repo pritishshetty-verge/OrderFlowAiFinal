@@ -3875,6 +3875,15 @@ export class DbStorage implements IStorage {
    * orders.discountCodes (all codes) or the legacy orders.discountCode (first).
    * Powers the "My Converted Orders" list. Returns full order rows (shipping
    * status + payment method) newest first.
+   *
+   * TOKEN match, not exact match. Agents manually creating orders sometimes
+   * stack coupons, and Shopify delivers the combination as ONE code string,
+   * e.g. "FREEBIE X TARA10" — the agent's real coupon (TARA10) is just one
+   * token inside it. We therefore split each stored discount string on any
+   * run of non-alphanumeric chars ([^a-z0-9]+, covering the " X " / "+" / ","
+   * joiners agents use) and match the coupon against the resulting tokens.
+   * A single-coupon "TARA10" still tokenises to ["tara10"] and matches, and
+   * "TARA1" tokenises to ["tara1"] so there are no partial-string false hits.
    */
   async getConvertedOrdersForCoupon(couponCode: string): Promise<Order[]> {
     const code = couponCode.trim().toLowerCase();
@@ -3884,8 +3893,19 @@ export class DbStorage implements IStorage {
       .from(orders)
       .where(
         or(
-          sql`LOWER(COALESCE(${orders.discountCode}, '')) = ${code}`,
-          sql`EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) c WHERE LOWER(c) = ${code})`,
+          // Legacy single-code column, tokenised.
+          sql`EXISTS (
+            SELECT 1
+            FROM regexp_split_to_table(LOWER(COALESCE(${orders.discountCode}, '')), '[^a-z0-9]+') AS tok(token)
+            WHERE tok.token = ${code}
+          )`,
+          // discount_codes JSONB array — tokenise each element.
+          sql`EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) AS dc(code_str),
+                 regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
+            WHERE tok.token = ${code}
+          )`,
         ),
       )
       .orderBy(desc(orders.createdAt));

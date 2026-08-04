@@ -588,17 +588,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // detail-drawer must be able to load /api/orders/:id (+ items /
       // history / shipment) even when the order is not assignedTo them.
       //
-      // The coupon on the order IS the security relationship — matches
-      // the same server-side attribution rule getConvertedOrdersForCoupon
-      // already uses (case-insensitive against discount_code or any
-      // element of discount_codes). Read-only; write gates unchanged.
+      // The coupon on the order IS the security relationship. Uses the SAME
+      // token-match rule as getConvertedOrdersForCoupon: a stacked/manual
+      // order can carry the coupon as one token inside a combined string
+      // ("FREEBIE X TARA10"), so we tokenise each stored discount string on
+      // any non-alphanumeric run and match the coupon against the tokens
+      // rather than the whole string. Read-only; write gates unchanged.
       const userCoupon = (user.couponCode ?? "").trim().toLowerCase();
       if (userCoupon) {
-        const legacyCode = (order.discountCode ?? "").trim().toLowerCase();
-        const codes = Array.isArray(order.discountCodes)
-          ? (order.discountCodes as string[]).map((c) => (c ?? "").trim().toLowerCase())
-          : [];
-        if (legacyCode === userCoupon || codes.includes(userCoupon)) {
+        const tokenize = (s?: string | null): string[] =>
+          (s ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        const discountStrings = [
+          order.discountCode,
+          ...(Array.isArray(order.discountCodes) ? (order.discountCodes as string[]) : []),
+        ];
+        const matched = discountStrings.some((dc) =>
+          tokenize(dc).includes(userCoupon),
+        );
+        if (matched) {
           return { authorized: true, isAdmin: false };
         }
       }

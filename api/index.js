@@ -3712,14 +3712,34 @@ var init_storage = __esm({
        * orders.discountCodes (all codes) or the legacy orders.discountCode (first).
        * Powers the "My Converted Orders" list. Returns full order rows (shipping
        * status + payment method) newest first.
+       *
+       * TOKEN match, not exact match. Agents manually creating orders sometimes
+       * stack coupons, and Shopify delivers the combination as ONE code string,
+       * e.g. "FREEBIE X TARA10" — the agent's real coupon (TARA10) is just one
+       * token inside it. We therefore split each stored discount string on any
+       * run of non-alphanumeric chars ([^a-z0-9]+, covering the " X " / "+" / ","
+       * joiners agents use) and match the coupon against the resulting tokens.
+       * A single-coupon "TARA10" still tokenises to ["tara10"] and matches, and
+       * "TARA1" tokenises to ["tara1"] so there are no partial-string false hits.
        */
       async getConvertedOrdersForCoupon(couponCode) {
         const code = couponCode.trim().toLowerCase();
         if (!code) return [];
         return await db.select().from(orders).where(
           or(
-            sql2`LOWER(COALESCE(${orders.discountCode}, '')) = ${code}`,
-            sql2`EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) c WHERE LOWER(c) = ${code})`
+            // Legacy single-code column, tokenised.
+            sql2`EXISTS (
+            SELECT 1
+            FROM regexp_split_to_table(LOWER(COALESCE(${orders.discountCode}, '')), '[^a-z0-9]+') AS tok(token)
+            WHERE tok.token = ${code}
+          )`,
+            // discount_codes JSONB array — tokenise each element.
+            sql2`EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) AS dc(code_str),
+                 regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
+            WHERE tok.token = ${code}
+          )`
           )
         ).orderBy(desc(orders.createdAt));
       }
@@ -11171,9 +11191,15 @@ async function registerRoutes(app2) {
     if (order.assignedTo !== userId) {
       const userCoupon = (user.couponCode ?? "").trim().toLowerCase();
       if (userCoupon) {
-        const legacyCode = (order.discountCode ?? "").trim().toLowerCase();
-        const codes = Array.isArray(order.discountCodes) ? order.discountCodes.map((c) => (c ?? "").trim().toLowerCase()) : [];
-        if (legacyCode === userCoupon || codes.includes(userCoupon)) {
+        const tokenize = (s) => (s ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        const discountStrings = [
+          order.discountCode,
+          ...Array.isArray(order.discountCodes) ? order.discountCodes : []
+        ];
+        const matched = discountStrings.some(
+          (dc) => tokenize(dc).includes(userCoupon)
+        );
+        if (matched) {
           return { authorized: true, isAdmin: false };
         }
       }
