@@ -1668,7 +1668,7 @@ __export(storage_exports, {
   DbStorage: () => DbStorage,
   storage: () => storage
 });
-import { eq, and, desc, asc, or, count, gte, lte, sql as sql2, isNull, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, or, count, gte, lte, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
 function getRandomAvatar() {
   return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
 }
@@ -3725,7 +3725,12 @@ var init_storage = __esm({
       async getConvertedOrdersForCoupon(couponCode) {
         const code = couponCode.trim().toLowerCase();
         if (!code) return [];
-        return await db.select().from(orders).where(
+        const deliveredAt = sql2`COALESCE(
+      (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = ${orders.id}),
+      (SELECT MAX(h.created_at) FROM ${orderStatusHistory} h
+         WHERE h.order_id = ${orders.id} AND h.status = 'delivered')
+    )`.as("delivered_at");
+        return await db.select({ ...getTableColumns(orders), deliveredAt }).from(orders).where(
           or(
             // Legacy single-code column, tokenised.
             sql2`EXISTS (

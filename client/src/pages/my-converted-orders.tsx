@@ -67,10 +67,18 @@ interface Performance {
   prepaidCount: number;
 }
 
+// Backend attaches deliveredAt (COALESCE of shipments.delivered_at and the
+// order_status_history "delivered" transition) to each order — the basis for
+// delivery-date-windowed commission.
+type ConvertedBackendOrder = BackendOrder & { deliveredAt: string | null };
+
 interface ConvertedOrdersResponse {
   couponCode: string | null;
-  orders: BackendOrder[];
+  orders: ConvertedBackendOrder[];
 }
+
+// UI order + the parsed delivery timestamp (null until delivered / unknown).
+type ConvertedUIOrder = UIOrder & { deliveredAt: Date | null };
 
 const currency = (v: number) =>
   `₹${(Math.round(v * 100) / 100).toLocaleString("en-IN")}`;
@@ -95,7 +103,7 @@ const SHIPPING_FILTER_OPTIONS: { value: string; label: string; matches: Shipping
 ];
 
 // Backend Order → the UI Order shape the shared components expect.
-function toUIOrder(o: BackendOrder): UIOrder {
+function toUIOrder(o: ConvertedBackendOrder): ConvertedUIOrder {
   const addressParts = [
     o.shippingAddressLine1,
     o.shippingAddressLine2,
@@ -123,6 +131,7 @@ function toUIOrder(o: BackendOrder): UIOrder {
     discountCode: o.discountCode || undefined,
     tags: o.tags || undefined,
     createdAt: new Date(o.shopifyCreatedAt),
+    deliveredAt: o.deliveredAt ? new Date(o.deliveredAt) : null,
   };
 }
 
@@ -284,6 +293,34 @@ export default function MyConvertedOrdersPage() {
     };
   }, [dateScopedOrders]);
 
+  // Earned Commission — Option A: windowed by DELIVERY date, not placed date.
+  // An order contributes to commission when its deliveredAt falls inside the
+  // selected range, regardless of when it was placed. Independent of the
+  // placed-date scope that drives the table + the other tiles, so selecting
+  // "Last Month" yields exactly what the agent is owed for that month's
+  // deliveries. (deliveredAt is only set for delivered orders, but we still
+  // gate on status defensively.)
+  const commissionBasis = useMemo(() => {
+    const startMs = dateRange.startDate ? dateRange.startDate.getTime() : null;
+    const endMs = dateRange.endDate ? dateRange.endDate.getTime() : null;
+    let deliveredGmv = 0;
+    let deliveredCount = 0;
+    for (const o of uiOrders) {
+      if (!o.deliveredAt) continue;
+      if ((o.status || "").toLowerCase() !== "delivered") continue;
+      const d = o.deliveredAt.getTime();
+      if (startMs !== null && d < startMs) continue;
+      if (endMs !== null && d > endMs) continue;
+      deliveredGmv += o.total;
+      deliveredCount += 1;
+    }
+    return {
+      deliveredGmv: Math.round(deliveredGmv * 100) / 100,
+      deliveredCount,
+      commission: Math.round(deliveredGmv * 0.1 * 100) / 100,
+    };
+  }, [uiOrders, dateRange]);
+
   const codPrepaidTotal = performance.codCount + performance.prepaidCount;
   const codShare =
     codPrepaidTotal > 0 ? Math.round((performance.codCount / codPrepaidTotal) * 100) : 0;
@@ -419,8 +456,8 @@ export default function MyConvertedOrdersPage() {
             />
             <StatTile
               title="Earned Commission"
-              value={currency(performance.commission)}
-              description={`10% × ${currency(performance.deliveredGmv)} delivered GMV`}
+              value={currency(commissionBasis.commission)}
+              description={`10% × ${currency(commissionBasis.deliveredGmv)} delivered GMV · by delivery date`}
               icon={<Wallet className="h-4 w-4" />}
               isLoading={isLoading}
               tone="success"
