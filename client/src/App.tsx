@@ -246,7 +246,15 @@ function Router() {
         {() => <ChatSupportGuard component={AbandonedCartsPage} />}
       </Route>
       <Route path="/my-converted-orders">
-        {() => <ChatSupportGuard component={MyConvertedOrdersPage} />}
+        {() => {
+          // ISE-only surface. Admins have no coupon so the page is empty for
+          // them anyway — bounce them to Overview instead of showing an
+          // empty "no coupon code" state, and keep the page out of reach by
+          // direct URL, matching its removal from the admin sidebar.
+          const role = localStorage.getItem("userRole");
+          if (role === "admin") return <Redirect to="/" />;
+          return <ChatSupportGuard component={MyConvertedOrdersPage} />;
+        }}
       </Route>
       <Route path="/learning-center">
         {() => <ChatSupportGuard component={LearningCenterPlaceholder} />}

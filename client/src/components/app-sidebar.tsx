@@ -136,16 +136,6 @@ const adminMenuItems: MenuItem[] = [
     accessModule: "abandoned_carts",
   },
   {
-    // Per-agent view of the orders they've recovered (attributed by their
-    // Shopify coupon code), with live shipping status + commission stats.
-    // Admins keep it in the tree for oversight; plain agents / recovery
-    // agents see it in their own sidebars via the arrays below.
-    title: "My Converted Orders",
-    url: "/my-converted-orders",
-    icon: TrendingUp,
-    allowedRoles: ["admin", "recovery_agent"],
-  },
-  {
     title: "Products",
     url: "/products",
     icon: LayoutGrid,
