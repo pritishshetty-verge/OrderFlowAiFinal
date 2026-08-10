@@ -698,6 +698,28 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
 
     await storage.updateOrder(existingOrder.id, updateData);
 
+    // Reshipments hook: if this Shopify order is the -R twin of a
+    // reshipment log, capture the AWB the moment fulfilment attaches
+    // one. Fire-and-forget so a service failure never breaks ingest.
+    if (trackingNumber) {
+      void import("./reshipments/service")
+        .then((s) =>
+          s.updateFromFulfillment({
+            storeId: store.id,
+            newShopifyOrderId: existingOrder.shopifyOrderId!,
+            trackingAwb: trackingNumber,
+            courierName: trackingCompany,
+          }),
+        )
+        .catch((e) =>
+          console.warn(
+            "[reshipments] fulfillment-sync failed for",
+            existingOrder.shopifyOrderId,
+            e?.message ?? e,
+          ),
+        );
+    }
+
     // Create status history if main status changed
     if (newOrderStatus && newOrderStatus !== existingOrder.status) {
       await storage.createOrderStatus({

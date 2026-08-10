@@ -17,6 +17,7 @@ import ParePage from "@/pages/pare";
 import OrdersPage from "@/pages/orders";
 import FulfilPage from "@/pages/fulfil";
 import NDRPage from "@/pages/ndr";
+import ReshipmentsPage from "@/pages/reshipments";
 import TeamPage from "@/pages/team";
 import SettingsPage from "@/pages/settings";
 import ProfilePage from "@/pages/profile";
@@ -202,6 +203,9 @@ function Router() {
       </Route>
       <Route path="/ndr">
         {() => <ChatSupportGuard component={NDRPage} />}
+      </Route>
+      <Route path="/reshipments">
+        {() => <ChatSupportGuard component={ReshipmentsPage} />}
       </Route>
       <Route path="/team">
         {() => <RecoveryAgentGuard component={TeamPage} />}

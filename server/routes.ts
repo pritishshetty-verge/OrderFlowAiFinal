@@ -1254,6 +1254,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════
+  //  RESHIPMENTS  —  duplicate-order flow when a parcel fails
+  //  delivery. Admin + agents on the NDR team can create; anyone in
+  //  the store can view the log.
+  // ═══════════════════════════════════════════════════════════════════
+  const requireReshipmentUser = async (
+    req: any,
+    res: any,
+  ): Promise<{ user: any } | null> => {
+    const uid =
+      typeof req.query.userId === "string"
+        ? req.query.userId
+        : typeof req.body?.userId === "string"
+          ? req.body.userId
+          : null;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized: userId required." });
+      return null;
+    }
+    const user = await storage.getUser(uid);
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized: user not found." });
+      return null;
+    }
+    return { user };
+  };
+
+  // POST /api/reshipments — create a duplicate order in Shopify + log it.
+  app.post("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      // Any agent role can trigger a reshipment (NDR team is agents);
+      // the endpoint IS store-scoped so cross-tenant abuse can't happen.
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+
+      const { createReshipment, ReshipmentError } = await import("./reshipments/service");
+      const b = req.body ?? {};
+      // Minimal server-side validation — the Zod schema on the client
+      // does the heavy lifting, but we defend the DB either way.
+      const required = [
+        "originalOrderId",
+        "customerName",
+        "customerPhone",
+        "shippingAddress",
+        "reason",
+        "urgency",
+      ] as const;
+      for (const k of required) {
+        if (!b[k]) return res.status(400).json({ error: `Missing field: ${k}` });
+      }
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res
+          .status(400)
+          .json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      if (!b.shippingAddress.address1 || !b.shippingAddress.zip) {
+        return res
+          .status(400)
+          .json({ error: "shippingAddress.address1 and .zip are required." });
+      }
+
+      try {
+        const row = await createReshipment({
+          storeId: scope.storeId,
+          originalOrderId: b.originalOrderId,
+          customerName: b.customerName,
+          customerPhone: b.customerPhone,
+          shippingAddress: b.shippingAddress,
+          reason: b.reason,
+          urgency: b.urgency,
+          scheduledDate: b.scheduledDate ?? null,
+          internalNotes: b.internalNotes ?? null,
+          createdBy: authed.user.id,
+        });
+        res.status(201).json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] create failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to create reshipment." });
+    }
+  });
+
+  // GET /api/reshipments?filter=all|attention — dashboard rows.
+  app.get("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const filter = req.query.filter === "attention" ? "attention" : "all";
+      const { listReshipments } = await import("./reshipments/service");
+      res.json(await listReshipments(scope.storeId, filter));
+    } catch (error: any) {
+      console.error("[reshipments] list failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to list reshipments." });
+    }
+  });
+
   // Get single order by ID
   // SECURITY: Read protection with Safe Global View pattern
   // - Agents with scope='global' can read any order details

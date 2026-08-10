@@ -1,0 +1,255 @@
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { PageLayout } from "@/components/page-layout";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, ExternalLink } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useActiveStore } from "@/hooks/use-store";
+import { NewReshipmentDialog } from "@/components/reshipments/new-reshipment-dialog";
+import { format } from "date-fns";
+
+// ─────────────────────────────────────────────────────────────────────
+// Reshipments — dashboard for the NDR team's re-dispatch log. Replaces
+// the manual spreadsheet: one click creates a duplicate order in
+// Shopify with the correct financial framing, then the AWB + courier
+// status flow in automatically via webhooks.
+// ─────────────────────────────────────────────────────────────────────
+
+interface Row {
+  id: string;
+  originalShopifyOrderId: string;
+  originalShopifyOrderName: string;
+  newShopifyOrderId: string | null;
+  newShopifyOrderName: string | null;
+  customerName: string;
+  reason: string;
+  paymentType: "cod" | "prepaid";
+  courierStatus: "pending" | "in_transit" | "out_for_delivery" | "ndr" | "delivered" | "rto";
+  trackingAwb: string | null;
+  createdAt: string;
+}
+
+const REASON_LABEL: Record<string, string> = {
+  courier_error: "Courier error",
+  customer_unavailable: "Customer unavailable",
+  fake_delivery_attempt: "Fake delivery attempt",
+  address_issue: "Address issue",
+  product_damaged: "Product damaged",
+  other: "Other",
+};
+
+const STATUS_PILL: Record<Row["courierStatus"], { label: string; cls: string }> = {
+  pending: { label: "Pending", cls: "bg-muted text-foreground/70" },
+  in_transit: {
+    label: "In Transit",
+    cls: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400",
+  },
+  out_for_delivery: {
+    label: "Out for Delivery",
+    cls: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400",
+  },
+  ndr: {
+    label: "NDR",
+    cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
+  },
+  delivered: {
+    label: "Delivered",
+    cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400",
+  },
+  rto: {
+    label: "RTO",
+    cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
+  },
+};
+
+function PaymentPill({ type }: { type: "cod" | "prepaid" }) {
+  const cls =
+    type === "cod"
+      ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
+      : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400";
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${cls}`}
+    >
+      {type}
+    </span>
+  );
+}
+
+function shopifyOrderUrl(storeUrl: string | null | undefined, shopifyId: string): string {
+  return `https://${storeUrl ?? "admin.shopify.com"}/admin/orders/${shopifyId}`;
+}
+
+export default function ReshipmentsPage() {
+  const [tab, setTab] = useState<"all" | "attention">("all");
+  const [openNew, setOpenNew] = useState(false);
+  const { activeStoreId, activeStore } = useActiveStore();
+  const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+
+  const { data, isLoading, refetch } = useQuery<Row[]>({
+    queryKey: ["/api/reshipments", tab, userId, activeStoreId],
+    queryFn: async () =>
+      (
+        await apiRequest("GET", `/api/reshipments?filter=${tab}&userId=${userId ?? ""}`)
+      ).json(),
+    enabled: !!userId && !!activeStoreId,
+    refetchInterval: 60_000,
+  });
+
+  const rows = data ?? [];
+  const attentionCount = useMemo(
+    () =>
+      (data ?? []).filter(
+        (r) => r.courierStatus === "ndr" || r.courierStatus === "rto",
+      ).length,
+    [data],
+  );
+
+  return (
+    <PageLayout
+      title="Reshipments"
+      description="Duplicate a failed order to Shopify with one click — AWB and courier status update automatically"
+    >
+      <div className="mx-auto max-w-7xl space-y-6 overflow-y-auto px-6 py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+            <TabsList
+              className="h-auto justify-start gap-1 rounded-none border-0 bg-transparent p-0"
+              data-testid="reshipments-tabs"
+            >
+              <TabsTrigger
+                value="all"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-3.5 py-2.5 text-sm font-medium text-muted-foreground shadow-none transition-colors data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                All Reshipments
+              </TabsTrigger>
+              <TabsTrigger
+                value="attention"
+                className="rounded-none border-b-2 border-transparent bg-transparent px-3.5 py-2.5 text-sm font-medium text-muted-foreground shadow-none transition-colors data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none"
+              >
+                Requires Attention
+                {attentionCount > 0 && (
+                  <span className="ml-2 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500/10 px-1.5 text-[11px] font-semibold text-red-600 dark:text-red-400">
+                    {attentionCount}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Button onClick={() => setOpenNew(true)} data-testid="btn-new-reshipment">
+            <Plus className="mr-1.5 h-4 w-4" />
+            New Reshipment
+          </Button>
+        </div>
+
+        {isLoading ? (
+          <Skeleton className="h-96" />
+        ) : rows.length === 0 ? (
+          <Card>
+            <CardContent className="p-10 text-center text-sm text-muted-foreground">
+              {tab === "attention"
+                ? "Nothing in the Attention queue right now — every live reshipment is on track."
+                : "No reshipments yet. Click New Reshipment to log the first one."}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30 text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                      <th className="px-4 py-3 text-left font-medium">Sr No</th>
+                      <th className="px-4 py-3 text-left font-medium">Date</th>
+                      <th className="px-4 py-3 text-left font-medium">Order ID</th>
+                      <th className="px-4 py-3 text-left font-medium">New Order ID</th>
+                      <th className="px-4 py-3 text-left font-medium">Customer</th>
+                      <th className="px-4 py-3 text-left font-medium">Reason</th>
+                      <th className="px-4 py-3 text-left font-medium">Payment</th>
+                      <th className="px-4 py-3 text-left font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="[&>tr]:border-b [&>tr:last-child]:border-0 [&>tr]:transition-colors hover:[&>tr]:bg-muted/40">
+                    {rows.map((r, i) => (
+                      <tr key={r.id} data-testid={`reshipment-row-${r.id}`}>
+                        <td className="px-4 py-3 tabular-nums text-muted-foreground">
+                          {i + 1}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {format(new Date(r.createdAt), "dd MMM yyyy")}
+                        </td>
+                        <td className="px-4 py-3">
+                          <a
+                            href={shopifyOrderUrl(
+                              activeStore?.storeUrl,
+                              r.originalShopifyOrderId,
+                            )}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
+                          >
+                            {r.originalShopifyOrderName}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.newShopifyOrderId ? (
+                            <a
+                              href={shopifyOrderUrl(
+                                activeStore?.storeUrl,
+                                r.newShopifyOrderId,
+                              )}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
+                            >
+                              {r.newShopifyOrderName ?? `#${r.newShopifyOrderId}`}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">{r.customerName}</td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          {REASON_LABEL[r.reason] ?? r.reason}
+                        </td>
+                        <td className="px-4 py-3">
+                          <PaymentPill type={r.paymentType} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_PILL[r.courierStatus].cls}`}
+                          >
+                            {STATUS_PILL[r.courierStatus].label}
+                          </span>
+                          {r.trackingAwb && (
+                            <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                              {r.trackingAwb}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      <NewReshipmentDialog
+        open={openNew}
+        onOpenChange={setOpenNew}
+        onCreated={() => {
+          setOpenNew(false);
+          void refetch();
+        }}
+      />
+    </PageLayout>
+  );
+}

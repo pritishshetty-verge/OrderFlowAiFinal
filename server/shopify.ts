@@ -147,6 +147,38 @@ export class ShopifyClient {
     return await response.json();
   }
 
+  /**
+   * Create a new order in Shopify. Used by the reshipments flow to
+   * duplicate an existing order with the correct financial framing
+   * (see server/reshipments/payload.ts for the body shape).
+   *
+   * Returns the freshly created order object so callers can persist
+   * its shopify id and generated name (e.g. "#1234-R1").
+   */
+  async createOrder(body: { order: Record<string, unknown> }): Promise<any> {
+    const url = `${this.baseUrl}/orders.json`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...(await this.getHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      // Surface Shopify's validation errors — they're the useful bit
+      // (e.g. `{"errors":{"line_items":["variant_id is invalid"]}}`).
+      const errorBody = await response.text();
+      throw new Error(
+        `Shopify createOrder failed: ${response.status} ${response.statusText} — ${errorBody.slice(0, 400)}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.order;
+  }
+
   async fetchCustomer(customerId: string): Promise<any> {
     const url = `${this.baseUrl}/customers/${customerId}.json`;
     const response = await fetch(url, {

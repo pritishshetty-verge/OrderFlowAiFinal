@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp, Send, PackagePlus } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -121,6 +121,15 @@ const adminMenuItems: MenuItem[] = [
         icon: Phone,
         comingSoon: true,
       },
+      {
+        // Reshipments — duplicate a failed order to Shopify with the
+        // right financial framing so Delhivery generates the correct
+        // waybill. Lives under Orders (natural home; NDR agents already
+        // work here). Admin + agents on the NDR team can create.
+        title: "Reshipments",
+        url: "/reshipments",
+        icon: PackagePlus,
+      },
     ],
   },
   {
@@ -144,6 +153,11 @@ const adminMenuItems: MenuItem[] = [
     title: "Returns",
     url: "/returns",
     icon: RefreshCcw,
+  },
+  {
+    title: "Reshipments",
+    url: "/reshipments",
+    icon: Send,
   },
   {
     title: "Learning Center",
