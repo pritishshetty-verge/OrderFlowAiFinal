@@ -21,7 +21,7 @@ import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient, getShopifyClient } from "./shopify";
 import { requireStoreScope } from "./storeScope";
-import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
+import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema, pincodeTiers } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
 import { OrderAssignmentEngine } from "./assignment";
@@ -1342,6 +1342,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res
         .status(500)
         .json({ error: error?.message ?? "Failed to create reshipment." });
+    }
+  });
+
+  // GET /api/pincode/:zip — resolve a 6-digit Indian pincode to city +
+  // state. Uses the existing pincode_tiers table (19.5k rows). No auth
+  // gate — same treatment as other read-only lookups.
+  app.get("/api/pincode/:zip", async (req, res) => {
+    try {
+      const zip = String(req.params.zip ?? "").trim();
+      if (!/^\d{6}$/.test(zip)) {
+        return res.status(400).json({ error: "Pincode must be 6 digits." });
+      }
+      const rows = await db
+        .select()
+        .from(pincodeTiers)
+        .where(eq(pincodeTiers.pincode, zip))
+        .limit(1);
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Pincode not found." });
+      res.json({
+        pincode: row.pincode,
+        city: row.city,
+        state: row.state,
+        tier: row.tier,
+      });
+    } catch (error: any) {
+      console.error("[pincode] lookup failed:", error);
+      res.status(500).json({ error: "Failed to resolve pincode." });
     }
   });
 

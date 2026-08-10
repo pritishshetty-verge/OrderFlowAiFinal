@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Pencil, Loader2, Search, AlertCircle } from "lucide-react";
+import { Pencil, Loader2, Search, AlertCircle, MapPin } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -120,6 +120,54 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
     enabled: !!submittedQuery && !!userId,
     retry: false,
   });
+
+  // Debounced pincode → city/state resolver. Fires when the operator
+  // edits the zip to a fresh 6-digit value; leaves what they typed if
+  // the pincode is unknown (no destructive overwrite).
+  const [pincodeState, setPincodeState] = useState<"idle" | "loading" | "ok" | "notfound">(
+    "idle",
+  );
+  useEffect(() => {
+    if (!address || !expanded) return;
+    const zip = address.zip.trim();
+    if (!/^\d{6}$/.test(zip)) {
+      setPincodeState("idle");
+      return;
+    }
+    let cancelled = false;
+    setPincodeState("loading");
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await apiRequest("GET", `/api/pincode/${zip}`);
+        if (!res.ok) {
+          if (!cancelled) setPincodeState("notfound");
+          return;
+        }
+        const body: { city: string | null; state: string | null } = await res.json();
+        if (cancelled) return;
+        setAddress((a) =>
+          a
+            ? {
+                ...a,
+                // Only overwrite empty fields — never clobber a manual
+                // edit the operator has already made.
+                city: a.city || body.city || "",
+                state: a.state || body.state || "",
+              }
+            : a,
+        );
+        setPincodeState("ok");
+      } catch {
+        if (!cancelled) setPincodeState("notfound");
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+    // Re-run only when zip changes (address ref changes on every keystroke).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address?.zip, expanded]);
 
   // Prefill the address once we have the order.
   useEffect(() => {
@@ -307,12 +355,31 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                         />
                       </FormRow>
                       <FormRow label="Pincode">
-                        <Input
-                          value={address.zip}
-                          onChange={(e) => setAddress({ ...address, zip: e.target.value })}
-                          maxLength={6}
-                          inputMode="numeric"
-                        />
+                        <div className="relative">
+                          <Input
+                            value={address.zip}
+                            onChange={(e) =>
+                              setAddress({ ...address, zip: e.target.value })
+                            }
+                            maxLength={6}
+                            inputMode="numeric"
+                            className="pr-8"
+                          />
+                          {pincodeState === "loading" && (
+                            <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+                          )}
+                          {pincodeState === "ok" && (
+                            <MapPin
+                              className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-emerald-600 dark:text-emerald-400"
+                              aria-label="Pincode resolved"
+                            />
+                          )}
+                        </div>
+                        {pincodeState === "notfound" && (
+                          <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                            Pincode not in the directory — enter city / state manually.
+                          </p>
+                        )}
                       </FormRow>
                       <FormRow label="Address line 1" className="sm:col-span-2">
                         <Input

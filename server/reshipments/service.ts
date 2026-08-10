@@ -144,7 +144,13 @@ export async function createReshipment(
         ? `#${order.shopifyOrderNumber}`
         : `#${order.shopifyOrderId}`,
       newShopifyOrderId: String(created.id),
-      newShopifyOrderName: created.name ?? null,
+      // Shopify silently reassigns `name` on non-Plus plans, so the
+      // returned value can differ from what we requested. Prefer
+      // Shopify's own name (it's what the merchant sees in admin);
+      // fall back to our "#1234R" convention when absent.
+      newShopifyOrderName:
+        created.name ??
+        `${order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`}R`,
       customerName: input.customerName,
       customerPhone: input.customerPhone,
       shippingAddress: input.shippingAddress as any,
