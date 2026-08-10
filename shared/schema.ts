@@ -2014,3 +2014,108 @@ export const insertPgRateCardSchema = createInsertSchema(pgRateCards).omit({
 });
 export type InsertPgRateCard = z.infer<typeof insertPgRateCardSchema>;
 export type PgRateCard = typeof pgRateCards.$inferSelect;
+
+// ─────────────────────────────────────────────────────────────────────
+// RESHIPMENTS  —  NDR-triggered duplicate orders in Shopify.
+//
+// Flow: operator picks a failed original order → we POST a duplicate to
+// Shopify (COD stays COD, prepaid gets a 100% discount so the courier
+// doesn't collect again) → tags carry "Reshipment" + "Original:#1234"
+// so downstream systems can identify these reshipments → live courier
+// status flows in via the existing Shopify + Delhivery webhook path.
+// See server/reshipments/ and migrations/0007_reshipments.sql.
+// ─────────────────────────────────────────────────────────────────────
+
+export const RESHIPMENT_REASONS = [
+  "courier_error",
+  "customer_unavailable",
+  "fake_delivery",
+  "address_issue",
+  "product_damaged",
+  "other",
+] as const;
+export type ReshipmentReason = (typeof RESHIPMENT_REASONS)[number];
+
+export const RESHIPMENT_URGENCIES = ["instant", "scheduled"] as const;
+export type ReshipmentUrgency = (typeof RESHIPMENT_URGENCIES)[number];
+
+export const RESHIPMENT_STATUSES = [
+  "pending",
+  "in_transit",
+  "out_for_delivery",
+  "ndr",
+  "delivered",
+  "rto",
+] as const;
+export type ReshipmentStatus = (typeof RESHIPMENT_STATUSES)[number];
+
+export const reshipmentLogs = pgTable(
+  "reshipment_logs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    storeId: varchar("store_id")
+      .notNull()
+      .references(() => stores.id, { onDelete: "cascade" }),
+    /** OrderFlow row id of the original failed order (FK). */
+    originalOrderId: varchar("original_order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    /** Shopify's numeric id + display name of the original, denormalised
+     *  so the dashboard's "#1234" link doesn't need a join on every row. */
+    originalShopifyOrderId: text("original_shopify_order_id").notNull(),
+    originalShopifyOrderName: text("original_shopify_order_name").notNull(),
+    /** New (duplicate) order's Shopify ids. Nullable until the Shopify
+     *  API create round-trip succeeds. */
+    newShopifyOrderId: text("new_shopify_order_id"),
+    newShopifyOrderName: text("new_shopify_order_name"),
+    customerName: text("customer_name").notNull(),
+    customerPhone: text("customer_phone").notNull(),
+    /** JSONB — operator may edit phone/address in the modal (updated
+     *  pincode etc.); this is the payload we sent to Shopify. */
+    shippingAddress: jsonb("shipping_address").notNull(),
+    reason: text("reason").notNull().$type<ReshipmentReason>(),
+    urgencyType: text("urgency_type").notNull().$type<ReshipmentUrgency>(),
+    scheduledDate: date("scheduled_date"),
+    internalNotes: text("internal_notes"),
+    /** cod | prepaid — inherited from the original order at request time. */
+    paymentType: text("payment_type").notNull(),
+    trackingAwb: text("tracking_awb"),
+    courierName: text("courier_name"),
+    courierStatus: text("courier_status")
+      .notNull()
+      .default("pending")
+      .$type<ReshipmentStatus>(),
+    createdBy: varchar("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    storeCreatedIdx: index("reshipment_logs_store_created_idx").on(
+      table.storeId,
+      table.createdAt,
+    ),
+    originalIdx: index("reshipment_logs_original_idx").on(
+      table.storeId,
+      table.originalOrderId,
+    ),
+    newShopifyIdx: index("reshipment_logs_new_shopify_idx").on(
+      table.storeId,
+      table.newShopifyOrderId,
+    ),
+    awbIdx: index("reshipment_logs_awb_idx").on(table.trackingAwb),
+    statusIdx: index("reshipment_logs_status_idx").on(
+      table.storeId,
+      table.courierStatus,
+    ),
+  }),
+);
+
+export const insertReshipmentLogSchema = createInsertSchema(reshipmentLogs).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertReshipmentLog = z.infer<typeof insertReshipmentLogSchema>;
+export type ReshipmentLog = typeof reshipmentLogs.$inferSelect;
