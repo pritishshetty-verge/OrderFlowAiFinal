@@ -30,6 +30,17 @@ interface Row {
   courierStatus: "pending" | "in_transit" | "out_for_delivery" | "ndr" | "delivered" | "rto";
   trackingAwb: string | null;
   createdAt: string;
+  createdByName: string | null;
+}
+
+interface Stats {
+  scope: "mine" | "store";
+  total: number;
+  delivered: number;
+  inTransit: number;
+  ndr: number;
+  rto: number;
+  pending: number;
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -88,12 +99,24 @@ export default function ReshipmentsPage() {
   const [openNew, setOpenNew] = useState(false);
   const { activeStoreId, activeStore } = useActiveStore();
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+  const userRole = typeof window !== "undefined" ? localStorage.getItem("userRole") : null;
+  const isAdmin = userRole === "admin";
 
   const { data, isLoading, refetch } = useQuery<Row[]>({
     queryKey: ["/api/reshipments", tab, userId, activeStoreId],
     queryFn: async () =>
       (
         await apiRequest("GET", `/api/reshipments?filter=${tab}&userId=${userId ?? ""}`)
+      ).json(),
+    enabled: !!userId && !!activeStoreId,
+    refetchInterval: 60_000,
+  });
+
+  const { data: stats } = useQuery<Stats>({
+    queryKey: ["/api/reshipments/stats", userId, activeStoreId],
+    queryFn: async () =>
+      (
+        await apiRequest("GET", `/api/reshipments/stats?userId=${userId ?? ""}`)
       ).json(),
     enabled: !!userId && !!activeStoreId,
     refetchInterval: 60_000,
@@ -114,6 +137,39 @@ export default function ReshipmentsPage() {
       description="Duplicate a failed order to Shopify with one click — AWB and courier status update automatically"
     >
       <div className="mx-auto max-w-7xl space-y-6 overflow-y-auto px-6 py-8">
+        {/* Stats strip — agents see THEIR numbers (payroll transparency),
+            admins see the store total. Scope label makes it explicit. */}
+        {stats && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {(
+              [
+                ["Total", stats.total, ""],
+                ["Delivered", stats.delivered, "text-emerald-600 dark:text-emerald-400"],
+                ["In Transit", stats.inTransit, "text-blue-600 dark:text-blue-400"],
+                ["Pending", stats.pending, "text-muted-foreground"],
+                ["NDR", stats.ndr, "text-red-600 dark:text-red-400"],
+                ["RTO", stats.rto, "text-red-600 dark:text-red-400"],
+              ] as const
+            ).map(([label, value, cls]) => (
+              <div key={label} className="rounded-xl border bg-card p-3">
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  {label}
+                </p>
+                <p className={`mt-1 text-xl font-semibold tabular-nums ${cls}`}>
+                  {value.toLocaleString("en-IN")}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+        {stats && (
+          <p className="-mt-2 text-[11px] text-muted-foreground">
+            {stats.scope === "mine"
+              ? "Showing your reshipments only — payroll incentives are calculated from your delivered count."
+              : "Store-wide totals across all agents."}
+          </p>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
             <TabsList
@@ -168,6 +224,9 @@ export default function ReshipmentsPage() {
                       <th className="px-4 py-3 text-left font-medium">New Order ID</th>
                       <th className="px-4 py-3 text-left font-medium">Customer</th>
                       <th className="px-4 py-3 text-left font-medium">Reason</th>
+                      {isAdmin && (
+                        <th className="px-4 py-3 text-left font-medium">Created by</th>
+                      )}
                       <th className="px-4 py-3 text-left font-medium">Payment</th>
                       <th className="px-4 py-3 text-left font-medium">Status</th>
                     </tr>
@@ -217,6 +276,11 @@ export default function ReshipmentsPage() {
                         <td className="px-4 py-3 text-muted-foreground">
                           {REASON_LABEL[r.reason] ?? r.reason}
                         </td>
+                        {isAdmin && (
+                          <td className="px-4 py-3 text-muted-foreground">
+                            {r.createdByName ?? "—"}
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <PaymentPill type={r.paymentType} />
                         </td>

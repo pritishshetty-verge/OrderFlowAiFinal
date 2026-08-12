@@ -87,7 +87,33 @@ const one = async (q: any) => ((await db.execute(q)) as any).rows?.[0] ?? ((awai
   const blr: any = await one(sql`SELECT city, state FROM pincode_tiers WHERE pincode = '560001'`);
   check("560001 → Bangalore, KARNATAKA", !!blr && /bang|beng/i.test(String(blr.city ?? "")), JSON.stringify(blr));
 
-  console.log("\n═══ E. LINE-ITEM CLONE — quantity and variant preserved ═══");
+  console.log("\n═══ E. ACCESS MODEL — per-agent scoping enforced ═══");
+  const { listReshipments, getReshipmentStats } = await import("../reshipments/service");
+  const anyRow: any = await one(sql`SELECT store_id, created_by FROM reshipment_logs WHERE created_by IS NOT NULL LIMIT 1`);
+  if (anyRow) {
+    const scoped = await listReshipments(anyRow.store_id, "all", { createdByOnly: anyRow.created_by });
+    const unscoped = await listReshipments(anyRow.store_id, "all");
+    check(
+      "createdByOnly filter narrows the list (or matches when creator = only creator)",
+      scoped.length <= unscoped.length,
+      `scoped=${scoped.length}, unscoped=${unscoped.length}`,
+    );
+    check(
+      "every scoped row belongs to that creator",
+      scoped.every((r) => r.createdBy === anyRow.created_by),
+    );
+    const scopedStats = await getReshipmentStats(anyRow.store_id, { createdByOnly: anyRow.created_by });
+    const unscopedStats = await getReshipmentStats(anyRow.store_id);
+    check(
+      "stats: scoped total ≤ store total",
+      scopedStats.total <= unscopedStats.total,
+      `mine=${scopedStats.total} vs store=${unscopedStats.total}`,
+    );
+  } else {
+    console.log("  (no rows with created_by yet — skipping runtime scoping check)");
+  }
+
+  console.log("\n═══ F. LINE-ITEM CLONE — quantity and variant preserved ═══");
   const multi = buildReshipmentPayload({
     ...baseArgs,
     original: {

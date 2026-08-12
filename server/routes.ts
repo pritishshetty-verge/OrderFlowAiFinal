@@ -1374,6 +1374,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/reshipments?filter=all|attention — dashboard rows.
+  // Access model (payroll incentives depend on this being tight):
+  //   admin     → all rows in the store, createdByName populated
+  //   non-admin → ONLY rows they created themselves. The createdBy
+  //               filter comes from the resolved-session user id, not
+  //               anything the client passes.
   app.get("/api/reshipments", async (req, res) => {
     try {
       const authed = await requireReshipmentUser(req, res);
@@ -1382,12 +1387,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!scope) return;
       const filter = req.query.filter === "attention" ? "attention" : "all";
       const { listReshipments } = await import("./reshipments/service");
-      res.json(await listReshipments(scope.storeId, filter));
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      res.json(await listReshipments(scope.storeId, filter, { createdByOnly }));
     } catch (error: any) {
       console.error("[reshipments] list failed:", error);
       res
         .status(500)
         .json({ error: error?.message ?? "Failed to list reshipments." });
+    }
+  });
+
+  // GET /api/reshipments/stats — counts by status. Agents see THEIR
+  // numbers (payroll transparency); admins see the store total.
+  app.get("/api/reshipments/stats", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { getReshipmentStats } = await import("./reshipments/service");
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      const stats = await getReshipmentStats(scope.storeId, { createdByOnly });
+      res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
+    } catch (error: any) {
+      console.error("[reshipments] stats failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to fetch stats." });
     }
   });
 

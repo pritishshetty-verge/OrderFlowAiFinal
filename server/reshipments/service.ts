@@ -11,6 +11,7 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import {
   reshipmentLogs,
   orders,
+  users,
   type ReshipmentLog,
   type ReshipmentReason,
   type ReshipmentUrgency,
@@ -167,43 +168,68 @@ export async function createReshipment(
   return row;
 }
 
-/** Table rows for the dashboard, most-recent first. Optionally
- *  filtered to the Requires Attention set (§4B): reshipments whose
- *  NEW order is currently NDR/RTO, OR whose ORIGINAL was RTO'd. */
+/** Row shape returned to the dashboard — same as ReshipmentLog plus
+ *  a joined `createdByName` (for the admin "Created by" column). */
+export type ReshipmentRow = ReshipmentLog & { createdByName: string | null };
+
+const rowShape = {
+  id: reshipmentLogs.id,
+  storeId: reshipmentLogs.storeId,
+  originalOrderId: reshipmentLogs.originalOrderId,
+  originalShopifyOrderId: reshipmentLogs.originalShopifyOrderId,
+  originalShopifyOrderName: reshipmentLogs.originalShopifyOrderName,
+  newShopifyOrderId: reshipmentLogs.newShopifyOrderId,
+  newShopifyOrderName: reshipmentLogs.newShopifyOrderName,
+  customerName: reshipmentLogs.customerName,
+  customerPhone: reshipmentLogs.customerPhone,
+  shippingAddress: reshipmentLogs.shippingAddress,
+  reason: reshipmentLogs.reason,
+  urgencyType: reshipmentLogs.urgencyType,
+  scheduledDate: reshipmentLogs.scheduledDate,
+  internalNotes: reshipmentLogs.internalNotes,
+  paymentType: reshipmentLogs.paymentType,
+  trackingAwb: reshipmentLogs.trackingAwb,
+  courierName: reshipmentLogs.courierName,
+  courierStatus: reshipmentLogs.courierStatus,
+  createdBy: reshipmentLogs.createdBy,
+  createdByName: users.fullName,
+  createdAt: reshipmentLogs.createdAt,
+  updatedAt: reshipmentLogs.updatedAt,
+};
+
+/**
+ * Table rows for the dashboard, most-recent first.
+ *
+ * Access model — this is what payroll incentives ride on so it MUST
+ * be tight:
+ *   • admin      → sees every reshipment in the store (createdByName
+ *                  populated so they can see who did what)
+ *   • non-admin  → sees only rows where they were the creator. The
+ *                  server enforces this from the resolved-session user
+ *                  id, NOT anything the client can pass, so the
+ *                  incentive count can't be spoofed.
+ *
+ * Optional `filter=attention` scopes to NDR/RTO orders (§4B).
+ */
 export async function listReshipments(
   storeId: string,
   filter: "all" | "attention" = "all",
-): Promise<ReshipmentLog[]> {
+  opts: { createdByOnly?: string } = {},
+): Promise<ReshipmentRow[]> {
+  const scopeCreator = opts.createdByOnly
+    ? eq(reshipmentLogs.createdBy, opts.createdByOnly)
+    : sql`TRUE`;
+
   if (filter === "attention") {
     return db
-      .select({
-        id: reshipmentLogs.id,
-        storeId: reshipmentLogs.storeId,
-        originalOrderId: reshipmentLogs.originalOrderId,
-        originalShopifyOrderId: reshipmentLogs.originalShopifyOrderId,
-        originalShopifyOrderName: reshipmentLogs.originalShopifyOrderName,
-        newShopifyOrderId: reshipmentLogs.newShopifyOrderId,
-        newShopifyOrderName: reshipmentLogs.newShopifyOrderName,
-        customerName: reshipmentLogs.customerName,
-        customerPhone: reshipmentLogs.customerPhone,
-        shippingAddress: reshipmentLogs.shippingAddress,
-        reason: reshipmentLogs.reason,
-        urgencyType: reshipmentLogs.urgencyType,
-        scheduledDate: reshipmentLogs.scheduledDate,
-        internalNotes: reshipmentLogs.internalNotes,
-        paymentType: reshipmentLogs.paymentType,
-        trackingAwb: reshipmentLogs.trackingAwb,
-        courierName: reshipmentLogs.courierName,
-        courierStatus: reshipmentLogs.courierStatus,
-        createdBy: reshipmentLogs.createdBy,
-        createdAt: reshipmentLogs.createdAt,
-        updatedAt: reshipmentLogs.updatedAt,
-      })
+      .select(rowShape)
       .from(reshipmentLogs)
       .leftJoin(orders, eq(orders.id, reshipmentLogs.originalOrderId))
+      .leftJoin(users, eq(users.id, reshipmentLogs.createdBy))
       .where(
         and(
           eq(reshipmentLogs.storeId, storeId),
+          scopeCreator,
           or(
             eq(reshipmentLogs.courierStatus, "ndr"),
             eq(reshipmentLogs.courierStatus, "rto"),
@@ -211,14 +237,57 @@ export async function listReshipments(
           ),
         ),
       )
-      .orderBy(desc(reshipmentLogs.createdAt)) as unknown as ReshipmentLog[];
+      .orderBy(desc(reshipmentLogs.createdAt)) as unknown as ReshipmentRow[];
   }
 
   return db
-    .select()
+    .select(rowShape)
     .from(reshipmentLogs)
-    .where(eq(reshipmentLogs.storeId, storeId))
-    .orderBy(desc(reshipmentLogs.createdAt));
+    .leftJoin(users, eq(users.id, reshipmentLogs.createdBy))
+    .where(and(eq(reshipmentLogs.storeId, storeId), scopeCreator))
+    .orderBy(desc(reshipmentLogs.createdAt)) as unknown as Promise<ReshipmentRow[]>;
+}
+
+/**
+ * My-numbers strip for the top of the dashboard. For agents this
+ * counts THEIR own reshipments (payroll incentive visibility);
+ * for admins it counts everything in the store.
+ */
+export async function getReshipmentStats(
+  storeId: string,
+  opts: { createdByOnly?: string } = {},
+): Promise<{
+  total: number;
+  delivered: number;
+  inTransit: number;
+  ndr: number;
+  rto: number;
+  pending: number;
+}> {
+  const scopeCreator = opts.createdByOnly
+    ? eq(reshipmentLogs.createdBy, opts.createdByOnly)
+    : sql`TRUE`;
+  const res: any = await db.execute(sql`
+    SELECT
+      COUNT(*)::int4 AS total,
+      COUNT(*) FILTER (WHERE courier_status = 'delivered')::int4 AS delivered,
+      COUNT(*) FILTER (WHERE courier_status IN ('in_transit','out_for_delivery'))::int4 AS in_transit,
+      COUNT(*) FILTER (WHERE courier_status = 'ndr')::int4 AS ndr,
+      COUNT(*) FILTER (WHERE courier_status = 'rto')::int4 AS rto,
+      COUNT(*) FILTER (WHERE courier_status = 'pending')::int4 AS pending
+    FROM reshipment_logs
+    WHERE store_id = ${storeId}
+      ${opts.createdByOnly ? sql`AND created_by = ${opts.createdByOnly}` : sql``}
+  `);
+  const r = (res.rows ?? res)[0] ?? {};
+  return {
+    total: Number(r.total ?? 0),
+    delivered: Number(r.delivered ?? 0),
+    inTransit: Number(r.in_transit ?? 0),
+    ndr: Number(r.ndr ?? 0),
+    rto: Number(r.rto ?? 0),
+    pending: Number(r.pending ?? 0),
+  };
 }
 
 /**
