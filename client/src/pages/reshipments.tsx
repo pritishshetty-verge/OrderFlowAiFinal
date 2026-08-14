@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, ExternalLink } from "lucide-react";
+import { Plus, ExternalLink, Banknote, CreditCard } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
 import { NewReshipmentDialog } from "@/components/reshipments/new-reshipment-dialog";
@@ -45,40 +45,48 @@ const REASON_LABEL: Record<string, string> = {
   other: "Other",
 };
 
+// Chips mirror the Orders page conventions: purple "active" pill for
+// Pending, colored family fills for the rest (blue in-transit, yellow
+// NDR, green delivered, red RTO, slate cancelled).
 const STATUS_PILL: Record<Row["courierStatus"], { label: string; cls: string }> = {
-  pending: { label: "Pending", cls: "bg-muted text-foreground/70" },
+  pending: {
+    label: "Pending",
+    cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300 border border-violet-200 dark:border-violet-700",
+  },
   in_transit: {
     label: "In Transit",
-    cls: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400",
+    cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-700",
   },
   ndr: {
     label: "NDR",
-    cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
+    cls: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700",
   },
   delivered: {
     label: "Delivered",
-    cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400",
+    cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700",
   },
   rto: {
     label: "RTO",
-    cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
+    cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border border-red-200 dark:border-red-700",
   },
   cancelled: {
     label: "Cancelled",
-    cls: "bg-muted text-muted-foreground",
+    cls: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-600",
   },
 };
 
+// Matches the Orders PaymentBadge: icon + colored/grey outline pill.
 function PaymentPill({ type }: { type: "cod" | "prepaid" }) {
-  const cls =
-    type === "cod"
-      ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
-      : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400";
+  const isCod = type === "cod";
+  const cls = isCod
+    ? "text-slate-600 dark:text-slate-300 border-slate-400 dark:border-slate-500"
+    : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400";
   return (
     <span
-      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${cls}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border bg-transparent px-2.5 py-0.5 text-xs font-medium ${cls}`}
     >
-      {type}
+      {isCod ? <Banknote className="h-3 w-3" /> : <CreditCard className="h-3 w-3" />}
+      {isCod ? "COD" : "Prepaid"}
     </span>
   );
 }

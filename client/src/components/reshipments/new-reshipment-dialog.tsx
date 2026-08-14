@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Pencil, Loader2, Search, AlertCircle, MapPin } from "lucide-react";
+import { Pencil, Loader2, Search, AlertCircle, MapPin, Save } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -338,8 +338,17 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                       className="inline-flex items-center gap-1 text-xs text-brand hover:underline"
                       data-testid="btn-edit-address"
                     >
-                      <Pencil className="h-3 w-3" />
-                      {expanded ? "Collapse" : "Edit address / phone"}
+                      {expanded ? (
+                        <>
+                          <Save className="h-3 w-3" />
+                          Save
+                        </>
+                      ) : (
+                        <>
+                          <Pencil className="h-3 w-3" />
+                          Edit address / phone
+                        </>
+                      )}
                     </button>
                   </div>
 
