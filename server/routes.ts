@@ -1329,6 +1329,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           scheduledDate: b.scheduledDate ?? null,
           internalNotes: b.internalNotes ?? null,
           createdBy: authed.user.id,
+          createdByName: authed.user.fullName ?? null,
         });
         res.status(201).json(row);
       } catch (err: any) {
@@ -1394,6 +1395,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res
         .status(500)
         .json({ error: error?.message ?? "Failed to list reshipments." });
+    }
+  });
+
+  // PATCH /api/reshipments/:id — edit a PENDING reshipment. Address and
+  // phone changes are pushed to the Shopify duplicate too, otherwise the
+  // courier would still ship to the address we're fixing.
+  app.patch("/api/reshipments/:id", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { updateReshipment, ReshipmentError } = await import("./reshipments/service");
+      const b = req.body ?? {};
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res
+          .status(400)
+          .json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      try {
+        const row = await updateReshipment(
+          scope.storeId,
+          req.params.id,
+          {
+            customerPhone: b.customerPhone,
+            shippingAddress: b.shippingAddress,
+            reason: b.reason,
+            urgency: b.urgency,
+            scheduledDate: b.scheduledDate ?? null,
+            internalNotes: b.internalNotes,
+          },
+          { createdByOnly },
+        );
+        res.json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] update failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to update reshipment." });
+    }
+  });
+
+  // POST /api/reshipments/:id/cancel — cancel a PENDING reshipment and
+  // the Shopify duplicate behind it. Shopify is cancelled first; if that
+  // fails nothing is marked cancelled here.
+  app.post("/api/reshipments/:id/cancel", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { cancelReshipment, ReshipmentError } = await import("./reshipments/service");
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      try {
+        const row = await cancelReshipment(
+          scope.storeId,
+          req.params.id,
+          authed.user.id,
+          { createdByOnly },
+        );
+        res.json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] cancel failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to cancel reshipment." });
     }
   });
 

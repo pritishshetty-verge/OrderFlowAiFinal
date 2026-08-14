@@ -1,8 +1,20 @@
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { X, ExternalLink, Copy, Check } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { X, ExternalLink, Copy, Check, Pencil, Ban, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -31,13 +43,14 @@ export interface ReshipmentDetail {
   courierStatus:
     | "pending"
     | "in_transit"
-    | "out_for_delivery"
     | "ndr"
     | "delivered"
-    | "rto";
+    | "rto"
+    | "cancelled";
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
+  cancelledAt?: string | null;
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -58,24 +71,21 @@ const STATUS_META: Record<
     label: "In Transit",
     cls: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400",
   },
-  out_for_delivery: {
-    label: "Out for Delivery",
-    cls: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400",
-  },
   ndr: { label: "NDR", cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400" },
   delivered: {
     label: "Delivered",
     cls: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400",
   },
   rto: { label: "RTO", cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400" },
+  cancelled: { label: "Cancelled", cls: "bg-muted text-muted-foreground line-through" },
 };
 
-// Happy-path progression for the tracker. NDR/RTO are exception states
-// and render as a separate banner rather than a step.
-const JOURNEY = ["pending", "in_transit", "out_for_delivery", "delivered"] as const;
+// Happy-path progression for the tracker. NDR/RTO/cancelled are
+// exception states and render as a banner rather than a step.
+const JOURNEY = ["pending", "in_transit", "delivered"] as const;
 
 function StatusTracker({ status }: { status: ReshipmentDetail["courierStatus"] }) {
-  const isException = status === "ndr" || status === "rto";
+  const isException = status === "ndr" || status === "rto" || status === "cancelled";
   const activeIdx = isException ? -1 : JOURNEY.indexOf(status as any);
 
   return (
@@ -97,14 +107,21 @@ function StatusTracker({ status }: { status: ReshipmentDetail["courierStatus"] }
       <div className="flex justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
         <span>Created</span>
         <span>In transit</span>
-        <span>Out for delivery</span>
         <span>Delivered</span>
       </div>
       {isException && (
-        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-800 dark:bg-red-950/50 dark:text-red-400">
+        <div
+          className={`rounded-lg px-3 py-2 text-xs ${
+            status === "cancelled"
+              ? "bg-muted text-muted-foreground"
+              : "bg-red-50 text-red-800 dark:bg-red-950/50 dark:text-red-400"
+          }`}
+        >
           {status === "ndr"
             ? "Delivery attempt failed (NDR). The courier could not hand over the parcel — follow up with the customer."
-            : "Parcel returned to origin (RTO). This reshipment did not reach the customer."}
+            : status === "rto"
+              ? "Parcel returned to origin (RTO). This reshipment did not reach the customer."
+              : "This reshipment was cancelled. The duplicate order in Shopify was cancelled too."}
         </div>
       )}
     </div>
@@ -136,15 +153,59 @@ export function ReshipmentDetailDrawer({
   open,
   onOpenChange,
   storeUrl,
+  onEdit,
+  onChanged,
 }: {
   row: ReshipmentDetail | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   storeUrl?: string | null;
+  onEdit?: (row: ReshipmentDetail) => void;
+  onChanged?: () => void;
 }) {
   const { toast } = useToast();
+  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+
+  const cancel = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest(
+        "POST",
+        `/api/reshipments/${row!.id}/cancel?userId=${userId ?? ""}`,
+      );
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Reshipment cancelled",
+        description: "The duplicate order in Shopify was cancelled too.",
+      });
+      qc.invalidateQueries({ queryKey: ["/api/reshipments"] });
+      setConfirmCancel(false);
+      onChanged?.();
+      onOpenChange(false);
+    },
+    onError: (err: any) => {
+      const raw = String(err?.message ?? "");
+      let description = raw || "Try again";
+      const m = raw.match(/^\d+:\s*([\s\S]*)$/);
+      if (m) {
+        try {
+          description = JSON.parse(m[1]).error ?? m[1];
+        } catch {
+          description = m[1];
+        }
+      }
+      // Deliberately leave the dialog open and the row untouched — the
+      // reshipment is NOT cancelled if Shopify refused.
+      toast({ title: "Couldn't cancel", description, variant: "destructive" });
+    },
+  });
+
   if (!row) return null;
+  const isMutable = row.courierStatus === "pending";
 
   const meta = STATUS_META[row.courierStatus];
   const addr = row.shippingAddress ?? {};
@@ -290,9 +351,81 @@ export function ReshipmentDetailDrawer({
             </Row>
             <Row label="Created by">{row.createdByName ?? "—"}</Row>
             {row.internalNotes && <Row label="Notes">{row.internalNotes}</Row>}
+            {row.cancelledAt && (
+              <Row label="Cancelled">
+                {format(new Date(row.cancelledAt), "dd MMM yyyy, h:mm a")}
+              </Row>
+            )}
           </Section>
         </div>
+
+        {/* Pinned action bar. Edit/Cancel are live only while pending —
+            once the parcel is with the courier this record is read-only. */}
+        <div className="flex-shrink-0 border-t bg-card px-5 py-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isMutable}
+              onClick={() => onEdit?.(row)}
+              data-testid="btn-edit-reshipment"
+            >
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              Edit
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!isMutable || cancel.isPending}
+              onClick={() => setConfirmCancel(true)}
+              className="text-red-600 hover:text-red-700 dark:text-red-400"
+              data-testid="btn-cancel-reshipment"
+            >
+              <Ban className="mr-1.5 h-3.5 w-3.5" />
+              Cancel reshipment
+            </Button>
+            {!isMutable && (
+              <p className="ml-auto text-[11px] text-muted-foreground">
+                {row.courierStatus === "cancelled"
+                  ? "Cancelled — read-only"
+                  : "With the courier — read-only"}
+              </p>
+            )}
+          </div>
+        </div>
       </SheetContent>
+
+      <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Reshipment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to cancel this reshipment? The corresponding duplicate order
+              created in Shopify will also be cancelled.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancel.isPending}>Keep Reshipment</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault(); // keep the dialog open until the API answers
+                cancel.mutate();
+              }}
+              disabled={cancel.isPending}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {cancel.isPending ? (
+                <>
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  Cancelling…
+                </>
+              ) : (
+                "Cancel Reshipment"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

@@ -13,6 +13,7 @@ import {
   ReshipmentDetailDrawer,
   type ReshipmentDetail,
 } from "@/components/reshipments/reshipment-detail-drawer";
+import { EditReshipmentDialog } from "@/components/reshipments/edit-reshipment-dialog";
 import { format } from "date-fns";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -32,6 +33,7 @@ interface Stats {
   ndr: number;
   rto: number;
   pending: number;
+  cancelled: number;
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -49,10 +51,6 @@ const STATUS_PILL: Record<Row["courierStatus"], { label: string; cls: string }> 
     label: "In Transit",
     cls: "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400",
   },
-  out_for_delivery: {
-    label: "Out for Delivery",
-    cls: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400",
-  },
   ndr: {
     label: "NDR",
     cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
@@ -64,6 +62,10 @@ const STATUS_PILL: Record<Row["courierStatus"], { label: string; cls: string }> 
   rto: {
     label: "RTO",
     cls: "bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400",
+  },
+  cancelled: {
+    label: "Cancelled",
+    cls: "bg-muted text-muted-foreground",
   },
 };
 
@@ -89,6 +91,7 @@ export default function ReshipmentsPage() {
   const [tab, setTab] = useState<"all" | "attention">("all");
   const [openNew, setOpenNew] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
+  const [editing, setEditing] = useState<Row | null>(null);
   const { activeStoreId, activeStore } = useActiveStore();
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
   const userRole = typeof window !== "undefined" ? localStorage.getItem("userRole") : null;
@@ -228,7 +231,9 @@ export default function ReshipmentsPage() {
                       <tr
                         key={r.id}
                         onClick={() => setSelected(r)}
-                        className="cursor-pointer"
+                        className={`cursor-pointer ${
+                          r.courierStatus === "cancelled" ? "text-muted-foreground" : ""
+                        }`}
                         data-testid={`reshipment-row-${r.id}`}
                       >
                         <td className="px-4 py-3 tabular-nums text-muted-foreground">
@@ -270,7 +275,13 @@ export default function ReshipmentsPage() {
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3">{r.customerName}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={r.courierStatus === "cancelled" ? "line-through" : ""}
+                          >
+                            {r.customerName}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-muted-foreground">
                           {REASON_LABEL[r.reason] ?? r.reason}
                         </td>
@@ -318,6 +329,18 @@ export default function ReshipmentsPage() {
         open={!!selected}
         onOpenChange={(v) => !v && setSelected(null)}
         storeUrl={activeStore?.storeUrl}
+        onEdit={(r) => setEditing(r)}
+        onChanged={() => void refetch()}
+      />
+
+      <EditReshipmentDialog
+        row={editing}
+        open={!!editing}
+        onOpenChange={(v) => !v && setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          void refetch();
+        }}
       />
     </PageLayout>
   );

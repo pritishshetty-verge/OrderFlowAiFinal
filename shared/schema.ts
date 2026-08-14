@@ -2039,15 +2039,30 @@ export type ReshipmentReason = (typeof RESHIPMENT_REASONS)[number];
 export const RESHIPMENT_URGENCIES = ["instant", "scheduled"] as const;
 export type ReshipmentUrgency = (typeof RESHIPMENT_URGENCIES)[number];
 
+/**
+ * Six user-facing reshipment statuses. Deliberately coarser than the
+ * courier's own vocabulary — "out for delivery" folds into in_transit,
+ * because the NDR team only acts on the transitions that matter:
+ *
+ *   pending → in_transit → delivered
+ *   pending → in_transit → ndr → rto
+ *   pending → cancelled                (terminal)
+ *
+ * Edit/Cancel are available ONLY while pending; once the parcel enters
+ * the courier lifecycle the record is read-only here.
+ */
 export const RESHIPMENT_STATUSES = [
   "pending",
   "in_transit",
-  "out_for_delivery",
   "ndr",
   "delivered",
   "rto",
+  "cancelled",
 ] as const;
 export type ReshipmentStatus = (typeof RESHIPMENT_STATUSES)[number];
+
+/** Statuses in which an operator may still edit or cancel. */
+export const RESHIPMENT_MUTABLE_STATUSES = ["pending"] as const;
 
 export const reshipmentLogs = pgTable(
   "reshipment_logs",
@@ -2086,6 +2101,14 @@ export const reshipmentLogs = pgTable(
       .default("pending")
       .$type<ReshipmentStatus>(),
     createdBy: varchar("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    /** Denormalised at creation so the audit trail survives the user
+     *  being renamed or deleted (PRD §7 wants a stored name, not only a
+     *  derived one). The live join still wins for display. */
+    createdByName: text("created_by_name"),
+    cancelledAt: timestamp("cancelled_at"),
+    cancelledBy: varchar("cancelled_by").references(() => users.id, {
       onDelete: "set null",
     }),
     createdAt: timestamp("created_at").notNull().defaultNow(),

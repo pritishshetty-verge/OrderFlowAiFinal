@@ -370,20 +370,21 @@ async function processDelhiveryScan(body: any): Promise<void> {
     // Reshipments hook: bump any reshipment log tracked on this AWB.
     // Maps unified courier events to the reshipment_logs enum. Anything
     // outside the set (e.g. 'awb_assigned') leaves the row untouched.
+    // Reshipments track a coarser six-status model than the courier's
+    // own vocabulary: "out for delivery" folds into in_transit, since
+    // the NDR team only acts on the transitions that matter.
     const reshipStatus =
-      unifiedStatus === "in_transit"
+      unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery"
         ? "in_transit"
-        : unifiedStatus === "out_for_delivery"
-          ? "out_for_delivery"
-          : unifiedStatus === "ndr"
-            ? "ndr"
-            : unifiedStatus === "delivered"
-              ? "delivered"
-              : unifiedStatus === "rto_initiated" ||
-                  unifiedStatus === "rto_ofd" ||
-                  unifiedStatus === "rto_delivered"
-                ? "rto"
-                : null;
+        : unifiedStatus === "ndr"
+          ? "ndr"
+          : unifiedStatus === "delivered"
+            ? "delivered"
+            : unifiedStatus === "rto_initiated" ||
+                unifiedStatus === "rto_ofd" ||
+                unifiedStatus === "rto_delivered"
+              ? "rto"
+              : null;
     if (reshipStatus && awb) {
       void import("./reshipments/service")
         .then((s) =>
