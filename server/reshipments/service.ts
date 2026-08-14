@@ -96,7 +96,28 @@ export async function createReshipment(
   // 3. Fetch the full Shopify order — we need the line_items with
   //    variant_id, and the gateway string exactly as Shopify has it.
   const shop = await getShopifyClient(input.storeId);
-  const rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+  let rawOrder: any;
+  try {
+    rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    // Shopify returns 402 on frozen/closed stores (unpaid invoice or the
+    // merchant paused the shop). Surfacing the raw status here is useless
+    // to an operator — name the actual problem and the fix.
+    if (/payment required|402/i.test(msg)) {
+      throw new ReshipmentError(
+        "This store's Shopify account is frozen or closed, so orders can't be created in it. Switch to an active store using the store switcher, or resolve the Shopify billing issue.",
+        409,
+      );
+    }
+    if (/not found|404/i.test(msg)) {
+      throw new ReshipmentError(
+        "That order no longer exists in Shopify (it may have been deleted). Pick a different order.",
+        404,
+      );
+    }
+    throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+  }
   const shopifyOrder = rawOrder?.order ?? rawOrder;
   if (!shopifyOrder?.line_items?.length) {
     throw new ReshipmentError(

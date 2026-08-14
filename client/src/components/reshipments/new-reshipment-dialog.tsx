@@ -212,10 +212,6 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           internalNotes: notes || null,
         },
       );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "Failed to create reshipment");
-      }
       return res.json();
     },
     onSuccess: () => {
@@ -227,9 +223,23 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
       onCreated();
     },
     onError: (err: any) => {
+      // apiRequest throws `"<status>: <raw body>"`, and the body is our
+      // JSON error envelope. Unwrap it so the operator sees the actual
+      // sentence instead of `500: {"error":"…"}`.
+      const raw = String(err?.message ?? "");
+      let description = raw || "Try again";
+      // [\s\S] rather than the `s` dotall flag — the TS target predates es2018.
+      const match = raw.match(/^\d+:\s*([\s\S]*)$/);
+      if (match) {
+        try {
+          description = JSON.parse(match[1]).error ?? match[1];
+        } catch {
+          description = match[1];
+        }
+      }
       toast({
         title: "Couldn't create reshipment",
-        description: err?.message ?? "Try again",
+        description,
         variant: "destructive",
       });
     },
@@ -249,7 +259,11 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden">
+      {/* NOTE: DialogContent is `grid` in the primitive — do NOT add
+          flex/flex-col here or the two display modes fight and the
+          dialog stretches to full height with empty space. Cap the
+          scroll on the body instead. */}
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New Reshipment</DialogTitle>
           <DialogDescription>
@@ -257,7 +271,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-6 flex-1 space-y-5 overflow-y-auto px-6">
+        <div className="-mx-6 max-h-[65vh] space-y-4 overflow-y-auto px-6">
           {/* 1. Search */}
           <div className="space-y-1.5">
             <Label htmlFor="reshipment-search">Original order</Label>
@@ -422,7 +436,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
 
           {/* 3. Reason + urgency + notes */}
           {order && (
-            <div className="space-y-4">
+            <div className="space-y-3.5">
               <FormRow label="Reason">
                 <Select value={reason} onValueChange={setReason}>
                   <SelectTrigger data-testid="select-reason">
@@ -456,7 +470,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                 {urgency === "scheduled" && (
                   <Input
                     type="date"
-                    className="mt-2 max-w-[220px]"
+                    className="mt-1.5 h-9 w-[168px]"
                     value={scheduledDate}
                     onChange={(e) => setScheduledDate(e.target.value)}
                     min={new Date().toISOString().slice(0, 10)}
