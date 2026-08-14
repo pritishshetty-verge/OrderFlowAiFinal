@@ -72,10 +72,10 @@ test("Prepaid: 100% discount zeroes payable, financial_status paid, ₹0 txn wit
   assert.equal(disc[0].amount, "1200.00");
   assert.equal(disc[0].type, "fixed_amount");
   assert.equal(p.total_discounts, "1200.00");
-  const txns = p.transactions as any[];
-  assert.equal(txns[0].amount, "0.00");
-  assert.equal(txns[0].status, "success");
-  assert.equal(txns[0].gateway, "Razorpay", "must carry the ORIGINAL prepaid gateway label");
+  // No transactions on prepaid: the payable total is zero and Shopify
+  // rejects zero-amount sale transactions (422 "Amount must be greater
+  // than zero for sale transactions"). financial_status marks it settled.
+  assert.equal(p.transactions, undefined, "prepaid must NOT send a zero-amount transaction");
 });
 
 test("Tags: always Reshipment + Original:<name>; scheduled adds Hold_Until_<date>", () => {
@@ -133,13 +133,24 @@ test("Missing payment_gateway_names on the original falls back to a sane default
   ).order;
   assert.equal((cod.transactions as any[])[0].gateway, "COD");
 
+  // Prepaid carries no transaction at all, so there's no gateway label to
+  // assert — zeroing is done by the 100% discount + financial_status.
   const prepaid = buildReshipmentPayload(
     baseArgs({
       paymentType: "prepaid",
       original: { id: 2, name: "#2", line_items: [{ quantity: 1, price: "10" }] },
     }),
   ).order;
-  assert.equal((prepaid.transactions as any[])[0].gateway, "manual");
+  assert.equal(prepaid.transactions, undefined);
+  assert.equal(prepaid.financial_status, "paid");
+});
+
+test("zero-value COD order sends no transaction (Shopify rejects amount 0)", () => {
+  const p = buildReshipmentPayload(
+    baseArgs({ original: { id: 3, name: "#3", line_items: [{ quantity: 1, price: "0" }] } }),
+  ).order;
+  assert.equal(p.transactions, undefined);
+  assert.equal(p.financial_status, "pending");
 });
 
 test("inventory_behaviour=bypass so reshipment doesn't decrement stock again", () => {

@@ -179,20 +179,29 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
     // pending so Shopify shows "Payment pending" and the courier is expected
     // to collect on delivery.
     body.financial_status = "pending";
-    body.transactions = [
-      {
-        kind: "sale",
-        status: "pending",
-        amount: money(subtotal),
-        currency: args.original.currency ?? "INR",
-        gateway: originalGateway,
-      },
-    ];
+    // Shopify rejects sale transactions of zero ("Amount must be greater
+    // than zero for sale transactions"), so only attach one when there's
+    // actually a value to collect. A ₹0 COD order needs no transaction.
+    if (subtotal > 0) {
+      body.transactions = [
+        {
+          kind: "sale",
+          status: "pending",
+          amount: money(subtotal),
+          currency: args.original.currency ?? "INR",
+          gateway: originalGateway,
+        },
+      ];
+    }
   } else {
-    // Prepaid → 100% order-level discount zeroes the payable total;
-    // financial_status paid with a $0 gateway transaction carrying the
-    // original gateway label so no downstream system tries to charge
-    // the customer again or double-count revenue.
+    // Prepaid → 100% order-level discount zeroes the payable total so the
+    // courier collects nothing and Shopify doesn't double-count revenue.
+    //
+    // Deliberately NO transactions array: the payable total is zero, and
+    // Shopify rejects a zero-amount `sale` transaction outright (422
+    // "Amount must be greater than zero for sale transactions").
+    // `financial_status: "paid"` alone marks the order settled, which is
+    // what the waybill logic and the merchant's reports read.
     body.discount_codes = [
       {
         code: "RESHIPMENT_ALREADY_PAID",
@@ -202,15 +211,6 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
     ];
     body.total_discounts = money(subtotal);
     body.financial_status = "paid";
-    body.transactions = [
-      {
-        kind: "sale",
-        status: "success",
-        amount: "0.00",
-        currency: args.original.currency ?? "INR",
-        gateway: originalGateway,
-      },
-    ];
   }
 
   return { order: body };
