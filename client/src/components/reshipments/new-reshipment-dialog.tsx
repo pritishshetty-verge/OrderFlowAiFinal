@@ -249,7 +249,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>New Reshipment</DialogTitle>
           <DialogDescription>
@@ -257,7 +257,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
+        <div className="-mx-6 flex-1 space-y-5 overflow-y-auto px-6">
           {/* 1. Search */}
           <div className="space-y-1.5">
             <Label htmlFor="reshipment-search">Original order</Label>

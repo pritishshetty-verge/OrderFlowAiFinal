@@ -1094,13 +1094,30 @@ async function loadShopifyConfigForStore(
   // that's required at construct time is storeUrl — we want a usable
   // ShopifyClient even when credentials haven't been entered yet
   // (e.g. the admin just connected a store but hasn't run the test).
-  return {
-    storeUrl: row.storeUrl,
-    apiKey: row.apiKey ? decrypt(row.apiKey) : "",
-    apiSecret: row.apiSecret ? decrypt(row.apiSecret) : "",
-    webhookSecret: row.webhookSecret ? decrypt(row.webhookSecret) : undefined,
-    useClientCredentials: true,
-  };
+  try {
+    return {
+      storeUrl: row.storeUrl,
+      apiKey: row.apiKey ? decrypt(row.apiKey) : "",
+      apiSecret: row.apiSecret ? decrypt(row.apiSecret) : "",
+      webhookSecret: row.webhookSecret ? decrypt(row.webhookSecret) : undefined,
+      useClientCredentials: true,
+    };
+  } catch (e: any) {
+    // Local dev against a prod-copy DB: rows are encrypted with the
+    // prod SESSION_SECRET, which this environment doesn't have. Fall
+    // back to env credentials — but ONLY when the env shop domain
+    // matches this store's URL, so we can never point one tenant's
+    // API calls at another tenant's shop.
+    if (row.storeUrl && row.storeUrl === shopDomain && initialConfig.apiKey) {
+      console.warn(
+        `[Shopify] decrypt failed for store ${storeId}; using env credentials for ${shopDomain} (local dev fallback)`,
+      );
+      return { ...initialConfig, storeUrl: row.storeUrl };
+    }
+    throw new Error(
+      `[Shopify] cannot decrypt credentials for store ${storeId} and env fallback doesn't match (${row.storeUrl} vs ${shopDomain}): ${e?.message ?? e}`,
+    );
+  }
 }
 
 /**

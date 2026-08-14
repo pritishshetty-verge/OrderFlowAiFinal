@@ -155,11 +155,6 @@ const adminMenuItems: MenuItem[] = [
     icon: RefreshCcw,
   },
   {
-    title: "Reshipments",
-    url: "/reshipments",
-    icon: Send,
-  },
-  {
     title: "Learning Center",
     url: "/learning",
     icon: GraduationCap,
