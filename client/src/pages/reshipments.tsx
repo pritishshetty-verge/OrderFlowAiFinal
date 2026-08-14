@@ -9,6 +9,10 @@ import { Plus, ExternalLink } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
 import { NewReshipmentDialog } from "@/components/reshipments/new-reshipment-dialog";
+import {
+  ReshipmentDetailDrawer,
+  type ReshipmentDetail,
+} from "@/components/reshipments/reshipment-detail-drawer";
 import { format } from "date-fns";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -18,20 +22,7 @@ import { format } from "date-fns";
 // status flow in automatically via webhooks.
 // ─────────────────────────────────────────────────────────────────────
 
-interface Row {
-  id: string;
-  originalShopifyOrderId: string;
-  originalShopifyOrderName: string;
-  newShopifyOrderId: string | null;
-  newShopifyOrderName: string | null;
-  customerName: string;
-  reason: string;
-  paymentType: "cod" | "prepaid";
-  courierStatus: "pending" | "in_transit" | "out_for_delivery" | "ndr" | "delivered" | "rto";
-  trackingAwb: string | null;
-  createdAt: string;
-  createdByName: string | null;
-}
+type Row = ReshipmentDetail;
 
 interface Stats {
   scope: "mine" | "store";
@@ -97,6 +88,7 @@ function shopifyOrderUrl(storeUrl: string | null | undefined, shopifyId: string)
 export default function ReshipmentsPage() {
   const [tab, setTab] = useState<"all" | "attention">("all");
   const [openNew, setOpenNew] = useState(false);
+  const [selected, setSelected] = useState<Row | null>(null);
   const { activeStoreId, activeStore } = useActiveStore();
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
   const userRole = typeof window !== "undefined" ? localStorage.getItem("userRole") : null;
@@ -233,7 +225,12 @@ export default function ReshipmentsPage() {
                   </thead>
                   <tbody className="[&>tr]:border-b [&>tr:last-child]:border-0 [&>tr]:transition-colors hover:[&>tr]:bg-muted/40">
                     {rows.map((r, i) => (
-                      <tr key={r.id} data-testid={`reshipment-row-${r.id}`}>
+                      <tr
+                        key={r.id}
+                        onClick={() => setSelected(r)}
+                        className="cursor-pointer"
+                        data-testid={`reshipment-row-${r.id}`}
+                      >
                         <td className="px-4 py-3 tabular-nums text-muted-foreground">
                           {i + 1}
                         </td>
@@ -248,6 +245,7 @@ export default function ReshipmentsPage() {
                             )}
                             target="_blank"
                             rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
                           >
                             {r.originalShopifyOrderName}
@@ -313,6 +311,13 @@ export default function ReshipmentsPage() {
           setOpenNew(false);
           void refetch();
         }}
+      />
+
+      <ReshipmentDetailDrawer
+        row={selected}
+        open={!!selected}
+        onOpenChange={(v) => !v && setSelected(null)}
+        storeUrl={activeStore?.storeUrl}
       />
     </PageLayout>
   );
