@@ -122,8 +122,9 @@ function PaymentChip({ type }: { type: "cod" | "prepaid" }) {
       variant="outline"
       className={cn(
         "rounded-full px-3 py-1 text-xs font-medium border gap-1.5 bg-transparent",
+        // Payment palette: COD → yellow (cash to collect), Prepaid → green.
         isCod
-          ? "text-slate-600 dark:text-slate-300 border-slate-400 dark:border-slate-500"
+          ? "text-yellow-700 dark:text-yellow-500 border-yellow-500 dark:border-yellow-600"
           : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400",
       )}
       data-testid={`badge-payment-${type}`}

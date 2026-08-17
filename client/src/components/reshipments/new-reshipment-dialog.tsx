@@ -272,7 +272,10 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           flex/flex-col here or the two display modes fight and the
           dialog stretches to full height with empty space. Cap the
           scroll on the body instead. */}
-      <DialogContent className="max-w-2xl">
+      {/* Roomier: previous max-w-2xl (672px) cropped the customer card's
+          focus outline against the edge — 780px gives every field a
+          calm margin without going full-width. */}
+      <DialogContent className="max-w-[780px] w-[92vw]">
         <DialogHeader>
           <DialogTitle>New Reshipment</DialogTitle>
           <DialogDescription>
@@ -338,7 +341,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                         <span
                           className={`inline-flex items-center gap-1.5 rounded-full border bg-transparent px-2.5 py-0.5 text-xs font-medium ${
                             paymentType === "COD"
-                              ? "text-slate-600 dark:text-slate-300 border-slate-400 dark:border-slate-500"
+                              ? "text-yellow-700 dark:text-yellow-500 border-yellow-500 dark:border-yellow-600"
                               : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400"
                           }`}
                         >

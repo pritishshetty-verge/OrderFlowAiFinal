@@ -78,8 +78,9 @@ const STATUS_PILL: Record<Row["courierStatus"], { label: string; cls: string }> 
 // Matches the Orders PaymentBadge: icon + colored/grey outline pill.
 function PaymentPill({ type }: { type: "cod" | "prepaid" }) {
   const isCod = type === "cod";
+  // Payment palette: COD → yellow (cash), Prepaid → green (paid).
   const cls = isCod
-    ? "text-slate-600 dark:text-slate-300 border-slate-400 dark:border-slate-500"
+    ? "text-yellow-700 dark:text-yellow-500 border-yellow-500 dark:border-yellow-600"
     : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400";
   return (
     <span
