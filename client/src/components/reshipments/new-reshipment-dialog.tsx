@@ -283,10 +283,13 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-6 max-h-[65vh] space-y-4 overflow-y-auto px-6">
-          {/* 1. Search — a bit of top padding so the modal's scroll area
-              doesn't visually clip the input's focus ring on the top edge. */}
-          <div className="space-y-2 pt-1">
+        {/* Scroll container. py-2 gives the search input's focus ring
+            (ring-2 + ring-offset-2 = 4px total bleed) room on both edges
+            so it isn't clipped by the overflow-y-auto boundary. */}
+        <div className="-mx-6 max-h-[65vh] space-y-4 overflow-y-auto px-6 py-2">
+          {/* 1. Search. Top padding lives on the outer scroll container
+              (see above) so the input's focus ring has clearance. */}
+          <div className="space-y-2">
             <Label htmlFor="reshipment-search">Original order</Label>
             <form
               className="flex items-center gap-2"

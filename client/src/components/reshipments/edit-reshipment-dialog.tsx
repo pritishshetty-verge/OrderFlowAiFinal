@@ -188,7 +188,9 @@ export function EditReshipmentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="-mx-6 max-h-[62vh] space-y-4 overflow-y-auto px-6">
+        {/* py-2 so input focus rings (ring-2 + ring-offset-2) aren't
+            clipped by the overflow-y-auto boundary. */}
+        <div className="-mx-6 max-h-[62vh] space-y-4 overflow-y-auto px-6 py-2">
           <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             Customer name is fixed at{" "}
             <span className="font-medium text-foreground">{row.customerName}</span> and can't be
