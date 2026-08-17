@@ -165,15 +165,16 @@ export default function ReshipmentsPage() {
             ))}
           </div>
         )}
-        {stats && (
+        {/* Payroll-scope caption is agent-only. Admins see the store total
+            without a redundant caption. */}
+        {stats?.scope === "mine" && (
           <p className="-mt-2 text-[11px] text-muted-foreground">
-            {stats.scope === "mine"
-              ? "Showing your reshipments only — payroll incentives are calculated from your delivered count."
-              : "Store-wide totals across all agents."}
+            Showing your reshipments only — payroll incentives are calculated from your
+            delivered count.
           </p>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
             <TabsList
               className="h-auto justify-start gap-1 rounded-none border-0 bg-transparent p-0"

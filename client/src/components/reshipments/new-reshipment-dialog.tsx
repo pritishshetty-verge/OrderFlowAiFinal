@@ -21,7 +21,16 @@ import {
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Pencil, Loader2, Search, AlertCircle, MapPin, Save } from "lucide-react";
+import {
+  Pencil,
+  Loader2,
+  Search,
+  AlertCircle,
+  MapPin,
+  Save,
+  Banknote,
+  CreditCard,
+} from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -272,11 +281,12 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
         </DialogHeader>
 
         <div className="-mx-6 max-h-[65vh] space-y-4 overflow-y-auto px-6">
-          {/* 1. Search */}
-          <div className="space-y-1.5">
+          {/* 1. Search — a bit of top padding so the modal's scroll area
+              doesn't visually clip the input's focus ring on the top edge. */}
+          <div className="space-y-2 pt-1">
             <Label htmlFor="reshipment-search">Original order</Label>
             <form
-              className="flex gap-2"
+              className="flex items-center gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 setSubmittedQuery(query.trim());
@@ -287,14 +297,19 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="reshipment-search"
-                  className="pl-9"
+                  className="h-10 pl-9"
                   placeholder="Order number or ID (e.g. #1234)"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   autoFocus
                 />
               </div>
-              <Button type="submit" variant="secondary" disabled={!query.trim()}>
+              <Button
+                type="submit"
+                variant="secondary"
+                className="h-10 shrink-0"
+                disabled={!query.trim()}
+              >
                 Find
               </Button>
             </form>
@@ -318,14 +333,21 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
                         <span className="font-semibold">
                           {order.customerName || "Guest"}
                         </span>
+                        {/* Match the Orders-page PaymentBadge: icon +
+                            grey outline for COD, green outline for prepaid. */}
                         <span
-                          className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                          className={`inline-flex items-center gap-1.5 rounded-full border bg-transparent px-2.5 py-0.5 text-xs font-medium ${
                             paymentType === "COD"
-                              ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
-                              : "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
+                              ? "text-slate-600 dark:text-slate-300 border-slate-400 dark:border-slate-500"
+                              : "text-green-600 dark:text-green-400 border-green-600 dark:border-green-400"
                           }`}
                         >
-                          {paymentType}
+                          {paymentType === "COD" ? (
+                            <Banknote className="h-3 w-3" />
+                          ) : (
+                            <CreditCard className="h-3 w-3" />
+                          )}
+                          {paymentType === "COD" ? "COD" : "Prepaid"}
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">
