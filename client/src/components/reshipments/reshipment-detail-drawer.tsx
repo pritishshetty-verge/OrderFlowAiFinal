@@ -401,9 +401,17 @@ export function ReshipmentDetailDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
+      {/* Responsive width strategy:
+          - mobile (< sm): full viewport, no margins, flat edges — the
+            panel becomes an app-shell sheet.
+          - sm+: floating rounded card whose width is min(560px,
+            viewport - 2rem) so a narrow browser window still leaves
+            breathing room and the panel never overflows.
+          Uses !important prefixes because shadcn's SheetContent primitive
+          hard-codes `w-3/4 sm:max-w-sm` in its base classes. */}
       <SheetContent
         hideCloseButton
-        className="inset-y-auto bottom-4 top-4 my-4 mr-4 flex !h-auto max-h-[calc(100vh-2rem)] w-[460px] flex-col rounded-l-xl p-0 shadow-2xl sm:w-[560px]"
+        className="flex !h-full !w-full !max-w-none flex-col rounded-none p-0 shadow-2xl sm:!inset-y-auto sm:!top-4 sm:!bottom-4 sm:my-4 sm:mr-4 sm:!h-auto sm:max-h-[calc(100vh-2rem)] sm:!w-[min(560px,calc(100vw-2rem))] sm:rounded-l-xl"
       >
         <Tabs
           value={activeTab}
