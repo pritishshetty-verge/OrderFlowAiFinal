@@ -1038,6 +1038,12 @@ export const payrollLedger = pgTable("payroll_ledger", {
   reshipsBonus: decimal("reships_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
   totalIncentives: decimal("total_incentives", { precision: 12, scale: 2 }).notNull().default("0"),
 
+  // ── Reimbursement (fixed monthly, editable per payslip) ─────────
+  // Default ₹349 for eligible employees per the Compensation Breakdown
+  // PDF; admin can zero it out for those without a reimbursement line
+  // or bump it for one-off expenses.
+  reimbursement: decimal("reimbursement", { precision: 12, scale: 2 }).notNull().default("0"),
+
   // ── Final payout ────────────────────────────────────────────────
   finalPayout: decimal("final_payout", { precision: 12, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("INR"),

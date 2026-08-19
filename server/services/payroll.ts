@@ -170,6 +170,12 @@ export type CompensationProfile =
   | "CHAT_SUPPORT"
   | null;
 
+// Default reimbursement (₹) suggested for a fresh payslip. The admin
+// can edit this to 0 for employees without a reimbursement line
+// (per the Compensation Breakdown PDF, Tanisha + Chandi get 349;
+// Satish + Nandakishore have no reimbursement mentioned).
+export const DEFAULT_REIMBURSEMENT = 349;
+
 export interface PayrollMathInputs {
   // Base-pay inputs
   baseSalary: number;
@@ -183,6 +189,10 @@ export interface PayrollMathInputs {
   teamDeliveryRatePct?: number | null;
   personalRecoveryRatePct?: number | null;
   reshipsCount?: number | null;
+
+  // Reimbursement — added on top of base + incentives to reach final
+  // payout. Optional; treated as 0 if omitted.
+  reimbursement?: number | null;
 }
 
 export interface PayrollMathResult {
@@ -194,6 +204,7 @@ export interface PayrollMathResult {
     reshipsBonus: number;
     total: number;
   };
+  reimbursement: number;
   finalPayout: number;
 }
 
@@ -229,7 +240,8 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
   }
 
   const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus;
-  const finalPayout = round2(base.amount + total);
+  const reimbursement = Math.max(0, Number(input.reimbursement ?? 0));
+  const finalPayout = round2(base.amount + total + reimbursement);
 
   return {
     base,
@@ -240,6 +252,7 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
       reshipsBonus,
       total,
     },
+    reimbursement,
     finalPayout,
   };
 }

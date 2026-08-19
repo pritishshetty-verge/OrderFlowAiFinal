@@ -6766,6 +6766,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const effectiveTeamRate = brandTdr ?? teamRate;
 
       const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
+      // Reimbursement default. If the caller passed ?reimbursement=X,
+      // honor that (lets the UI show a live-recomputed final when the
+      // admin edits the field). Otherwise use the compensation-plan
+      // default of ₹349.
+      const { DEFAULT_REIMBURSEMENT } = await import("./services/payroll");
+      const reimbursementParam = parseFloatOrNull(req.query.reimbursement);
+      const reimbursement = reimbursementParam ?? DEFAULT_REIMBURSEMENT;
+
       const result = runPayrollMath({
         baseSalary,
         expectedWorkingDays: expectedDays,
@@ -6779,6 +6787,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // override on /api/payroll/run.
         personalRecoveryRatePct: brandNdr.ratePct,
         reshipsCount: reshipsDelivered,
+        reimbursement,
       });
 
       res.json({
@@ -6819,6 +6828,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             stillOpen: brandNdr.openNdrs,
           },
           reshipsCount: reshipsDelivered,
+          reimbursement,
         },
         math: result,
         existingLedger: existing
@@ -6865,6 +6875,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const teamDeliveryRatePct = parseFloatOrNull(body.teamDeliveryRatePct);
       const personalRecoveryRatePct = parseFloatOrNull(body.personalRecoveryRatePct);
       const reshipsCount = parseIntOr(body.reshipsCount, 0);
+      // Reimbursement — admin-editable; defaults to plan value if
+      // caller omits the field. Clamped to non-negative.
+      const reimbursementInput = parseFloatOrNull(body.reimbursement);
+      const reimbursement = Math.max(0, reimbursementInput ?? payroll.DEFAULT_REIMBURSEMENT);
       const notes = typeof body.notes === "string" ? body.notes : null;
 
       const baseSalary = Number(user.baseSalary);
@@ -6885,6 +6899,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         teamDeliveryRatePct,
         personalRecoveryRatePct,
         reshipsCount,
+        reimbursement,
       });
 
       // Persist (or update existing) ledger row before email — that
@@ -6910,6 +6925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recoveryBonus: String(math.incentives.recoveryBonus),
         reshipsBonus: String(math.incentives.reshipsBonus),
         totalIncentives: String(math.incentives.total),
+        reimbursement: String(math.reimbursement),
         finalPayout: String(math.finalPayout),
         currency: "INR",
         status: "finalized",
@@ -6951,6 +6967,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           reshipsBonus: math.incentives.reshipsBonus,
           total: math.incentives.total,
         },
+        reimbursement: math.reimbursement,
         finalPayout: math.finalPayout,
         ledgerId: created.id,
         generatedAt: new Date(),
