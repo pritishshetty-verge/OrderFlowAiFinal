@@ -6726,12 +6726,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]);
 
       const expectedDays = expectedWorkingDays(year, month);
-      // Brand-scoped metrics (TDR / NDR / Reshipments) come from the
-      // admin's currently-active store. If a user works across stores
-      // the admin should switch scope to see each store's numbers; in
-      // practice today the roster is small enough that each employee
-      // owns work in one store at a time.
-      const activeStoreId = req.storeScope?.storeId ?? null;
+      // Brand-scoped metrics (TDR / NDR / Reshipments). Priority:
+      //   1. explicit ?storeId=<id> query param — for a future
+      //      compensation-UI dropdown, and for admins overriding the
+      //      middleware fallback (which picks the oldest store, not
+      //      necessarily the live one).
+      //   2. the storeScope middleware's resolution.
+      const explicitStoreId = req.query.storeId ? String(req.query.storeId) : null;
+      const activeStoreId = explicitStoreId || req.storeScope?.storeId || null;
       const [att, autoHolidays, deliveryRate, teamRate, brandTdr, brandNdr, reshipsDelivered, ytdHolidays, existing] = await Promise.all([
         metrics.getAttendanceMetrics(userId, year, month),
         user.holidayState ? metrics.getAutoPaidHolidaysCount(user.holidayState, year, month) : 0,
