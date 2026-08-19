@@ -29,6 +29,7 @@ import axios from "axios";
 import { sendInvitationEmail } from "./resend";
 import { kycUpload, resolveKycFilePath, KYC_UPLOAD_DIR } from "./upload";
 import { getPareMetrics } from "./services/analytics";
+import { closeStaleNDREvents } from "./cron/close-stale-ndr";
 import { hashPassword, verifyPassword } from "./auth";
 import fs from "fs";
 import path from "path";
@@ -6052,6 +6053,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Nightly NDR fallback poll — catches ndr_events rows whose terminal-
+  // status webhook never arrived (Delhivery occasionally drops one).
+  // Without this the row stays open forever and never counts toward
+  // NDR Delivery Rate on the payroll page, making Chandi's numbers
+  // look worse than reality. Full logic + thresholds live in
+  // server/cron/close-stale-ndr.ts.
+  //
+  // Auth mirrors attendance-auto-logout: Vercel Bearer OR a custom
+  // header for ad-hoc curling.
+  app.all("/api/cron/close-stale-ndr", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)",
+      });
+    }
+
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" &&
+      vercelSecret !== undefined &&
+      auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" &&
+      customSecret !== undefined &&
+      customHeader === customSecret;
+
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+      const result = await closeStaleNDREvents();
+      console.log(
+        `[cron/close-stale-ndr] scanned=${result.scanned} delivered=${result.closedDelivered} returned=${result.closedReturned} cancelled=${result.closedCancelled} stillOpen=${result.stillOpen} errors=${result.errors}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[cron/close-stale-ndr] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+
   // Smart presence — caller's own status. Frontend polls this for the
   // countdown banner. Returns the calling user's idle state computed
   // from their lastActiveAt against the configured threshold. Cheap:
@@ -6680,11 +6726,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]);
 
       const expectedDays = expectedWorkingDays(year, month);
-      const [att, autoHolidays, deliveryRate, teamRate, ytdHolidays, existing] = await Promise.all([
+      // Brand-scoped metrics (TDR / NDR / Reshipments) come from the
+      // admin's currently-active store. If a user works across stores
+      // the admin should switch scope to see each store's numbers; in
+      // practice today the roster is small enough that each employee
+      // owns work in one store at a time.
+      const activeStoreId = req.storeScope?.storeId ?? null;
+      const [att, autoHolidays, deliveryRate, teamRate, brandTdr, brandNdr, reshipsDelivered, ytdHolidays, existing] = await Promise.all([
         metrics.getAttendanceMetrics(userId, year, month),
         user.holidayState ? metrics.getAutoPaidHolidaysCount(user.holidayState, year, month) : 0,
         metrics.getConfirmationDeliveryRatePct(userId, year, month),
         metrics.getTeamDeliveryRatePct(year, month),
+        activeStoreId ? metrics.getBrandTDRPct(activeStoreId, year, month) : Promise.resolve<number | null>(null),
+        activeStoreId
+          ? metrics.getBrandNDRDeliveryRate(activeStoreId, year, month)
+          : Promise.resolve({
+              ratePct: null as number | null,
+              totalNdrs: 0,
+              deliveredNdrs: 0,
+              returnedNdrs: 0,
+              cancelledNdrs: 0,
+              openNdrs: 0,
+            }),
+        activeStoreId ? metrics.getReshipmentsDeliveredCount(activeStoreId, year, month) : Promise.resolve(0),
         metrics.getYtdPaidHolidaysUsed(userId, year, month),
         storage.getPayrollLedgerByPeriod(userId, year, month),
       ]);
@@ -6694,6 +6758,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
       const paidHolidaysAuto = Math.min(autoHolidays, remainingQuota);
 
+      // Prefer brand-wide TDR (per PDF: "Total Delivery Rate of the
+      // Brand") when a store scope is present; fall back to the legacy
+      // global teamRate otherwise so unscoped previews still render.
+      const effectiveTeamRate = brandTdr ?? teamRate;
+
       const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
       const result = runPayrollMath({
         baseSalary,
@@ -6702,9 +6771,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paidHolidaysUsed: paidHolidaysAuto,
         compensationProfile: (user.compensationProfile as any) ?? null,
         deliveryRatePct: deliveryRate,
-        teamDeliveryRatePct: teamRate,
-        personalRecoveryRatePct: null, // admin enters
-        reshipsCount: null, // admin enters
+        teamDeliveryRatePct: effectiveTeamRate,
+        // Brand-wide NDR Delivery Rate (delivered NDRs / total NDRs)
+        // now feeds the recovery tier automatically. Admin can still
+        // override on /api/payroll/run.
+        personalRecoveryRatePct: brandNdr.ratePct,
+        reshipsCount: reshipsDelivered,
       });
 
       res.json({
@@ -6730,9 +6802,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         autoMetrics: {
           deliveryRatePct: deliveryRate,
-          teamDeliveryRatePct: teamRate,
-          personalRecoveryRatePct: null,
-          reshipsCount: null,
+          teamDeliveryRatePct: effectiveTeamRate,
+          // brandTDR / brandNDR are the per-store values used to
+          // compute the tier bonuses in Chandi's variable-pay stack.
+          // The UI can show them side-by-side with the admin-editable
+          // fields so overrides are conscious, not silent.
+          brandTdrPct: brandTdr,
+          personalRecoveryRatePct: brandNdr.ratePct,
+          ndrBreakdown: {
+            total: brandNdr.totalNdrs,
+            delivered: brandNdr.deliveredNdrs,
+            returned: brandNdr.returnedNdrs,
+            cancelled: brandNdr.cancelledNdrs,
+            stillOpen: brandNdr.openNdrs,
+          },
+          reshipsCount: reshipsDelivered,
         },
         math: result,
         existingLedger: existing

@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/payroll-sync",
       "schedule": "30 21 * * *"
+    },
+    {
+      "path": "/api/cron/close-stale-ndr",
+      "schedule": "45 21 * * *"
     }
   ]
 }
