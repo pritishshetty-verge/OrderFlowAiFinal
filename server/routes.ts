@@ -5569,10 +5569,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Capture the "before" state so we can detect payroll-relevant
+      // changes and re-sync RazorpayX after the update.
+      const beforeUser = await storage.getUser(req.params.id);
+
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+
+      // Auto-sync to RazorpayX when a payroll-relevant field changed
+      // (baseSalary, payrollEmail, fullName). Fire-and-forget — never
+      // fail the PATCH on a RazorpayX outage. The provisionUser
+      // function is idempotent: it looks up first, creates only if
+      // missing, always pushes the current salary.
+      const payrollChanged = beforeUser && (
+        String(beforeUser.baseSalary ?? "") !== String(user.baseSalary ?? "") ||
+        (beforeUser.payrollEmail ?? "") !== (user.payrollEmail ?? "") ||
+        (beforeUser.fullName ?? "") !== (user.fullName ?? "")
+      );
+      if (payrollChanged && user.baseSalary != null && Number(user.baseSalary) > 0) {
+        void import("./razorpay-payroll/provision")
+          .then(({ provisionUser }) => provisionUser(user.id))
+          .then((r) => {
+            console.log(
+              `[razorpay-provision/patch] ${user.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) — ${r.message}`,
+            );
+          })
+          .catch((err) => {
+            console.error(`[razorpay-provision/patch] uncaught for ${user.email}:`, err);
+          });
+      }
+
       // PATCH is admin-only at the auth layer above; safe to leave
       // payroll fields. Always strip password.
       res.json(stripPassword(user));
@@ -8928,6 +8956,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       await storage.updateInviteStatus(invite.id, 'accepted');
+
+      // Auto-provision the new hire in RazorpayX Payroll. Fire-and-
+      // forget — a RazorpayX outage or a permissions issue must NOT
+      // block the signup response. The compensation-update hook on
+      // PATCH /api/users/:id retries salary-setting once the admin
+      // enters a base salary (the invite flow doesn't collect one).
+      void import("./razorpay-payroll/provision")
+        .then(({ provisionUser }) => provisionUser(newUser.id))
+        .then((r) => {
+          console.log(
+            `[razorpay-provision/invite] ${newUser.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) — ${r.message}`,
+          );
+        })
+        .catch((err) => {
+          console.error(`[razorpay-provision/invite] uncaught for ${newUser.email}:`, err);
+        });
 
       // Log the new user in immediately — they just proved ownership
       // of the invite token + chose a password, so a session is

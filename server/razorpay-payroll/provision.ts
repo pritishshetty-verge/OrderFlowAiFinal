@@ -6,12 +6,23 @@
  * Salary: OrderFlow `baseSalary` is a MONTHLY figure (shown as "₹X/mo" in
  * the UI); RazorpayX `set-salary` wants annual CTC, so we multiply by 12.
  *
- * Dry-run gated: when RAZORPAY_PAYROLL_DRY_RUN !== "false" this returns a
- * preview of what WOULD be created/set, and calls nothing.
+ * Idempotent: safe to call multiple times for the same user. Looks the
+ * employee up first, skips create when they already exist, always ends
+ * by setting salary (when a salary is known). Used by:
+ *   - the new-hire hook on POST /api/invites/accept (no salary yet)
+ *   - the compensation-update hook on PATCH /api/users/:id (salary
+ *     gets pushed the first time it's entered)
+ *   - the manual "Provision" button on the RazorpayX Sync tab
+ *
+ * Dry-run gated: when RAZORPAY_PAYROLL_DRY_RUN !== "false" this returns
+ * a preview of what WOULD be created/set, and calls nothing.
  */
 
 import { storage } from "../storage";
-import { peopleCreate, peopleSetSalary, isDryRun, isRazorpayPayrollConfigured } from "./client";
+import {
+  peopleCreate, peopleSetSalary, peopleView,
+  isDryRun, isRazorpayPayrollConfigured,
+} from "./client";
 
 export interface ProvisionResult {
   ok: boolean;
@@ -20,7 +31,7 @@ export interface ProvisionResult {
   email: string;
   name: string;
   annualCtc: number | null;
-  steps: Array<{ step: "create" | "set-salary"; ok: boolean; detail?: any }>;
+  steps: Array<{ step: "lookup" | "create" | "set-salary" | "skip"; ok: boolean; detail?: any }>;
   employeeId?: number | string;
   message: string;
 }
@@ -65,33 +76,54 @@ export async function provisionUser(userId: string): Promise<ProvisionResult> {
     };
   }
 
-  // Live: create, then set salary on the returned employee-id.
   const steps: ProvisionResult["steps"] = [];
-  const created = await peopleCreate({ email, name, type: "employee", hire_date: hireDate });
-  steps.push({ step: "create", ok: created.ok, detail: created.body });
-  if (!created.ok) {
-    // code -1 = "Permission Denied": the API key can read employees and
-    // write attendance, but lacks People-module write permission. This is
-    // a RazorpayX key-scope issue, not a data problem — surface it plainly.
-    const denied = created.body?.error?.code === -1;
-    return {
-      ok: false,
-      mode: "live",
-      userId,
-      email,
-      name,
-      annualCtc,
-      steps,
-      message: denied
-        ? "RazorpayX denied employee creation: this API key lacks People-module write permission. Add the new hire in the RazorpayX dashboard, or grant the key 'manage employees' permission."
-        : created.body?.error?.message ?? "Create failed (may already exist)",
-    };
-  }
-  const employeeId = created.body?.["employee-id"];
 
+  // Step 1 — look up by email. If RazorpayX already has this employee,
+  // skip the create call so this function is safe to re-run whenever
+  // an admin edits compensation.
+  const lookup = await peopleView({ email, "employee-type": "employee" });
+  let employeeId: number | string | undefined;
+  const existing = lookup.ok ? extractEmployeeId(lookup.body) : undefined;
+  if (existing != null) {
+    employeeId = existing;
+    steps.push({ step: "lookup", ok: true, detail: { employeeId, alreadyExists: true } });
+  } else {
+    steps.push({ step: "lookup", ok: true, detail: { alreadyExists: false } });
+    const created = await peopleCreate({ email, name, type: "employee", hire_date: hireDate });
+    steps.push({ step: "create", ok: created.ok, detail: created.body });
+    if (!created.ok) {
+      // code -1 = "Permission Denied": the API key can read employees and
+      // write attendance, but lacks People-module write permission.
+      const denied = created.body?.error?.code === -1;
+      return {
+        ok: false,
+        mode: "live",
+        userId,
+        email,
+        name,
+        annualCtc,
+        steps,
+        message: denied
+          ? "RazorpayX denied employee creation: this API key lacks People-module write permission. Add the new hire in the RazorpayX dashboard, or grant the key 'manage employees' permission."
+          : created.body?.error?.message ?? "Create failed",
+      };
+    }
+    employeeId = created.body?.["employee-id"];
+  }
+
+  // Step 2 — set salary if we know one AND we have an employee-id.
+  // Skipping when annualCtc is null is normal: the invite-accept hook
+  // fires before compensation is entered; the compensation-update hook
+  // retries with the real number when the admin sets it.
   if (annualCtc && employeeId != null) {
     const sal = await peopleSetSalary({ "employee-id": Number(employeeId), "annual-ctc": annualCtc });
     steps.push({ step: "set-salary", ok: sal.ok, detail: sal.body });
+  } else {
+    steps.push({
+      step: "skip",
+      ok: true,
+      detail: annualCtc == null ? "no salary set yet" : "employee-id missing from create response",
+    });
   }
 
   return {
@@ -103,6 +135,25 @@ export async function provisionUser(userId: string): Promise<ProvisionResult> {
     annualCtc,
     steps,
     employeeId,
-    message: `Created ${name} (employee-id ${employeeId})${annualCtc ? ` + salary set` : ""}`,
+    message: existing != null
+      ? `${name} already in RazorpayX (id ${employeeId})${annualCtc ? " · salary updated" : ""}`
+      : `Created ${name} (${employeeId ? `employee-id ${employeeId}` : "no id returned"})${annualCtc ? " + salary set" : ""}`,
   };
+}
+
+/**
+ * Best-effort employee-id extractor. peopleView's body shape varies
+ * slightly by account state; try the common paths in order and return
+ * undefined if the employee isn't in RazorpayX yet.
+ */
+function extractEmployeeId(body: any): number | string | undefined {
+  if (!body || body.error) return undefined;
+  const id =
+    body["employee-id"] ??
+    body.employee_id ??
+    body.employee?.["employee-id"] ??
+    body.employee?.employee_id ??
+    body.data?.["employee-id"] ??
+    body.data?.employee_id;
+  return id != null ? id : undefined;
 }
