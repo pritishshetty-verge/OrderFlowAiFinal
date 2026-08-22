@@ -6807,6 +6807,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // On-demand payslip PDF. Renders from the current ledger row (or the
+  // approved version) and streams as an attachment. Works for both
+  // pending and approved cycles per PRD: "Download PDF instantly
+  // compiles the View Mode data".
+  app.get("/api/payroll/cycles/:id/ledger/:userId/pdf", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { payrollLedger: ledgerTable, payrollCycles: cyclesTable } = await import("@shared/schema");
+      const [ledger] = await db
+        .select()
+        .from(ledgerTable)
+        .where(and(eq(ledgerTable.cycleId, req.params.id), eq(ledgerTable.userId, req.params.userId)))
+        .limit(1);
+      if (!ledger) return res.status(404).json({ error: "Ledger row not found for this cycle+user" });
+
+      const user = await storage.getUser(req.params.userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const { renderPayslipPdfBuffer } = await import("./services/payslip-pdf");
+      const { runPayrollMath } = await import("./services/payroll");
+
+      // Recompute unpaidLeaveDeduction from the ledger's stored values
+      // so the PDF's deduction line matches what the admin approved.
+      const math = runPayrollMath({
+        baseSalary: Number(ledger.baseSalary),
+        expectedWorkingDays: ledger.expectedWorkingDays,
+        daysPresent: ledger.daysPresent,
+        paidHolidaysUsed: ledger.paidHolidaysUsed,
+        unpaidLeaves: ledger.unpaidLeaves,
+        compensationProfile: (ledger.compensationProfile as any) ?? null,
+        deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+        teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+        personalRecoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+        reshipsCount: ledger.reshipsCount ?? 0,
+        reimbursement: Number(ledger.reimbursement),
+        lineItems: (ledger.lineItems as any) ?? [],
+      });
+
+      const buf = await renderPayslipPdfBuffer({
+        employee: {
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId ?? null,
+          holidayState: user.holidayState ?? null,
+          department: user.department ?? null,
+        },
+        period: { year: ledger.year, month: ledger.month },
+        base: {
+          baseSalary: Number(ledger.baseSalary),
+          expectedWorkingDays: ledger.expectedWorkingDays,
+          daysPresent: ledger.daysPresent,
+          paidHolidaysUsed: ledger.paidHolidaysUsed,
+          ratio: Number(ledger.basePayRatio),
+          amount: Number(ledger.basePayAmount),
+          capped: Number(ledger.basePayRatio) >= 1,
+        },
+        incentives: {
+          profile: ledger.compensationProfile as any,
+          deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+          teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+          recoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+          reshipsCount: ledger.reshipsCount ?? 0,
+          confirmationBonus: Number(ledger.confirmationBonus),
+          teamDeliveryBonus: Number(ledger.teamDeliveryBonus),
+          recoveryBonus: Number(ledger.recoveryBonus),
+          reshipsBonus: Number(ledger.reshipsBonus),
+          total: Number(ledger.totalIncentives),
+        },
+        lineItems: (ledger.lineItems as any) ?? [],
+        unpaidLeaves: ledger.unpaidLeaves,
+        unpaidLeaveDeduction: math.unpaidLeaveDeduction,
+        reimbursement: Number(ledger.reimbursement),
+        finalPayout: Number(ledger.finalPayout),
+        ledgerId: ledger.id,
+        generatedAt: new Date(),
+      });
+
+      const safeName = (user.fullName ?? "employee").replace(/[^a-z0-9]/gi, "_");
+      const period = `${ledger.year}-${String(ledger.month).padStart(2, "0")}`;
+      const filename = `${safeName}__${period}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", String(buf.byteLength));
+      res.end(buf);
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles/:id/ledger/:userId/pdf:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to render PDF" });
+    }
+  });
+
   app.patch("/api/payroll/cycles/:id/ledger/:userId", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
@@ -6828,6 +6919,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userId: req.params.userId,
         storeId: cycleRow.storeId,
         overrides: {
+          baseSalary: body.baseSalary != null ? Number(body.baseSalary) : undefined,
           daysPresent: body.daysPresent != null ? Number(body.daysPresent) : undefined,
           paidHolidaysUsed: body.paidHolidaysUsed != null ? Number(body.paidHolidaysUsed) : undefined,
           unpaidLeaves: body.unpaidLeaves != null ? Number(body.unpaidLeaves) : undefined,

@@ -455,6 +455,8 @@ function PayslipSheet({
 function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: CycleRow; ledger: LedgerRow; onClose: () => void }) {
   const [editing, setEditing] = useState(false);
   const [ledger, setLedger] = useState<LedgerRow>(initialLedger);
+  // Draft fields are only used while `editing` is true — reset on
+  // Cancel or after a successful Save.
   const [draftBase, setDraftBase] = useState<number>(Number(initialLedger.baseSalary));
   const [draftItems, setDraftItems] = useState<LineItem[]>(initialLedger.lineItems ?? []);
   const { toast } = useToast();
@@ -467,10 +469,10 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
       const currentUserId = localStorage.getItem("userId") ?? "";
       const res = await apiRequest("PATCH", `/api/payroll/cycles/${cycle.id}/ledger/${ledger.userId}`, {
         currentUserId,
-        // baseSalary override travels via the reimbursement/lineItems
-        // route — we keep base_salary in sync via a "Base override"
-        // line item ONLY if the admin changed it. This preserves the
-        // schema's base_salary field for auditability.
+        // Base salary override — snapshot on THIS ledger row only,
+        // does not touch users.baseSalary. Ignored server-side if
+        // equal to the source value (buildLedgerRow ?? fallback).
+        baseSalary: draftBase,
         lineItems: draftItems.filter((i) => i.label.trim() && Number.isFinite(i.amount)),
         // reimbursement folded into lineItems, so post 0 for the
         // legacy single-value field.
@@ -480,6 +482,8 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
     },
     onSuccess: (updated) => {
       setLedger(updated);
+      setDraftBase(Number(updated.baseSalary));
+      setDraftItems(updated.lineItems ?? []);
       setEditing(false);
       qc.invalidateQueries({ predicate: (q) => typeof q.queryKey?.[0] === "string" && (q.queryKey[0] as string).startsWith("/api/payroll/cycles") });
       toast({ title: "Saved", description: `New total: ${CURRENCY(Number(updated.finalPayout))}` });
@@ -487,12 +491,48 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
     onError: (e: any) => toast({ title: "Save failed", description: e?.message ?? "Unknown error", variant: "destructive" }),
   });
 
-  const liveBase = Number(ledger.basePayAmount);
+  // Download the payslip PDF for this ledger row. Streams from the
+  // server (renders on-demand) so pending cycles work too — the
+  // approval flow's email attachment is a separate path.
+  const downloadPdf = () => {
+    const url = `/api/payroll/cycles/${cycle.id}/ledger/${ledger.userId}/pdf`;
+    // Same-origin fetch → blob → object URL → anchor click. Beats
+    // window.open (blocked as popup) and window.location (loses the
+    // in-page state / dismisses the sheet).
+    fetch(url, { credentials: "include" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`PDF ${r.status}`);
+        const blob = await r.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = `${(ledger.user.fullName ?? "employee").replace(/[^a-z0-9]/gi, "_")}__${ledger.year}-${String(ledger.month).padStart(2, "0")}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      })
+      .catch((e) => toast({ title: "PDF failed", description: e?.message ?? "Unknown error", variant: "destructive" }));
+  };
+
+  // Live math — when editing, re-derive base pay from the drafted
+  // baseSalary using the same ratio the backend used, so the black
+  // footer's Net pay updates instantly as the admin types.
+  const savedRatio = Number(ledger.basePayRatio);
+  const liveBaseSalary = editing ? draftBase : Number(ledger.baseSalary);
+  const liveBase = editing
+    ? Math.round(liveBaseSalary * savedRatio * 100) / 100
+    : Number(ledger.basePayAmount);
+  // Unpaid-leave deduction scales with the drafted base salary (per-
+  // day rate = base/26 × unpaid days).
+  const liveUnpaidDeduction = editing && ledger.unpaidLeaves > 0
+    ? Math.round((liveBaseSalary / 26) * ledger.unpaidLeaves * 100) / 100
+    : (Number(ledger.baseSalary) / 26) * ledger.unpaidLeaves;
   const liveItemsTotal = editing
     ? draftItems.reduce((s, li) => s + (Number.isFinite(li.amount) ? Number(li.amount) : 0), 0)
     : (ledger.lineItems ?? []).reduce((s, li) => s + Number(li.amount), 0);
   const liveVariable = Number(ledger.totalIncentives);
-  const liveNet = liveBase + liveItemsTotal + liveVariable + Number(ledger.reimbursement);
+  const liveNet = Math.max(0, liveBase - liveUnpaidDeduction) + liveItemsTotal + liveVariable + Number(ledger.reimbursement);
 
   const attendance = {
     workingDays: ledger.expectedWorkingDays,
@@ -522,7 +562,11 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
               <Save className="w-3.5 h-3.5 mr-1.5" />
               {save.isPending ? "Saving…" : "Save changes"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setDraftItems(ledger.lineItems ?? []); }}>
+            <Button size="sm" variant="ghost" onClick={() => {
+              setEditing(false);
+              setDraftBase(Number(ledger.baseSalary));
+              setDraftItems(ledger.lineItems ?? []);
+            }}>
               <XCircle className="w-3.5 h-3.5 mr-1.5" /> Cancel
             </Button>
           </div>
@@ -530,14 +574,18 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
           <Button
             size="sm"
             variant="outline"
-            onClick={() => { setEditing(true); setDraftItems(ledger.lineItems ?? []); }}
+            onClick={() => {
+              setEditing(true);
+              setDraftBase(Number(ledger.baseSalary));
+              setDraftItems(ledger.lineItems ?? []);
+            }}
             disabled={locked}
             title={locked ? "Approved cycles cannot be edited" : undefined}
           >
             <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit pay
           </Button>
         )}
-        <Button size="sm" variant="ghost" disabled title="PDF is emailed on cycle approval">
+        <Button size="sm" variant="ghost" onClick={downloadPdf} disabled={editing} title={editing ? "Save changes first" : "Download payslip PDF"}>
           <Download className="w-3.5 h-3.5 mr-1.5" /> Download PDF
         </Button>
       </div>
@@ -556,8 +604,33 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
         </Section>
 
         {/* Fixed Pay */}
-        <Section title="Fixed Pay" totalLabel={CURRENCY(liveBase + liveItemsTotal)}>
-          <FixedRow label="Fixed Salary" amount={liveBase} readOnly />
+        <Section title="Fixed Pay" totalLabel={CURRENCY(Math.max(0, liveBase - liveUnpaidDeduction) + liveItemsTotal)}>
+          {editing ? (
+            <div className="flex items-center gap-2">
+              <div className="flex-1 text-sm text-muted-foreground pl-2">Fixed Salary <span className="text-[10px] text-muted-foreground/70">(monthly, pro-rated by attendance)</span></div>
+              <div className="relative w-32">
+                <span className="absolute inset-y-0 left-2 flex items-center text-xs text-muted-foreground">₹</span>
+                <Input
+                  type="number"
+                  value={Number.isFinite(draftBase) ? draftBase : 0}
+                  onChange={(e) => setDraftBase(Number(e.target.value))}
+                  className="h-8 pl-6 tabular-nums text-right"
+                />
+              </div>
+              <div className="w-7" />
+            </div>
+          ) : (
+            <FixedRow label="Fixed Salary" amount={liveBase} readOnly />
+          )}
+          {ledger.unpaidLeaves > 0 && (
+            <div className="flex items-center justify-between text-sm py-1.5 pl-2">
+              <span className="text-red-600 dark:text-red-400">
+                Unpaid leave deduction
+                <span className="text-[10px] text-muted-foreground/70 ml-2">{ledger.unpaidLeaves} × ₹{Math.round(liveBaseSalary / 26).toLocaleString("en-IN")}/day</span>
+              </span>
+              <span className="tabular-nums font-medium text-red-600 dark:text-red-400">−{CURRENCY(liveUnpaidDeduction)}</span>
+            </div>
+          )}
           {(editing ? draftItems : (ledger.lineItems ?? [])).map((li, i) => (
             <FixedRow
               key={i}

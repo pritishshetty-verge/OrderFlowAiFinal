@@ -33,6 +33,9 @@ import {
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface PayslipInputs {
+  // Base salary override — per-payslip only, does NOT mutate users.baseSalary.
+  // Set when admin edits the "Fixed Salary" row in the payslip modal.
+  baseSalary?: number;
   daysPresent?: number;
   paidHolidaysUsed?: number;
   unpaidLeaves?: number;
@@ -64,7 +67,14 @@ export async function buildLedgerRow(args: {
   createdBy?: string | null;
 }): Promise<InsertPayrollLedger> {
   const { user, storeId, year, month, cycleId, overrides = {}, createdBy = null } = args;
-  const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
+  // Base salary — override wins, otherwise snapshot from users.baseSalary.
+  // The override is stored ONLY on this ledger row; the user record is
+  // unchanged (per PRD: "Admin can edit the numerical value of the
+  // Fixed Salary" for this payslip; permanent raises go through Team).
+  const baseSalary = Math.max(
+    0,
+    Number(overrides.baseSalary ?? user.baseSalary ?? 0),
+  );
   const expectedDays = expectedWorkingDays(year, month);
 
   const [attendance, holidaysAuto, confirmRate, teamRate, brandTdr, brandNdr, reships, ytdHolidays] =
@@ -84,7 +94,12 @@ export async function buildLedgerRow(args: {
 
   const daysPresent = overrides.daysPresent ?? attendance.daysPresent;
   const paidHolidaysUsed = overrides.paidHolidaysUsed ?? paidHolidaysAuto;
-  const unpaidLeaves = overrides.unpaidLeaves ?? 0;
+  // Auto-derived unpaid leaves: any expected working day the employee
+  // didn't clock in for AND didn't apply an approved paid holiday to
+  // is counted as unpaid. Clamped >= 0 so overtime (daysPresent >
+  // expectedDays) doesn't fabricate a negative deduction.
+  const unpaidLeavesAuto = Math.max(0, expectedDays - daysPresent - paidHolidaysUsed);
+  const unpaidLeaves = overrides.unpaidLeaves ?? unpaidLeavesAuto;
   const deliveryRatePct = overrides.deliveryRatePct ?? confirmRate;
   const teamDeliveryRatePct = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
   const personalRecoveryRatePct = overrides.personalRecoveryRatePct ?? brandNdr.ratePct;
@@ -515,6 +530,13 @@ function payslipDataFromLedger(row: PayrollLedger, user: User): any {
     reimbursement: Number(row.reimbursement),
     lineItems: (row.lineItems as unknown as LineItem[]) ?? [],
     unpaidLeaves: row.unpaidLeaves,
+    // Recompute the deduction here (not stored on the ledger) so the
+    // PDF renders the "- ₹X" row correctly for approve-emailed
+    // payslips. Matches STANDARD_WORKING_DAYS_PER_MONTH = 26 in the
+    // math service.
+    unpaidLeaveDeduction: row.unpaidLeaves > 0
+      ? Math.round((Number(row.baseSalary) / 26) * row.unpaidLeaves * 100) / 100
+      : 0,
     finalPayout: Number(row.finalPayout),
     ledgerId: row.id,
     generatedAt: new Date(),

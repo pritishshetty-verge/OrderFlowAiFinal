@@ -72,6 +72,11 @@ const PAYSLIPS_DIR = path.join(os.tmpdir(), "orderflow-payslips");
 const BRANDING_DIR = path.join(os.tmpdir(), "orderflow-branding");
 const LOGO_CACHED_PATH = path.join(BRANDING_DIR, "verge-scales-logo.png");
 
+export interface PayslipLineItem {
+  label: string;
+  amount: number;
+}
+
 export interface PayslipData {
   employee: {
     fullName: string;
@@ -105,6 +110,17 @@ export interface PayslipData {
     reshipsBonus: number;
     total: number;
   };
+  // Custom Fixed-Pay components from the "+ Add component" UI.
+  // Each renders as a separate row in the EARNINGS table and flows
+  // through as one entry in the RazorpayX "Additions" array on
+  // approval. Optional so legacy callers that don't pass line items
+  // (e.g. the old /api/payroll/run endpoint) still render.
+  lineItems?: PayslipLineItem[];
+  // Unpaid-leave days for the period. When > 0, the PDF renders a
+  // negative row showing baseSalary/26 × unpaidLeaves as a deduction.
+  unpaidLeaves?: number;
+  unpaidLeaveDeduction?: number;
+  reimbursement?: number;
   finalPayout: number;
   ledgerId: string;
   generatedAt: Date;
@@ -449,6 +465,17 @@ function drawEarningsTable(doc: PDFKit.PDFDocument, data: PayslipData) {
     formatINR(data.base.amount),
   );
 
+  // ── Unpaid-leave deduction (negative row) ──
+  if (data.unpaidLeaves && data.unpaidLeaves > 0 && data.unpaidLeaveDeduction && data.unpaidLeaveDeduction > 0) {
+    const perDay = data.base.baseSalary / 26;
+    drawTableRow(
+      doc,
+      "Unpaid leave deduction",
+      `${data.unpaidLeaves} unpaid day(s) × Rs. ${formatINR(Math.round(perDay))}/day (Rs. ${formatINR(data.base.baseSalary)} ÷ 26)`,
+      `- ${formatINR(data.unpaidLeaveDeduction)}`,
+    );
+  }
+
   // ── Incentive rows (only for ORDER_CONFIRMATION / NDR_RTO) ──
   const showIncentives =
     data.incentives.profile === "ORDER_CONFIRMATION" ||
@@ -487,6 +514,34 @@ function drawEarningsTable(doc: PDFKit.PDFDocument, data: PayslipData) {
         "Reships bonus",
         `${reships} reships × Rs. 50 = Rs. ${formatINR(reships * 50)}`,
         formatINR(data.incentives.reshipsBonus),
+      );
+    }
+  }
+
+  // ── Legacy reimbursement (single-value field) ──
+  // Only render when > 0. New payslips express reimbursement as a
+  // lineItem so this row is redundant; kept for backward-compat with
+  // payslips written before the lineItems model existed.
+  if (data.reimbursement && data.reimbursement > 0) {
+    drawTableRow(
+      doc,
+      "Reimbursement",
+      "Fixed monthly reimbursement",
+      formatINR(data.reimbursement),
+    );
+  }
+
+  // ── Custom Fixed-Pay line items ("+ Add component" in the UI) ──
+  // Each label + amount comes through verbatim from the payslip modal
+  // and flows into the RazorpayX "Additions" array on approval.
+  if (Array.isArray(data.lineItems) && data.lineItems.length > 0) {
+    for (const li of data.lineItems) {
+      if (!li?.label || !Number.isFinite(li.amount) || li.amount <= 0) continue;
+      drawTableRow(
+        doc,
+        li.label,
+        "Custom Fixed-Pay component",
+        formatINR(li.amount),
       );
     }
   }
