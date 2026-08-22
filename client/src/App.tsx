@@ -19,6 +19,7 @@ import FulfilPage from "@/pages/fulfil";
 import NDRPage from "@/pages/ndr";
 import ReshipmentsPage from "@/pages/reshipments";
 import TeamPage from "@/pages/team";
+import PayrollPage from "@/pages/payroll";
 import SettingsPage from "@/pages/settings";
 import ProfilePage from "@/pages/profile";
 import ShopifySetupPage from "@/pages/shopify-setup";
@@ -209,6 +210,9 @@ function Router() {
       </Route>
       <Route path="/team">
         {() => <RecoveryAgentGuard component={TeamPage} />}
+      </Route>
+      <Route path="/payroll">
+        {() => <AdminOnlyGuard component={PayrollPage} />}
       </Route>
       <Route path="/pare">
         {() => <AdminOnlyGuard component={ParePage} />}

@@ -176,12 +176,26 @@ export type CompensationProfile =
 // Satish + Nandakishore have no reimbursement mentioned).
 export const DEFAULT_REIMBURSEMENT = 349;
 
+// Per the Payroll PRD: standard full-time month is 26 working days
+// (8 hours/day, 5 days/week baseline). Used as the denominator for
+// unpaid-leave pro-rata deduction so a day off costs baseSalary / 26,
+// not baseSalary / (variable Mon-Fri count that changes each month).
+export const STANDARD_WORKING_DAYS_PER_MONTH = 26;
+
+export interface LineItem {
+  label: string;
+  amount: number;
+}
+
 export interface PayrollMathInputs {
   // Base-pay inputs
   baseSalary: number;
   expectedWorkingDays: number;
   daysPresent: number;
   paidHolidaysUsed: number;
+  // Unpaid leaves — each subtracts (baseSalary / STANDARD_WORKING_DAYS_PER_MONTH)
+  // from the base amount, per PRD "Attendance Deductions" rule.
+  unpaidLeaves?: number | null;
 
   // Incentive inputs (kept optional — admin may zero them via override)
   compensationProfile: CompensationProfile;
@@ -190,13 +204,19 @@ export interface PayrollMathInputs {
   personalRecoveryRatePct?: number | null;
   reshipsCount?: number | null;
 
-  // Reimbursement — added on top of base + incentives to reach final
-  // payout. Optional; treated as 0 if omitted.
+  // Reimbursement — legacy single-value field. New payslips express
+  // reimbursement as one of the lineItems below.
   reimbursement?: number | null;
+
+  // Custom Fixed-Pay line items (from "+ Add component" UI). Each
+  // { label, amount } sums into the final payout AND flows through
+  // as one entry in the RazorpayX "Additions" array on approval.
+  lineItems?: LineItem[] | null;
 }
 
 export interface PayrollMathResult {
   base: BasePayResult;
+  unpaidLeaveDeduction: number;
   incentives: {
     confirmationBonus: number;
     teamDeliveryBonus: number;
@@ -205,6 +225,8 @@ export interface PayrollMathResult {
     total: number;
   };
   reimbursement: number;
+  lineItems: LineItem[];
+  lineItemsTotal: number;
   finalPayout: number;
 }
 
@@ -239,12 +261,33 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     reshipsBonus = ndr.reshipsBonus;
   }
 
+  // Unpaid-leave pro-rata deduction (per PRD): each unpaid day costs
+  // baseSalary / STANDARD_WORKING_DAYS_PER_MONTH. Clamped so a runaway
+  // count can't push finalPayout negative.
+  const unpaidDays = Math.max(0, Math.floor(Number(input.unpaidLeaves ?? 0)));
+  const perDayRate = input.baseSalary > 0
+    ? input.baseSalary / STANDARD_WORKING_DAYS_PER_MONTH
+    : 0;
+  const unpaidLeaveDeduction = round2(Math.min(base.amount, unpaidDays * perDayRate));
+
   const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus;
   const reimbursement = Math.max(0, Number(input.reimbursement ?? 0));
-  const finalPayout = round2(base.amount + total + reimbursement);
+
+  // Custom Fixed-Pay line items — cleaned + summed. Non-numeric or
+  // negative amounts are dropped rather than silently negating other
+  // components.
+  const lineItems: LineItem[] = (input.lineItems ?? [])
+    .filter((li) => li && typeof li.label === "string" && Number.isFinite(Number(li.amount)))
+    .map((li) => ({ label: String(li.label).slice(0, 80), amount: Math.max(0, Number(li.amount)) }));
+  const lineItemsTotal = round2(lineItems.reduce((s, li) => s + li.amount, 0));
+
+  const finalPayout = round2(
+    base.amount - unpaidLeaveDeduction + total + reimbursement + lineItemsTotal,
+  );
 
   return {
     base,
+    unpaidLeaveDeduction,
     incentives: {
       confirmationBonus,
       teamDeliveryBonus,
@@ -253,6 +296,8 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
       total,
     },
     reimbursement,
+    lineItems,
+    lineItemsTotal,
     finalPayout,
   };
 }

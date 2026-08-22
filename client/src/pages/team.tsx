@@ -5,7 +5,6 @@ import { LeaveRequests } from "@/components/leave-requests";
 import { TeamPresence } from "@/components/team-presence";
 import { AttendanceReportContent } from "@/pages/attendance-report";
 import { PayrollSyncContent } from "@/pages/payroll-sync";
-import { PayrollCompensationContent } from "@/components/payroll-compensation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
@@ -102,21 +101,7 @@ export default function TeamPage() {
 
           {userRole === "admin" && (
             <TabsContent value="payroll">
-              {/* Nested tabs — Compensation is the new default (monthly
-                  payslips w/ auto-computed variable pay). RazorpayX Sync
-                  is the existing attendance/leave push to Razorpay. */}
-              <Tabs defaultValue="compensation" className="space-y-5">
-                <TabsList>
-                  <TabsTrigger value="compensation">Compensation</TabsTrigger>
-                  <TabsTrigger value="razorpay-sync">RazorpayX Sync</TabsTrigger>
-                </TabsList>
-                <TabsContent value="compensation">
-                  <PayrollCompensationContent />
-                </TabsContent>
-                <TabsContent value="razorpay-sync">
-                  <PayrollSyncContent />
-                </TabsContent>
-              </Tabs>
+              <PayrollSyncContent />
             </TabsContent>
           )}
 

@@ -6732,6 +6732,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────────
+  // Payroll CYCLES — the /payroll dashboard's data model.
+  //
+  // A cycle = one monthly run for a store, with a payroll_ledger row
+  // per eligible employee. Cron auto-generates on the 2nd of every
+  // month; admin can also generate on-demand for a past month
+  // (backfill) via POST /api/payroll/cycles.
+  // ─────────────────────────────────────────────────────────────────
+
+  app.get("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const storeId = typeof req.query.storeId === "string" ? req.query.storeId : (req.storeScope?.storeId ?? null);
+      const cycle = await import("./services/payroll-cycle");
+      const cycles = await cycle.listCycles(storeId);
+      res.json({ cycles, activeStoreId: storeId });
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to list cycles" });
+    }
+  });
+
+  app.post("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const year = parseInt(String(body.year ?? ""), 10);
+      const month = parseInt(String(body.month ?? ""), 10);
+      const storeId = String(body.storeId ?? req.storeScope?.storeId ?? "");
+      if (!storeId || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "storeId, year, month required (month 1-12)" });
+      }
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.generateCycle({
+        storeId, year, month,
+        generatedBy: (req.body?.currentUserId as string) ?? null,
+      });
+      res.status(result.alreadyExisted ? 200 : 201).json(result);
+    } catch (err: any) {
+      console.error("Error in POST /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to generate cycle" });
+    }
+  });
+
+  app.get("/api/payroll/cycles/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.getCycleWithLedgers(req.params.id);
+      if (!result) return res.status(404).json({ error: "Cycle not found" });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles/:id:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to fetch cycle" });
+    }
+  });
+
+  app.post("/api/payroll/cycles/:id/approve", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const approvedBy = (req.body?.currentUserId as string) ?? (req.session?.userId as string) ?? "";
+      if (!approvedBy) return res.status(400).json({ error: "currentUserId required" });
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.approveCycle({ cycleId: req.params.id, approvedBy });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error in POST /api/payroll/cycles/:id/approve:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to approve cycle" });
+    }
+  });
+
+  app.patch("/api/payroll/cycles/:id/ledger/:userId", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const cycleModule = await import("./services/payroll-cycle");
+
+      // Fetch the cycle first to know its storeId for the metric
+      // re-fetch inside buildLedgerRow.
+      const [cycleRow] = await db
+        .select()
+        .from((await import("@shared/schema")).payrollCycles)
+        .where(eq((await import("@shared/schema")).payrollCycles.id, req.params.id))
+        .limit(1);
+      if (!cycleRow) return res.status(404).json({ error: "Cycle not found" });
+
+      const updated = await cycleModule.updateCycleLedger({
+        cycleId: req.params.id,
+        userId: req.params.userId,
+        storeId: cycleRow.storeId,
+        overrides: {
+          daysPresent: body.daysPresent != null ? Number(body.daysPresent) : undefined,
+          paidHolidaysUsed: body.paidHolidaysUsed != null ? Number(body.paidHolidaysUsed) : undefined,
+          unpaidLeaves: body.unpaidLeaves != null ? Number(body.unpaidLeaves) : undefined,
+          deliveryRatePct: body.deliveryRatePct === null ? null : body.deliveryRatePct != null ? Number(body.deliveryRatePct) : undefined,
+          teamDeliveryRatePct: body.teamDeliveryRatePct === null ? null : body.teamDeliveryRatePct != null ? Number(body.teamDeliveryRatePct) : undefined,
+          personalRecoveryRatePct: body.personalRecoveryRatePct === null ? null : body.personalRecoveryRatePct != null ? Number(body.personalRecoveryRatePct) : undefined,
+          reshipsCount: body.reshipsCount != null ? Number(body.reshipsCount) : undefined,
+          reimbursement: body.reimbursement != null ? Number(body.reimbursement) : undefined,
+          lineItems: Array.isArray(body.lineItems) ? body.lineItems : undefined,
+          notes: typeof body.notes === "string" ? body.notes : undefined,
+        },
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("Error in PATCH /api/payroll/cycles/:id/ledger/:userId:", err);
+      const msg = err?.message ?? "Failed to update ledger";
+      const status = msg.includes("locked") ? 409 : msg.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  // Cron endpoint — auto-generates the previous month's cycle for
+  // every active store. Fires nightly at 18:30 UTC on the 1st = 00:00
+  // IST on the 2nd, per the PRD "Trigger Event" rule.
+  app.all("/api/cron/generate-payroll-cycle", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.PAYROLL_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({ error: "No cron secret configured" });
+    }
+    const authHdr = req.headers.authorization;
+    const customHdr = req.headers["x-payroll-cron-secret"];
+    const vercelOk = typeof authHdr === "string" && vercelSecret && authHdr === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHdr === "string" && customSecret && customHdr === customSecret;
+    if (!vercelOk && !customOk) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      // Compute the previous calendar month in IST — "August 1st IST"
+      // maps to a specific instant; we bucket by that instant's month.
+      const now = new Date();
+      const nowInIst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const targetMonthIst = new Date(nowInIst.getFullYear(), nowInIst.getMonth() - 1, 15);
+      const year = targetMonthIst.getFullYear();
+      const month = targetMonthIst.getMonth() + 1;
+
+      // All active stores get a cycle for the previous month.
+      const { stores: storesTable } = await import("@shared/schema");
+      const activeStores = await db
+        .select({ id: storesTable.id })
+        .from(storesTable)
+        .where(eq(storesTable.isActive, true));
+
+      const cycleModule = await import("./services/payroll-cycle");
+      const results: any[] = [];
+      for (const s of activeStores) {
+        try {
+          const r = await cycleModule.generateCycle({ storeId: s.id, year, month, generatedBy: null });
+          results.push({ storeId: s.id, ok: r.ok, ledgerCount: r.ledgerCount, alreadyExisted: r.alreadyExisted, message: r.message });
+        } catch (err: any) {
+          results.push({ storeId: s.id, ok: false, error: err?.message ?? String(err) });
+        }
+      }
+      console.log(`[cron/generate-payroll-cycle] ${year}-${String(month).padStart(2, "0")} — ${results.length} store(s) processed`);
+      res.json({ ok: true, year, month, results });
+    } catch (err: any) {
+      console.error("[cron/generate-payroll-cycle] crash:", err);
+      res.status(500).json({ error: err?.message ?? "Cron failed" });
+    }
+  });
+
   app.get("/api/payroll/preview", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;

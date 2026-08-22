@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp, Send, PackagePlus } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp, Send, PackagePlus, Wallet } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -164,9 +164,15 @@ const adminMenuItems: MenuItem[] = [
     url: "/team",
     icon: Users,
   },
-  // Payroll page removed — RazorpayX sync now lives as an admin tab
-  // under Team (see client/src/pages/team.tsx). Reconciliation (PG
-  // settlements) is still WIP — page exists but is unrouted/unlisted.
+  // Payroll — top-level admin-only route (per Payroll PRD §2).
+  // AdminOnlyGuard on the route itself does the auth check; the
+  // sidebar entry is filtered via ADMIN_ONLY_URLS in AppSidebar so
+  // non-admins don't see it even if they had the URL.
+  {
+    title: "Payroll",
+    url: "/payroll",
+    icon: Wallet,
+  },
   {
     title: "Integrations",
     url: "/integrations",
@@ -303,6 +309,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   // visible to plain agents; locked down now per role brief.
   const ADMIN_ONLY_URLS = new Set([
     "/pare",
+    "/payroll",
     "/integrations",
     "/api-logs",
   ]);
