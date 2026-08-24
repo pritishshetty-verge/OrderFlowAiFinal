@@ -13,7 +13,7 @@
  *   • Cron auto-generates cycle on 2nd of every month at 00:00 IST;
  *     admins can also generate on-demand for a past month
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -85,14 +85,17 @@ export default function PayrollPage() {
 
   const stores = useQuery<StoreRow[]>({ queryKey: ["/api/stores"] });
 
-  // Default store to first active. Waits for stores to load.
-  useMemo(() => {
-    if (!storeId && stores.data?.length) {
-      const active = stores.data.find((s) => s.isActive) ?? stores.data[0];
-      setStoreId(active.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stores.data]);
+  // Default store to first active on mount. useEffect (not useMemo)
+  // is the right hook for side-effects — the previous useMemo version
+  // never fired because React can skip memo evaluations. Also tolerates
+  // the /api/stores response using either `isActive` (camelCase) or
+  // `is_active` (snake_case) since the surface has mixed conventions.
+  useEffect(() => {
+    if (storeId || !stores.data?.length) return;
+    const isLive = (s: any) => s.isActive === true || s.is_active === true;
+    const active = stores.data.find(isLive) ?? stores.data[0];
+    if (active?.id) setStoreId(active.id);
+  }, [stores.data, storeId]);
 
   return (
     <PageLayout
@@ -107,11 +110,15 @@ export default function PayrollPage() {
               <SelectValue placeholder="Store" />
             </SelectTrigger>
             <SelectContent>
-              {(stores.data ?? []).map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.shopifyDomain ?? s.id.slice(0, 8)}{s.isActive === false && " · closed"}
-                </SelectItem>
-              ))}
+              {(stores.data ?? []).map((s) => {
+                const domain = (s as any).shopifyDomain ?? (s as any).shopify_domain ?? s.id.slice(0, 8);
+                const active = (s as any).isActive === true || (s as any).is_active === true;
+                return (
+                  <SelectItem key={s.id} value={s.id}>
+                    {domain}{!active && " · closed"}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
           <GenerateCycleButton storeId={storeId} />
