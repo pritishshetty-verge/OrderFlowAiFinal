@@ -77,9 +77,16 @@ interface StoreRow { id: string; shopifyDomain: string | null; isActive: boolean
 
 // ── Main page ────────────────────────────────────────────────────────
 
+// TEMP: Glow & Me's store id, hardcoded as the initial storeId so
+// the cycles query fires immediately even if /api/stores is slow /
+// malformed / not returning the expected fields. The useEffect below
+// still upgrades this the moment stores.data lands. Delete this
+// literal once the store selector is proven reliable in prod.
+const DEFAULT_STORE_ID = "3f550942-9bb4-4ec1-b8ed-3a11803acd3e";
+
 export default function PayrollPage() {
   const now = new Date();
-  const [storeId, setStoreId] = useState<string>("");
+  const [storeId, setStoreId] = useState<string>(DEFAULT_STORE_ID);
   const [expandedCycleId, setExpandedCycleId] = useState<string | null>(null);
   const [selectedLedger, setSelectedLedger] = useState<{ cycle: CycleRow; ledger: LedgerRow } | null>(null);
 
