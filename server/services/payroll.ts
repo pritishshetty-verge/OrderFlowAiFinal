@@ -104,22 +104,24 @@ export function calculateBasePay(input: BasePayInputs): BasePayResult {
   return { ratio, amount, capped };
 }
 
-// ── Incentive: Order Confirmation ────────────────────────────────────
+// ── Incentive: Order Confirmation (Earned Commission = 10% × GMV) ──
+//
+// Per the Compensation Breakdown PDF, the ORDER_CONFIRMATION profile
+// pays a flat 10% commission on the Delivered GMV attributable to
+// the agent — NOT a tiered confirmation-rate bonus. Tanisha is the
+// canonical example.
+export const EARNED_COMMISSION_RATE = 0.10;
 
 /**
- * Tiered bonus based on personal delivery rate of orders confirmed by
- * this agent in the month.
- *   75–84.99% → ₹5,000   |   85–89.99% → ₹7,500   |   90%+ → ₹10,000
- * Below 75% → ₹0.
+ * Earned Commission bonus for the ORDER_CONFIRMATION profile.
+ * `deliveredGmv` is the sum of order totals delivered from this
+ * agent's confirmed orders in the month (see
+ * getDeliveredGMVForAgent in payroll-metrics.ts).
+ * Returns 0 when the number is null / non-finite / negative.
  */
-export function calculateConfirmationBonus(deliveryRatePct: number | null | undefined): number {
-  if (deliveryRatePct == null || !Number.isFinite(deliveryRatePct)) return 0;
-  for (const tier of ORDER_CONFIRMATION_TIERS) {
-    if (deliveryRatePct >= tier.minPct && deliveryRatePct < tier.maxPct) {
-      return tier.bonus;
-    }
-  }
-  return 0;
+export function calculateConfirmationBonus(deliveredGmv: number | null | undefined): number {
+  if (deliveredGmv == null || !Number.isFinite(deliveredGmv) || deliveredGmv <= 0) return 0;
+  return round2(deliveredGmv * EARNED_COMMISSION_RATE);
 }
 
 // ── Incentive: NDR/RTO (stackable) ───────────────────────────────────
@@ -164,10 +166,15 @@ export function calculateNdrRtoBonus(input: NdrRtoInputs): NdrRtoResult {
 // — it's a base-pay-only ladder. The orchestrator handles unknown
 // profiles gracefully (no incentive component fires) so adding new
 // profiles in future doesn't require an engine change.
+// DEVELOPER: admin-level access role with a dedicated compensation
+// profile (base pay + admin-added line items, no auto-computed
+// variable bonus). Keeps the metric-driven profiles clean while
+// letting devs receive payslips.
 export type CompensationProfile =
   | "ORDER_CONFIRMATION"
   | "NDR_RTO"
   | "CHAT_SUPPORT"
+  | "DEVELOPER"
   | null;
 
 // Default reimbursement (₹) suggested for a fresh payslip. The admin
@@ -199,7 +206,14 @@ export interface PayrollMathInputs {
 
   // Incentive inputs (kept optional — admin may zero them via override)
   compensationProfile: CompensationProfile;
+  // Legacy tier-based delivery rate — retained for schema/audit but
+  // NOT used by the current ORDER_CONFIRMATION formula (see
+  // deliveredGmv below). Kept nullable so old callers still compile.
   deliveryRatePct?: number | null;
+  // Sum of delivered order totals from this agent's confirmed
+  // orders in the month. Drives the ORDER_CONFIRMATION variable
+  // (Earned Commission = 10% × deliveredGmv).
+  deliveredGmv?: number | null;
   teamDeliveryRatePct?: number | null;
   personalRecoveryRatePct?: number | null;
   reshipsCount?: number | null;
@@ -249,7 +263,9 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
   let reshipsBonus = 0;
 
   if (input.compensationProfile === "ORDER_CONFIRMATION") {
-    confirmationBonus = calculateConfirmationBonus(input.deliveryRatePct);
+    // Earned Commission = 10% × Delivered GMV. Falls back to 0 if
+    // GMV wasn't provided (e.g. legacy /api/payroll/run callers).
+    confirmationBonus = calculateConfirmationBonus(input.deliveredGmv);
   } else if (input.compensationProfile === "NDR_RTO") {
     const ndr = calculateNdrRtoBonus({
       teamDeliveryRatePct: input.teamDeliveryRatePct,

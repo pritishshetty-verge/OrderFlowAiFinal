@@ -6745,7 +6745,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
     try {
-      const storeId = typeof req.query.storeId === "string" ? req.query.storeId : (req.storeScope?.storeId ?? null);
+      // Store resolution: query param → storeScope middleware →
+      // first ACTIVE store (prefers live stores over legacy/closed
+      // ones). The last fallback matters because /payroll no longer
+      // has its own store selector — admins expect the page to
+      // "just work" against whatever store is currently sensible.
+      let storeId: string | null =
+        (typeof req.query.storeId === "string" && req.query.storeId) ||
+        req.storeScope?.storeId ||
+        null;
+      if (!storeId) {
+        const { stores: storesTable } = await import("@shared/schema");
+        const [live] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .limit(1);
+        storeId = live?.id ?? null;
+      }
       const cycle = await import("./services/payroll-cycle");
       const cycles = await cycle.listCycles(storeId);
       res.json({ cycles, activeStoreId: storeId });

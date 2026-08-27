@@ -261,6 +261,34 @@ export async function getBrandNDRDeliveryRate(
   };
 }
 
+// ── Delivered GMV — for the Earned Commission (10%) profile ─────────
+//
+// Per the Compensation Breakdown PDF, Tanisha (ORDER_CONFIRMATION
+// profile) earns 10% of Delivered GMV. GMV here = the sum of
+// `total_price` on orders this agent CONFIRMED that eventually
+// delivered — regardless of who fulfilled or handled the return
+// downstream. Confirmed_at drives the month bucket (matches the
+// existing getConfirmationDeliveryRatePct query).
+export async function getDeliveredGMVForAgent(
+  userId: string,
+  storeId: string,
+  year: number,
+  month: number,
+): Promise<number> {
+  const { start, end } = monthRangeUtc(year, month);
+  const r: any = await db.execute(sql`
+    SELECT COALESCE(SUM(CAST(total_price AS numeric)), 0)::numeric AS gmv
+    FROM orders
+    WHERE store_id     = ${storeId}
+      AND confirmed_by = ${userId}
+      AND status       = 'delivered'
+      AND confirmed_at >= ${start.toISOString()}::timestamptz
+      AND confirmed_at <  ${end.toISOString()}::timestamptz
+  `);
+  const row = ((r as any).rows ?? r)[0] ?? { gmv: 0 };
+  return Number(row.gmv ?? 0);
+}
+
 // ── Reshipments delivered — for Chandi's per-reship bonus ───────────
 //
 // Count of reshipments whose courier_status reached 'delivered' in the

@@ -13,7 +13,7 @@
  *   • Cron auto-generates cycle on 2nd of every month at 00:00 IST;
  *     admins can also generate on-demand for a past month
  */
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -26,16 +26,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import {
   ChevronDown, ChevronRight, Check, Search, Plus, X, Eye,
-  Download, Pencil, Save, XCircle, Sparkles, Store as StoreIcon,
+  Download, Pencil, Save, XCircle,
 } from "lucide-react";
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -77,64 +74,18 @@ interface StoreRow { id: string; shopifyDomain: string | null; isActive: boolean
 
 // ── Main page ────────────────────────────────────────────────────────
 
-// TEMP: Glow & Me's store id, hardcoded as the initial storeId so
-// the cycles query fires immediately even if /api/stores is slow /
-// malformed / not returning the expected fields. The useEffect below
-// still upgrades this the moment stores.data lands. Delete this
-// literal once the store selector is proven reliable in prod.
-const DEFAULT_STORE_ID = "3f550942-9bb4-4ec1-b8ed-3a11803acd3e";
-
 export default function PayrollPage() {
-  const now = new Date();
-  const [storeId, setStoreId] = useState<string>(DEFAULT_STORE_ID);
   const [expandedCycleId, setExpandedCycleId] = useState<string | null>(null);
   const [selectedLedger, setSelectedLedger] = useState<{ cycle: CycleRow; ledger: LedgerRow } | null>(null);
-
-  const stores = useQuery<StoreRow[]>({ queryKey: ["/api/stores"] });
-
-  // Default store to first active on mount. useEffect (not useMemo)
-  // is the right hook for side-effects — the previous useMemo version
-  // never fired because React can skip memo evaluations. Also tolerates
-  // the /api/stores response using either `isActive` (camelCase) or
-  // `is_active` (snake_case) since the surface has mixed conventions.
-  useEffect(() => {
-    if (storeId || !stores.data?.length) return;
-    const isLive = (s: any) => s.isActive === true || s.is_active === true;
-    const active = stores.data.find(isLive) ?? stores.data[0];
-    if (active?.id) setStoreId(active.id);
-  }, [stores.data, storeId]);
 
   return (
     <PageLayout
       title="Payroll"
       description="A new payroll is generated on the 2nd of every month"
       hideNotifications
-      actions={
-        <div className="flex items-center gap-2">
-          <StoreIcon className="w-4 h-4 text-muted-foreground" />
-          <Select value={storeId} onValueChange={setStoreId}>
-            <SelectTrigger className="w-[240px]" data-testid="payroll-store-selector">
-              <SelectValue placeholder="Store" />
-            </SelectTrigger>
-            <SelectContent>
-              {(stores.data ?? []).map((s) => {
-                const domain = (s as any).shopifyDomain ?? (s as any).shopify_domain ?? s.id.slice(0, 8);
-                const active = (s as any).isActive === true || (s as any).is_active === true;
-                return (
-                  <SelectItem key={s.id} value={s.id}>
-                    {domain}{!active && " · closed"}
-                  </SelectItem>
-                );
-              })}
-            </SelectContent>
-          </Select>
-          <GenerateCycleButton storeId={storeId} />
-        </div>
-      }
     >
       <div className="p-6 max-w-[1200px] mx-auto space-y-3">
         <CycleList
-          storeId={storeId}
           expandedCycleId={expandedCycleId}
           onToggleExpand={(id) => setExpandedCycleId(id === expandedCycleId ? null : id)}
           onView={(cycle, ledger) => setSelectedLedger({ cycle, ledger })}
@@ -151,80 +102,21 @@ export default function PayrollPage() {
   );
 }
 
-// ── Generate cycle button (backfill / manual trigger) ───────────────
-
-function GenerateCycleButton({ storeId }: { storeId: string }) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const now = new Date();
-  const [open, setOpen] = useState(false);
-  const [year, setYear] = useState(now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() === 0 ? 12 : now.getMonth()); // default: previous month
-
-  const gen = useMutation({
-    mutationFn: async () => {
-      const currentUserId = localStorage.getItem("userId") ?? "";
-      const res = await apiRequest("POST", "/api/payroll/cycles", { storeId, year, month, currentUserId });
-      return await res.json();
-    },
-    onSuccess: (r: any) => {
-      toast({
-        title: r.alreadyExisted ? "Cycle already exists" : "Cycle generated",
-        description: r.message,
-      });
-      qc.invalidateQueries({ predicate: (q) => typeof q.queryKey?.[0] === "string" && (q.queryKey[0] as string).startsWith("/api/payroll/cycles") });
-      setOpen(false);
-    },
-    onError: (e: any) => toast({ title: "Generate failed", description: e?.message ?? "Unknown error", variant: "destructive" }),
-  });
-
-  return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={!storeId}>
-        <Sparkles className="w-4 h-4 mr-1.5" />
-        Generate cycle
-      </Button>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Generate payroll cycle</AlertDialogTitle>
-          <AlertDialogDescription>
-            Creates a new payroll cycle for the selected month. Cycles for future or past months can be created manually; the cron auto-generates on the 2nd of each month for the previous month.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div className="flex items-center gap-2">
-          <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
-            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
-            <SelectContent>{MONTHS.map((m, i) => <SelectItem key={i+1} value={String(i+1)}>{m}</SelectItem>)}</SelectContent>
-          </Select>
-          <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-            <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
-            <SelectContent>{[now.getFullYear(), now.getFullYear() - 1].map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={(e) => { e.preventDefault(); gen.mutate(); }} disabled={gen.isPending}>
-            {gen.isPending ? "Generating…" : "Generate"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
 // ── Cycle list ───────────────────────────────────────────────────────
+//
+// Store scope comes from the app's global store switcher (top-left of
+// the sidebar) via req.storeScope on the server — the /payroll page
+// no longer carries its own store selector.
 
 function CycleList({
-  storeId, expandedCycleId, onToggleExpand, onView,
+  expandedCycleId, onToggleExpand, onView,
 }: {
-  storeId: string;
   expandedCycleId: string | null;
   onToggleExpand: (id: string) => void;
   onView: (cycle: CycleRow, ledger: LedgerRow) => void;
 }) {
   const q = useQuery<{ cycles: CycleRow[]; activeStoreId: string | null }>({
-    queryKey: [`/api/payroll/cycles?storeId=${storeId}`],
-    enabled: !!storeId,
+    queryKey: [`/api/payroll/cycles`],
   });
 
   if (q.isLoading) {
@@ -237,7 +129,7 @@ function CycleList({
   if (!q.data?.cycles.length) {
     return (
       <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        No payroll cycles yet. Click <b>Generate cycle</b> to create one for a past month, or wait for the 2nd of next month.
+        No payroll cycles yet. The 2nd of every month a fresh cycle is auto-generated for the previous month.
       </div>
     );
   }
@@ -562,6 +454,9 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
         <div>
           <p className="font-semibold text-[15px]">{ledger.user.fullName}</p>
           <p className="text-xs text-muted-foreground">{formatDesignation(ledger.user)} · {MONTHS[cycle.month - 1]} {cycle.year}</p>
+          {/* Role from team directory — no derived compensation-profile
+              label here per platform review feedback. The variable-pay
+              section already shows the profile via its formula. */}
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
           <X className="w-4 h-4" />
@@ -673,10 +568,10 @@ function PayslipContent({ cycle, ledger: initialLedger, onClose }: { cycle: Cycl
         </Section>
       </div>
 
-      {/* Footer — net pay */}
-      <div className="border-t bg-black text-white dark:bg-white dark:text-black flex items-center justify-between px-5 py-4">
-        <p className="text-sm font-medium">Net pay for {MONTHS[cycle.month - 1]} {cycle.year}</p>
-        <p className="text-2xl font-semibold tabular-nums">{CURRENCY(liveNet)}</p>
+      {/* Footer — net pay (muted band, per platform review) */}
+      <div className="border-t bg-muted/60 flex items-center justify-between px-5 py-4">
+        <p className="text-sm text-muted-foreground">Net pay for {MONTHS[cycle.month - 1]} {cycle.year}</p>
+        <p className="text-2xl font-semibold tabular-nums text-foreground">{CURRENCY(liveNet)}</p>
       </div>
     </>
   );
@@ -760,10 +655,18 @@ function VariableBreakdown({ ledger }: { ledger: LedgerRow }) {
   const p = ledger.compensationProfile;
   const rows: Array<{ label: string; sub?: string; amount: number }> = [];
   if (p === "ORDER_CONFIRMATION") {
+    // Earned Commission per compensation PDF: 10% of Delivered GMV.
+    // Bonus = GMV × 0.10, so we can reverse-derive the raw GMV for
+    // display: GMV = bonus × 10. Avoids needing to persist GMV as a
+    // separate ledger field.
+    const bonus = Number(ledger.confirmationBonus);
+    const derivedGmv = bonus > 0 ? bonus * 10 : 0;
     rows.push({
-      label: "Confirmation delivery rate",
-      sub: ledger.deliveryRatePct != null ? `${Number(ledger.deliveryRatePct).toFixed(2)}% of confirmed orders delivered` : "No data",
-      amount: Number(ledger.confirmationBonus),
+      label: "Earned commission",
+      sub: derivedGmv > 0
+        ? `10% × ₹${Math.round(derivedGmv).toLocaleString("en-IN")} delivered GMV`
+        : "No delivered GMV recorded this period",
+      amount: bonus,
     });
   } else if (p === "NDR_RTO") {
     rows.push({

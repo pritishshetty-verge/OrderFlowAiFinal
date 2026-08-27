@@ -483,12 +483,18 @@ function drawEarningsTable(doc: PDFKit.PDFDocument, data: PayslipData) {
 
   if (showIncentives) {
     if (data.incentives.profile === "ORDER_CONFIRMATION") {
+      // Earned Commission = 10% × Delivered GMV. Reverse-derive the
+      // GMV from the bonus for a plain-English note; skip when the
+      // agent had zero delivered GMV in the period.
+      const gmv = data.incentives.confirmationBonus > 0
+        ? data.incentives.confirmationBonus * 10
+        : 0;
       drawTableRow(
         doc,
-        "Confirmation bonus",
-        data.incentives.deliveryRatePct == null
-          ? "No delivery rate recorded for this period"
-          : `Delivery rate ${data.incentives.deliveryRatePct.toFixed(2)}% -> tier bonus per Order Confirmation ladder`,
+        "Earned commission",
+        gmv > 0
+          ? `10% × Rs. ${formatINR(gmv)} delivered GMV`
+          : "No delivered GMV recorded for this period",
         formatINR(data.incentives.confirmationBonus),
       );
     } else if (data.incentives.profile === "NDR_RTO") {

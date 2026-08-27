@@ -27,7 +27,7 @@ import {
   getAttendanceMetrics, getAutoPaidHolidaysCount,
   getConfirmationDeliveryRatePct, getTeamDeliveryRatePct,
   getBrandTDRPct, getBrandNDRDeliveryRate, getReshipmentsDeliveredCount,
-  getYtdPaidHolidaysUsed,
+  getYtdPaidHolidaysUsed, getDeliveredGMVForAgent,
 } from "./payroll-metrics";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ export async function buildLedgerRow(args: {
   );
   const expectedDays = expectedWorkingDays(year, month);
 
-  const [attendance, holidaysAuto, confirmRate, teamRate, brandTdr, brandNdr, reships, ytdHolidays] =
+  const [attendance, holidaysAuto, confirmRate, teamRate, brandTdr, brandNdr, reships, ytdHolidays, deliveredGmv] =
     await Promise.all([
       getAttendanceMetrics(user.id, year, month),
       user.holidayState ? getAutoPaidHolidaysCount(user.holidayState, year, month) : Promise.resolve(0),
@@ -87,6 +87,10 @@ export async function buildLedgerRow(args: {
       getBrandNDRDeliveryRate(storeId, year, month),
       getReshipmentsDeliveredCount(storeId, year, month),
       getYtdPaidHolidaysUsed(user.id, year, month),
+      // GMV only matters for ORDER_CONFIRMATION agents — but we
+      // fetch unconditionally so overrides can flip profile without
+      // a second round-trip. Cheap query, storeId is required.
+      getDeliveredGMVForAgent(user.id, storeId, year, month),
     ]);
 
   const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
@@ -122,6 +126,7 @@ export async function buildLedgerRow(args: {
     unpaidLeaves,
     compensationProfile: profile,
     deliveryRatePct,
+    deliveredGmv,
     teamDeliveryRatePct,
     personalRecoveryRatePct,
     reshipsCount,
@@ -224,14 +229,23 @@ export async function generateCycle(args: {
     })
     .returning();
 
-  // Eligible employees: active + has a base salary. We include admins
-  // (Nandakishore is an admin with base salary in the target state)
-  // so long as the salary is set.
+  // Eligible employees per the Platform Review:
+  //   1. active
+  //   2. has a base salary set
+  //   3. has a compensation profile assigned (null = "No payroll")
+  // Employees without a profile intentionally get NO payslip so
+  // the admin controls opt-out at the Team → Edit Compensation step.
   const eligible = await db
     .select()
     .from(users)
     .where(and(eq(users.isActive, true)));
-  const withSalary = eligible.filter((u) => u.baseSalary != null && Number(u.baseSalary) > 0);
+  const withSalary = eligible.filter(
+    (u) =>
+      u.baseSalary != null &&
+      Number(u.baseSalary) > 0 &&
+      u.compensationProfile != null &&
+      u.compensationProfile !== "",
+  );
 
   const inserts: InsertPayrollLedger[] = [];
   for (const u of withSalary) {
