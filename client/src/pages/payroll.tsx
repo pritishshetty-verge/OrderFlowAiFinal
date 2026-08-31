@@ -720,6 +720,24 @@ function formatDesignation(user: LedgerRow["user"]): string {
   return parts.join(" · ");
 }
 
+// Keep in sync with formatRoleLabel in components/team-directory.tsx —
+// the Platform Review wants the same role wording everywhere so
+// there's a single source of truth for how a role reads to the admin.
 function prettifyRole(r: string): string {
-  return r.split("_").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+  switch (r) {
+    case "recovery_agent":
+      return "Inside Sales Executive (ISE)";
+    case "chat_support":
+      return "Chat Support";
+    case "ndr_rto":
+      return "NDR/RTO Executive";
+    case "admin":
+      return "Admin";
+    case "developer":
+      return "Developer";
+    case "agent":
+      return "Order Confirmation Executive (OCE)";
+    default:
+      return r.split("_").map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+  }
 }

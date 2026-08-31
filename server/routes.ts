@@ -9279,10 +9279,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/leave-requests", async (req, res) => {
     try {
-      const { userId, status } = req.query;
+      // Visibility rule (per Platform Review):
+      //   • Admins / developers see EVERY member's leave requests
+      //   • Everyone else only sees their own
+      // Server-side filter — the Leave Requests page continues to
+      // render whatever comes back, but a non-admin can no longer
+      // read someone else's request even by hitting the raw endpoint.
+      const currentUserId = (req.query.currentUserId as string | undefined) ??
+        (req.body?.currentUserId as string | undefined) ??
+        req.session?.userId;
+
+      let scopedUserId = req.query.userId as string | undefined;
+      if (currentUserId) {
+        const caller = await storage.getUser(currentUserId);
+        if (caller && !isAdmin(caller)) {
+          // Non-admins are locked to their own id regardless of
+          // whatever userId param they pass.
+          scopedUserId = caller.id;
+        }
+      }
+
       const filters = {
-        userId: userId as string | undefined,
-        status: status as string | undefined,
+        userId: scopedUserId,
+        status: req.query.status as string | undefined,
       };
       const requests = await storage.listLeaveRequests(filters);
       res.json(requests);

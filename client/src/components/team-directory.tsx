@@ -58,12 +58,13 @@ const HOLIDAY_STATE_OPTIONS: HolidayState[] = [
   "HYDERABAD",
 ];
 
-type CompensationProfile = "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT";
+type CompensationProfile = "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT" | "DEVELOPER";
 const COMPENSATION_PROFILE_OPTIONS: { value: CompensationProfile | "NONE"; label: string }[] = [
   { value: "NONE", label: "None (no payroll)" },
   { value: "ORDER_CONFIRMATION", label: "Order Confirmation" },
   { value: "NDR_RTO", label: "NDR / RTO" },
   { value: "CHAT_SUPPORT", label: "Chat Support (base only)" },
+  { value: "DEVELOPER", label: "Developer (base + line items)" },
 ];
 
 type LiveStatus = "active" | "idle" | "auto-closed" | "on-leave" | "offline";
@@ -71,7 +72,7 @@ type LiveStatus = "active" | "idle" | "auto-closed" | "on-leave" | "offline";
 interface TeamMember {
   id: string;
   name: string;
-  role: "admin" | "agent" | "recovery_agent" | "chat_support" | "ndr_rto";
+  role: "admin" | "agent" | "recovery_agent" | "chat_support" | "ndr_rto" | "developer";
   adminType?: "full_control" | "partial_control";
   moduleAccess?: string[];
   email: string;
@@ -150,7 +151,7 @@ const editCompensationSchema = z.object({
     .refine((v) => v === "" || (!Number.isNaN(parseFloat(v)) && parseFloat(v) >= 0), {
       message: "Enter a non-negative number",
     }),
-  compensationProfile: z.enum(["NONE", "ORDER_CONFIRMATION", "NDR_RTO", "CHAT_SUPPORT"]),
+  compensationProfile: z.enum(["NONE", "ORDER_CONFIRMATION", "NDR_RTO", "CHAT_SUPPORT", "DEVELOPER"]),
   couponCode: z.string().max(60, "Coupon code too long"),
 });
 
@@ -161,7 +162,7 @@ type EditCompensationFormData = z.infer<typeof editCompensationSchema>;
 // non-admin cases so we don't have to make the form field conditionally
 // required — we coerce on submit.
 const editRoleSchema = z.object({
-  role: z.enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto"]),
+  role: z.enum(["admin", "agent", "recovery_agent", "chat_support", "ndr_rto", "developer"]),
   adminType: z.enum(["full_control", "partial_control", "NONE"]),
 });
 type EditRoleFormData = z.infer<typeof editRoleSchema>;
@@ -857,6 +858,8 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
         return "NDR/RTO Executive";
       case "admin":
         return "Admin";
+      case "developer":
+        return "Developer";
       case "agent":
       default:
         return "Order Confirmation Executive (OCE)";
@@ -1324,6 +1327,7 @@ export function TeamDirectory({ userRole }: TeamDirectoryProps) {
                         <SelectItem value="admin">Admin</SelectItem>
                         <SelectItem value="recovery_agent">Inside Sales Executive (ISE)</SelectItem>
                         <SelectItem value="chat_support">Chat Support</SelectItem>
+                        <SelectItem value="developer">Developer</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />

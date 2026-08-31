@@ -71,9 +71,11 @@ export default function TeamPage() {
             <TabsTrigger value="directory" data-testid="tab-directory">
               Team Directory
             </TabsTrigger>
-            <TabsTrigger value="presence" data-testid="tab-presence">
-              Presence & Workload
-            </TabsTrigger>
+            {userRole === "admin" && (
+              <TabsTrigger value="presence" data-testid="tab-presence">
+                Presence & Workload
+              </TabsTrigger>
+            )}
             <TabsTrigger value="attendance-report" data-testid="tab-attendance-report">
               Attendance Report
             </TabsTrigger>
@@ -91,9 +93,11 @@ export default function TeamPage() {
             <TeamDirectory userRole={userRole} />
           </TabsContent>
 
-          <TabsContent value="presence">
-            <TeamPresence userRole={userRole} />
-          </TabsContent>
+          {userRole === "admin" && (
+            <TabsContent value="presence">
+              <TeamPresence userRole={userRole} />
+            </TabsContent>
+          )}
 
           <TabsContent value="attendance-report">
             <AttendanceReportContent />
