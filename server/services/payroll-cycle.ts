@@ -111,18 +111,20 @@ export async function buildLedgerRow(args: {
 
   const profile = (user.compensationProfile as CompensationProfile) ?? null;
 
-  // Default line items: only the profiles that get a fixed monthly
-  // reimbursement per the Compensation Breakdown PDF (Tanisha +
-  // Chandi, both ₹349). MANAGER / DEVELOPER / CHAT_SUPPORT ship
-  // with zero line items — the admin adds bonuses/reimbursements
-  // via "+ Add component" on their payslips.
-  const PROFILES_WITH_REIMBURSEMENT = new Set<CompensationProfile>([
-    "ORDER_CONFIRMATION",
-    "NDR_RTO",
-  ]);
-  const defaultLineItems: LineItem[] = PROFILES_WITH_REIMBURSEMENT.has(profile)
-    ? [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }]
-    : [];
+  // Default line items per compensation profile:
+  //   ORDER_CONFIRMATION / NDR_RTO — ₹349 monthly reimbursement
+  //     (Tanisha + Chandi per the Compensation Breakdown PDF).
+  //   DEVELOPER — a preloaded "Manager bonus" line at ₹0 that the
+  //     admin fills in each month based on store performance
+  //     (Nandakishore's compensation structure).
+  //   CHAT_SUPPORT — zero line items; admin adds any bonuses ad-hoc
+  //     via "+ Add component".
+  let defaultLineItems: LineItem[] = [];
+  if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
+    defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
+  } else if (profile === "DEVELOPER") {
+    defaultLineItems = [{ label: "Manager bonus", amount: 0 }];
+  }
   const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
 
   const math = runPayrollMath({

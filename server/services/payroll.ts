@@ -177,21 +177,7 @@ export type CompensationProfile =
   | "NDR_RTO"
   | "CHAT_SUPPORT"
   | "DEVELOPER"
-  | "MANAGER"
   | null;
-
-// MANAGER: base pay + a flat ₹3,000 store-performance bonus when the
-// brand-wide Total Delivery Rate hits the ≥80% threshold (same
-// baseline as the NDR/RTO team-delivery tier). Nandakishore is the
-// canonical example — his fixed is ₹30k and his variable is ₹3k
-// conditional on the store performing well.
-export const MANAGER_STORE_BONUS = 3000;
-export const MANAGER_STORE_TDR_THRESHOLD_PCT = 80;
-
-export function calculateManagerBonus(brandTdrPct: number | null | undefined): number {
-  if (brandTdrPct == null || !Number.isFinite(brandTdrPct)) return 0;
-  return brandTdrPct >= MANAGER_STORE_TDR_THRESHOLD_PCT ? MANAGER_STORE_BONUS : 0;
-}
 
 // Default reimbursement (₹) suggested for a fresh payslip. The admin
 // can edit this to 0 for employees without a reimbursement line
@@ -282,13 +268,6 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     // Earned Commission = 10% × Delivered GMV. Falls back to 0 if
     // GMV wasn't provided (e.g. legacy /api/payroll/run callers).
     confirmationBonus = calculateConfirmationBonus(input.deliveredGmv);
-  } else if (input.compensationProfile === "MANAGER") {
-    // MANAGER's ₹3K store-performance bonus rides on the
-    // teamDeliveryBonus slot since it's derived from the same
-    // brand-TDR signal. Frontend + PDF render it under a
-    // "Store performance bonus" label instead of the NDR/RTO ladder
-    // label when profile == MANAGER.
-    teamDeliveryBonus = calculateManagerBonus(input.teamDeliveryRatePct);
   } else if (input.compensationProfile === "NDR_RTO") {
     const ndr = calculateNdrRtoBonus({
       teamDeliveryRatePct: input.teamDeliveryRatePct,

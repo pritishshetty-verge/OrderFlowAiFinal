@@ -55,7 +55,7 @@ interface LedgerRow {
   baseSalary: string; expectedWorkingDays: number;
   daysPresent: number; paidHolidaysUsed: number; unpaidLeaves: number;
   basePayRatio: string; basePayAmount: string;
-  compensationProfile: "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT" | "DEVELOPER" | "MANAGER" | null;
+  compensationProfile: "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT" | "DEVELOPER" | null;
   deliveryRatePct: string | null; teamDeliveryRatePct: string | null; recoveryRatePct: string | null;
   reshipsCount: number | null;
   confirmationBonus: string; teamDeliveryBonus: string; recoveryBonus: string; reshipsBonus: string;
@@ -667,16 +667,6 @@ function VariableBreakdown({ ledger }: { ledger: LedgerRow }) {
         ? `10% × ₹${Math.round(derivedGmv).toLocaleString("en-IN")} delivered GMV`
         : "No delivered GMV recorded this period",
       amount: bonus,
-    });
-  } else if (p === "MANAGER") {
-    // Store-performance bonus lives in the team_delivery_bonus slot
-    // (see server/services/payroll.ts). ₹3K when brand TDR ≥ 80%.
-    rows.push({
-      label: "Store performance bonus",
-      sub: ledger.teamDeliveryRatePct != null
-        ? `${Number(ledger.teamDeliveryRatePct).toFixed(2)}% brand delivery — pays ₹3,000 when ≥80%`
-        : "Brand delivery rate not recorded this period",
-      amount: Number(ledger.teamDeliveryBonus),
     });
   } else if (p === "NDR_RTO") {
     rows.push({
