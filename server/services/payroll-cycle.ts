@@ -99,12 +99,15 @@ export async function buildLedgerRow(args: {
 
   const daysPresent = overrides.daysPresent ?? attendance.daysPresent;
   const paidHolidaysUsed = overrides.paidHolidaysUsed ?? paidHolidaysAuto;
-  // Auto-derived unpaid leaves: any expected working day the employee
-  // didn't clock in for AND didn't apply an approved paid holiday to
-  // is counted as unpaid. Clamped >= 0 so overtime (daysPresent >
-  // expectedDays) doesn't fabricate a negative deduction.
-  const unpaidLeavesAuto = Math.max(0, expectedDays - daysPresent - paidHolidaysUsed);
-  const unpaidLeaves = overrides.unpaidLeaves ?? unpaidLeavesAuto;
+  // Unpaid leaves default to 0. The old auto-formula
+  // (expectedDays - daysPresent - paidHolidaysUsed) was too aggressive:
+  // it counted every no-clock-in day as unpaid absence, which
+  // includes people who forgot to punch in, took an approved leave
+  // that wasn't flagged as "paid holiday", or had legitimate off
+  // days that just weren't paid holidays. Admin now explicitly
+  // supplies unpaidLeaves via override when they actually want a
+  // deduction — otherwise no pro-rata deduction fires.
+  const unpaidLeaves = overrides.unpaidLeaves ?? 0;
   const deliveryRatePct = overrides.deliveryRatePct ?? confirmRate;
   const teamDeliveryRatePct = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
   const personalRecoveryRatePct = overrides.personalRecoveryRatePct ?? brandNdr.ratePct;
