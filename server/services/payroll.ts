@@ -283,12 +283,21 @@ export interface PayrollMathResult {
  * result. Components not relevant to the profile are zeroed.
  */
 export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
-  const base = calculateBasePay({
-    baseSalary: input.baseSalary,
-    expectedWorkingDays: input.expectedWorkingDays,
-    daysPresent: input.daysPresent,
-    paidHolidaysUsed: input.paidHolidaysUsed,
-  });
+  // DEVELOPER is a flat-salary role (Nandakishore) — full base
+  // regardless of daily attendance, like a salaried manager. Every
+  // other profile prorates by attendance ratio via calculateBasePay.
+  const base = input.compensationProfile === "DEVELOPER"
+    ? {
+        ratio: 1,
+        amount: round2(Math.max(0, input.baseSalary)),
+        capped: false,
+      }
+    : calculateBasePay({
+        baseSalary: input.baseSalary,
+        expectedWorkingDays: input.expectedWorkingDays,
+        daysPresent: input.daysPresent,
+        paidHolidaysUsed: input.paidHolidaysUsed,
+      });
 
   let confirmationBonus = 0;
   let teamDeliveryBonus = 0;
