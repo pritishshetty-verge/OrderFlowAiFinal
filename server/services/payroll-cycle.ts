@@ -21,7 +21,8 @@ import {
 import { storage } from "../storage";
 import {
   runPayrollMath, expectedWorkingDays, DEFAULT_REIMBURSEMENT,
-  ANNUAL_PAID_HOLIDAY_CAP, type CompensationProfile, type LineItem,
+  ANNUAL_PAID_HOLIDAY_CAP, calculateDeveloperManagerBonus,
+  type CompensationProfile, type LineItem,
 } from "./payroll";
 import {
   getAttendanceMetrics, getAutoPaidHolidaysCount,
@@ -114,16 +115,18 @@ export async function buildLedgerRow(args: {
   // Default line items per compensation profile:
   //   ORDER_CONFIRMATION / NDR_RTO — ₹349 monthly reimbursement
   //     (Tanisha + Chandi per the Compensation Breakdown PDF).
-  //   DEVELOPER — a preloaded "Manager bonus" line at ₹0 that the
-  //     admin fills in each month based on store performance
-  //     (Nandakishore's compensation structure).
+  //   DEVELOPER — auto "Manager bonus" that reads brand TDR: ₹3,000
+  //     when TDR ≥ 80%, else ₹0. Editable in the payslip modal so the
+  //     admin can override the amount month-to-month.
   //   CHAT_SUPPORT — zero line items; admin adds any bonuses ad-hoc
   //     via "+ Add component".
+  const brandTdrForBonus = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
   let defaultLineItems: LineItem[] = [];
   if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
     defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
   } else if (profile === "DEVELOPER") {
-    defaultLineItems = [{ label: "Manager bonus", amount: 0 }];
+    const managerBonus = calculateDeveloperManagerBonus(brandTdrForBonus);
+    defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
   }
   const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
 
