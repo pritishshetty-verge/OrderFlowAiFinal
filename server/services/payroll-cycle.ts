@@ -131,23 +131,25 @@ export async function buildLedgerRow(args: {
   } else if (profile === "DEVELOPER") {
     // Manager→reportee map. Hardcoded MVP — should move to a
     // `reports_to` column on users when the org grows beyond one pair.
-    // Nandakishore's bonus rides on Sathish's attendance.
+    // Only DEVELOPER users with a reportee entry get the auto
+    // Manager bonus line item; other DEVELOPER users (Sathish etc.)
+    // ship with zero line items so their payslip isn't cluttered
+    // with a ₹0 field that doesn't apply to them.
     const REPORTEE_MAP: Record<string, string> = {
       "54862e00-6bee-4921-ab9e-339cfdc13d56": "f4f76079-f4d3-44fa-9cff-13a1ff40b873",
     };
     const reporteeId = REPORTEE_MAP[user.id];
-    let reporteeAttendancePct: number | null = null;
     if (reporteeId) {
       const reporteeAtt = await getAttendanceMetrics(reporteeId, year, month);
-      reporteeAttendancePct = expectedDays > 0
+      const reporteeAttendancePct = expectedDays > 0
         ? (reporteeAtt.daysPresent / expectedDays) * 100
         : 0;
+      const managerBonus = calculateDeveloperManagerBonus({
+        brandTdrPct: brandTdrForBonus,
+        reporteeAttendancePct,
+      });
+      defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
     }
-    const managerBonus = calculateDeveloperManagerBonus({
-      brandTdrPct: brandTdrForBonus,
-      reporteeAttendancePct,
-    });
-    defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
   }
   const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
 
