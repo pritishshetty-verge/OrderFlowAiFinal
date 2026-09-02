@@ -279,12 +279,17 @@ export async function generateCycle(args: {
 
 /** Recompute employee_count + total_payout from child ledger rows. */
 export async function refreshCycleTotals(cycleId: string): Promise<PayrollCycle> {
-  const [row] = await db.execute<{ n: number; total: string | null }>(sql`
+  // Neon's db.execute returns an object with `.rows`. Previous
+  // implementation destructured it as `[row] = ...` which extracts
+  // the object's first own property (usually `command`), not the
+  // first row — leaving employee_count + total_payout at 0 on every
+  // cron-generated cycle. Fixed by reading `.rows` explicitly.
+  const result: any = await db.execute(sql`
     SELECT COUNT(*)::int4 AS n, COALESCE(SUM(final_payout), 0)::text AS total
     FROM payroll_ledger
     WHERE cycle_id = ${cycleId}
-  `) as any;
-  const rows = ((row as any).rows ?? row) as any[];
+  `);
+  const rows = (result?.rows ?? []) as Array<{ n: number; total: string | null }>;
   const summary = rows[0] ?? { n: 0, total: "0" };
   const [updated] = await db
     .update(payrollCycles)
