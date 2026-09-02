@@ -115,9 +115,10 @@ export async function buildLedgerRow(args: {
   // Default line items per compensation profile:
   //   ORDER_CONFIRMATION / NDR_RTO — ₹349 monthly reimbursement
   //     (Tanisha + Chandi per the Compensation Breakdown PDF).
-  //   DEVELOPER — auto "Manager bonus" that reads brand TDR: ₹3,000
-  //     when TDR ≥ 80%, else ₹0. Editable in the payslip modal so the
-  //     admin can override the amount month-to-month.
+  //   DEVELOPER — auto "Manager bonus" tied to BOTH the store's TDR
+  //     AND the direct-report's attendance (currently Nandakishore
+  //     manages Sathish). ₹5,000 when both signals cross 80%, else 0.
+  //     Editable in the payslip modal for manual override.
   //   CHAT_SUPPORT — zero line items; admin adds any bonuses ad-hoc
   //     via "+ Add component".
   const brandTdrForBonus = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
@@ -125,7 +126,24 @@ export async function buildLedgerRow(args: {
   if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
     defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
   } else if (profile === "DEVELOPER") {
-    const managerBonus = calculateDeveloperManagerBonus(brandTdrForBonus);
+    // Manager→reportee map. Hardcoded MVP — should move to a
+    // `reports_to` column on users when the org grows beyond one pair.
+    // Nandakishore's bonus rides on Sathish's attendance.
+    const REPORTEE_MAP: Record<string, string> = {
+      "54862e00-6bee-4921-ab9e-339cfdc13d56": "f4f76079-f4d3-44fa-9cff-13a1ff40b873",
+    };
+    const reporteeId = REPORTEE_MAP[user.id];
+    let reporteeAttendancePct: number | null = null;
+    if (reporteeId) {
+      const reporteeAtt = await getAttendanceMetrics(reporteeId, year, month);
+      reporteeAttendancePct = expectedDays > 0
+        ? (reporteeAtt.daysPresent / expectedDays) * 100
+        : 0;
+    }
+    const managerBonus = calculateDeveloperManagerBonus({
+      brandTdrPct: brandTdrForBonus,
+      reporteeAttendancePct,
+    });
     defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
   }
   const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;

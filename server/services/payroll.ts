@@ -179,17 +179,28 @@ export type CompensationProfile =
   | "DEVELOPER"
   | null;
 
-// Developer's "Manager bonus" auto-computed from store performance.
-// ₹5,000 flat when the brand-wide Total Delivery Rate hits ≥80%
-// (same threshold as the NDR/RTO teamDelivery ladder's first tier).
-// Stored as an editable line item on the ledger row, so the admin
-// can override the amount month-to-month via the payslip modal.
+// Developer's "Manager bonus" auto-computed from BOTH store
+// performance AND the reportee's individual performance. ₹5,000 flat
+// when brand-wide TDR ≥ 80% AND the direct-report's attendance
+// ratio ≥ 80%. Nandakishore manages Sathish, so his bonus is
+// conditional on both signals — store overall health AND Sathish
+// showing up. Editable in the payslip modal for manual override.
 export const DEVELOPER_MANAGER_BONUS = 5000;
 export const DEVELOPER_MANAGER_TDR_THRESHOLD_PCT = 80;
+export const DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT = 80;
 
-export function calculateDeveloperManagerBonus(brandTdrPct: number | null | undefined): number {
-  if (brandTdrPct == null || !Number.isFinite(brandTdrPct)) return 0;
-  return brandTdrPct >= DEVELOPER_MANAGER_TDR_THRESHOLD_PCT ? DEVELOPER_MANAGER_BONUS : 0;
+export function calculateDeveloperManagerBonus(args: {
+  brandTdrPct: number | null | undefined;
+  /** Reportee attendance ratio 0-100 (daysPresent/expected × 100). */
+  reporteeAttendancePct: number | null | undefined;
+}): number {
+  const tdr = args.brandTdrPct;
+  const att = args.reporteeAttendancePct;
+  if (tdr == null || !Number.isFinite(tdr)) return 0;
+  if (att == null || !Number.isFinite(att)) return 0;
+  const storeOk = tdr >= DEVELOPER_MANAGER_TDR_THRESHOLD_PCT;
+  const reporteeOk = att >= DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT;
+  return storeOk && reporteeOk ? DEVELOPER_MANAGER_BONUS : 0;
 }
 
 // Default reimbursement (₹) suggested for a fresh payslip. The admin
