@@ -180,11 +180,11 @@ export type CompensationProfile =
   | null;
 
 // Developer's "Manager bonus" auto-computed from store performance.
-// ₹3,000 flat when the brand-wide Total Delivery Rate hits ≥80%
+// ₹5,000 flat when the brand-wide Total Delivery Rate hits ≥80%
 // (same threshold as the NDR/RTO teamDelivery ladder's first tier).
 // Stored as an editable line item on the ledger row, so the admin
 // can override the amount month-to-month via the payslip modal.
-export const DEVELOPER_MANAGER_BONUS = 3000;
+export const DEVELOPER_MANAGER_BONUS = 5000;
 export const DEVELOPER_MANAGER_TDR_THRESHOLD_PCT = 80;
 
 export function calculateDeveloperManagerBonus(brandTdrPct: number | null | undefined): number {
