@@ -109,14 +109,21 @@ export async function buildLedgerRow(args: {
   const personalRecoveryRatePct = overrides.personalRecoveryRatePct ?? brandNdr.ratePct;
   const reshipsCount = overrides.reshipsCount ?? reships;
 
-  // Default line items: one Reimbursement row at ₹349. Admin can
-  // delete or edit in the payslip modal.
-  const defaultLineItems: LineItem[] = [
-    { label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT },
-  ];
-  const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
-
   const profile = (user.compensationProfile as CompensationProfile) ?? null;
+
+  // Default line items: only the profiles that get a fixed monthly
+  // reimbursement per the Compensation Breakdown PDF (Tanisha +
+  // Chandi, both ₹349). MANAGER / DEVELOPER / CHAT_SUPPORT ship
+  // with zero line items — the admin adds bonuses/reimbursements
+  // via "+ Add component" on their payslips.
+  const PROFILES_WITH_REIMBURSEMENT = new Set<CompensationProfile>([
+    "ORDER_CONFIRMATION",
+    "NDR_RTO",
+  ]);
+  const defaultLineItems: LineItem[] = PROFILES_WITH_REIMBURSEMENT.has(profile)
+    ? [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }]
+    : [];
+  const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
 
   const math = runPayrollMath({
     baseSalary,

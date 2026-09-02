@@ -44,11 +44,13 @@ export const PERSONAL_RECOVERY_TIERS = [
 // ── Working-day helpers ──────────────────────────────────────────────
 
 /**
- * Count of weekdays (Mon-Fri) in the given calendar month. Saturdays
- * and Sundays do not contribute. The user's holiday calendar is NOT
- * subtracted here — paid holidays factor in via the numerator of the
- * base-pay ratio (treated as "paid present days") rather than by
- * shrinking the denominator.
+ * Count of working days (Mon–Sat) in the given calendar month.
+ * Verge Scales runs a 6-day work week, so Sundays are the only
+ * off-day. Aligns with STANDARD_WORKING_DAYS_PER_MONTH = 26.
+ *
+ * The user's holiday calendar is NOT subtracted here — paid holidays
+ * factor in via the numerator of the base-pay ratio (treated as
+ * "paid present days") rather than by shrinking the denominator.
  *
  * @param year  Full year (e.g. 2026)
  * @param month 1-indexed month (1=Jan, 12=Dec)
@@ -57,13 +59,13 @@ export function expectedWorkingDays(year: number, month: number): number {
   if (!Number.isInteger(month) || month < 1 || month > 12) {
     throw new Error(`Invalid month: ${month}`);
   }
-  // Date(year, month, 0) → last day of `month` (because day 0 is "the
-  // day before day 1"). Iterate inclusive 1…lastDay and tally Mon-Fri.
+  // Date(year, month, 0) → last day of `month`. Iterate 1…lastDay
+  // and tally every day except Sunday (dow === 0).
   const lastDay = new Date(year, month, 0).getDate();
   let count = 0;
   for (let d = 1; d <= lastDay; d++) {
-    const dow = new Date(year, month - 1, d).getDay(); // 0=Sun, 6=Sat
-    if (dow !== 0 && dow !== 6) count++;
+    const dow = new Date(year, month - 1, d).getDay();
+    if (dow !== 0) count++;
   }
   return count;
 }
@@ -175,7 +177,21 @@ export type CompensationProfile =
   | "NDR_RTO"
   | "CHAT_SUPPORT"
   | "DEVELOPER"
+  | "MANAGER"
   | null;
+
+// MANAGER: base pay + a flat ₹3,000 store-performance bonus when the
+// brand-wide Total Delivery Rate hits the ≥80% threshold (same
+// baseline as the NDR/RTO team-delivery tier). Nandakishore is the
+// canonical example — his fixed is ₹30k and his variable is ₹3k
+// conditional on the store performing well.
+export const MANAGER_STORE_BONUS = 3000;
+export const MANAGER_STORE_TDR_THRESHOLD_PCT = 80;
+
+export function calculateManagerBonus(brandTdrPct: number | null | undefined): number {
+  if (brandTdrPct == null || !Number.isFinite(brandTdrPct)) return 0;
+  return brandTdrPct >= MANAGER_STORE_TDR_THRESHOLD_PCT ? MANAGER_STORE_BONUS : 0;
+}
 
 // Default reimbursement (₹) suggested for a fresh payslip. The admin
 // can edit this to 0 for employees without a reimbursement line
@@ -266,6 +282,13 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     // Earned Commission = 10% × Delivered GMV. Falls back to 0 if
     // GMV wasn't provided (e.g. legacy /api/payroll/run callers).
     confirmationBonus = calculateConfirmationBonus(input.deliveredGmv);
+  } else if (input.compensationProfile === "MANAGER") {
+    // MANAGER's ₹3K store-performance bonus rides on the
+    // teamDeliveryBonus slot since it's derived from the same
+    // brand-TDR signal. Frontend + PDF render it under a
+    // "Store performance bonus" label instead of the NDR/RTO ladder
+    // label when profile == MANAGER.
+    teamDeliveryBonus = calculateManagerBonus(input.teamDeliveryRatePct);
   } else if (input.compensationProfile === "NDR_RTO") {
     const ndr = calculateNdrRtoBonus({
       teamDeliveryRatePct: input.teamDeliveryRatePct,
