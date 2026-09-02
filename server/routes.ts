@@ -6745,17 +6745,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
     try {
-      // Store resolution: query param → storeScope middleware →
-      // first ACTIVE store (prefers live stores over legacy/closed
-      // ones). The last fallback matters because /payroll no longer
-      // has its own store selector — admins expect the page to
-      // "just work" against whatever store is currently sensible.
+      // Store resolution: query param wins; otherwise the storeScope
+      // middleware value UNLESS it points to an inactive store (OLB
+      // et al.), in which case fall through to the first active
+      // store. /payroll no longer has its own store selector, so the
+      // page has to just work against whatever store is currently
+      // sensible. Admins on a legacy/closed store scope shouldn't
+      // see an empty payroll dashboard.
+      const { stores: storesTable } = await import("@shared/schema");
       let storeId: string | null =
-        (typeof req.query.storeId === "string" && req.query.storeId) ||
-        req.storeScope?.storeId ||
-        null;
+        (typeof req.query.storeId === "string" && req.query.storeId) || null;
+      if (!storeId && req.storeScope?.storeId) {
+        // Verify the scope points to an ACTIVE store.
+        const [scoped] = await db
+          .select({ id: storesTable.id, isActive: storesTable.isActive })
+          .from(storesTable)
+          .where(eq(storesTable.id, req.storeScope.storeId))
+          .limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
       if (!storeId) {
-        const { stores: storesTable } = await import("@shared/schema");
         const [live] = await db
           .select({ id: storesTable.id })
           .from(storesTable)
