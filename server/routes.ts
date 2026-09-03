@@ -6090,6 +6090,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //
   // Auth mirrors attendance-auto-logout: Vercel Bearer OR a custom
   // header for ad-hoc curling.
+
+  // Bulk AWB status lookup — admin-only quick tool. Takes an array
+  // of Delhivery AWBs, hits the tracking API via the store's
+  // configured client, returns a simplified status per AWB. Used by
+  // the standalone /tools/awb-tracker.html and by ad-hoc console
+  // pastes for on-call debugging.
+  app.post("/api/tools/track-awbs", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const rawAwbs = Array.isArray(req.body?.awbs) ? req.body.awbs : [];
+      const awbs = rawAwbs
+        .map((s: any) => String(s ?? "").trim())
+        .filter((s: string) => s.length > 0)
+        .slice(0, 100); // safety cap
+      if (!awbs.length) return res.status(400).json({ error: "Pass { awbs: [...] } in body" });
+
+      // Store scope resolution mirrors /api/payroll/cycles — query
+      // param first, then middleware scope, then first active store.
+      const { stores: storesTable } = await import("@shared/schema");
+      let storeId: string | null =
+        (typeof req.query.storeId === "string" && req.query.storeId) || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db
+          .select({ id: storesTable.id, isActive: storesTable.isActive })
+          .from(storesTable)
+          .where(eq(storesTable.id, req.storeScope.storeId))
+          .limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .limit(1);
+        storeId = live?.id ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+
+      const { getDelhiveryClient } = await import("./services/delhivery");
+      const client = await getDelhiveryClient(storeId);
+
+      const simplify = (status: string | undefined, statusType: string | undefined) => {
+        const s = (status ?? "").toLowerCase();
+        if (s === "delivered") return "Delivered";
+        if (s.includes("rto") && s.includes("deliver")) return "RTO Delivered";
+        if (statusType === "RT" || s.includes("rto") || s.includes("return")) return "In Transit (RTO)";
+        if (statusType === "UD") return "NDR";
+        if (s.includes("transit") || s === "dispatched" || s === "manifested" || s === "in transit" || s.includes("out for delivery")) return "In Transit";
+        return status ?? "Unknown";
+      };
+
+      const results = await Promise.all(
+        awbs.map(async (awb: string) => {
+          try {
+            const track = await client.trackShipment(awb);
+            if (!track.success) return { awb, simplified: "Error", status: track.error ?? "Unknown", location: "", scannedAt: "" };
+            const activities = track.activities ?? [];
+            const latest = activities[0];
+            return {
+              awb,
+              simplified: simplify(track.status, track.statusCode),
+              status: track.status ?? "Unknown",
+              location: track.location ?? latest?.location ?? "",
+              scannedAt: latest?.datetime ?? "",
+            };
+          } catch (e: any) {
+            return { awb, simplified: "Error", status: e?.message ?? String(e), location: "", scannedAt: "" };
+          }
+        }),
+      );
+
+      res.json({ storeId, results });
+    } catch (err: any) {
+      console.error("Error in POST /api/tools/track-awbs:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+    }
+  });
+
   app.all("/api/cron/close-stale-ndr", async (req, res) => {
     const vercelSecret = process.env.CRON_SECRET;
     const customSecret = process.env.NDR_CRON_SECRET;
