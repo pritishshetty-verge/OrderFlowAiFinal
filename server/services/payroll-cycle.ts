@@ -242,7 +242,14 @@ export async function generateCycle(args: {
     )
     .limit(1);
 
-  if (existing) {
+  // Self-heal: a cycle row with 0 ledgers means an earlier
+  // generate crashed mid-flight (Vercel timeout after cycle insert
+  // but before ledger inserts). Delete it and regenerate so admins
+  // don't get stuck with a permanently empty August cycle.
+  if (existing && existing.employeeCount === 0 && existing.status !== "approved") {
+    await db.delete(payrollLedger).where(eq(payrollLedger.cycleId, existing.id));
+    await db.delete(payrollCycles).where(eq(payrollCycles.id, existing.id));
+  } else if (existing) {
     return {
       ok: true,
       cycle: existing,
