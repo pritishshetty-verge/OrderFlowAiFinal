@@ -78,6 +78,12 @@ export async function buildLedgerRow(args: {
   );
   const expectedDays = expectedWorkingDays(year, month);
 
+  // GMV attribution runs a coupon-tokenised query against orders
+  // with correlated subqueries — heavy on Vercel's serverless
+  // timeout. Only ORDER_CONFIRMATION agents ever consume the value,
+  // so gate the fetch on profile to keep buildLedgerRow fast for
+  // NDR_RTO / DEVELOPER / CHAT_SUPPORT.
+  const gmvNeeded = (user.compensationProfile as CompensationProfile) === "ORDER_CONFIRMATION";
   const [attendance, holidaysAuto, confirmRate, teamRate, brandTdr, brandNdr, reships, ytdHolidays, deliveredGmv] =
     await Promise.all([
       getAttendanceMetrics(user.id, year, month),
@@ -88,10 +94,7 @@ export async function buildLedgerRow(args: {
       getBrandNDRDeliveryRate(storeId, year, month),
       getReshipmentsDeliveredCount(storeId, year, month),
       getYtdPaidHolidaysUsed(user.id, year, month),
-      // GMV only matters for ORDER_CONFIRMATION agents — but we
-      // fetch unconditionally so overrides can flip profile without
-      // a second round-trip. Cheap query, storeId is required.
-      getDeliveredGMVForAgent(user.id, storeId, year, month),
+      gmvNeeded ? getDeliveredGMVForAgent(user.id, storeId, year, month) : Promise.resolve(0),
     ]);
 
   const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
