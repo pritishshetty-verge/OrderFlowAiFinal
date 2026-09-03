@@ -276,16 +276,53 @@ export async function getDeliveredGMVForAgent(
   month: number,
 ): Promise<number> {
   const { start, end } = monthRangeUtc(year, month);
-  const r: any = await db.execute(sql`
-    SELECT COALESCE(SUM(CAST(total_price AS numeric)), 0)::numeric AS gmv
-    FROM orders
-    WHERE store_id     = ${storeId}
-      AND confirmed_by = ${userId}
-      AND status       = 'delivered'
-      AND confirmed_at >= ${start.toISOString()}::timestamptz
-      AND confirmed_at <  ${end.toISOString()}::timestamptz
+
+  // Look up the agent's coupon code — attribution mirrors the
+  // existing /api/agents/me/performance dashboard (users.coupon_code
+  // tokenised against orders.discount_code / discount_codes).
+  const userRow: any = await db.execute(sql`
+    SELECT coupon_code FROM users WHERE id = ${userId} LIMIT 1
   `);
-  const row = ((r as any).rows ?? r)[0] ?? { gmv: 0 };
+  const couponRaw: string | null =
+    ((userRow?.rows ?? [])[0]?.coupon_code ?? null);
+  if (!couponRaw || !couponRaw.trim()) return 0;
+  const code = couponRaw.trim().toLowerCase();
+
+  // Delivered-in-month bucket keys on shipments.delivered_at first
+  // (courier's real delivery timestamp), falling back to the
+  // order_status_history row for the → delivered transition. Same
+  // COALESCE pattern getConvertedOrdersForCoupon uses.
+  const r: any = await db.execute(sql`
+    SELECT COALESCE(SUM(CAST(o.total_price AS numeric)), 0)::numeric AS gmv
+    FROM orders o
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(
+        (SELECT MAX(s.delivered_at) FROM shipments s WHERE s.order_id = o.id),
+        (SELECT MAX(h.created_at) FROM order_status_history h
+           WHERE h.order_id = o.id AND h.status = 'delivered')
+      ) AS delivered_at
+    ) dt ON TRUE
+    WHERE o.store_id = ${storeId}
+      AND o.status = 'delivered'
+      AND (
+        EXISTS (
+          SELECT 1 FROM regexp_split_to_table(
+            LOWER(COALESCE(o.discount_code, '')), '[^a-z0-9]+'
+          ) AS tok(token)
+          WHERE tok.token = ${code}
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(o.discount_codes, '[]'::jsonb)
+          ) AS dc(code_str),
+          regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
+          WHERE tok.token = ${code}
+        )
+      )
+      AND dt.delivered_at >= ${start.toISOString()}::timestamptz
+      AND dt.delivered_at <  ${end.toISOString()}::timestamptz
+  `);
+  const row = ((r?.rows ?? []) as any[])[0] ?? { gmv: 0 };
   return Number(row.gmv ?? 0);
 }
 
