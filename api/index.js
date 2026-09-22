@@ -15,9 +15,14 @@ __export(schema_exports, {
   ABANDONED_RECOVERY_STATUSES: () => ABANDONED_RECOVERY_STATUSES,
   ACCESS_MODULES: () => ACCESS_MODULES,
   DEFAULT_MANAGER_PERMISSIONS: () => DEFAULT_MANAGER_PERMISSIONS,
+  PAYROLL_CYCLE_STATUSES: () => PAYROLL_CYCLE_STATUSES,
   PG_NAMES: () => PG_NAMES,
   PG_SETTLEMENT_STATUSES: () => PG_SETTLEMENT_STATUSES,
   REFUND_TYPES: () => REFUND_TYPES,
+  RESHIPMENT_MUTABLE_STATUSES: () => RESHIPMENT_MUTABLE_STATUSES,
+  RESHIPMENT_REASONS: () => RESHIPMENT_REASONS,
+  RESHIPMENT_STATUSES: () => RESHIPMENT_STATUSES,
+  RESHIPMENT_URGENCIES: () => RESHIPMENT_URGENCIES,
   RETURN_STATUSES: () => RETURN_STATUSES,
   SHIPPING_STATUSES: () => SHIPPING_STATUSES,
   SHIPPING_STATUS_LABELS: () => SHIPPING_STATUS_LABELS,
@@ -52,11 +57,13 @@ __export(schema_exports, {
   insertOrderItemSchema: () => insertOrderItemSchema,
   insertOrderSchema: () => insertOrderSchema,
   insertOrderStatusHistorySchema: () => insertOrderStatusHistorySchema,
+  insertPayrollCycleSchema: () => insertPayrollCycleSchema,
   insertPayrollLedgerSchema: () => insertPayrollLedgerSchema,
   insertPgRateCardSchema: () => insertPgRateCardSchema,
   insertPgSettlementSchema: () => insertPgSettlementSchema,
   insertProductSchema: () => insertProductSchema,
   insertReconUploadSchema: () => insertReconUploadSchema,
+  insertReshipmentLogSchema: () => insertReshipmentLogSchema,
   insertResourceSchema: () => insertResourceSchema,
   insertReturnItemSchema: () => insertReturnItemSchema,
   insertReturnSchema: () => insertReturnSchema,
@@ -82,6 +89,7 @@ __export(schema_exports, {
   orderItems: () => orderItems,
   orderStatusHistory: () => orderStatusHistory,
   orders: () => orders,
+  payrollCycles: () => payrollCycles,
   payrollLedger: () => payrollLedger,
   payrollSyncRuns: () => payrollSyncRuns,
   pgRateCards: () => pgRateCards,
@@ -89,6 +97,7 @@ __export(schema_exports, {
   pincodeTiers: () => pincodeTiers,
   products: () => products,
   reconUploads: () => reconUploads,
+  reshipmentLogs: () => reshipmentLogs,
   resources: () => resources,
   returnItems: () => returnItems,
   returns: () => returns,
@@ -109,7 +118,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, decimal, jsonb, serial, date, unique, primaryKey, index, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
-var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, payrollSyncRuns, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema, pgSettlements, insertPgSettlementSchema, PG_SETTLEMENT_STATUSES, PG_NAMES, reconUploads, insertReconUploadSchema, pgRateCards, insertPgRateCardSchema;
+var sessions, users, insertUserSchema, updateUserSchema, ACCESS_MODULES, DEFAULT_MANAGER_PERMISSIONS, invites, insertInviteSchema, stores, insertStoreSchema, userStores, insertUserStoreSchema, marketingMetrics, pincodeTiers, customers, insertCustomerSchema, orders, insertOrderSchema, orderItems, insertOrderItemSchema, products, insertProductSchema, catalogProducts, insertCatalogProductSchema, orderAssignments, insertOrderAssignmentSchema, orderStatusHistory, insertOrderStatusHistorySchema, shopifySyncLogs, insertShopifySyncLogSchema, leaveRequests, insertLeaveRequestSchema, payrollSyncRuns, webhookLogs, insertWebhookLogSchema, shopifyCredentials, insertShopifyCredentialsSchema, attendance, insertAttendanceSchema, attendanceBreaks, insertAttendanceBreakSchema, holidays, insertHolidaySchema, PAYROLL_CYCLE_STATUSES, payrollCycles, insertPayrollCycleSchema, payrollLedger, insertPayrollLedgerSchema, calls, insertCallSchema, notifications, insertNotificationSchema, courses, insertCourseSchema, lessons, insertLessonSchema, userLessonProgress, insertUserLessonProgressSchema, lessonAnalytics, insertLessonAnalyticsSchema, resources, insertResourceSchema, onboardingChecklists, insertOnboardingChecklistSchema, userOnboardingProgress, insertUserOnboardingProgressSchema, shipments, insertShipmentSchema, ndrEvents, insertNdrEventSchema, RETURN_STATUSES, REFUND_TYPES, SHIPPING_STATUSES, SHIPPING_STATUS_LABELS, returns, returnItems, insertReturnSchema, insertReturnItemSchema, appSettings, insertAppSettingSchema, abandonedCheckouts, ABANDONED_RECOVERY_STATUSES, insertAbandonedCheckoutSchema, webhooks, insertWebhookSchema, inboundWebhookLogs, insertInboundWebhookLogSchema, pgSettlements, insertPgSettlementSchema, PG_SETTLEMENT_STATUSES, PG_NAMES, reconUploads, insertReconUploadSchema, pgRateCards, insertPgRateCardSchema, RESHIPMENT_REASONS, RESHIPMENT_URGENCIES, RESHIPMENT_STATUSES, RESHIPMENT_MUTABLE_STATUSES, reshipmentLogs, insertReshipmentLogSchema;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -851,8 +860,47 @@ var init_schema = __esm({
       id: true,
       createdAt: true
     });
+    PAYROLL_CYCLE_STATUSES = ["pending", "approved"];
+    payrollCycles = pgTable(
+      "payroll_cycles",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+        year: integer("year").notNull(),
+        month: integer("month").notNull(),
+        // 1–12
+        status: text("status").notNull().default("pending").$type(),
+        // Aggregate cache (denormalised from child ledgers for cheap dashboard reads)
+        employeeCount: integer("employee_count").notNull().default(0),
+        totalPayout: decimal("total_payout", { precision: 14, scale: 2 }).notNull().default("0"),
+        // Lifecycle
+        generatedAt: timestamp("generated_at").notNull().defaultNow(),
+        generatedBy: varchar("generated_by").references(() => users.id, { onDelete: "set null" }),
+        approvedAt: timestamp("approved_at"),
+        approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        // One cycle per store per month.
+        storeYearMonthIdx: index("payroll_cycles_store_year_month_idx").on(
+          table.storeId,
+          table.year,
+          table.month
+        )
+      })
+    );
+    insertPayrollCycleSchema = createInsertSchema(payrollCycles).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
     payrollLedger = pgTable("payroll_ledger", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      // Optional FK to the parent cycle. Ledger rows created before the
+      // cycles table existed (or via the legacy /api/payroll/run endpoint)
+      // stay valid with cycleId = null.
+      cycleId: varchar("cycle_id").references(() => payrollCycles.id, { onDelete: "set null" }),
       userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
       year: integer("year").notNull(),
       month: integer("month").notNull(),
@@ -862,6 +910,10 @@ var init_schema = __esm({
       expectedWorkingDays: integer("expected_working_days").notNull(),
       daysPresent: integer("days_present").notNull(),
       paidHolidaysUsed: integer("paid_holidays_used").notNull().default(0),
+      // Unpaid leaves — pro-rata deduction from base pay (base × unpaid/expectedDays).
+      // Distinct from daysPresent because a day can be "absent unpaid" without
+      // affecting the days-present count directly.
+      unpaidLeaves: integer("unpaid_leaves").notNull().default(0),
       // Capped ratio ((daysPresent + paidHolidays) / expectedDays), max 1.0
       basePayRatio: decimal("base_pay_ratio", { precision: 5, scale: 4 }).notNull(),
       basePayAmount: decimal("base_pay_amount", { precision: 12, scale: 2 }).notNull(),
@@ -878,6 +930,16 @@ var init_schema = __esm({
       recoveryBonus: decimal("recovery_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
       reshipsBonus: decimal("reships_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
       totalIncentives: decimal("total_incentives", { precision: 12, scale: 2 }).notNull().default("0"),
+      // ── Reimbursement (fixed monthly, editable per payslip) ─────────
+      // Legacy — kept for existing rows. New payslips express this via
+      // lineItems below (a "Reimbursement" component); the cycle math
+      // treats reimbursement + line-items uniformly as "Additions".
+      reimbursement: decimal("reimbursement", { precision: 12, scale: 2 }).notNull().default("0"),
+      // ── Custom Fixed-Pay line items (from "+ Add component" UI) ──────
+      // JSONB array of { label: string, amount: number }. Admin-defined
+      // labels flow through to RazorpayX as the "Additions" payload on
+      // approval — one entry per label, verbatim.
+      lineItems: jsonb("line_items").notNull().default(sql`'[]'::jsonb`),
       // ── Final payout ────────────────────────────────────────────────
       finalPayout: decimal("final_payout", { precision: 12, scale: 2 }).notNull(),
       currency: text("currency").notNull().default("INR"),
@@ -1561,6 +1623,92 @@ var init_schema = __esm({
       createdAt: true,
       updatedAt: true
     });
+    RESHIPMENT_REASONS = [
+      "courier_error",
+      "customer_unavailable",
+      "fake_delivery",
+      "address_issue",
+      "product_damaged",
+      "other"
+    ];
+    RESHIPMENT_URGENCIES = ["instant", "scheduled"];
+    RESHIPMENT_STATUSES = [
+      "pending",
+      "in_transit",
+      "ndr",
+      "delivered",
+      "rto",
+      "cancelled"
+    ];
+    RESHIPMENT_MUTABLE_STATUSES = ["pending"];
+    reshipmentLogs = pgTable(
+      "reshipment_logs",
+      {
+        id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+        storeId: varchar("store_id").notNull().references(() => stores.id, { onDelete: "cascade" }),
+        /** OrderFlow row id of the original failed order (FK). */
+        originalOrderId: varchar("original_order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+        /** Shopify's numeric id + display name of the original, denormalised
+         *  so the dashboard's "#1234" link doesn't need a join on every row. */
+        originalShopifyOrderId: text("original_shopify_order_id").notNull(),
+        originalShopifyOrderName: text("original_shopify_order_name").notNull(),
+        /** New (duplicate) order's Shopify ids. Nullable until the Shopify
+         *  API create round-trip succeeds. */
+        newShopifyOrderId: text("new_shopify_order_id"),
+        newShopifyOrderName: text("new_shopify_order_name"),
+        customerName: text("customer_name").notNull(),
+        customerPhone: text("customer_phone").notNull(),
+        /** JSONB — operator may edit phone/address in the modal (updated
+         *  pincode etc.); this is the payload we sent to Shopify. */
+        shippingAddress: jsonb("shipping_address").notNull(),
+        reason: text("reason").notNull().$type(),
+        urgencyType: text("urgency_type").notNull().$type(),
+        scheduledDate: date("scheduled_date"),
+        internalNotes: text("internal_notes"),
+        /** cod | prepaid — inherited from the original order at request time. */
+        paymentType: text("payment_type").notNull(),
+        trackingAwb: text("tracking_awb"),
+        courierName: text("courier_name"),
+        courierStatus: text("courier_status").notNull().default("pending").$type(),
+        createdBy: varchar("created_by").references(() => users.id, {
+          onDelete: "set null"
+        }),
+        /** Denormalised at creation so the audit trail survives the user
+         *  being renamed or deleted (PRD §7 wants a stored name, not only a
+         *  derived one). The live join still wins for display. */
+        createdByName: text("created_by_name"),
+        cancelledAt: timestamp("cancelled_at"),
+        cancelledBy: varchar("cancelled_by").references(() => users.id, {
+          onDelete: "set null"
+        }),
+        createdAt: timestamp("created_at").notNull().defaultNow(),
+        updatedAt: timestamp("updated_at").notNull().defaultNow()
+      },
+      (table) => ({
+        storeCreatedIdx: index("reshipment_logs_store_created_idx").on(
+          table.storeId,
+          table.createdAt
+        ),
+        originalIdx: index("reshipment_logs_original_idx").on(
+          table.storeId,
+          table.originalOrderId
+        ),
+        newShopifyIdx: index("reshipment_logs_new_shopify_idx").on(
+          table.storeId,
+          table.newShopifyOrderId
+        ),
+        awbIdx: index("reshipment_logs_awb_idx").on(table.trackingAwb),
+        statusIdx: index("reshipment_logs_status_idx").on(
+          table.storeId,
+          table.courierStatus
+        )
+      })
+    );
+    insertReshipmentLogSchema = createInsertSchema(reshipmentLogs).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
   }
 });
 
@@ -1668,7 +1816,7 @@ __export(storage_exports, {
   DbStorage: () => DbStorage,
   storage: () => storage
 });
-import { eq, and, desc, asc, or, count, gte, lte, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
+import { eq, and, desc, asc, or, count, gte, lte, lt, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
 function getRandomAvatar() {
   return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
 }
@@ -2859,6 +3007,48 @@ var init_storage = __esm({
       async updateNDREvent(id, data) {
         const [updated] = await db.update(ndrEvents).set({ ...data, updatedAt: /* @__PURE__ */ new Date() }).where(eq(ndrEvents.id, id)).returning();
         return updated;
+      }
+      // Dedupe helper. Delhivery/Shiprocket occasionally re-fire the same NDR
+      // webhook (network hiccup, retry logic). Without a guard we insert a
+      // duplicate ndr_events row per re-fire, inflating the denominator of
+      // NDR Delivery Rate. Match on (awb, ndrDate) within a small window — a
+      // real second NDR attempt for the same AWB won't happen within minutes
+      // of the first. Returns the existing row if a near-duplicate is found.
+      async findRecentNDREvent(awb, ndrDate, windowMinutes = 5) {
+        const windowMs = windowMinutes * 60 * 1e3;
+        const lo = new Date(ndrDate.getTime() - windowMs);
+        const hi = new Date(ndrDate.getTime() + windowMs);
+        const [existing] = await db.select().from(ndrEvents).where(
+          and(
+            eq(ndrEvents.awb, awb),
+            gte(ndrEvents.ndrDate, lo),
+            lte(ndrEvents.ndrDate, hi)
+          )
+        ).orderBy(desc(ndrEvents.ndrDate)).limit(1);
+        return existing;
+      }
+      // Terminal-status closer. When a shipment finally delivers / RTOs /
+      // cancels, mark every unresolved ndr_events row for that AWB as
+      // resolved with the right resolution. This is what makes NDR Delivery
+      // Rate (delivered NDRs / total NDRs) computable — closes the loop.
+      // Returns the number of rows updated.
+      async resolveOpenNDREvents(awb, resolution, resolvedAt = /* @__PURE__ */ new Date()) {
+        const updated = await db.update(ndrEvents).set({
+          resolved: true,
+          resolvedAt,
+          resolution,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(and(eq(ndrEvents.awb, awb), eq(ndrEvents.resolved, false))).returning({ id: ndrEvents.id });
+        return updated.length;
+      }
+      // Fallback-poll candidates. If Delhivery ever drops a delivery webhook
+      // (they occasionally do), the corresponding ndr_events row stays open
+      // forever and never counts toward Delivery Rate. This picks up rows
+      // whose ndr_date is older than `olderThanHours` so the poll cron can
+      // re-check them against the live tracking API and close them.
+      async listStaleUnresolvedNDREvents(olderThanHours, limit = 200) {
+        const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1e3);
+        return await db.select().from(ndrEvents).where(and(eq(ndrEvents.resolved, false), lt(ndrEvents.ndrDate, cutoff))).orderBy(asc(ndrEvents.ndrDate)).limit(limit);
       }
       async listUnresolvedNDREvents(filters) {
         const baseConds = [eq(ndrEvents.resolved, false)];
@@ -4286,21 +4476,33 @@ async function updateShopifyClient() {
 async function loadShopifyConfigForStore(storeId) {
   const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
   const { stores: stores2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-  const { eq: eq9 } = await import("drizzle-orm");
+  const { eq: eq11 } = await import("drizzle-orm");
   const { decrypt: decrypt2 } = await Promise.resolve().then(() => (init_encryption(), encryption_exports));
-  const [row] = await db2.select().from(stores2).where(eq9(stores2.id, storeId)).limit(1);
+  const [row] = await db2.select().from(stores2).where(eq11(stores2.id, storeId)).limit(1);
   if (!row) {
     throw new Error(
       `[Shopify] getShopifyClient: no stores row for id ${storeId}`
     );
   }
-  return {
-    storeUrl: row.storeUrl,
-    apiKey: row.apiKey ? decrypt2(row.apiKey) : "",
-    apiSecret: row.apiSecret ? decrypt2(row.apiSecret) : "",
-    webhookSecret: row.webhookSecret ? decrypt2(row.webhookSecret) : void 0,
-    useClientCredentials: true
-  };
+  try {
+    return {
+      storeUrl: row.storeUrl,
+      apiKey: row.apiKey ? decrypt2(row.apiKey) : "",
+      apiSecret: row.apiSecret ? decrypt2(row.apiSecret) : "",
+      webhookSecret: row.webhookSecret ? decrypt2(row.webhookSecret) : void 0,
+      useClientCredentials: true
+    };
+  } catch (e) {
+    if (row.storeUrl && row.storeUrl === shopDomain && initialConfig.apiKey) {
+      console.warn(
+        `[Shopify] decrypt failed for store ${storeId}; using env credentials for ${shopDomain} (local dev fallback)`
+      );
+      return { ...initialConfig, storeUrl: row.storeUrl };
+    }
+    throw new Error(
+      `[Shopify] cannot decrypt credentials for store ${storeId} and env fallback doesn't match (${row.storeUrl} vs ${shopDomain}): ${e?.message ?? e}`
+    );
+  }
 }
 async function getShopifyClient(storeId) {
   const cached = clientCache.get(storeId);
@@ -4434,6 +4636,33 @@ var init_shopify = __esm({
           throw new Error(`Shopify API error: ${response.statusText}`);
         }
         return await response.json();
+      }
+      /**
+       * Create a new order in Shopify. Used by the reshipments flow to
+       * duplicate an existing order with the correct financial framing
+       * (see server/reshipments/payload.ts for the body shape).
+       *
+       * Returns the freshly created order object so callers can persist
+       * its shopify id and generated name (e.g. "#1234-R1").
+       */
+      async createOrder(body) {
+        const url = `${this.baseUrl}/orders.json`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            ...await this.getHeaders(),
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+          const errorBody = await response.text();
+          throw new Error(
+            `Shopify createOrder failed: ${response.status} ${response.statusText} \u2014 ${errorBody.slice(0, 400)}`
+          );
+        }
+        const data = await response.json();
+        return data.order;
       }
       async fetchCustomer(customerId) {
         const url = `${this.baseUrl}/customers/${customerId}.json`;
@@ -5159,6 +5388,457 @@ var init_unifiedStatus = __esm({
   }
 });
 
+// server/reshipments/payload.ts
+function sanitizeSuffix(raw) {
+  const c = (raw ?? "R").toUpperCase().trim();
+  return /^[A-Z]$/.test(c) ? c : "R";
+}
+function buildReshipmentPayload(args) {
+  const isCOD = args.paymentType === "cod";
+  const line_items = args.original.line_items.map((li) => ({
+    variant_id: li.variant_id ?? void 0,
+    quantity: li.quantity,
+    // Preserving `price` keeps subtotal_price visible in the merchant's
+    // dashboard, matching the original's line values. Shopify expects a
+    // string with 2 decimals; normalise defensively.
+    price: money(Number(li.price ?? 0)),
+    // Passthrough — Shopify uses these for variant fallback if the
+    // variant has since been archived.
+    title: li.title ?? li.name,
+    sku: li.sku ?? void 0,
+    taxable: li.taxable,
+    requires_shipping: li.requires_shipping
+  }));
+  const subtotal = args.original.line_items.reduce(
+    (s, li) => s + Number(li.price ?? 0) * (li.quantity ?? 0),
+    0
+  );
+  const originalGateway = args.original.payment_gateway_names?.[0] ?? (isCOD ? "COD" : "manual");
+  const originalDiscountCodes = (args.original.discount_codes ?? []).filter((d) => !!d?.code).map((d) => ({
+    code: String(d.code),
+    amount: money(Number(d.amount ?? 0)),
+    type: d.type ?? "fixed_amount"
+  }));
+  const primaryOriginalCode = originalDiscountCodes[0]?.code ?? null;
+  const originalTotalDiscounts = Number(args.original.total_discounts ?? 0);
+  const tags = ["Reshipment", `Original:${args.original.name}`];
+  if (args.urgency === "scheduled" && args.scheduledDate) {
+    tags.push(`Hold_Until_${args.scheduledDate}`);
+  }
+  tags.push(`Reason:${args.reason}`);
+  const body = {
+    // `name` — Shopify overwrites this on most plans; we still set it
+    // so the intent is explicit, and stores that DO allow custom names
+    // (Shopify Plus) end up with the correct "#1234R" (or "C") naming.
+    name: `${args.original.name}${sanitizeSuffix(args.nameSuffix)}`,
+    currency: args.original.currency ?? "INR",
+    line_items,
+    tags: tags.join(", "),
+    note: `Reshipment of ${args.original.name}. Reason: ${args.reason}.${args.internalNotes ? " " + args.internalNotes : ""}`,
+    note_attributes: [
+      { name: "reshipment_of", value: String(args.original.id) },
+      { name: "reshipment_of_name", value: args.original.name },
+      { name: "reshipment_reason", value: args.reason },
+      { name: "reshipment_urgency", value: args.urgency },
+      ...args.scheduledDate ? [{ name: "reshipment_scheduled_date", value: args.scheduledDate }] : [],
+      ...primaryOriginalCode ? [{ name: "original_discount_code", value: primaryOriginalCode }] : []
+    ],
+    shipping_address: {
+      ...args.shippingAddress,
+      country: args.shippingAddress.country ?? "India",
+      country_code: args.shippingAddress.country_code ?? "IN",
+      phone: args.customerPhone,
+      first_name: args.shippingAddress.first_name ?? args.customerName.split(" ")[0],
+      last_name: args.shippingAddress.last_name ?? args.customerName.split(" ").slice(1).join(" "),
+      name: args.shippingAddress.name ?? args.customerName
+    },
+    billing_address: {
+      ...args.shippingAddress,
+      country: args.shippingAddress.country ?? "India",
+      country_code: args.shippingAddress.country_code ?? "IN",
+      phone: args.customerPhone,
+      first_name: args.shippingAddress.first_name ?? args.customerName.split(" ")[0],
+      last_name: args.shippingAddress.last_name ?? args.customerName.split(" ").slice(1).join(" "),
+      name: args.shippingAddress.name ?? args.customerName
+    },
+    customer: {
+      first_name: args.customerName.split(" ")[0],
+      last_name: args.customerName.split(" ").slice(1).join(" ") || void 0,
+      phone: args.customerPhone,
+      email: args.customerEmail
+    },
+    // We create the order as "unfulfilled" so the merchant's normal
+    // fulfillment flow (Delhivery hook in the app) generates the AWB.
+    inventory_behaviour: "bypass",
+    // don't decrement stock again
+    send_receipt: false,
+    send_fulfillment_receipt: false
+  };
+  if (isCOD) {
+    body.financial_status = "pending";
+    if (originalDiscountCodes.length) {
+      body.discount_codes = originalDiscountCodes;
+      body.total_discounts = money(originalTotalDiscounts);
+    }
+    const netAmount = Math.max(0, subtotal - originalTotalDiscounts);
+    if (netAmount > 0) {
+      body.transactions = [
+        {
+          kind: "sale",
+          status: "pending",
+          amount: money(netAmount),
+          currency: args.original.currency ?? "INR",
+          gateway: originalGateway
+        }
+      ];
+    }
+  } else {
+    body.discount_codes = [
+      {
+        code: primaryOriginalCode ?? "RESHIPMENT_ALREADY_PAID",
+        amount: money(subtotal),
+        type: "fixed_amount"
+      }
+    ];
+    body.total_discounts = money(subtotal);
+    body.financial_status = "paid";
+  }
+  return { order: body };
+}
+var money;
+var init_payload = __esm({
+  "server/reshipments/payload.ts"() {
+    "use strict";
+    money = (v) => (Math.round(v * 100) / 100).toFixed(2);
+  }
+});
+
+// server/reshipments/service.ts
+var service_exports = {};
+__export(service_exports, {
+  ReshipmentError: () => ReshipmentError,
+  cancelReshipment: () => cancelReshipment,
+  createReshipment: () => createReshipment,
+  getReshipmentStats: () => getReshipmentStats,
+  listReshipments: () => listReshipments,
+  updateFromFulfillment: () => updateFromFulfillment,
+  updateReshipment: () => updateReshipment,
+  updateStatusByAwb: () => updateStatusByAwb
+});
+import { and as and3, desc as desc2, eq as eq4, or as or2, sql as sql3 } from "drizzle-orm";
+async function createReshipment(input) {
+  const [order] = await db.select().from(orders).where(
+    and3(eq4(orders.id, input.originalOrderId), eq4(orders.storeId, input.storeId))
+  ).limit(1);
+  if (!order) {
+    throw new ReshipmentError("Original order not found in this store.", 404);
+  }
+  if (!order.shopifyOrderId) {
+    throw new ReshipmentError(
+      "Original order has no Shopify id \u2014 cannot duplicate.",
+      400
+    );
+  }
+  const existing = await db.select().from(reshipmentLogs).where(
+    and3(
+      eq4(reshipmentLogs.storeId, input.storeId),
+      eq4(reshipmentLogs.originalOrderId, input.originalOrderId),
+      or2(...LIVE_STATUSES.map((s) => eq4(reshipmentLogs.courierStatus, s)))
+    )
+  ).limit(1);
+  if (existing.length) {
+    const dup = existing[0];
+    throw new ReshipmentError(
+      `A live reshipment already exists for this order (${dup.newShopifyOrderName ?? dup.id}, status: ${dup.courierStatus}). Chase that one instead.`,
+      409
+    );
+  }
+  const shop = await getShopifyClient(input.storeId);
+  let rawOrder;
+  try {
+    rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+  } catch (e) {
+    const msg = String(e?.message ?? e);
+    if (/payment required|402/i.test(msg)) {
+      throw new ReshipmentError(
+        "This store's Shopify account is frozen or closed, so orders can't be created in it. Switch to an active store using the store switcher, or resolve the Shopify billing issue.",
+        409
+      );
+    }
+    if (/not found|404/i.test(msg)) {
+      throw new ReshipmentError(
+        "That order no longer exists in Shopify (it may have been deleted). Pick a different order.",
+        404
+      );
+    }
+    throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+  }
+  const shopifyOrder = rawOrder?.order ?? rawOrder;
+  if (!shopifyOrder?.line_items?.length) {
+    throw new ReshipmentError(
+      "Shopify returned no line items for the original order.",
+      502
+    );
+  }
+  const paymentType = (order.paymentMethod ?? "").toLowerCase().includes("cod") ? "cod" : "prepaid";
+  const payload = buildReshipmentPayload({
+    original: {
+      id: shopifyOrder.id,
+      name: shopifyOrder.name,
+      currency: shopifyOrder.currency,
+      total_price: shopifyOrder.total_price,
+      total_discounts: shopifyOrder.total_discounts,
+      payment_gateway_names: shopifyOrder.payment_gateway_names,
+      // Inherit the parent order's discount code(s) — e.g. TARA10 — so
+      // the reshipment shows against the same coupon in Shopify Discounts
+      // and gets credited by agent-attribution reports.
+      discount_codes: shopifyOrder.discount_codes,
+      line_items: shopifyOrder.line_items
+    },
+    customerName: input.customerName,
+    customerPhone: input.customerPhone,
+    customerEmail: order.customerEmail ?? shopifyOrder.email ?? void 0,
+    shippingAddress: input.shippingAddress,
+    reason: input.reason,
+    urgency: input.urgency,
+    scheduledDate: input.scheduledDate,
+    internalNotes: input.internalNotes,
+    paymentType,
+    nameSuffix: input.nameSuffix ?? void 0
+  });
+  const created = await shop.createOrder(payload);
+  const [row] = await db.insert(reshipmentLogs).values({
+    storeId: input.storeId,
+    originalOrderId: input.originalOrderId,
+    originalShopifyOrderId: order.shopifyOrderId,
+    originalShopifyOrderName: order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`,
+    newShopifyOrderId: String(created.id),
+    // Shopify silently reassigns `name` on non-Plus plans, so the
+    // returned value can differ from what we requested. Prefer
+    // Shopify's own name (it's what the merchant sees in admin);
+    // fall back to our "#1234R" convention when absent.
+    newShopifyOrderName: created.name ?? `${order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`}R`,
+    customerName: input.customerName,
+    customerPhone: input.customerPhone,
+    shippingAddress: input.shippingAddress,
+    reason: input.reason,
+    urgencyType: input.urgency,
+    scheduledDate: input.scheduledDate ?? null,
+    internalNotes: input.internalNotes ?? null,
+    paymentType,
+    courierStatus: "pending",
+    createdBy: input.createdBy ?? null,
+    createdByName: input.createdByName ?? null
+  }).returning();
+  return row;
+}
+async function listReshipments(storeId, filter = "all", opts = {}) {
+  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql3`TRUE`;
+  if (filter === "attention") {
+    return db.select(rowShape).from(reshipmentLogs).leftJoin(orders, eq4(orders.id, reshipmentLogs.originalOrderId)).leftJoin(users, eq4(users.id, reshipmentLogs.createdBy)).where(
+      and3(
+        eq4(reshipmentLogs.storeId, storeId),
+        scopeCreator,
+        or2(
+          eq4(reshipmentLogs.courierStatus, "ndr"),
+          eq4(reshipmentLogs.courierStatus, "rto"),
+          sql3`${orders.status} IN ('rto_initiated','rto_ofd','rto_delivered')`
+        )
+      )
+    ).orderBy(desc2(reshipmentLogs.createdAt));
+  }
+  return db.select(rowShape).from(reshipmentLogs).leftJoin(users, eq4(users.id, reshipmentLogs.createdBy)).where(and3(eq4(reshipmentLogs.storeId, storeId), scopeCreator)).orderBy(desc2(reshipmentLogs.createdAt));
+}
+async function getReshipmentStats(storeId, opts = {}) {
+  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql3`TRUE`;
+  const res = await db.execute(sql3`
+    SELECT
+      COUNT(*)::int4 AS total,
+      COUNT(*) FILTER (WHERE courier_status = 'delivered')::int4 AS delivered,
+      COUNT(*) FILTER (WHERE courier_status = 'in_transit')::int4 AS in_transit,
+      COUNT(*) FILTER (WHERE courier_status = 'ndr')::int4 AS ndr,
+      COUNT(*) FILTER (WHERE courier_status = 'rto')::int4 AS rto,
+      COUNT(*) FILTER (WHERE courier_status = 'pending')::int4 AS pending,
+      COUNT(*) FILTER (WHERE courier_status = 'cancelled')::int4 AS cancelled
+    FROM reshipment_logs
+    WHERE store_id = ${storeId}
+      ${opts.createdByOnly ? sql3`AND created_by = ${opts.createdByOnly}` : sql3``}
+  `);
+  const r = (res.rows ?? res)[0] ?? {};
+  return {
+    total: Number(r.total ?? 0),
+    delivered: Number(r.delivered ?? 0),
+    inTransit: Number(r.in_transit ?? 0),
+    ndr: Number(r.ndr ?? 0),
+    rto: Number(r.rto ?? 0),
+    pending: Number(r.pending ?? 0),
+    cancelled: Number(r.cancelled ?? 0)
+  };
+}
+async function getReshipmentOr404(storeId, id, createdByOnly) {
+  const [row] = await db.select().from(reshipmentLogs).where(
+    and3(
+      eq4(reshipmentLogs.id, id),
+      eq4(reshipmentLogs.storeId, storeId),
+      createdByOnly ? eq4(reshipmentLogs.createdBy, createdByOnly) : sql3`TRUE`
+    )
+  ).limit(1);
+  if (!row) throw new ReshipmentError("Reshipment not found.", 404);
+  return row;
+}
+function assertMutable(row, action) {
+  if (row.courierStatus !== "pending") {
+    throw new ReshipmentError(
+      row.courierStatus === "cancelled" ? `This reshipment is already cancelled, so it can't be ${action}.` : `This reshipment has already entered the courier lifecycle (${row.courierStatus.replace(/_/g, " ")}), so it can't be ${action}. Only pending reshipments are editable.`,
+      409
+    );
+  }
+}
+async function updateReshipment(storeId, id, input, opts = {}) {
+  const row = await getReshipmentOr404(storeId, id, opts.createdByOnly);
+  assertMutable(row, "edited");
+  const addressChanged = !!input.shippingAddress || !!input.customerPhone && input.customerPhone !== row.customerPhone;
+  if (addressChanged && row.newShopifyOrderId) {
+    const nextAddress = {
+      ...row.shippingAddress ?? {},
+      ...input.shippingAddress ?? {},
+      phone: input.customerPhone ?? row.customerPhone
+    };
+    const shop = await getShopifyClient(storeId);
+    try {
+      await shop.updateOrderShippingAddress(row.newShopifyOrderId, {
+        firstName: nextAddress.first_name,
+        lastName: nextAddress.last_name,
+        address1: nextAddress.address1,
+        address2: nextAddress.address2,
+        city: nextAddress.city,
+        province: nextAddress.province,
+        zip: nextAddress.zip,
+        country: nextAddress.country ?? "India",
+        phone: input.customerPhone ?? row.customerPhone
+      });
+    } catch (e) {
+      throw new ReshipmentError(
+        `Couldn't update the address on the Shopify order, so nothing was changed here either: ${e?.message ?? e}`,
+        502
+      );
+    }
+  }
+  const [updated] = await db.update(reshipmentLogs).set({
+    customerPhone: input.customerPhone ?? row.customerPhone,
+    shippingAddress: input.shippingAddress ?? row.shippingAddress,
+    reason: input.reason ?? row.reason,
+    urgencyType: input.urgency ?? row.urgencyType,
+    // Clearing the date is meaningful when switching back to instant.
+    scheduledDate: input.urgency === "instant" ? null : input.scheduledDate ?? row.scheduledDate,
+    internalNotes: input.internalNotes !== void 0 ? input.internalNotes : row.internalNotes,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq4(reshipmentLogs.id, id)).returning();
+  return updated;
+}
+async function cancelReshipment(storeId, id, cancelledBy, opts = {}) {
+  const row = await getReshipmentOr404(storeId, id, opts.createdByOnly);
+  assertMutable(row, "cancelled");
+  if (row.newShopifyOrderId) {
+    const shop = await getShopifyClient(storeId);
+    try {
+      await shop.cancelOrder(row.newShopifyOrderId, "other", false, false);
+    } catch (e) {
+      const msg = String(e?.message ?? e);
+      if (/fulfilled/i.test(msg)) {
+        throw new ReshipmentError(
+          "This order has already been fulfilled in Shopify, so it can't be cancelled. The parcel is with the courier \u2014 track it instead.",
+          409
+        );
+      }
+      throw new ReshipmentError(
+        `Shopify wouldn't cancel the duplicate order, so the reshipment was left untouched: ${msg}`,
+        502
+      );
+    }
+  }
+  const [updated] = await db.update(reshipmentLogs).set({
+    courierStatus: "cancelled",
+    cancelledAt: /* @__PURE__ */ new Date(),
+    cancelledBy,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq4(reshipmentLogs.id, id)).returning();
+  return updated;
+}
+async function updateFromFulfillment(params) {
+  await db.update(reshipmentLogs).set({
+    trackingAwb: params.trackingAwb ?? void 0,
+    courierName: params.courierName ?? void 0,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(
+    and3(
+      eq4(reshipmentLogs.storeId, params.storeId),
+      eq4(reshipmentLogs.newShopifyOrderId, params.newShopifyOrderId)
+    )
+  );
+}
+async function updateStatusByAwb(params) {
+  const rows = await db.update(reshipmentLogs).set({
+    courierStatus: params.courierStatus,
+    courierName: params.courierName ?? void 0,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(
+    and3(
+      eq4(reshipmentLogs.trackingAwb, params.awb),
+      // Cancelled is terminal — a late courier scan must not resurrect
+      // a reshipment the operator already called off.
+      sql3`${reshipmentLogs.courierStatus} <> 'cancelled'`
+    )
+  ).returning({ id: reshipmentLogs.id });
+  return rows.length;
+}
+var ReshipmentError, LIVE_STATUSES, rowShape;
+var init_service = __esm({
+  "server/reshipments/service.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_shopify();
+    init_payload();
+    ReshipmentError = class extends Error {
+      status;
+      constructor(message, status = 400) {
+        super(message);
+        this.status = status;
+      }
+    };
+    LIVE_STATUSES = ["pending", "in_transit", "ndr"];
+    rowShape = {
+      id: reshipmentLogs.id,
+      storeId: reshipmentLogs.storeId,
+      originalOrderId: reshipmentLogs.originalOrderId,
+      originalShopifyOrderId: reshipmentLogs.originalShopifyOrderId,
+      originalShopifyOrderName: reshipmentLogs.originalShopifyOrderName,
+      newShopifyOrderId: reshipmentLogs.newShopifyOrderId,
+      newShopifyOrderName: reshipmentLogs.newShopifyOrderName,
+      customerName: reshipmentLogs.customerName,
+      customerPhone: reshipmentLogs.customerPhone,
+      shippingAddress: reshipmentLogs.shippingAddress,
+      reason: reshipmentLogs.reason,
+      urgencyType: reshipmentLogs.urgencyType,
+      scheduledDate: reshipmentLogs.scheduledDate,
+      internalNotes: reshipmentLogs.internalNotes,
+      paymentType: reshipmentLogs.paymentType,
+      trackingAwb: reshipmentLogs.trackingAwb,
+      courierName: reshipmentLogs.courierName,
+      courierStatus: reshipmentLogs.courierStatus,
+      createdBy: reshipmentLogs.createdBy,
+      // Live join wins for display; the stored column is the durable audit
+      // record for when the user is later renamed or removed.
+      createdByName: sql3`COALESCE(${users.fullName}, ${reshipmentLogs.createdByName})`,
+      cancelledAt: reshipmentLogs.cancelledAt,
+      cancelledBy: reshipmentLogs.cancelledBy,
+      createdAt: reshipmentLogs.createdAt,
+      updatedAt: reshipmentLogs.updatedAt
+    };
+  }
+});
+
 // server/resend.ts
 var resend_exports = {};
 __export(resend_exports, {
@@ -5640,234 +6320,6 @@ var init_upload = __esm({
   }
 });
 
-// server/shiprocketWebhook.ts
-var shiprocketWebhook_exports = {};
-__export(shiprocketWebhook_exports, {
-  handleShiprocketWebhook: () => handleShiprocketWebhook
-});
-import crypto5 from "crypto";
-function verifyShiprocketSignature(payload, signature, secret) {
-  if (!signature) {
-    console.error("[Shiprocket Webhook] No signature provided");
-    return false;
-  }
-  try {
-    const hmac = crypto5.createHmac("sha256", secret);
-    hmac.update(payload);
-    const expectedSignature = hmac.digest("hex");
-    return crypto5.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
-  } catch (error) {
-    console.error("[Shiprocket Webhook] Signature verification error:", error);
-    return false;
-  }
-}
-async function handleShiprocketWebhook(req, res) {
-  try {
-    console.log("[Shiprocket Webhook] Received webhook:", {
-      headers: req.headers,
-      body: req.body
-    });
-    const shiprocketWebhookSecret = process.env.SHIPROCKET_WEBHOOK_SECRET;
-    if (!shiprocketWebhookSecret) {
-      console.error("[Shiprocket Webhook] SHIPROCKET_WEBHOOK_SECRET not configured");
-      return res.status(500).json({ error: "Webhook secret not configured" });
-    }
-    const signature = req.headers["x-shiprocket-signature"];
-    const rawBody = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body);
-    if (!verifyShiprocketSignature(rawBody, signature, shiprocketWebhookSecret)) {
-      console.error("[Shiprocket Webhook] Invalid signature");
-      return res.status(401).json({ error: "Invalid signature" });
-    }
-    console.log("[Shiprocket Webhook] Signature verified successfully");
-    const payload = req.body;
-    if (!payload.awb || !payload.current_status) {
-      console.error("[Shiprocket Webhook] Missing required fields");
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-    const shipment = await storage.getShipmentByAWB(payload.awb);
-    if (!shipment) {
-      console.error("[Shiprocket Webhook] Shipment not found:", payload.awb);
-      return res.status(404).json({ error: "Shipment not found" });
-    }
-    await storage.updateShipment(shipment.id, {
-      currentStatus: payload.current_status,
-      statusUpdatedAt: /* @__PURE__ */ new Date(),
-      courierName: payload.courier_name || shipment.courierName
-    });
-    const unifiedStatus = payload.ndr_status ? "ndr" : toUnifiedStatus({ source: "shiprocket", rawStatus: payload.current_status });
-    const isNDR = unifiedStatus === "ndr";
-    const isDelivered = unifiedStatus === "delivered";
-    const isRTO = unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered";
-    await storage.updateOrder(shipment.orderId, {
-      status: unifiedStatus,
-      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || payload.current_status
-    });
-    if (isNDR) {
-      console.log("[Shiprocket Webhook] NDR event detected:", {
-        awb: payload.awb,
-        status: payload.current_status,
-        ndrStatus: payload.ndr_status
-      });
-      let ndrStatus = "other";
-      const statusLower = (payload.current_status || "").toLowerCase();
-      if (statusLower.includes("customer unavailable") || statusLower.includes("not available")) {
-        ndrStatus = "customer_unavailable";
-      } else if (statusLower.includes("address") || statusLower.includes("incomplete")) {
-        ndrStatus = "address_issue";
-      } else if (statusLower.includes("refused") || statusLower.includes("reject")) {
-        ndrStatus = "refused";
-      }
-      await storage.createNDREvent({
-        shipmentId: shipment.id,
-        orderId: shipment.orderId,
-        awb: payload.awb,
-        ndrStatus,
-        ndrReason: payload.comment || payload.current_status,
-        ndrDate: /* @__PURE__ */ new Date(),
-        rawNdrData: payload
-      });
-      const order = await storage.getOrder(shipment.orderId);
-      if (order && order.assignedTo) {
-        await storage.createNotification({
-          userId: order.assignedTo,
-          orderId: shipment.orderId,
-          type: "ndr_alert",
-          title: "NDR Alert: Failed Delivery",
-          message: `Order #${order.shopifyOrderNumber} has a delivery issue: ${payload.comment || payload.current_status}. AWB: ${payload.awb}`,
-          actionUrl: `/orders?orderId=${shipment.orderId}`
-        });
-        console.log("[Shiprocket Webhook] NDR notification created for agent:", order.assignedTo);
-      }
-      await storage.updateShipment(shipment.id, {
-        status: "ndr"
-      });
-    }
-    if (isDelivered) {
-      console.log("[Shiprocket Webhook] Delivery completed:", payload.awb);
-      await storage.updateShipment(shipment.id, {
-        status: "delivered",
-        deliveredAt: /* @__PURE__ */ new Date()
-      });
-    }
-    if (isRTO) {
-      console.log("[Shiprocket Webhook] RTO detected:", payload.awb, unifiedStatus);
-      await storage.updateShipment(shipment.id, {
-        status: "rto",
-        ...unifiedStatus === "rto_delivered" ? { deliveredAt: /* @__PURE__ */ new Date() } : {}
-      });
-    }
-    console.log("[Shiprocket Webhook] Webhook processed successfully:", {
-      awb: payload.awb,
-      status: payload.current_status,
-      unifiedStatus,
-      isNDR,
-      isDelivered,
-      isRTO
-    });
-    res.json({ success: true, message: "Webhook processed successfully" });
-  } catch (error) {
-    console.error("[Shiprocket Webhook] Error processing webhook:", error);
-    res.status(500).json({ error: "Failed to process webhook" });
-  }
-}
-var init_shiprocketWebhook = __esm({
-  "server/shiprocketWebhook.ts"() {
-    "use strict";
-    init_storage();
-    init_unifiedStatus();
-    init_schema();
-  }
-});
-
-// server/logic/rules/delhivery.ts
-function normalizeDelhivery(payload) {
-  const rawType = (payload.Shipment?.Status?.StatusType || "").toUpperCase().trim();
-  const statusText = payload.Shipment?.Status?.Status || "";
-  const s = statusText.toLowerCase().trim();
-  const instr = (payload.Shipment?.Status?.Instructions || "").toLowerCase();
-  const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || "";
-  const isUD = rawType === "UD" || rawType.includes("UNDELIVER");
-  const isRT = rawType === "RT" || rawType.includes("RETURN");
-  const isPP = rawType === "PP" || rawType.includes("MANIFEST") || rawType.includes("PENDING PICKUP");
-  const isPU = rawType === "PU" || rawType.includes("PICK") && rawType.includes("UP");
-  const isCN = rawType === "CN" || rawType.includes("CANCEL");
-  const isDL = rawType === "DL" || rawType.includes("DELIVER") && !isUD;
-  const looksLost = (x) => x.includes("lost") || x.includes("untraceable") || x.includes("damaged");
-  if (looksLost(s) || looksLost(instr)) {
-    return { status: "lost", isActionable: false };
-  }
-  if (isDL) {
-    if (s.includes("dto") || s.includes("rto") || s.includes("return") || instr.includes("return")) {
-      return { status: "rto_delivered", isActionable: false };
-    }
-    return { status: "delivered", isActionable: false };
-  }
-  if (isRT) {
-    if (s.includes("dispatch") || s.includes("out for delivery") || instr.includes("out for delivery")) {
-      return { status: "rto_ofd", isActionable: false };
-    }
-    return { status: "rto_initiated", isActionable: false };
-  }
-  if (isPP) {
-    return { status: "ready_for_pickup", isActionable: false };
-  }
-  if (isPU) {
-    return { status: "picked_up", isActionable: false };
-  }
-  if (isCN) {
-    return { status: "cancelled", isActionable: false };
-  }
-  if (isUD) {
-    if (s.includes("manifest")) {
-      return { status: "awb_assigned", isActionable: false };
-    }
-    if (s.includes("not picked")) {
-      return { status: "ready_for_pickup", isActionable: false };
-    }
-    if (s.includes("dispatch") || instr.includes("out for delivery")) {
-      return { status: "out_for_delivery", isActionable: false };
-    }
-    if (s.includes("pending")) {
-      return { status: "ndr", isActionable: ACTIONABLE_CODES.includes(nsl) };
-    }
-    if (s.includes("in transit") || s.includes("in-transit")) {
-      return { status: "in_transit", isActionable: false };
-    }
-    if (ACTIONABLE_CODES.includes(nsl)) {
-      return { status: "ndr", isActionable: true };
-    }
-    return { status: "in_transit", isActionable: false };
-  }
-  return { status: "in_transit", isActionable: false };
-}
-var ACTIONABLE_CODES;
-var init_delhivery = __esm({
-  "server/logic/rules/delhivery.ts"() {
-    "use strict";
-    ACTIONABLE_CODES = [
-      "EOD-74",
-      // Customer Unavailable
-      "EOD-15",
-      // Address Issue
-      "EOD-104",
-      // Customer Requested Reschedule
-      "EOD-43",
-      // Customer Not Reachable
-      "EOD-86",
-      // Incomplete Address
-      "EOD-11",
-      // Customer Refused
-      "EOD-69",
-      // COD Amount Not Ready
-      "EOD-6"
-      // Out of Delivery Area
-    ];
-  }
-});
-
 // server/services/delhivery.ts
 var delhivery_exports = {};
 __export(delhivery_exports, {
@@ -5878,7 +6330,7 @@ __export(delhivery_exports, {
   mapNDRStatus: () => mapNDRStatus
 });
 import axios from "axios";
-import { eq as eq5 } from "drizzle-orm";
+import { eq as eq6 } from "drizzle-orm";
 function classifyReverseError(message) {
   const m = (message || "").toLowerCase();
   if (m.includes("serviceab") || m.includes("non-serviceable") || m.includes("pin") && m.includes("serv")) {
@@ -5935,7 +6387,7 @@ async function getDelhiveryClient(storeId) {
   const [row] = await db.select({
     delhiveryApiToken: stores.delhiveryApiToken,
     delhiveryClientName: stores.delhiveryClientName
-  }).from(stores).where(eq5(stores.id, storeId)).limit(1);
+  }).from(stores).where(eq6(stores.id, storeId)).limit(1);
   if (!row) {
     throw new Error(`Store not found: ${storeId}`);
   }
@@ -5961,7 +6413,7 @@ function invalidateDelhiveryClient(storeId) {
   }
 }
 var DELHIVERY_BASE_URL, DelhiveryClient, clientCache2, CACHE_TTL_MS;
-var init_delhivery2 = __esm({
+var init_delhivery = __esm({
   "server/services/delhivery.ts"() {
     "use strict";
     init_db();
@@ -6276,6 +6728,258 @@ var init_delhivery2 = __esm({
   }
 });
 
+// server/shiprocketWebhook.ts
+var shiprocketWebhook_exports = {};
+__export(shiprocketWebhook_exports, {
+  handleShiprocketWebhook: () => handleShiprocketWebhook
+});
+import crypto5 from "crypto";
+function verifyShiprocketSignature(payload, signature, secret) {
+  if (!signature) {
+    console.error("[Shiprocket Webhook] No signature provided");
+    return false;
+  }
+  try {
+    const hmac = crypto5.createHmac("sha256", secret);
+    hmac.update(payload);
+    const expectedSignature = hmac.digest("hex");
+    return crypto5.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch (error) {
+    console.error("[Shiprocket Webhook] Signature verification error:", error);
+    return false;
+  }
+}
+async function handleShiprocketWebhook(req, res) {
+  try {
+    console.log("[Shiprocket Webhook] Received webhook:", {
+      headers: req.headers,
+      body: req.body
+    });
+    const shiprocketWebhookSecret = process.env.SHIPROCKET_WEBHOOK_SECRET;
+    if (!shiprocketWebhookSecret) {
+      console.error("[Shiprocket Webhook] SHIPROCKET_WEBHOOK_SECRET not configured");
+      return res.status(500).json({ error: "Webhook secret not configured" });
+    }
+    const signature = req.headers["x-shiprocket-signature"];
+    const rawBody = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body);
+    if (!verifyShiprocketSignature(rawBody, signature, shiprocketWebhookSecret)) {
+      console.error("[Shiprocket Webhook] Invalid signature");
+      return res.status(401).json({ error: "Invalid signature" });
+    }
+    console.log("[Shiprocket Webhook] Signature verified successfully");
+    const payload = req.body;
+    if (!payload.awb || !payload.current_status) {
+      console.error("[Shiprocket Webhook] Missing required fields");
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const shipment = await storage.getShipmentByAWB(payload.awb);
+    if (!shipment) {
+      console.error("[Shiprocket Webhook] Shipment not found:", payload.awb);
+      return res.status(404).json({ error: "Shipment not found" });
+    }
+    await storage.updateShipment(shipment.id, {
+      currentStatus: payload.current_status,
+      statusUpdatedAt: /* @__PURE__ */ new Date(),
+      courierName: payload.courier_name || shipment.courierName
+    });
+    const unifiedStatus = payload.ndr_status ? "ndr" : toUnifiedStatus({ source: "shiprocket", rawStatus: payload.current_status });
+    const isNDR = unifiedStatus === "ndr";
+    const isDelivered = unifiedStatus === "delivered";
+    const isRTO = unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered";
+    await storage.updateOrder(shipment.orderId, {
+      status: unifiedStatus,
+      shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || payload.current_status
+    });
+    if (isNDR) {
+      console.log("[Shiprocket Webhook] NDR event detected:", {
+        awb: payload.awb,
+        status: payload.current_status,
+        ndrStatus: payload.ndr_status
+      });
+      let ndrStatus = "other";
+      const statusLower = (payload.current_status || "").toLowerCase();
+      if (statusLower.includes("customer unavailable") || statusLower.includes("not available")) {
+        ndrStatus = "customer_unavailable";
+      } else if (statusLower.includes("address") || statusLower.includes("incomplete")) {
+        ndrStatus = "address_issue";
+      } else if (statusLower.includes("refused") || statusLower.includes("reject")) {
+        ndrStatus = "refused";
+      }
+      const ndrDate = /* @__PURE__ */ new Date();
+      const existingNdr = await storage.findRecentNDREvent(payload.awb, ndrDate, 5);
+      if (existingNdr) {
+        console.log(
+          `[Shiprocket Webhook] Duplicate NDR webhook for AWB ${payload.awb} (existing ndr_event ${existingNdr.id}); skipping insert.`
+        );
+      } else {
+        await storage.createNDREvent({
+          shipmentId: shipment.id,
+          orderId: shipment.orderId,
+          awb: payload.awb,
+          ndrStatus,
+          ndrReason: payload.comment || payload.current_status,
+          ndrDate,
+          rawNdrData: payload
+        });
+      }
+      const order = await storage.getOrder(shipment.orderId);
+      if (order && order.assignedTo) {
+        await storage.createNotification({
+          userId: order.assignedTo,
+          orderId: shipment.orderId,
+          type: "ndr_alert",
+          title: "NDR Alert: Failed Delivery",
+          message: `Order #${order.shopifyOrderNumber} has a delivery issue: ${payload.comment || payload.current_status}. AWB: ${payload.awb}`,
+          actionUrl: `/orders?orderId=${shipment.orderId}`
+        });
+        console.log("[Shiprocket Webhook] NDR notification created for agent:", order.assignedTo);
+      }
+      await storage.updateShipment(shipment.id, {
+        status: "ndr"
+      });
+    }
+    if (isDelivered) {
+      console.log("[Shiprocket Webhook] Delivery completed:", payload.awb);
+      await storage.updateShipment(shipment.id, {
+        status: "delivered",
+        deliveredAt: /* @__PURE__ */ new Date()
+      });
+    }
+    if (isRTO) {
+      console.log("[Shiprocket Webhook] RTO detected:", payload.awb, unifiedStatus);
+      await storage.updateShipment(shipment.id, {
+        status: "rto",
+        ...unifiedStatus === "rto_delivered" ? { deliveredAt: /* @__PURE__ */ new Date() } : {}
+      });
+    }
+    const terminalResolution = isDelivered ? "delivered" : unifiedStatus === "rto_delivered" ? "delivered" : isRTO ? "returned" : null;
+    if (terminalResolution) {
+      try {
+        const closed = await storage.resolveOpenNDREvents(payload.awb, terminalResolution);
+        if (closed > 0) {
+          console.log(
+            `[Shiprocket Webhook] Closed ${closed} open NDR event(s) for AWB ${payload.awb} \u2192 ${terminalResolution}`
+          );
+        }
+      } catch (closeErr) {
+        console.warn(
+          `[Shiprocket Webhook] Failed to close open NDR events for AWB ${payload.awb}:`,
+          closeErr?.message ?? closeErr
+        );
+      }
+    }
+    console.log("[Shiprocket Webhook] Webhook processed successfully:", {
+      awb: payload.awb,
+      status: payload.current_status,
+      unifiedStatus,
+      isNDR,
+      isDelivered,
+      isRTO
+    });
+    res.json({ success: true, message: "Webhook processed successfully" });
+  } catch (error) {
+    console.error("[Shiprocket Webhook] Error processing webhook:", error);
+    res.status(500).json({ error: "Failed to process webhook" });
+  }
+}
+var init_shiprocketWebhook = __esm({
+  "server/shiprocketWebhook.ts"() {
+    "use strict";
+    init_storage();
+    init_unifiedStatus();
+    init_schema();
+  }
+});
+
+// server/logic/rules/delhivery.ts
+function normalizeDelhivery(payload) {
+  const rawType = (payload.Shipment?.Status?.StatusType || "").toUpperCase().trim();
+  const statusText = payload.Shipment?.Status?.Status || "";
+  const s = statusText.toLowerCase().trim();
+  const instr = (payload.Shipment?.Status?.Instructions || "").toLowerCase();
+  const nsl = payload.Shipment?.Status?.NSLCode || payload.Shipment?.NSLCode || "";
+  const isUD = rawType === "UD" || rawType.includes("UNDELIVER");
+  const isRT = rawType === "RT" || rawType.includes("RETURN");
+  const isPP = rawType === "PP" || rawType.includes("MANIFEST") || rawType.includes("PENDING PICKUP");
+  const isPU = rawType === "PU" || rawType.includes("PICK") && rawType.includes("UP");
+  const isCN = rawType === "CN" || rawType.includes("CANCEL");
+  const isDL = rawType === "DL" || rawType.includes("DELIVER") && !isUD;
+  const looksLost = (x) => x.includes("lost") || x.includes("untraceable") || x.includes("damaged");
+  if (looksLost(s) || looksLost(instr)) {
+    return { status: "lost", isActionable: false };
+  }
+  if (isDL) {
+    if (s.includes("dto") || s.includes("rto") || s.includes("return") || instr.includes("return")) {
+      return { status: "rto_delivered", isActionable: false };
+    }
+    return { status: "delivered", isActionable: false };
+  }
+  if (isRT) {
+    if (s.includes("dispatch") || s.includes("out for delivery") || instr.includes("out for delivery")) {
+      return { status: "rto_ofd", isActionable: false };
+    }
+    return { status: "rto_initiated", isActionable: false };
+  }
+  if (isPP) {
+    return { status: "ready_for_pickup", isActionable: false };
+  }
+  if (isPU) {
+    return { status: "picked_up", isActionable: false };
+  }
+  if (isCN) {
+    return { status: "cancelled", isActionable: false };
+  }
+  if (isUD) {
+    if (s.includes("manifest")) {
+      return { status: "awb_assigned", isActionable: false };
+    }
+    if (s.includes("not picked")) {
+      return { status: "ready_for_pickup", isActionable: false };
+    }
+    if (s.includes("dispatch") || instr.includes("out for delivery")) {
+      return { status: "out_for_delivery", isActionable: false };
+    }
+    if (s.includes("pending")) {
+      return { status: "ndr", isActionable: ACTIONABLE_CODES.includes(nsl) };
+    }
+    if (s.includes("in transit") || s.includes("in-transit")) {
+      return { status: "in_transit", isActionable: false };
+    }
+    if (ACTIONABLE_CODES.includes(nsl)) {
+      return { status: "ndr", isActionable: true };
+    }
+    return { status: "in_transit", isActionable: false };
+  }
+  return { status: "in_transit", isActionable: false };
+}
+var ACTIONABLE_CODES;
+var init_delhivery2 = __esm({
+  "server/logic/rules/delhivery.ts"() {
+    "use strict";
+    ACTIONABLE_CODES = [
+      "EOD-74",
+      // Customer Unavailable
+      "EOD-15",
+      // Address Issue
+      "EOD-104",
+      // Customer Requested Reschedule
+      "EOD-43",
+      // Customer Not Reachable
+      "EOD-86",
+      // Incomplete Address
+      "EOD-11",
+      // Customer Refused
+      "EOD-69",
+      // COD Amount Not Ready
+      "EOD-6"
+      // Out of Delivery Area
+    ];
+  }
+});
+
 // server/delhiveryWebhook.ts
 var delhiveryWebhook_exports = {};
 __export(delhiveryWebhook_exports, {
@@ -6494,6 +7198,18 @@ async function processDelhiveryScan(body) {
     };
     console.log(`[Delhivery Webhook] Updating order ${order.id} status to ${unifiedStatus} (isActionable: ${isActionable})`);
     await storage.updateOrder(order.id, orderUpdate);
+    const reshipStatus = unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery" ? "in_transit" : unifiedStatus === "ndr" ? "ndr" : unifiedStatus === "delivered" ? "delivered" : unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered" ? "rto" : null;
+    if (reshipStatus && awb) {
+      void Promise.resolve().then(() => (init_service(), service_exports)).then(
+        (s) => s.updateStatusByAwb({
+          awb,
+          courierStatus: reshipStatus,
+          courierName: "Delhivery"
+        })
+      ).catch(
+        (e) => console.warn("[reshipments] status-sync failed:", e?.message ?? e)
+      );
+    }
     if (previousStatus !== unifiedStatus) {
       try {
         await storage.createOrderStatus({
@@ -6532,17 +7248,25 @@ async function processDelhiveryScan(body) {
           ndrStatusValue = "rto";
         }
       }
-      await storage.createNDREvent({
-        storeId: storeId ?? void 0,
-        shipmentId: shipment.id,
-        orderId: order.id,
-        awb,
-        ndrStatus: ndrStatusValue,
-        ndrReason: remarks || effectiveStatus,
-        ndrDate: statusDateTime ? new Date(statusDateTime) : /* @__PURE__ */ new Date(),
-        rawNdrData: body
-      });
-      console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
+      const ndrDate = statusDateTime ? new Date(statusDateTime) : /* @__PURE__ */ new Date();
+      const existingNdr = await storage.findRecentNDREvent(awb, ndrDate, 5);
+      if (existingNdr) {
+        console.log(
+          `[Delhivery Webhook] Duplicate NDR webhook for AWB ${awb} (existing ndr_event ${existingNdr.id} at ${existingNdr.ndrDate.toISOString()}); skipping insert.`
+        );
+      } else {
+        await storage.createNDREvent({
+          storeId: storeId ?? void 0,
+          shipmentId: shipment.id,
+          orderId: order.id,
+          awb,
+          ndrStatus: ndrStatusValue,
+          ndrReason: remarks || effectiveStatus,
+          ndrDate,
+          rawNdrData: body
+        });
+        console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
+      }
       const shipmentStatusLabel = SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "NDR");
       await storage.updateOrder(order.id, {
         status: unifiedStatus,
@@ -6584,6 +7308,26 @@ async function processDelhiveryScan(body) {
         shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? "RTO" : "Delivered")
       });
     }
+    const terminalResolution = isDelivered ? "delivered" : unifiedStatus === "rto_delivered" ? "delivered" : isRTO ? "returned" : null;
+    if (terminalResolution) {
+      try {
+        const closed = await storage.resolveOpenNDREvents(
+          awb,
+          terminalResolution,
+          statusDateTime ? new Date(statusDateTime) : /* @__PURE__ */ new Date()
+        );
+        if (closed > 0) {
+          console.log(
+            `[Delhivery Webhook] Closed ${closed} open NDR event(s) for AWB ${awb} \u2192 ${terminalResolution}`
+          );
+        }
+      } catch (closeErr) {
+        console.warn(
+          `[Delhivery Webhook] Failed to close open NDR events for AWB ${awb}:`,
+          closeErr?.message ?? closeErr
+        );
+      }
+    }
     if ((isInTransit || isOutForDelivery) && !isNDR && !isRTO && !isDelivered && !shipmentJustCreated) {
       await storage.updateShipment(shipment.id, {
         status: isOutForDelivery ? "out_for_delivery" : "in_transit"
@@ -6610,10 +7354,10 @@ var init_delhiveryWebhook = __esm({
   "server/delhiveryWebhook.ts"() {
     "use strict";
     init_storage();
-    init_delhivery();
+    init_delhivery2();
     init_unifiedStatus();
     init_schema();
-    init_delhivery2();
+    init_delhivery();
   }
 });
 
@@ -7049,7 +7793,7 @@ var meta_exports = {};
 __export(meta_exports, {
   syncMetaInsights: () => syncMetaInsights
 });
-import { eq as eq6, sql as sql4 } from "drizzle-orm";
+import { eq as eq7, sql as sql5 } from "drizzle-orm";
 function sumAction(list, type = PURCHASE_ACTION_TYPE) {
   if (!list) return 0;
   const row = list.find((a) => a.action_type === type);
@@ -7084,7 +7828,7 @@ async function syncMetaInsights(storeId, startDate, endDate) {
     id: stores.id,
     metaAccessToken: stores.metaAccessToken,
     metaAdAccountsConfig: stores.metaAdAccountsConfig
-  }).from(stores).where(eq6(stores.id, storeId)).limit(1);
+  }).from(stores).where(eq7(stores.id, storeId)).limit(1);
   if (!storeRow) {
     throw new Error(`Store not found: ${storeId}`);
   }
@@ -7167,11 +7911,11 @@ async function syncMetaInsights(storeId, startDate, endDate) {
     await db.insert(marketingMetrics).values(upsertRows).onConflictDoUpdate({
       target: [marketingMetrics.date, marketingMetrics.storeId],
       set: {
-        fbSpend: sql4`excluded.fb_spend`,
-        fbGmv: sql4`excluded.fb_gmv`,
-        fbOrders: sql4`excluded.fb_orders`,
-        fbRoas: sql4`excluded.fb_roas`,
-        updatedAt: sql4`now()`
+        fbSpend: sql5`excluded.fb_spend`,
+        fbGmv: sql5`excluded.fb_gmv`,
+        fbOrders: sql5`excluded.fb_orders`,
+        fbRoas: sql5`excluded.fb_roas`,
+        updatedAt: sql5`now()`
       }
     });
   }
@@ -7228,7 +7972,7 @@ var REVERSE_PICKUP_PROVIDERS, DEFAULT_REVERSE_PROVIDER;
 var init_courier = __esm({
   "server/services/courier/index.ts"() {
     "use strict";
-    init_delhivery2();
+    init_delhivery();
     init_types();
     REVERSE_PICKUP_PROVIDERS = ["delhivery"];
     DEFAULT_REVERSE_PROVIDER = "delhivery";
@@ -7366,6 +8110,105 @@ var init_client = __esm({
   }
 });
 
+// server/razorpay-payroll/provision.ts
+var provision_exports = {};
+__export(provision_exports, {
+  provisionUser: () => provisionUser
+});
+async function provisionUser(userId) {
+  const user = await storage.getUser(userId);
+  if (!user) {
+    return { ok: false, mode: "preview", userId, email: "", name: "", annualCtc: null, steps: [], message: "User not found" };
+  }
+  const email = (user.payrollEmail?.trim() || user.email || "").trim();
+  const name = user.fullName || user.username || email;
+  const monthly = user.baseSalary != null && user.baseSalary !== "" ? Number(user.baseSalary) : null;
+  const annualCtc = monthly && Number.isFinite(monthly) && monthly > 0 ? Math.round(monthly * 12) : null;
+  const hireDate = new Date(user.createdAt ?? /* @__PURE__ */ new Date()).toLocaleDateString("en-GB", {
+    timeZone: "Asia/Kolkata"
+  });
+  if (!email) {
+    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "No email to provision" };
+  }
+  if (!isRazorpayPayrollConfigured()) {
+    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "RazorpayX not configured" };
+  }
+  if (isDryRun()) {
+    return {
+      ok: true,
+      mode: "preview",
+      userId,
+      email,
+      name,
+      annualCtc,
+      steps: [
+        { step: "create", ok: true, detail: { email, name, type: "employee", hire_date: hireDate } },
+        ...annualCtc ? [{ step: "set-salary", ok: true, detail: { "annual-ctc": annualCtc } }] : []
+      ],
+      message: `Dry-run: would create ${name} (${email}, hired ${hireDate})${annualCtc ? ` + set annual CTC \u20B9${annualCtc.toLocaleString("en-IN")}` : ""}`
+    };
+  }
+  const steps = [];
+  const lookup = await peopleView({ email, "employee-type": "employee" });
+  let employeeId;
+  const existing = lookup.ok ? extractEmployeeId(lookup.body) : void 0;
+  if (existing != null) {
+    employeeId = existing;
+    steps.push({ step: "lookup", ok: true, detail: { employeeId, alreadyExists: true } });
+  } else {
+    steps.push({ step: "lookup", ok: true, detail: { alreadyExists: false } });
+    const created = await peopleCreate({ email, name, type: "employee", hire_date: hireDate });
+    steps.push({ step: "create", ok: created.ok, detail: created.body });
+    if (!created.ok) {
+      const denied = created.body?.error?.code === -1;
+      return {
+        ok: false,
+        mode: "live",
+        userId,
+        email,
+        name,
+        annualCtc,
+        steps,
+        message: denied ? "RazorpayX denied employee creation: this API key lacks People-module write permission. Add the new hire in the RazorpayX dashboard, or grant the key 'manage employees' permission." : created.body?.error?.message ?? "Create failed"
+      };
+    }
+    employeeId = created.body?.["employee-id"];
+  }
+  if (annualCtc && employeeId != null) {
+    const sal = await peopleSetSalary({ "employee-id": Number(employeeId), "annual-ctc": annualCtc });
+    steps.push({ step: "set-salary", ok: sal.ok, detail: sal.body });
+  } else {
+    steps.push({
+      step: "skip",
+      ok: true,
+      detail: annualCtc == null ? "no salary set yet" : "employee-id missing from create response"
+    });
+  }
+  return {
+    ok: steps.every((s) => s.ok),
+    mode: "live",
+    userId,
+    email,
+    name,
+    annualCtc,
+    steps,
+    employeeId,
+    message: existing != null ? `${name} already in RazorpayX (id ${employeeId})${annualCtc ? " \xB7 salary updated" : ""}` : `Created ${name} (${employeeId ? `employee-id ${employeeId}` : "no id returned"})${annualCtc ? " + salary set" : ""}`
+  };
+}
+function extractEmployeeId(body) {
+  if (!body || body.error) return void 0;
+  const id = body["employee-id"] ?? body.employee_id ?? body.employee?.["employee-id"] ?? body.employee?.employee_id ?? body.data?.["employee-id"] ?? body.data?.employee_id;
+  return id != null ? id : void 0;
+}
+var init_provision = __esm({
+  "server/razorpay-payroll/provision.ts"() {
+    "use strict";
+    init_storage();
+    init_client();
+  }
+});
+
 // server/razorpay-payroll/mapping.ts
 var mapping_exports = {};
 __export(mapping_exports, {
@@ -7389,7 +8232,8 @@ function istTime(ts) {
   });
 }
 function leaveTypesConfigured() {
-  return Object.values(LEAVE_TYPE_MAP).some((m) => m.razorpayLeaveTypeId > 0);
+  const values = Object.values(LEAVE_TYPE_MAP);
+  return values.length > 0 && values.every((m) => m.razorpayLeaveTypeId >= 0);
 }
 function mapAttendanceRow(row) {
   if (!row.email) {
@@ -7434,7 +8278,7 @@ function mapLeaveRow(row) {
     skipped.push({ reason: `unmapped leave type "${row.leaveType}"`, sourceId: row.id, email: row.email });
     return { mapped, skipped };
   }
-  if (!map.razorpayLeaveTypeId || map.razorpayLeaveTypeId <= 0) {
+  if (map.razorpayLeaveTypeId < 0) {
     skipped.push({ reason: `leave type "${row.leaveType}" not configured (set RazorpayX leave-type ID)`, sourceId: row.id, email: row.email });
     return { mapped, skipped };
   }
@@ -7467,7 +8311,7 @@ var init_mapping = __esm({
     "use strict";
     IST = "Asia/Kolkata";
     LEAVE_TYPE_MAP = {
-      sick: { razorpayLeaveTypeId: 0, paid: true },
+      sick: { razorpayLeaveTypeId: 1, paid: true },
       casual: { razorpayLeaveTypeId: 0, paid: true },
       vacation: { razorpayLeaveTypeId: 0, paid: true }
     };
@@ -7547,7 +8391,7 @@ __export(sync_exports, {
   reconcileMonth: () => reconcileMonth,
   runSync: () => runSync
 });
-import { sql as sql5, desc as desc2 } from "drizzle-orm";
+import { sql as sql6, desc as desc3 } from "drizzle-orm";
 async function buildRecords(year, month) {
   const records = [];
   const skipped = [];
@@ -7560,7 +8404,7 @@ async function buildRecords(year, month) {
       console.warn("[payroll-sync] failed to fetch RazorpayX roster:", err?.message ?? err);
     }
   }
-  const attRes = await db.execute(sql5`
+  const attRes = await db.execute(sql6`
     SELECT a.id, u.email, u.full_name,
            a.date, a.clock_in_time, a.clock_out_time, a.status, a.total_hours
     FROM attendance a
@@ -7593,7 +8437,7 @@ async function buildRecords(year, month) {
     if (isSkipped(mapped)) skipped.push(mapped);
     else records.push(mapped);
   }
-  const leaveRes = await db.execute(sql5`
+  const leaveRes = await db.execute(sql6`
     SELECT l.id, u.email, u.full_name,
            l.leave_type, l.start_date, l.end_date, l.status
     FROM leave_requests l
@@ -7704,7 +8548,7 @@ async function runSync(year, month, triggeredBy) {
   return report;
 }
 async function listSyncRuns(limit = 20) {
-  return db.select().from(payrollSyncRuns).orderBy(desc2(payrollSyncRuns.createdAt)).limit(limit);
+  return db.select().from(payrollSyncRuns).orderBy(desc3(payrollSyncRuns.createdAt)).limit(limit);
 }
 async function reconcileMonth(year, month) {
   const built = await buildRecords(year, month);
@@ -7772,95 +8616,22 @@ var init_sync = __esm({
   }
 });
 
-// server/razorpay-payroll/provision.ts
-var provision_exports = {};
-__export(provision_exports, {
-  provisionUser: () => provisionUser
-});
-async function provisionUser(userId) {
-  const user = await storage.getUser(userId);
-  if (!user) {
-    return { ok: false, mode: "preview", userId, email: "", name: "", annualCtc: null, steps: [], message: "User not found" };
-  }
-  const email = (user.payrollEmail?.trim() || user.email || "").trim();
-  const name = user.fullName || user.username || email;
-  const monthly = user.baseSalary != null && user.baseSalary !== "" ? Number(user.baseSalary) : null;
-  const annualCtc = monthly && Number.isFinite(monthly) && monthly > 0 ? Math.round(monthly * 12) : null;
-  const hireDate = new Date(user.createdAt ?? /* @__PURE__ */ new Date()).toLocaleDateString("en-GB", {
-    timeZone: "Asia/Kolkata"
-  });
-  if (!email) {
-    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "No email to provision" };
-  }
-  if (!isRazorpayPayrollConfigured()) {
-    return { ok: false, mode: "preview", userId, email, name, annualCtc, steps: [], message: "RazorpayX not configured" };
-  }
-  if (isDryRun()) {
-    return {
-      ok: true,
-      mode: "preview",
-      userId,
-      email,
-      name,
-      annualCtc,
-      steps: [
-        { step: "create", ok: true, detail: { email, name, type: "employee", hire_date: hireDate } },
-        ...annualCtc ? [{ step: "set-salary", ok: true, detail: { "annual-ctc": annualCtc } }] : []
-      ],
-      message: `Dry-run: would create ${name} (${email}, hired ${hireDate})${annualCtc ? ` + set annual CTC \u20B9${annualCtc.toLocaleString("en-IN")}` : ""}`
-    };
-  }
-  const steps = [];
-  const created = await peopleCreate({ email, name, type: "employee", hire_date: hireDate });
-  steps.push({ step: "create", ok: created.ok, detail: created.body });
-  if (!created.ok) {
-    const denied = created.body?.error?.code === -1;
-    return {
-      ok: false,
-      mode: "live",
-      userId,
-      email,
-      name,
-      annualCtc,
-      steps,
-      message: denied ? "RazorpayX denied employee creation: this API key lacks People-module write permission. Add the new hire in the RazorpayX dashboard, or grant the key 'manage employees' permission." : created.body?.error?.message ?? "Create failed (may already exist)"
-    };
-  }
-  const employeeId = created.body?.["employee-id"];
-  if (annualCtc && employeeId != null) {
-    const sal = await peopleSetSalary({ "employee-id": Number(employeeId), "annual-ctc": annualCtc });
-    steps.push({ step: "set-salary", ok: sal.ok, detail: sal.body });
-  }
-  return {
-    ok: steps.every((s) => s.ok),
-    mode: "live",
-    userId,
-    email,
-    name,
-    annualCtc,
-    steps,
-    employeeId,
-    message: `Created ${name} (employee-id ${employeeId})${annualCtc ? ` + salary set` : ""}`
-  };
-}
-var init_provision = __esm({
-  "server/razorpay-payroll/provision.ts"() {
-    "use strict";
-    init_storage();
-    init_client();
-  }
-});
-
 // server/services/payroll.ts
 var payroll_exports = {};
 __export(payroll_exports, {
   ANNUAL_PAID_HOLIDAY_CAP: () => ANNUAL_PAID_HOLIDAY_CAP,
+  DEFAULT_REIMBURSEMENT: () => DEFAULT_REIMBURSEMENT,
+  DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT: () => DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT,
+  DEVELOPER_MANAGER_TIERS: () => DEVELOPER_MANAGER_TIERS,
+  EARNED_COMMISSION_RATE: () => EARNED_COMMISSION_RATE,
   ORDER_CONFIRMATION_TIERS: () => ORDER_CONFIRMATION_TIERS,
   PERSONAL_RECOVERY_TIERS: () => PERSONAL_RECOVERY_TIERS,
   RESHIP_BONUS_PER_UNIT: () => RESHIP_BONUS_PER_UNIT,
+  STANDARD_WORKING_DAYS_PER_MONTH: () => STANDARD_WORKING_DAYS_PER_MONTH,
   TEAM_DELIVERY_TIERS: () => TEAM_DELIVERY_TIERS,
   calculateBasePay: () => calculateBasePay,
   calculateConfirmationBonus: () => calculateConfirmationBonus,
+  calculateDeveloperManagerBonus: () => calculateDeveloperManagerBonus,
   calculateNdrRtoBonus: () => calculateNdrRtoBonus,
   expectedWorkingDays: () => expectedWorkingDays,
   formatINR: () => formatINR,
@@ -7874,7 +8645,7 @@ function expectedWorkingDays(year, month) {
   let count2 = 0;
   for (let d = 1; d <= lastDay; d++) {
     const dow = new Date(year, month - 1, d).getDay();
-    if (dow !== 0 && dow !== 6) count2++;
+    if (dow !== 0) count2++;
   }
   return count2;
 }
@@ -7889,14 +8660,9 @@ function calculateBasePay(input) {
   const amount = round2(ratio * baseSalary);
   return { ratio, amount, capped };
 }
-function calculateConfirmationBonus(deliveryRatePct) {
-  if (deliveryRatePct == null || !Number.isFinite(deliveryRatePct)) return 0;
-  for (const tier of ORDER_CONFIRMATION_TIERS) {
-    if (deliveryRatePct >= tier.minPct && deliveryRatePct < tier.maxPct) {
-      return tier.bonus;
-    }
-  }
-  return 0;
+function calculateConfirmationBonus(deliveredGmv) {
+  if (deliveredGmv == null || !Number.isFinite(deliveredGmv) || deliveredGmv <= 0) return 0;
+  return round2(deliveredGmv * EARNED_COMMISSION_RATE);
 }
 function calculateNdrRtoBonus(input) {
   const teamDeliveryBonus = pickTier(input.teamDeliveryRatePct, TEAM_DELIVERY_TIERS);
@@ -7909,8 +8675,23 @@ function calculateNdrRtoBonus(input) {
     total: teamDeliveryBonus + recoveryBonus + reshipsBonus
   };
 }
+function calculateDeveloperManagerBonus(args) {
+  const tdr = args.brandTdrPct;
+  const att = args.reporteeAttendancePct;
+  if (tdr == null || !Number.isFinite(tdr)) return 0;
+  if (att == null || !Number.isFinite(att)) return 0;
+  if (att < DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT) return 0;
+  for (const tier of DEVELOPER_MANAGER_TIERS) {
+    if (tdr >= tier.minPct) return tier.bonus;
+  }
+  return 0;
+}
 function runPayrollMath(input) {
-  const base = calculateBasePay({
+  const base = input.compensationProfile === "DEVELOPER" ? {
+    ratio: 1,
+    amount: round2(Math.max(0, input.baseSalary)),
+    capped: false
+  } : calculateBasePay({
     baseSalary: input.baseSalary,
     expectedWorkingDays: input.expectedWorkingDays,
     daysPresent: input.daysPresent,
@@ -7921,7 +8702,7 @@ function runPayrollMath(input) {
   let recoveryBonus = 0;
   let reshipsBonus = 0;
   if (input.compensationProfile === "ORDER_CONFIRMATION") {
-    confirmationBonus = calculateConfirmationBonus(input.deliveryRatePct);
+    confirmationBonus = calculateConfirmationBonus(input.deliveredGmv);
   } else if (input.compensationProfile === "NDR_RTO") {
     const ndr = calculateNdrRtoBonus({
       teamDeliveryRatePct: input.teamDeliveryRatePct,
@@ -7932,10 +8713,19 @@ function runPayrollMath(input) {
     recoveryBonus = ndr.recoveryBonus;
     reshipsBonus = ndr.reshipsBonus;
   }
+  const unpaidDays = Math.max(0, Math.floor(Number(input.unpaidLeaves ?? 0)));
+  const perDayRate = input.baseSalary > 0 ? input.baseSalary / STANDARD_WORKING_DAYS_PER_MONTH : 0;
+  const unpaidLeaveDeduction = round2(Math.min(base.amount, unpaidDays * perDayRate));
   const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus;
-  const finalPayout = round2(base.amount + total);
+  const reimbursement = Math.max(0, Number(input.reimbursement ?? 0));
+  const lineItems = (input.lineItems ?? []).filter((li) => li && typeof li.label === "string" && Number.isFinite(Number(li.amount))).map((li) => ({ label: String(li.label).slice(0, 80), amount: Math.max(0, Number(li.amount)) }));
+  const lineItemsTotal = round2(lineItems.reduce((s, li) => s + li.amount, 0));
+  const finalPayout = round2(
+    base.amount - unpaidLeaveDeduction + total + reimbursement + lineItemsTotal
+  );
   return {
     base,
+    unpaidLeaveDeduction,
     incentives: {
       confirmationBonus,
       teamDeliveryBonus,
@@ -7943,6 +8733,9 @@ function runPayrollMath(input) {
       reshipsBonus,
       total
     },
+    reimbursement,
+    lineItems,
+    lineItemsTotal,
     finalPayout
   };
 }
@@ -7962,7 +8755,7 @@ function formatINR(n) {
     maximumFractionDigits: 2
   });
 }
-var ANNUAL_PAID_HOLIDAY_CAP, RESHIP_BONUS_PER_UNIT, ORDER_CONFIRMATION_TIERS, TEAM_DELIVERY_TIERS, PERSONAL_RECOVERY_TIERS;
+var ANNUAL_PAID_HOLIDAY_CAP, RESHIP_BONUS_PER_UNIT, ORDER_CONFIRMATION_TIERS, TEAM_DELIVERY_TIERS, PERSONAL_RECOVERY_TIERS, EARNED_COMMISSION_RATE, DEVELOPER_MANAGER_TIERS, DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT, DEFAULT_REIMBURSEMENT, STANDARD_WORKING_DAYS_PER_MONTH;
 var init_payroll = __esm({
   "server/services/payroll.ts"() {
     "use strict";
@@ -7982,6 +8775,14 @@ var init_payroll = __esm({
       { minPct: 40, maxPct: 50, bonus: 6e3 },
       { minPct: 30, maxPct: 40, bonus: 3e3 }
     ];
+    EARNED_COMMISSION_RATE = 0.1;
+    DEVELOPER_MANAGER_TIERS = [
+      { minPct: 80, bonus: 5e3 },
+      { minPct: 60, bonus: 3e3 }
+    ];
+    DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT = 80;
+    DEFAULT_REIMBURSEMENT = 349;
+    STANDARD_WORKING_DAYS_PER_MONTH = 26;
   }
 });
 
@@ -7990,12 +8791,16 @@ var payroll_metrics_exports = {};
 __export(payroll_metrics_exports, {
   getAttendanceMetrics: () => getAttendanceMetrics,
   getAutoPaidHolidaysCount: () => getAutoPaidHolidaysCount,
+  getBrandNDRDeliveryRate: () => getBrandNDRDeliveryRate,
+  getBrandTDRPct: () => getBrandTDRPct,
   getConfirmationDeliveryRatePct: () => getConfirmationDeliveryRatePct,
+  getDeliveredGMVForAgent: () => getDeliveredGMVForAgent,
+  getReshipmentsDeliveredCount: () => getReshipmentsDeliveredCount,
   getTeamDeliveryRatePct: () => getTeamDeliveryRatePct,
   getYtdPaidHolidaysUsed: () => getYtdPaidHolidaysUsed,
   monthRangeUtc: () => monthRangeUtc
 });
-import { sql as sql6 } from "drizzle-orm";
+import { sql as sql7 } from "drizzle-orm";
 function monthRangeUtc(year, month) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
@@ -8003,7 +8808,7 @@ function monthRangeUtc(year, month) {
 }
 async function getAttendanceMetrics(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql6`
+  const r = await db.execute(sql7`
     SELECT
       COUNT(DISTINCT DATE(date)) FILTER (WHERE clock_in_time IS NOT NULL)::int4 AS days_present,
       COUNT(DISTINCT DATE(date)) FILTER (WHERE status = 'leave')::int4         AS days_leave
@@ -8019,7 +8824,7 @@ async function getAttendanceMetrics(userId, year, month) {
   };
 }
 async function getAutoPaidHolidaysCount(state, year, month) {
-  const r = await db.execute(sql6`
+  const r = await db.execute(sql7`
     SELECT COUNT(*)::int4 AS n
     FROM holidays
     WHERE state = ${state}
@@ -8033,7 +8838,7 @@ async function getAutoPaidHolidaysCount(state, year, month) {
   return (r.rows ?? r)[0]?.n ?? 0;
 }
 async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
-  const r = await db.execute(sql6`
+  const r = await db.execute(sql7`
     SELECT COALESCE(SUM(paid_holidays_used), 0)::int4 AS n
     FROM payroll_ledger
     WHERE user_id = ${userId}
@@ -8044,7 +8849,7 @@ async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
 }
 async function getConfirmationDeliveryRatePct(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql6`
+  const r = await db.execute(sql7`
     SELECT
       COUNT(*)::int4                                              AS confirmed,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4          AS delivered
@@ -8059,7 +8864,7 @@ async function getConfirmationDeliveryRatePct(userId, year, month) {
 }
 async function getTeamDeliveryRatePct(year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql6`
+  const r = await db.execute(sql7`
     SELECT
       COUNT(*)::int4                                       AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4   AS delivered
@@ -8073,6 +8878,105 @@ async function getTeamDeliveryRatePct(year, month) {
 }
 function round22(n) {
   return Math.round(n * 100) / 100;
+}
+async function getBrandTDRPct(storeId, year, month) {
+  const { start, end } = monthRangeUtc(year, month);
+  const r = await db.execute(sql7`
+    SELECT
+      COUNT(*)::int4                                     AS total,
+      COUNT(*) FILTER (WHERE status = 'delivered')::int4 AS delivered
+    FROM orders
+    WHERE store_id = ${storeId}
+      AND shopify_created_at >= ${start.toISOString()}::timestamptz
+      AND shopify_created_at <  ${end.toISOString()}::timestamptz
+  `);
+  const row = (r.rows ?? r)[0] ?? { total: 0, delivered: 0 };
+  if (!row.total) return null;
+  return round22(row.delivered / row.total * 100);
+}
+async function getBrandNDRDeliveryRate(storeId, year, month) {
+  const { start, end } = monthRangeUtc(year, month);
+  const r = await db.execute(sql7`
+    SELECT
+      COUNT(*)::int4                                                     AS total,
+      COUNT(*) FILTER (WHERE resolution = 'delivered')::int4             AS delivered,
+      COUNT(*) FILTER (WHERE resolution = 'returned')::int4              AS returned,
+      COUNT(*) FILTER (WHERE resolution = 'cancelled')::int4             AS cancelled,
+      COUNT(*) FILTER (WHERE resolved = false)::int4                     AS still_open
+    FROM ndr_events
+    WHERE store_id = ${storeId}
+      AND ndr_date >= ${start.toISOString()}::timestamptz
+      AND ndr_date <  ${end.toISOString()}::timestamptz
+  `);
+  const row = (r.rows ?? r)[0] ?? {
+    total: 0,
+    delivered: 0,
+    returned: 0,
+    cancelled: 0,
+    still_open: 0
+  };
+  const total = row.total ?? 0;
+  return {
+    ratePct: total ? round22(row.delivered / total * 100) : null,
+    totalNdrs: total,
+    deliveredNdrs: row.delivered ?? 0,
+    returnedNdrs: row.returned ?? 0,
+    cancelledNdrs: row.cancelled ?? 0,
+    openNdrs: row.still_open ?? 0
+  };
+}
+async function getDeliveredGMVForAgent(userId, storeId, year, month) {
+  const { start, end } = monthRangeUtc(year, month);
+  const userRow = await db.execute(sql7`
+    SELECT coupon_code FROM users WHERE id = ${userId} LIMIT 1
+  `);
+  const couponRaw = (userRow?.rows ?? [])[0]?.coupon_code ?? null;
+  if (!couponRaw || !couponRaw.trim()) return 0;
+  const code = couponRaw.trim().toLowerCase();
+  const r = await db.execute(sql7`
+    SELECT COALESCE(SUM(CAST(o.total_price AS numeric)), 0)::numeric AS gmv
+    FROM orders o
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(
+        (SELECT MAX(s.delivered_at) FROM shipments s WHERE s.order_id = o.id),
+        (SELECT MAX(h.created_at) FROM order_status_history h
+           WHERE h.order_id = o.id AND h.status = 'delivered')
+      ) AS delivered_at
+    ) dt ON TRUE
+    WHERE o.store_id = ${storeId}
+      AND o.status = 'delivered'
+      AND (
+        EXISTS (
+          SELECT 1 FROM regexp_split_to_table(
+            LOWER(COALESCE(o.discount_code, '')), '[^a-z0-9]+'
+          ) AS tok(token)
+          WHERE tok.token = ${code}
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(o.discount_codes, '[]'::jsonb)
+          ) AS dc(code_str),
+          regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
+          WHERE tok.token = ${code}
+        )
+      )
+      AND dt.delivered_at >= ${start.toISOString()}::timestamptz
+      AND dt.delivered_at <  ${end.toISOString()}::timestamptz
+  `);
+  const row = (r?.rows ?? [])[0] ?? { gmv: 0 };
+  return Number(row.gmv ?? 0);
+}
+async function getReshipmentsDeliveredCount(storeId, year, month) {
+  const { start, end } = monthRangeUtc(year, month);
+  const r = await db.execute(sql7`
+    SELECT COUNT(*)::int4 AS n
+    FROM reshipment_logs
+    WHERE store_id = ${storeId}
+      AND courier_status = 'delivered'
+      AND updated_at >= ${start.toISOString()}::timestamptz
+      AND updated_at <  ${end.toISOString()}::timestamptz
+  `);
+  return (r.rows ?? r)[0]?.n ?? 0;
 }
 var init_payroll_metrics = __esm({
   "server/services/payroll-metrics.ts"() {
@@ -8275,13 +9179,23 @@ function drawEarningsTable(doc, data) {
     `Calculation: (${data.base.daysPresent} present + ${data.base.paidHolidaysUsed} paid holidays) \xF7 ${data.base.expectedWorkingDays} working days \xD7 Rs. ${formatINR(data.base.baseSalary)} = ${ratioPct}%${cappedNote}`,
     formatINR(data.base.amount)
   );
+  if (data.unpaidLeaves && data.unpaidLeaves > 0 && data.unpaidLeaveDeduction && data.unpaidLeaveDeduction > 0) {
+    const perDay = data.base.baseSalary / 26;
+    drawTableRow(
+      doc,
+      "Unpaid leave deduction",
+      `${data.unpaidLeaves} unpaid day(s) \xD7 Rs. ${formatINR(Math.round(perDay))}/day (Rs. ${formatINR(data.base.baseSalary)} \xF7 26)`,
+      `- ${formatINR(data.unpaidLeaveDeduction)}`
+    );
+  }
   const showIncentives = data.incentives.profile === "ORDER_CONFIRMATION" || data.incentives.profile === "NDR_RTO";
   if (showIncentives) {
     if (data.incentives.profile === "ORDER_CONFIRMATION") {
+      const gmv = data.incentives.confirmationBonus > 0 ? data.incentives.confirmationBonus * 10 : 0;
       drawTableRow(
         doc,
-        "Confirmation bonus",
-        data.incentives.deliveryRatePct == null ? "No delivery rate recorded for this period" : `Delivery rate ${data.incentives.deliveryRatePct.toFixed(2)}% -> tier bonus per Order Confirmation ladder`,
+        "Earned commission",
+        gmv > 0 ? `10% \xD7 Rs. ${formatINR(gmv)} delivered GMV` : "No delivered GMV recorded for this period",
         formatINR(data.incentives.confirmationBonus)
       );
     } else if (data.incentives.profile === "NDR_RTO") {
@@ -8303,6 +9217,25 @@ function drawEarningsTable(doc, data) {
         "Reships bonus",
         `${reships} reships \xD7 Rs. 50 = Rs. ${formatINR(reships * 50)}`,
         formatINR(data.incentives.reshipsBonus)
+      );
+    }
+  }
+  if (data.reimbursement && data.reimbursement > 0) {
+    drawTableRow(
+      doc,
+      "Reimbursement",
+      "Fixed monthly reimbursement",
+      formatINR(data.reimbursement)
+    );
+  }
+  if (Array.isArray(data.lineItems) && data.lineItems.length > 0) {
+    for (const li of data.lineItems) {
+      if (!li?.label || !Number.isFinite(li.amount) || li.amount <= 0) continue;
+      drawTableRow(
+        doc,
+        li.label,
+        "Custom Fixed-Pay component",
+        formatINR(li.amount)
       );
     }
   }
@@ -8635,6 +9568,363 @@ var init_payslip_email = __esm({
     ];
     COMPANY_NAME2 = "Verge Scales Pvt Ltd";
     COMPANY_ADDRESS2 = "4th Floor, Innov8 R City North wing, LBS Marg, Sahakar Bhawan Sub Post Office, Ghatkopar West, Mumbai 400086";
+  }
+});
+
+// server/services/payroll-cycle.ts
+var payroll_cycle_exports = {};
+__export(payroll_cycle_exports, {
+  approveCycle: () => approveCycle,
+  buildLedgerRow: () => buildLedgerRow,
+  generateCycle: () => generateCycle,
+  getCycleWithLedgers: () => getCycleWithLedgers,
+  listCycles: () => listCycles,
+  refreshCycleTotals: () => refreshCycleTotals,
+  updateCycleLedger: () => updateCycleLedger
+});
+import { eq as eq8, and as and5, desc as desc4, sql as sql8 } from "drizzle-orm";
+async function buildLedgerRow(args) {
+  const { user, storeId, year, month, cycleId, overrides = {}, createdBy = null } = args;
+  const baseSalary = Math.max(
+    0,
+    Number(overrides.baseSalary ?? user.baseSalary ?? 0)
+  );
+  const expectedDays = expectedWorkingDays(year, month);
+  const gmvNeeded = user.compensationProfile === "ORDER_CONFIRMATION";
+  const [attendance2, holidaysAuto, confirmRate, teamRate, brandTdr, brandNdr, reships, ytdHolidays, deliveredGmv] = await Promise.all([
+    getAttendanceMetrics(user.id, year, month),
+    user.holidayState ? getAutoPaidHolidaysCount(user.holidayState, year, month) : Promise.resolve(0),
+    getConfirmationDeliveryRatePct(user.id, year, month),
+    getTeamDeliveryRatePct(year, month),
+    getBrandTDRPct(storeId, year, month),
+    getBrandNDRDeliveryRate(storeId, year, month),
+    getReshipmentsDeliveredCount(storeId, year, month),
+    getYtdPaidHolidaysUsed(user.id, year, month),
+    gmvNeeded ? getDeliveredGMVForAgent(user.id, storeId, year, month) : Promise.resolve(0)
+  ]);
+  const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
+  const paidHolidaysAuto = Math.min(holidaysAuto, remainingQuota);
+  const daysPresent = overrides.daysPresent ?? attendance2.daysPresent;
+  const paidHolidaysUsed = overrides.paidHolidaysUsed ?? paidHolidaysAuto;
+  const unpaidLeaves = overrides.unpaidLeaves ?? 0;
+  const deliveryRatePct = overrides.deliveryRatePct ?? confirmRate;
+  const teamDeliveryRatePct = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
+  const personalRecoveryRatePct = overrides.personalRecoveryRatePct ?? brandNdr.ratePct;
+  const reshipsCount = overrides.reshipsCount ?? reships;
+  const profile = user.compensationProfile ?? null;
+  const brandTdrForBonus = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
+  let defaultLineItems = [];
+  if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
+    defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
+  } else if (profile === "DEVELOPER") {
+    const REPORTEE_MAP = {
+      "54862e00-6bee-4921-ab9e-339cfdc13d56": "f4f76079-f4d3-44fa-9cff-13a1ff40b873"
+    };
+    const reporteeId = REPORTEE_MAP[user.id];
+    if (reporteeId) {
+      const reporteeAtt = await getAttendanceMetrics(reporteeId, year, month);
+      const reporteeAttendancePct = expectedDays > 0 ? reporteeAtt.daysPresent / expectedDays * 100 : 0;
+      const managerBonus = calculateDeveloperManagerBonus({
+        brandTdrPct: brandTdrForBonus,
+        reporteeAttendancePct
+      });
+      defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
+    }
+  }
+  const lineItems = overrides.lineItems ?? defaultLineItems;
+  const math = runPayrollMath({
+    baseSalary,
+    expectedWorkingDays: expectedDays,
+    daysPresent,
+    paidHolidaysUsed,
+    unpaidLeaves,
+    compensationProfile: profile,
+    deliveryRatePct,
+    deliveredGmv,
+    teamDeliveryRatePct,
+    personalRecoveryRatePct,
+    reshipsCount,
+    reimbursement: overrides.reimbursement ?? 0,
+    lineItems
+  });
+  return {
+    cycleId,
+    userId: user.id,
+    year,
+    month,
+    baseSalary: String(baseSalary),
+    expectedWorkingDays: expectedDays,
+    daysPresent,
+    paidHolidaysUsed,
+    unpaidLeaves,
+    basePayRatio: String(round4(math.base.ratio)),
+    basePayAmount: String(math.base.amount),
+    compensationProfile: profile,
+    deliveryRatePct: deliveryRatePct != null ? String(deliveryRatePct) : null,
+    teamDeliveryRatePct: teamDeliveryRatePct != null ? String(teamDeliveryRatePct) : null,
+    recoveryRatePct: personalRecoveryRatePct != null ? String(personalRecoveryRatePct) : null,
+    reshipsCount,
+    confirmationBonus: String(math.incentives.confirmationBonus),
+    teamDeliveryBonus: String(math.incentives.teamDeliveryBonus),
+    recoveryBonus: String(math.incentives.recoveryBonus),
+    reshipsBonus: String(math.incentives.reshipsBonus),
+    totalIncentives: String(math.incentives.total),
+    reimbursement: String(math.reimbursement),
+    lineItems: math.lineItems,
+    finalPayout: String(math.finalPayout),
+    currency: "INR",
+    status: "finalized",
+    recipientEmail: user.email,
+    notes: overrides.notes ?? null,
+    createdBy
+  };
+}
+async function generateCycle(args) {
+  const { storeId, year, month, generatedBy = null } = args;
+  const [existing] = await db.select().from(payrollCycles).where(
+    and5(
+      eq8(payrollCycles.storeId, storeId),
+      eq8(payrollCycles.year, year),
+      eq8(payrollCycles.month, month)
+    )
+  ).limit(1);
+  if (existing && existing.employeeCount === 0 && existing.status !== "approved") {
+    await db.delete(payrollLedger).where(eq8(payrollLedger.cycleId, existing.id));
+    await db.delete(payrollCycles).where(eq8(payrollCycles.id, existing.id));
+  } else if (existing) {
+    return {
+      ok: true,
+      cycle: existing,
+      ledgerCount: existing.employeeCount,
+      totalPayout: Number(existing.totalPayout),
+      alreadyExisted: true,
+      message: `Cycle for ${year}-${String(month).padStart(2, "0")} already exists`
+    };
+  }
+  const [cycle] = await db.insert(payrollCycles).values({
+    storeId,
+    year,
+    month,
+    status: "pending",
+    employeeCount: 0,
+    totalPayout: "0",
+    generatedBy
+  }).returning();
+  const eligible = await db.select().from(users).where(and5(eq8(users.isActive, true)));
+  const withSalary = eligible.filter(
+    (u) => u.baseSalary != null && Number(u.baseSalary) > 0 && u.compensationProfile != null && u.compensationProfile !== ""
+  );
+  const inserts = [];
+  for (const u of withSalary) {
+    const row = await buildLedgerRow({
+      user: u,
+      storeId,
+      year,
+      month,
+      cycleId: cycle.id,
+      createdBy: generatedBy
+    });
+    inserts.push(row);
+  }
+  if (inserts.length > 0) {
+    await db.insert(payrollLedger).values(inserts);
+  }
+  const updated = await refreshCycleTotals(cycle.id);
+  return {
+    ok: true,
+    cycle: updated,
+    ledgerCount: inserts.length,
+    totalPayout: Number(updated.totalPayout),
+    alreadyExisted: false,
+    message: `Generated cycle for ${year}-${String(month).padStart(2, "0")} with ${inserts.length} employees`
+  };
+}
+async function refreshCycleTotals(cycleId) {
+  const result = await db.execute(sql8`
+    SELECT COUNT(*)::int4 AS n, COALESCE(SUM(final_payout), 0)::text AS total
+    FROM payroll_ledger
+    WHERE cycle_id = ${cycleId}
+  `);
+  const rows = result?.rows ?? [];
+  const summary = rows[0] ?? { n: 0, total: "0" };
+  const [updated] = await db.update(payrollCycles).set({
+    employeeCount: summary.n ?? 0,
+    totalPayout: String(summary.total ?? "0"),
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq8(payrollCycles.id, cycleId)).returning();
+  return updated;
+}
+async function approveCycle(args) {
+  const { cycleId, approvedBy } = args;
+  const [cycle] = await db.select().from(payrollCycles).where(eq8(payrollCycles.id, cycleId)).limit(1);
+  if (!cycle) {
+    throw new Error("Cycle not found");
+  }
+  if (cycle.status === "approved") {
+    return {
+      ok: true,
+      cycle,
+      dispatched: 0,
+      failed: 0,
+      errors: [],
+      message: "Cycle was already approved"
+    };
+  }
+  const [approved] = await db.update(payrollCycles).set({ status: "approved", approvedAt: /* @__PURE__ */ new Date(), approvedBy, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(payrollCycles.id, cycleId)).returning();
+  const ledgers = await db.select().from(payrollLedger).where(eq8(payrollLedger.cycleId, cycleId));
+  let dispatched = 0;
+  let failed = 0;
+  const errors = [];
+  const { renderPayslipPdf: renderPayslipPdf2 } = await Promise.resolve().then(() => (init_payslip_pdf(), payslip_pdf_exports));
+  const { sendPayslipEmail: sendPayslipEmail2 } = await Promise.resolve().then(() => (init_payslip_email(), payslip_email_exports));
+  for (const row of ledgers) {
+    try {
+      const user = await storage.getUser(row.userId);
+      if (!user) throw new Error("User row missing");
+      const data = payslipDataFromLedger(row, user);
+      const pdf = await renderPayslipPdf2(data);
+      try {
+        await sendPayslipEmail2(data, pdf);
+        await storage.updatePayrollLedgerDispatch(row.id, {
+          status: "sent",
+          pdfFilename: pdf.filename,
+          sentAt: /* @__PURE__ */ new Date(),
+          emailError: null
+        });
+        dispatched += 1;
+      } catch (emailErr) {
+        await storage.updatePayrollLedgerDispatch(row.id, {
+          status: "failed",
+          pdfFilename: pdf.filename,
+          sentAt: null,
+          emailError: emailErr?.message ?? String(emailErr)
+        });
+        failed += 1;
+        errors.push({ userId: row.userId, error: emailErr?.message ?? String(emailErr) });
+      }
+    } catch (err) {
+      failed += 1;
+      errors.push({ userId: row.userId, error: err?.message ?? String(err) });
+      await storage.updatePayrollLedgerDispatch(row.id, {
+        status: "failed",
+        sentAt: null,
+        emailError: err?.message ?? String(err)
+      });
+    }
+  }
+  return {
+    ok: failed === 0,
+    cycle: approved,
+    dispatched,
+    failed,
+    errors,
+    message: `Approved cycle \xB7 ${dispatched} sent \xB7 ${failed} failed`
+  };
+}
+async function updateCycleLedger(args) {
+  const { cycleId, userId, storeId, overrides } = args;
+  const [cycle] = await db.select().from(payrollCycles).where(eq8(payrollCycles.id, cycleId)).limit(1);
+  if (!cycle) throw new Error("Cycle not found");
+  if (cycle.status === "approved") throw new Error("Cycle is locked \u2014 approved cycles cannot be edited");
+  const user = await storage.getUser(userId);
+  if (!user) throw new Error("User not found");
+  const rebuilt = await buildLedgerRow({
+    user,
+    storeId,
+    year: cycle.year,
+    month: cycle.month,
+    cycleId: cycle.id,
+    overrides
+  });
+  const [existing] = await db.select().from(payrollLedger).where(and5(eq8(payrollLedger.cycleId, cycleId), eq8(payrollLedger.userId, userId))).limit(1);
+  let saved;
+  if (existing) {
+    const [updated] = await db.update(payrollLedger).set({ ...rebuilt, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(payrollLedger.id, existing.id)).returning();
+    saved = updated;
+  } else {
+    const [created] = await db.insert(payrollLedger).values(rebuilt).returning();
+    saved = created;
+  }
+  await refreshCycleTotals(cycleId);
+  return saved;
+}
+async function listCycles(storeId) {
+  const rows = storeId ? await db.select().from(payrollCycles).where(eq8(payrollCycles.storeId, storeId)).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month)) : await db.select().from(payrollCycles).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month));
+  return rows;
+}
+async function getCycleWithLedgers(cycleId) {
+  const [cycle] = await db.select().from(payrollCycles).where(eq8(payrollCycles.id, cycleId)).limit(1);
+  if (!cycle) return null;
+  const rows = await db.select({
+    ledger: payrollLedger,
+    user: {
+      fullName: users.fullName,
+      email: users.email,
+      role: users.role,
+      department: users.department,
+      employeeId: users.employeeId
+    }
+  }).from(payrollLedger).innerJoin(users, eq8(payrollLedger.userId, users.id)).where(eq8(payrollLedger.cycleId, cycleId)).orderBy(users.fullName);
+  return {
+    cycle,
+    ledgers: rows.map((r) => ({ ...r.ledger, user: r.user }))
+  };
+}
+function round4(n) {
+  return Math.round(n * 1e4) / 1e4;
+}
+function payslipDataFromLedger(row, user) {
+  return {
+    employee: {
+      fullName: user.fullName,
+      email: user.email,
+      employeeId: user.employeeId ?? null,
+      holidayState: user.holidayState ?? null,
+      department: user.department ?? null
+    },
+    period: { year: row.year, month: row.month },
+    base: {
+      baseSalary: Number(row.baseSalary),
+      expectedWorkingDays: row.expectedWorkingDays,
+      daysPresent: row.daysPresent,
+      paidHolidaysUsed: row.paidHolidaysUsed,
+      ratio: Number(row.basePayRatio),
+      amount: Number(row.basePayAmount),
+      capped: Number(row.basePayRatio) >= 1
+    },
+    incentives: {
+      profile: row.compensationProfile,
+      deliveryRatePct: row.deliveryRatePct != null ? Number(row.deliveryRatePct) : null,
+      teamDeliveryRatePct: row.teamDeliveryRatePct != null ? Number(row.teamDeliveryRatePct) : null,
+      recoveryRatePct: row.recoveryRatePct != null ? Number(row.recoveryRatePct) : null,
+      reshipsCount: row.reshipsCount,
+      confirmationBonus: Number(row.confirmationBonus),
+      teamDeliveryBonus: Number(row.teamDeliveryBonus),
+      recoveryBonus: Number(row.recoveryBonus),
+      reshipsBonus: Number(row.reshipsBonus),
+      total: Number(row.totalIncentives)
+    },
+    reimbursement: Number(row.reimbursement),
+    lineItems: row.lineItems ?? [],
+    unpaidLeaves: row.unpaidLeaves,
+    // Recompute the deduction here (not stored on the ledger) so the
+    // PDF renders the "- ₹X" row correctly for approve-emailed
+    // payslips. Matches STANDARD_WORKING_DAYS_PER_MONTH = 26 in the
+    // math service.
+    unpaidLeaveDeduction: row.unpaidLeaves > 0 ? Math.round(Number(row.baseSalary) / 26 * row.unpaidLeaves * 100) / 100 : 0,
+    finalPayout: Number(row.finalPayout),
+    ledgerId: row.id,
+    generatedAt: /* @__PURE__ */ new Date()
+  };
+}
+var init_payroll_cycle = __esm({
+  "server/services/payroll-cycle.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_storage();
+    init_payroll();
+    init_payroll_metrics();
   }
 });
 
@@ -9349,7 +10639,7 @@ __export(matcher_exports, {
   getOverdueOrders: () => getOverdueOrders,
   matchPendingSettlements: () => matchPendingSettlements
 });
-import { and as and4, eq as eq7, sql as sql7 } from "drizzle-orm";
+import { and as and6, eq as eq9, sql as sql9 } from "drizzle-orm";
 async function matchPendingSettlements(opts) {
   const { storeId, pgName = "payu", toleranceRupees = 1 } = opts;
   const adapter = getPgAdapter(pgName);
@@ -9359,10 +10649,10 @@ async function matchPendingSettlements(opts) {
   const activeCard = await storage.getActivePgRateCard(storeId, pgName);
   const rules = activeCard?.rules;
   const pending = await db.select().from(pgSettlements).where(
-    and4(
-      eq7(pgSettlements.storeId, storeId),
-      eq7(pgSettlements.pgName, pgName),
-      eq7(pgSettlements.status, "pending")
+    and6(
+      eq9(pgSettlements.storeId, storeId),
+      eq9(pgSettlements.pgName, pgName),
+      eq9(pgSettlements.status, "pending")
     )
   );
   const result = {
@@ -9374,7 +10664,7 @@ async function matchPendingSettlements(opts) {
   };
   for (const s of pending) {
     try {
-      const found = await db.execute(sql7`
+      const found = await db.execute(sql9`
         SELECT o.id, o.total_price, o.shopify_order_number
         FROM orders o
         CROSS JOIN LATERAL jsonb_array_elements(
@@ -9405,7 +10695,7 @@ async function matchPendingSettlements(opts) {
         orderId: order.id,
         orderAmount: orderAmount.toFixed(2),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq7(pgSettlements.id, s.id));
+      }).where(eq9(pgSettlements.id, s.id));
       result.matched++;
       if (status === "settled") result.classified.settled++;
       else result.classified.mismatch++;
@@ -9420,7 +10710,7 @@ async function matchPendingSettlements(opts) {
 }
 async function getOverdueOrders(opts) {
   const { storeId, graceDays = 3, limit = 200 } = opts;
-  const windowQuery = await db.execute(sql7`
+  const windowQuery = await db.execute(sql9`
     SELECT
       MIN(settled_at)::timestamptz AS min_settled,
       MAX(settled_at)::timestamptz AS max_settled,
@@ -9441,7 +10731,7 @@ async function getOverdueOrders(opts) {
   const maxSettled = new Date(winRow.max_settled);
   const cutoff = new Date(maxSettled.getTime() - graceDays * 864e5);
   const windowStart = new Date(minSettled.getTime() - graceDays * 864e5);
-  const result = await db.execute(sql7`
+  const result = await db.execute(sql9`
     SELECT
       o.id,
       o.shopify_order_number,
@@ -9595,7 +10885,7 @@ function shouldWebhookAdvance(current) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq8, or as or2, sql as sql8, desc as desc3, gte as gte2, lte as lte2, and as and5, asc as asc3 } from "drizzle-orm";
+import { eq as eq10, or as or3, sql as sql10, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -10375,6 +11665,22 @@ async function handleFulfillmentUpdate(req, res) {
       updateData.status = newOrderStatus;
     }
     await storage.updateOrder(existingOrder.id, updateData);
+    if (trackingNumber) {
+      void Promise.resolve().then(() => (init_service(), service_exports)).then(
+        (s) => s.updateFromFulfillment({
+          storeId: store.id,
+          newShopifyOrderId: existingOrder.shopifyOrderId,
+          trackingAwb: trackingNumber,
+          courierName: trackingCompany
+        })
+      ).catch(
+        (e) => console.warn(
+          "[reshipments] fulfillment-sync failed for",
+          existingOrder.shopifyOrderId,
+          e?.message ?? e
+        )
+      );
+    }
     if (newOrderStatus && newOrderStatus !== existingOrder.status) {
       await storage.createOrderStatus({
         storeId: store.id,
@@ -10396,14 +11702,14 @@ async function handleFulfillmentUpdate(req, res) {
 // server/storeScope.ts
 init_db();
 init_schema();
-import { eq as eq4, and as and3, asc as asc2 } from "drizzle-orm";
+import { eq as eq5, and as and4, asc as asc2 } from "drizzle-orm";
 
 // server/permissions.ts
 function isFullControlAdmin(user) {
   return user.role === "admin" && user.adminType === "full_control";
 }
 function isAdmin(user) {
-  return user.role === "admin";
+  return user.role === "admin" || user.role === "developer";
 }
 function isAgent(user) {
   return user.role === "agent";
@@ -10468,14 +11774,14 @@ async function resolveStoreScope(req) {
   if (!sessionUserId) {
     return null;
   }
-  const [user] = await db.select().from(users).where(eq4(users.id, sessionUserId)).limit(1);
+  const [user] = await db.select().from(users).where(eq5(users.id, sessionUserId)).limit(1);
   if (!user) {
     return null;
   }
   const requestedHeader = readHeader(req);
   if (isAdmin(user)) {
     if (requestedHeader) {
-      const [row] = await db.select({ id: stores.id }).from(stores).where(eq4(stores.id, requestedHeader)).limit(1);
+      const [row] = await db.select({ id: stores.id }).from(stores).where(eq5(stores.id, requestedHeader)).limit(1);
       if (!row) {
         throw new StoreScopeError(
           404,
@@ -10492,9 +11798,9 @@ async function resolveStoreScope(req) {
   }
   if (requestedHeader) {
     const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
-      and3(
-        eq4(userStores.userId, user.id),
-        eq4(userStores.storeId, requestedHeader)
+      and4(
+        eq5(userStores.userId, user.id),
+        eq5(userStores.storeId, requestedHeader)
       )
     ).limit(1);
     if (!membership) {
@@ -10509,7 +11815,7 @@ async function resolveStoreScope(req) {
       isFallback: false
     };
   }
-  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq4(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
+  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
   if (!first) {
     throw new StoreScopeError(
       403,
@@ -10564,7 +11870,7 @@ import axios3 from "axios";
 // server/services/analytics.ts
 init_db();
 init_schema();
-import { sql as sql3 } from "drizzle-orm";
+import { sql as sql4 } from "drizzle-orm";
 function computeTierRtoPct(rtoRaw, totalRaw) {
   const n = Number(rtoRaw) || 0;
   const d = Number(totalRaw) || 0;
@@ -10594,9 +11900,9 @@ function enumerateDays(startDate, endDate) {
 }
 async function getPareMetrics(dateRange) {
   const { startDate, endDate, storeId } = dateRange;
-  const storeFilter = storeId ? sql3`AND ${orders}.store_id = ${storeId}` : sql3``;
-  const mmStoreFilter = storeId ? sql3`AND mm.store_id = ${storeId}` : sql3``;
-  const query = sql3`
+  const storeFilter = storeId ? sql4`AND ${orders}.store_id = ${storeId}` : sql4``;
+  const mmStoreFilter = storeId ? sql4`AND mm.store_id = ${storeId}` : sql4``;
+  const query = sql4`
     SELECT
       (DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata'))::date::text AS day,
 
@@ -10947,6 +12253,89 @@ async function getPareMetrics(dateRange) {
   };
 }
 
+// server/cron/close-stale-ndr.ts
+init_storage();
+init_delhivery();
+var STALE_HOURS = 72;
+var STALE_LIMIT = 200;
+var ABANDON_DAYS = 45;
+async function closeStaleNDREvents(now = /* @__PURE__ */ new Date()) {
+  const result = {
+    scanned: 0,
+    closedDelivered: 0,
+    closedReturned: 0,
+    closedCancelled: 0,
+    stillOpen: 0,
+    errors: 0,
+    errorSamples: []
+  };
+  const stale = await storage.listStaleUnresolvedNDREvents(STALE_HOURS, STALE_LIMIT);
+  result.scanned = stale.length;
+  if (!stale.length) return result;
+  const byAwb = /* @__PURE__ */ new Map();
+  for (const evt of stale) {
+    const existing = byAwb.get(evt.awb);
+    if (!existing || evt.ndrDate < existing.ndrDate) {
+      byAwb.set(evt.awb, { storeId: evt.storeId ?? null, ndrDate: evt.ndrDate });
+    }
+  }
+  const abandonCutoff = new Date(now.getTime() - ABANDON_DAYS * 24 * 60 * 60 * 1e3);
+  for (const [awb, meta] of Array.from(byAwb.entries())) {
+    try {
+      if (meta.ndrDate < abandonCutoff) {
+        const closed2 = await storage.resolveOpenNDREvents(awb, "cancelled", now);
+        result.closedCancelled += closed2;
+        continue;
+      }
+      if (!meta.storeId) {
+        result.stillOpen += 1;
+        continue;
+      }
+      let client;
+      try {
+        client = await getDelhiveryClient(meta.storeId);
+      } catch {
+        result.stillOpen += 1;
+        continue;
+      }
+      const track = await client.trackShipment(awb);
+      if (!track.success) {
+        result.stillOpen += 1;
+        continue;
+      }
+      const statusLower = (track.status ?? "").toLowerCase();
+      let resolution = null;
+      if (statusLower === "delivered") {
+        resolution = "delivered";
+      } else if (statusLower.includes("rto") || statusLower.includes("return")) {
+        resolution = "returned";
+      }
+      if (!resolution) {
+        result.stillOpen += 1;
+        continue;
+      }
+      let terminalAt = now;
+      const terminalScan = track.activities?.find((a) => {
+        const s = (a.status ?? "").toLowerCase();
+        return resolution === "delivered" ? s === "delivered" : s.includes("rto") || s.includes("return");
+      });
+      if (terminalScan?.datetime) {
+        const parsed = new Date(terminalScan.datetime);
+        if (!Number.isNaN(parsed.getTime())) terminalAt = parsed;
+      }
+      const closed = await storage.resolveOpenNDREvents(awb, resolution, terminalAt);
+      if (resolution === "delivered") result.closedDelivered += closed;
+      else result.closedReturned += closed;
+    } catch (err) {
+      result.errors += 1;
+      if (result.errorSamples.length < 5) {
+        result.errorSamples.push(`${awb}: ${err?.message ?? String(err)}`);
+      }
+    }
+  }
+  return result;
+}
+
 // server/auth.ts
 import bcrypt from "bcryptjs";
 var BCRYPT_COST = 12;
@@ -11088,7 +12477,7 @@ async function resolveUserScrub(req) {
 async function registerRoutes(app2) {
   app2.get("/api/health", async (_req, res) => {
     try {
-      const r = await db.execute(sql8`SELECT 1 AS ok`);
+      const r = await db.execute(sql10`SELECT 1 AS ok`);
       const ok = (r.rows ?? r)[0]?.ok === 1;
       res.status(ok ? 200 : 503).json({
         status: ok ? "ok" : "degraded",
@@ -11527,8 +12916,8 @@ async function registerRoutes(app2) {
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      const agentFilter = authResult.assignedTo ? sql8`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql8``;
-      const storeFilter = authResult.storeId ? sql8`AND ${orders.storeId} = ${authResult.storeId}` : sql8``;
+      const agentFilter = authResult.assignedTo ? sql10`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql10``;
+      const storeFilter = authResult.storeId ? sql10`AND ${orders.storeId} = ${authResult.storeId}` : sql10``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -11544,7 +12933,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt
       }).from(orders).where(
-        sql8`(
+        sql10`(
           -- STRICT MODE: Only match Out for Delivery statuses
           -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
@@ -11563,7 +12952,7 @@ async function registerRoutes(app2) {
         AND ${orders.shipmentStatus} != 'IT'
         ${agentFilter}
         ${storeFilter}`
-      ).orderBy(desc3(orders.createdAt)).limit(100);
+      ).orderBy(desc5(orders.createdAt)).limit(100);
       res.json({ orders: result, total: result.length });
     } catch (error) {
       console.error("Error fetching OFD orders:", error);
@@ -11666,6 +13055,186 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error computing Pare metrics:", error);
       res.status(500).json({ error: "Failed to compute Pare metrics" });
+    }
+  });
+  const requireReshipmentUser = async (req, res) => {
+    const uid = typeof req.query.userId === "string" ? req.query.userId : typeof req.body?.userId === "string" ? req.body.userId : null;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized: userId required." });
+      return null;
+    }
+    const user = await storage.getUser(uid);
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized: user not found." });
+      return null;
+    }
+    return { user };
+  };
+  app2.post("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { createReshipment: createReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const b = req.body ?? {};
+      const required = [
+        "originalOrderId",
+        "customerName",
+        "customerPhone",
+        "shippingAddress",
+        "reason",
+        "urgency"
+      ];
+      for (const k of required) {
+        if (!b[k]) return res.status(400).json({ error: `Missing field: ${k}` });
+      }
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res.status(400).json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      if (!b.shippingAddress.address1 || !b.shippingAddress.zip) {
+        return res.status(400).json({ error: "shippingAddress.address1 and .zip are required." });
+      }
+      try {
+        const row = await createReshipment2({
+          storeId: scope.storeId,
+          originalOrderId: b.originalOrderId,
+          customerName: b.customerName,
+          customerPhone: b.customerPhone,
+          shippingAddress: b.shippingAddress,
+          reason: b.reason,
+          urgency: b.urgency,
+          scheduledDate: b.scheduledDate ?? null,
+          internalNotes: b.internalNotes ?? null,
+          nameSuffix: b.nameSuffix ?? null,
+          createdBy: authed.user.id,
+          createdByName: authed.user.fullName ?? null
+        });
+        res.status(201).json(row);
+      } catch (err) {
+        if (err instanceof ReshipmentError2) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error("[reshipments] create failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to create reshipment." });
+    }
+  });
+  app2.get("/api/pincode/:zip", async (req, res) => {
+    try {
+      const zip = String(req.params.zip ?? "").trim();
+      if (!/^\d{6}$/.test(zip)) {
+        return res.status(400).json({ error: "Pincode must be 6 digits." });
+      }
+      const rows = await db.select().from(pincodeTiers).where(eq10(pincodeTiers.pincode, zip)).limit(1);
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Pincode not found." });
+      res.json({
+        pincode: row.pincode,
+        city: row.city,
+        state: row.state,
+        tier: row.tier
+      });
+    } catch (error) {
+      console.error("[pincode] lookup failed:", error);
+      res.status(500).json({ error: "Failed to resolve pincode." });
+    }
+  });
+  app2.get("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const filter = req.query.filter === "attention" ? "attention" : "all";
+      const { listReshipments: listReshipments2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
+      res.json(await listReshipments2(scope.storeId, filter, { createdByOnly }));
+    } catch (error) {
+      console.error("[reshipments] list failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to list reshipments." });
+    }
+  });
+  app2.patch("/api/reshipments/:id", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { updateReshipment: updateReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const b = req.body ?? {};
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res.status(400).json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
+      try {
+        const row = await updateReshipment2(
+          scope.storeId,
+          req.params.id,
+          {
+            customerPhone: b.customerPhone,
+            shippingAddress: b.shippingAddress,
+            reason: b.reason,
+            urgency: b.urgency,
+            scheduledDate: b.scheduledDate ?? null,
+            internalNotes: b.internalNotes
+          },
+          { createdByOnly }
+        );
+        res.json(row);
+      } catch (err) {
+        if (err instanceof ReshipmentError2) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error("[reshipments] update failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to update reshipment." });
+    }
+  });
+  app2.post("/api/reshipments/:id/cancel", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { cancelReshipment: cancelReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
+      try {
+        const row = await cancelReshipment2(
+          scope.storeId,
+          req.params.id,
+          authed.user.id,
+          { createdByOnly }
+        );
+        res.json(row);
+      } catch (err) {
+        if (err instanceof ReshipmentError2) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error) {
+      console.error("[reshipments] cancel failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to cancel reshipment." });
+    }
+  });
+  app2.get("/api/reshipments/stats", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { getReshipmentStats: getReshipmentStats2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
+      const stats = await getReshipmentStats2(scope.storeId, { createdByOnly });
+      res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
+    } catch (error) {
+      console.error("[reshipments] stats failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to fetch stats." });
     }
   });
   app2.get("/api/orders/:id", async (req, res) => {
@@ -12249,7 +13818,7 @@ async function registerRoutes(app2) {
       const [store] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12268,7 +13837,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12294,11 +13863,11 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide accessToken and/or adAccountsConfig." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq10(stores.id, storeId));
       const [updated] = await db.select({
         metaAccessToken: stores.metaAccessToken,
         metaAdAccountsConfig: stores.metaAdAccountsConfig
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.metaAccessToken,
         adAccountsConfig: updated?.metaAdAccountsConfig ?? []
@@ -12317,7 +13886,7 @@ async function registerRoutes(app2) {
       const [row] = await db.select({
         delhiveryApiToken: stores.delhiveryApiToken,
         delhiveryClientName: stores.delhiveryClientName
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!row) {
         return res.status(404).json({ error: "Store not found" });
       }
@@ -12336,7 +13905,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12352,13 +13921,13 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide apiToken and/or clientName." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
-      const { invalidateDelhiveryClient: invalidateDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+      await db.update(stores).set(patch).where(eq10(stores.id, storeId));
+      const { invalidateDelhiveryClient: invalidateDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery(), delhivery_exports));
       invalidateDelhiveryClient2(storeId);
       const [updated] = await db.select({
         delhiveryApiToken: stores.delhiveryApiToken,
         delhiveryClientName: stores.delhiveryClientName
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.delhiveryApiToken,
         clientName: updated?.delhiveryClientName ?? null
@@ -12378,7 +13947,7 @@ async function registerRoutes(app2) {
       if (!shipment.storeId) {
         return res.status(400).json({ error: "Shipment is missing store context" });
       }
-      const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+      const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery(), delhivery_exports));
       let client;
       try {
         client = await getDelhiveryClient2(shipment.storeId);
@@ -12405,7 +13974,7 @@ async function registerRoutes(app2) {
       const [row] = await db.select({
         resendApiKey: stores.resendApiKey,
         resendFromEmail: stores.resendFromEmail
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!row) {
         return res.status(404).json({ error: "Store not found" });
       }
@@ -12424,7 +13993,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12440,11 +14009,11 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "Nothing to update. Provide apiKey and/or fromEmail." });
       }
       patch.updatedAt = /* @__PURE__ */ new Date();
-      await db.update(stores).set(patch).where(eq8(stores.id, storeId));
+      await db.update(stores).set(patch).where(eq10(stores.id, storeId));
       const [updated] = await db.select({
         resendApiKey: stores.resendApiKey,
         resendFromEmail: stores.resendFromEmail
-      }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       res.json({
         hasToken: !!updated?.resendApiKey,
         fromEmail: updated?.resendFromEmail ?? null
@@ -12460,7 +14029,7 @@ async function registerRoutes(app2) {
       if (!storeId) {
         return res.status(400).json({ error: "Store scope required" });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12493,7 +14062,7 @@ async function registerRoutes(app2) {
       if (!adAccountId) {
         return res.status(400).json({ error: "adAccountId query param is required." });
       }
-      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [store] = await db.select({ metaAccessToken: stores.metaAccessToken }).from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!store) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -12569,7 +14138,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and5(eq8(webhooks.eventType, "order.created"), eq8(webhooks.isActive, true))
+        and7(eq10(webhooks.eventType, "order.created"), eq10(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -13931,7 +15500,7 @@ async function registerRoutes(app2) {
       if (isAdmin(user)) {
         rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq8(userStores.storeId, stores.id)).where(eq8(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq10(userStores.storeId, stores.id)).where(eq10(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -13972,7 +15541,7 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq8(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq10(stores.storeUrl, normalizedUrl)).limit(1);
       if (existing) {
         return res.status(409).json({
           error: "A store with this URL is already connected.",
@@ -14061,7 +15630,7 @@ async function registerRoutes(app2) {
         return res.status(403).json({ error: "Only admins can update store details." });
       }
       const storeId = req.params.id;
-      const [existing] = await db.select().from(stores).where(eq8(stores.id, storeId)).limit(1);
+      const [existing] = await db.select().from(stores).where(eq10(stores.id, storeId)).limit(1);
       if (!existing) {
         return res.status(404).json({ error: "Store not found." });
       }
@@ -14106,7 +15675,7 @@ async function registerRoutes(app2) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No supported fields supplied. Allowed: storeName, logoUrl." });
       }
-      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(stores.id, storeId)).returning({
+      const [updated] = await db.update(stores).set({ ...patch, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, storeId)).returning({
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
@@ -14138,7 +15707,7 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq8(userStores.userId, targetId));
+      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq10(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
@@ -14179,7 +15748,7 @@ async function registerRoutes(app2) {
           });
         }
       }
-      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq8(userStores.userId, targetId));
+      const current = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq10(userStores.userId, targetId));
       const currentSet = new Set(current.map((r) => r.storeId));
       const currentIds = Array.from(currentSet);
       const toInsert = requestedIds.filter((id) => !currentSet.has(id));
@@ -14195,9 +15764,9 @@ async function registerRoutes(app2) {
       }
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
-          and5(
-            eq8(userStores.userId, targetId),
-            or2(...toDelete.map((id) => eq8(userStores.storeId, id)))
+          and7(
+            eq10(userStores.userId, targetId),
+            or3(...toDelete.map((id) => eq10(userStores.storeId, id)))
           )
         );
       }
@@ -14338,9 +15907,20 @@ async function registerRoutes(app2) {
           }
         }
       }
+      const beforeUser = await storage.getUser(req.params.id);
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
+      }
+      const payrollChanged = beforeUser && (String(beforeUser.baseSalary ?? "") !== String(user.baseSalary ?? "") || (beforeUser.payrollEmail ?? "") !== (user.payrollEmail ?? "") || (beforeUser.fullName ?? "") !== (user.fullName ?? ""));
+      if (payrollChanged && user.baseSalary != null && Number(user.baseSalary) > 0) {
+        void Promise.resolve().then(() => (init_provision(), provision_exports)).then(({ provisionUser: provisionUser2 }) => provisionUser2(user.id)).then((r) => {
+          console.log(
+            `[razorpay-provision/patch] ${user.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) \u2014 ${r.message}`
+          );
+        }).catch((err) => {
+          console.error(`[razorpay-provision/patch] uncaught for ${user.email}:`, err);
+        });
       }
       res.json(stripPassword(user));
     } catch (error) {
@@ -14498,36 +16078,36 @@ async function registerRoutes(app2) {
         return res.status(404).json({ error: "User not found" });
       }
       console.log(`Starting cleanup for user ${userId} (${user.email})`);
-      await db.update(orders).set({ assignedTo: null }).where(eq8(orders.assignedTo, userId));
-      await db.update(orders).set({ confirmedBy: null }).where(eq8(orders.confirmedBy, userId));
-      await db.update(orders).set({ cancelledBy: null }).where(eq8(orders.cancelledBy, userId));
+      await db.update(orders).set({ assignedTo: null }).where(eq10(orders.assignedTo, userId));
+      await db.update(orders).set({ confirmedBy: null }).where(eq10(orders.confirmedBy, userId));
+      await db.update(orders).set({ cancelledBy: null }).where(eq10(orders.cancelledBy, userId));
       console.log("  - Orders unassigned");
       await db.delete(orderAssignments).where(
-        or2(eq8(orderAssignments.userId, userId), eq8(orderAssignments.assignedBy, userId))
+        or3(eq10(orderAssignments.userId, userId), eq10(orderAssignments.assignedBy, userId))
       );
       console.log("  - Order assignments deleted");
-      await db.delete(leaveRequests).where(eq8(leaveRequests.userId, userId));
-      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq8(leaveRequests.reviewedBy, userId));
+      await db.delete(leaveRequests).where(eq10(leaveRequests.userId, userId));
+      await db.update(leaveRequests).set({ reviewedBy: null }).where(eq10(leaveRequests.reviewedBy, userId));
       console.log("  - Leave requests deleted/updated");
-      await db.delete(notifications).where(eq8(notifications.userId, userId));
+      await db.delete(notifications).where(eq10(notifications.userId, userId));
       console.log("  - Notifications deleted");
-      await db.delete(attendance).where(eq8(attendance.userId, userId));
+      await db.delete(attendance).where(eq10(attendance.userId, userId));
       console.log("  - Attendance records deleted");
-      await db.delete(calls).where(eq8(calls.agentId, userId));
+      await db.delete(calls).where(eq10(calls.agentId, userId));
       console.log("  - Call records deleted");
-      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq8(orderStatusHistory.changedBy, userId));
+      await db.update(orderStatusHistory).set({ changedBy: null }).where(eq10(orderStatusHistory.changedBy, userId));
       console.log("  - Order status history updated");
-      await db.update(invites).set({ invitedBy: null }).where(eq8(invites.invitedBy, userId));
+      await db.update(invites).set({ invitedBy: null }).where(eq10(invites.invitedBy, userId));
       console.log("  - Invites updated");
-      await db.update(ndrEvents).set({ actionBy: null }).where(eq8(ndrEvents.actionBy, userId));
+      await db.update(ndrEvents).set({ actionBy: null }).where(eq10(ndrEvents.actionBy, userId));
       console.log("  - NDR events updated");
-      await db.update(courses).set({ authorId: null }).where(eq8(courses.authorId, userId));
+      await db.update(courses).set({ authorId: null }).where(eq10(courses.authorId, userId));
       console.log("  - Courses updated");
-      await db.update(resources).set({ authorId: null }).where(eq8(resources.authorId, userId));
+      await db.update(resources).set({ authorId: null }).where(eq10(resources.authorId, userId));
       console.log("  - Resources updated");
-      await db.delete(userLessonProgress).where(eq8(userLessonProgress.userId, userId));
+      await db.delete(userLessonProgress).where(eq10(userLessonProgress.userId, userId));
       console.log("  - User lesson progress deleted");
-      await db.delete(userOnboardingProgress).where(eq8(userOnboardingProgress.userId, userId));
+      await db.delete(userOnboardingProgress).where(eq10(userOnboardingProgress.userId, userId));
       console.log("  - User onboarding progress deleted");
       await storage.deleteUser(userId);
       console.log(`User ${userId} deleted successfully`);
@@ -14637,6 +16217,86 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("[cron/auto-logout] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.post("/api/tools/track-awbs", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const rawAwbs = Array.isArray(req.body?.awbs) ? req.body.awbs : [];
+      const awbs = rawAwbs.map((s) => String(s ?? "").trim()).filter((s) => s.length > 0).slice(0, 100);
+      if (!awbs.length) return res.status(400).json({ error: "Pass { awbs: [...] } in body" });
+      const { stores: storesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      let storeId = typeof req.query.storeId === "string" && req.query.storeId || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db.select({ id: storesTable.id, isActive: storesTable.isActive }).from(storesTable).where(eq10(storesTable.id, req.storeScope.storeId)).limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db.select({ id: storesTable.id }).from(storesTable).where(eq10(storesTable.isActive, true)).limit(1);
+        storeId = live?.id ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+      const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery(), delhivery_exports));
+      const client = await getDelhiveryClient2(storeId);
+      const simplify = (status, statusType) => {
+        const s = (status ?? "").toLowerCase();
+        if (s === "delivered") return "Delivered";
+        if (s.includes("rto") && s.includes("deliver")) return "RTO Delivered";
+        if (statusType === "RT" || s.includes("rto") || s.includes("return")) return "In Transit (RTO)";
+        if (statusType === "UD") return "NDR";
+        if (s.includes("transit") || s === "dispatched" || s === "manifested" || s === "in transit" || s.includes("out for delivery")) return "In Transit";
+        return status ?? "Unknown";
+      };
+      const results = await Promise.all(
+        awbs.map(async (awb) => {
+          try {
+            const track = await client.trackShipment(awb);
+            if (!track.success) return { awb, simplified: "Error", status: track.error ?? "Unknown", location: "", scannedAt: "" };
+            const activities = track.activities ?? [];
+            const latest = activities[0];
+            return {
+              awb,
+              simplified: simplify(track.status, track.statusCode),
+              status: track.status ?? "Unknown",
+              location: track.location ?? latest?.location ?? "",
+              scannedAt: latest?.datetime ?? ""
+            };
+          } catch (e) {
+            return { awb, simplified: "Error", status: e?.message ?? String(e), location: "", scannedAt: "" };
+          }
+        })
+      );
+      res.json({ storeId, results });
+    } catch (err) {
+      console.error("Error in POST /api/tools/track-awbs:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+    }
+  });
+  app2.all("/api/cron/close-stale-ndr", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)"
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk = typeof auth === "string" && vercelSecret !== void 0 && auth === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHeader === "string" && customSecret !== void 0 && customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const result = await closeStaleNDREvents();
+      console.log(
+        `[cron/close-stale-ndr] scanned=${result.scanned} delivered=${result.closedDelivered} returned=${result.closedReturned} cancelled=${result.closedCancelled} stillOpen=${result.stillOpen} errors=${result.errors}`
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error("[cron/close-stale-ndr] sweep crashed:", err);
       return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
     }
   });
@@ -15072,6 +16732,224 @@ async function registerRoutes(app2) {
       return res.status(500).json({ error: "Provision failed", detail: err?.message ?? String(err) });
     }
   });
+  app2.get("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { stores: storesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      let storeId = typeof req.query.storeId === "string" && req.query.storeId || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db.select({ id: storesTable.id, isActive: storesTable.isActive }).from(storesTable).where(eq10(storesTable.id, req.storeScope.storeId)).limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db.select({ id: storesTable.id }).from(storesTable).where(eq10(storesTable.isActive, true)).limit(1);
+        storeId = live?.id ?? null;
+      }
+      const cycle = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const cycles = await cycle.listCycles(storeId);
+      res.json({ cycles, activeStoreId: storeId });
+    } catch (err) {
+      console.error("Error in GET /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to list cycles" });
+    }
+  });
+  app2.post("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const year = parseInt(String(body.year ?? ""), 10);
+      const month = parseInt(String(body.month ?? ""), 10);
+      const storeId = String(body.storeId ?? req.storeScope?.storeId ?? "");
+      if (!storeId || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "storeId, year, month required (month 1-12)" });
+      }
+      const cycle = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const result = await cycle.generateCycle({
+        storeId,
+        year,
+        month,
+        generatedBy: req.body?.currentUserId ?? null
+      });
+      res.status(result.alreadyExisted ? 200 : 201).json(result);
+    } catch (err) {
+      console.error("Error in POST /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to generate cycle" });
+    }
+  });
+  app2.get("/api/payroll/cycles/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const cycle = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const result = await cycle.getCycleWithLedgers(req.params.id);
+      if (!result) return res.status(404).json({ error: "Cycle not found" });
+      res.json(result);
+    } catch (err) {
+      console.error("Error in GET /api/payroll/cycles/:id:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to fetch cycle" });
+    }
+  });
+  app2.post("/api/payroll/cycles/:id/approve", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const approvedBy = req.body?.currentUserId ?? req.session?.userId ?? "";
+      if (!approvedBy) return res.status(400).json({ error: "currentUserId required" });
+      const cycle = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const result = await cycle.approveCycle({ cycleId: req.params.id, approvedBy });
+      res.json(result);
+    } catch (err) {
+      console.error("Error in POST /api/payroll/cycles/:id/approve:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to approve cycle" });
+    }
+  });
+  app2.get("/api/payroll/cycles/:id/ledger/:userId/pdf", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { payrollLedger: ledgerTable, payrollCycles: cyclesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const [ledger] = await db.select().from(ledgerTable).where(and7(eq10(ledgerTable.cycleId, req.params.id), eq10(ledgerTable.userId, req.params.userId))).limit(1);
+      if (!ledger) return res.status(404).json({ error: "Ledger row not found for this cycle+user" });
+      const user = await storage.getUser(req.params.userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+      const { renderPayslipPdfBuffer: renderPayslipPdfBuffer2 } = await Promise.resolve().then(() => (init_payslip_pdf(), payslip_pdf_exports));
+      const { runPayrollMath: runPayrollMath2 } = await Promise.resolve().then(() => (init_payroll(), payroll_exports));
+      const math = runPayrollMath2({
+        baseSalary: Number(ledger.baseSalary),
+        expectedWorkingDays: ledger.expectedWorkingDays,
+        daysPresent: ledger.daysPresent,
+        paidHolidaysUsed: ledger.paidHolidaysUsed,
+        unpaidLeaves: ledger.unpaidLeaves,
+        compensationProfile: ledger.compensationProfile ?? null,
+        deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+        teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+        personalRecoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+        reshipsCount: ledger.reshipsCount ?? 0,
+        reimbursement: Number(ledger.reimbursement),
+        lineItems: ledger.lineItems ?? []
+      });
+      const buf = await renderPayslipPdfBuffer2({
+        employee: {
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId ?? null,
+          holidayState: user.holidayState ?? null,
+          department: user.department ?? null
+        },
+        period: { year: ledger.year, month: ledger.month },
+        base: {
+          baseSalary: Number(ledger.baseSalary),
+          expectedWorkingDays: ledger.expectedWorkingDays,
+          daysPresent: ledger.daysPresent,
+          paidHolidaysUsed: ledger.paidHolidaysUsed,
+          ratio: Number(ledger.basePayRatio),
+          amount: Number(ledger.basePayAmount),
+          capped: Number(ledger.basePayRatio) >= 1
+        },
+        incentives: {
+          profile: ledger.compensationProfile,
+          deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+          teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+          recoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+          reshipsCount: ledger.reshipsCount ?? 0,
+          confirmationBonus: Number(ledger.confirmationBonus),
+          teamDeliveryBonus: Number(ledger.teamDeliveryBonus),
+          recoveryBonus: Number(ledger.recoveryBonus),
+          reshipsBonus: Number(ledger.reshipsBonus),
+          total: Number(ledger.totalIncentives)
+        },
+        lineItems: ledger.lineItems ?? [],
+        unpaidLeaves: ledger.unpaidLeaves,
+        unpaidLeaveDeduction: math.unpaidLeaveDeduction,
+        reimbursement: Number(ledger.reimbursement),
+        finalPayout: Number(ledger.finalPayout),
+        ledgerId: ledger.id,
+        generatedAt: /* @__PURE__ */ new Date()
+      });
+      const safeName = (user.fullName ?? "employee").replace(/[^a-z0-9]/gi, "_");
+      const period = `${ledger.year}-${String(ledger.month).padStart(2, "0")}`;
+      const filename = `${safeName}__${period}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", String(buf.byteLength));
+      res.end(buf);
+    } catch (err) {
+      console.error("Error in GET /api/payroll/cycles/:id/ledger/:userId/pdf:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to render PDF" });
+    }
+  });
+  app2.patch("/api/payroll/cycles/:id/ledger/:userId", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const cycleModule = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const [cycleRow] = await db.select().from((await Promise.resolve().then(() => (init_schema(), schema_exports))).payrollCycles).where(eq10((await Promise.resolve().then(() => (init_schema(), schema_exports))).payrollCycles.id, req.params.id)).limit(1);
+      if (!cycleRow) return res.status(404).json({ error: "Cycle not found" });
+      const updated = await cycleModule.updateCycleLedger({
+        cycleId: req.params.id,
+        userId: req.params.userId,
+        storeId: cycleRow.storeId,
+        overrides: {
+          baseSalary: body.baseSalary != null ? Number(body.baseSalary) : void 0,
+          daysPresent: body.daysPresent != null ? Number(body.daysPresent) : void 0,
+          paidHolidaysUsed: body.paidHolidaysUsed != null ? Number(body.paidHolidaysUsed) : void 0,
+          unpaidLeaves: body.unpaidLeaves != null ? Number(body.unpaidLeaves) : void 0,
+          deliveryRatePct: body.deliveryRatePct === null ? null : body.deliveryRatePct != null ? Number(body.deliveryRatePct) : void 0,
+          teamDeliveryRatePct: body.teamDeliveryRatePct === null ? null : body.teamDeliveryRatePct != null ? Number(body.teamDeliveryRatePct) : void 0,
+          personalRecoveryRatePct: body.personalRecoveryRatePct === null ? null : body.personalRecoveryRatePct != null ? Number(body.personalRecoveryRatePct) : void 0,
+          reshipsCount: body.reshipsCount != null ? Number(body.reshipsCount) : void 0,
+          reimbursement: body.reimbursement != null ? Number(body.reimbursement) : void 0,
+          lineItems: Array.isArray(body.lineItems) ? body.lineItems : void 0,
+          notes: typeof body.notes === "string" ? body.notes : void 0
+        }
+      });
+      res.json(updated);
+    } catch (err) {
+      console.error("Error in PATCH /api/payroll/cycles/:id/ledger/:userId:", err);
+      const msg = err?.message ?? "Failed to update ledger";
+      const status = msg.includes("locked") ? 409 : msg.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: msg });
+    }
+  });
+  app2.all("/api/cron/generate-payroll-cycle", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.PAYROLL_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({ error: "No cron secret configured" });
+    }
+    const authHdr = req.headers.authorization;
+    const customHdr = req.headers["x-payroll-cron-secret"];
+    const vercelOk = typeof authHdr === "string" && vercelSecret && authHdr === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHdr === "string" && customSecret && customHdr === customSecret;
+    if (!vercelOk && !customOk) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const now = /* @__PURE__ */ new Date();
+      const nowInIst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const targetMonthIst = new Date(nowInIst.getFullYear(), nowInIst.getMonth() - 1, 15);
+      const year = targetMonthIst.getFullYear();
+      const month = targetMonthIst.getMonth() + 1;
+      const { stores: storesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const activeStores = await db.select({ id: storesTable.id }).from(storesTable).where(eq10(storesTable.isActive, true));
+      const cycleModule = await Promise.resolve().then(() => (init_payroll_cycle(), payroll_cycle_exports));
+      const results = [];
+      for (const s of activeStores) {
+        try {
+          const r = await cycleModule.generateCycle({ storeId: s.id, year, month, generatedBy: null });
+          results.push({ storeId: s.id, ok: r.ok, ledgerCount: r.ledgerCount, alreadyExisted: r.alreadyExisted, message: r.message });
+        } catch (err) {
+          results.push({ storeId: s.id, ok: false, error: err?.message ?? String(err) });
+        }
+      }
+      console.log(`[cron/generate-payroll-cycle] ${year}-${String(month).padStart(2, "0")} \u2014 ${results.length} store(s) processed`);
+      res.json({ ok: true, year, month, results });
+    } catch (err) {
+      console.error("[cron/generate-payroll-cycle] crash:", err);
+      res.status(500).json({ error: err?.message ?? "Cron failed" });
+    }
+  });
   app2.get("/api/payroll/preview", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
@@ -15092,17 +16970,33 @@ async function registerRoutes(app2) {
         Promise.resolve().then(() => (init_payroll_metrics(), payroll_metrics_exports))
       ]);
       const expectedDays = expectedWorkingDays2(year, month);
-      const [att, autoHolidays, deliveryRate, teamRate, ytdHolidays, existing] = await Promise.all([
+      const explicitStoreId = req.query.storeId ? String(req.query.storeId) : null;
+      const activeStoreId = explicitStoreId || req.storeScope?.storeId || null;
+      const [att, autoHolidays, deliveryRate, teamRate, brandTdr, brandNdr, reshipsDelivered, ytdHolidays, existing] = await Promise.all([
         metrics.getAttendanceMetrics(userId, year, month),
         user.holidayState ? metrics.getAutoPaidHolidaysCount(user.holidayState, year, month) : 0,
         metrics.getConfirmationDeliveryRatePct(userId, year, month),
         metrics.getTeamDeliveryRatePct(year, month),
+        activeStoreId ? metrics.getBrandTDRPct(activeStoreId, year, month) : Promise.resolve(null),
+        activeStoreId ? metrics.getBrandNDRDeliveryRate(activeStoreId, year, month) : Promise.resolve({
+          ratePct: null,
+          totalNdrs: 0,
+          deliveredNdrs: 0,
+          returnedNdrs: 0,
+          cancelledNdrs: 0,
+          openNdrs: 0
+        }),
+        activeStoreId ? metrics.getReshipmentsDeliveredCount(activeStoreId, year, month) : Promise.resolve(0),
         metrics.getYtdPaidHolidaysUsed(userId, year, month),
         storage.getPayrollLedgerByPeriod(userId, year, month)
       ]);
       const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP2 - ytdHolidays);
       const paidHolidaysAuto = Math.min(autoHolidays, remainingQuota);
+      const effectiveTeamRate = brandTdr ?? teamRate;
       const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
+      const { DEFAULT_REIMBURSEMENT: DEFAULT_REIMBURSEMENT2 } = await Promise.resolve().then(() => (init_payroll(), payroll_exports));
+      const reimbursementParam = parseFloatOrNull(req.query.reimbursement);
+      const reimbursement = reimbursementParam ?? DEFAULT_REIMBURSEMENT2;
       const result = runPayrollMath2({
         baseSalary,
         expectedWorkingDays: expectedDays,
@@ -15110,11 +17004,13 @@ async function registerRoutes(app2) {
         paidHolidaysUsed: paidHolidaysAuto,
         compensationProfile: user.compensationProfile ?? null,
         deliveryRatePct: deliveryRate,
-        teamDeliveryRatePct: teamRate,
-        personalRecoveryRatePct: null,
-        // admin enters
-        reshipsCount: null
-        // admin enters
+        teamDeliveryRatePct: effectiveTeamRate,
+        // Brand-wide NDR Delivery Rate (delivered NDRs / total NDRs)
+        // now feeds the recovery tier automatically. Admin can still
+        // override on /api/payroll/run.
+        personalRecoveryRatePct: brandNdr.ratePct,
+        reshipsCount: reshipsDelivered,
+        reimbursement
       });
       res.json({
         user: {
@@ -15139,9 +17035,22 @@ async function registerRoutes(app2) {
         },
         autoMetrics: {
           deliveryRatePct: deliveryRate,
-          teamDeliveryRatePct: teamRate,
-          personalRecoveryRatePct: null,
-          reshipsCount: null
+          teamDeliveryRatePct: effectiveTeamRate,
+          // brandTDR / brandNDR are the per-store values used to
+          // compute the tier bonuses in Chandi's variable-pay stack.
+          // The UI can show them side-by-side with the admin-editable
+          // fields so overrides are conscious, not silent.
+          brandTdrPct: brandTdr,
+          personalRecoveryRatePct: brandNdr.ratePct,
+          ndrBreakdown: {
+            total: brandNdr.totalNdrs,
+            delivered: brandNdr.deliveredNdrs,
+            returned: brandNdr.returnedNdrs,
+            cancelled: brandNdr.cancelledNdrs,
+            stillOpen: brandNdr.openNdrs
+          },
+          reshipsCount: reshipsDelivered,
+          reimbursement
         },
         math: result,
         existingLedger: existing ? {
@@ -15180,6 +17089,8 @@ async function registerRoutes(app2) {
       const teamDeliveryRatePct = parseFloatOrNull(body.teamDeliveryRatePct);
       const personalRecoveryRatePct = parseFloatOrNull(body.personalRecoveryRatePct);
       const reshipsCount = parseIntOr(body.reshipsCount, 0);
+      const reimbursementInput = parseFloatOrNull(body.reimbursement);
+      const reimbursement = Math.max(0, reimbursementInput ?? payroll.DEFAULT_REIMBURSEMENT);
       const notes = typeof body.notes === "string" ? body.notes : null;
       const baseSalary = Number(user.baseSalary);
       const profile = user.compensationProfile ?? null;
@@ -15192,7 +17103,8 @@ async function registerRoutes(app2) {
         deliveryRatePct,
         teamDeliveryRatePct,
         personalRecoveryRatePct,
-        reshipsCount
+        reshipsCount,
+        reimbursement
       });
       const created = await storage.upsertPayrollLedger({
         userId,
@@ -15202,7 +17114,7 @@ async function registerRoutes(app2) {
         expectedWorkingDays: expectedDays,
         daysPresent,
         paidHolidaysUsed,
-        basePayRatio: String(round4(math.base.ratio)),
+        basePayRatio: String(round42(math.base.ratio)),
         basePayAmount: String(math.base.amount),
         compensationProfile: profile,
         deliveryRatePct: deliveryRatePct != null ? String(deliveryRatePct) : null,
@@ -15214,6 +17126,7 @@ async function registerRoutes(app2) {
         recoveryBonus: String(math.incentives.recoveryBonus),
         reshipsBonus: String(math.incentives.reshipsBonus),
         totalIncentives: String(math.incentives.total),
+        reimbursement: String(math.reimbursement),
         finalPayout: String(math.finalPayout),
         currency: "INR",
         status: "finalized",
@@ -15253,6 +17166,7 @@ async function registerRoutes(app2) {
           reshipsBonus: math.incentives.reshipsBonus,
           total: math.incentives.total
         },
+        reimbursement: math.reimbursement,
         finalPayout: math.finalPayout,
         ledgerId: created.id,
         generatedAt: /* @__PURE__ */ new Date()
@@ -15376,7 +17290,7 @@ async function registerRoutes(app2) {
     const n = parseFloat(String(v));
     return Number.isFinite(n) ? n : null;
   }
-  function round4(n) {
+  function round42(n) {
     return Math.round(n * 1e4) / 1e4;
   }
   app2.get("/api/attendance", async (req, res) => {
@@ -15440,7 +17354,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.startBreak(attendance2.id);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq8(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "break", updatedAt: /* @__PURE__ */ new Date() }).where(eq10(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error starting break:", error);
@@ -15465,7 +17379,7 @@ async function registerRoutes(app2) {
       }
       const breakRecord = await storage.endBreak(activeBreak.id, now);
       const { attendance: attendanceSchema } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq8(attendanceSchema.id, attendance2.id));
+      await db.update(attendanceSchema).set({ status: "present", updatedAt: /* @__PURE__ */ new Date() }).where(eq10(attendanceSchema.id, attendance2.id));
       res.json({ success: true, breakRecord });
     } catch (error) {
       console.error("Error ending break:", error);
@@ -16247,7 +18161,7 @@ async function registerRoutes(app2) {
         if (!shipment.storeId) {
           return res.status(400).json({ error: "Shipment is missing store context; cannot route Delhivery call" });
         }
-        const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports));
+        const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery(), delhivery_exports));
         let delhiveryClient;
         try {
           delhiveryClient = await getDelhiveryClient2(shipment.storeId);
@@ -16744,6 +18658,13 @@ async function registerRoutes(app2) {
         department: null
       });
       await storage.updateInviteStatus(invite.id, "accepted");
+      void Promise.resolve().then(() => (init_provision(), provision_exports)).then(({ provisionUser: provisionUser2 }) => provisionUser2(newUser.id)).then((r) => {
+        console.log(
+          `[razorpay-provision/invite] ${newUser.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) \u2014 ${r.message}`
+        );
+      }).catch((err) => {
+        console.error(`[razorpay-provision/invite] uncaught for ${newUser.email}:`, err);
+      });
       req.session.userId = newUser.id;
       await new Promise(
         (resolve, reject) => req.session.save((err) => err ? reject(err) : resolve())
@@ -16765,10 +18686,17 @@ async function registerRoutes(app2) {
   });
   app2.get("/api/leave-requests", async (req, res) => {
     try {
-      const { userId, status } = req.query;
+      const currentUserId = req.query.currentUserId ?? req.body?.currentUserId ?? req.session?.userId;
+      let scopedUserId = req.query.userId;
+      if (currentUserId) {
+        const caller = await storage.getUser(currentUserId);
+        if (caller && !isAdmin(caller)) {
+          scopedUserId = caller.id;
+        }
+      }
       const filters = {
-        userId,
-        status
+        userId: scopedUserId,
+        status: req.query.status
       };
       const requests = await storage.listLeaveRequests(filters);
       res.json(requests);
@@ -17168,7 +19096,7 @@ async function registerRoutes(app2) {
       const endDateParsed = endDate && typeof endDate === "string" && endDate.trim() ? new Date(endDate) : null;
       const conditions = [];
       if (req.storeScope?.storeId) {
-        conditions.push(eq8(orders.storeId, req.storeScope.storeId));
+        conditions.push(eq10(orders.storeId, req.storeScope.storeId));
       }
       if (startDateParsed && !isNaN(startDateParsed.getTime())) {
         conditions.push(gte2(orders.createdAt, startDateParsed));
@@ -17187,7 +19115,7 @@ async function registerRoutes(app2) {
         createdAt: orders.createdAt,
         fulfillmentStatus: orders.fulfillmentStatus
       }).from(orders);
-      const allOrders = conditions.length > 0 ? await baseSelect.where(and5(...conditions)) : await baseSelect;
+      const allOrders = conditions.length > 0 ? await baseSelect.where(and7(...conditions)) : await baseSelect;
       const shippedOrders = allOrders.filter(
         (o) => o.fulfillmentStatus === "fulfilled" || o.fulfillmentStatus === "partial" || o.shipmentStatus
       );
@@ -17256,7 +19184,7 @@ async function registerRoutes(app2) {
         }
       });
       const agentIds = Object.keys(agentCounts);
-      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql8`${users.id} = ANY(${agentIds})`) : [];
+      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql10`${users.id} = ANY(${agentIds})`) : [];
       const agentNameMap = new Map(agentUsers.map((u) => [u.id, u.name]));
       const topAgents = Object.entries(agentCounts).map(([agentId, count2]) => ({
         agent_id: agentId,
@@ -17314,7 +19242,7 @@ async function registerRoutes(app2) {
   checkDueFollowups();
   app2.get("/api/webhooks-config", async (_req, res) => {
     try {
-      const allWebhooks = await db.select().from(webhooks).orderBy(desc3(webhooks.createdAt));
+      const allWebhooks = await db.select().from(webhooks).orderBy(desc5(webhooks.createdAt));
       res.json(allWebhooks);
     } catch (error) {
       console.error("Error fetching webhooks:", error);
@@ -17338,7 +19266,7 @@ async function registerRoutes(app2) {
     try {
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid webhook ID" });
-      await db.delete(webhooks).where(eq8(webhooks.id, id));
+      await db.delete(webhooks).where(eq10(webhooks.id, id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting webhook:", error);
@@ -17698,7 +19626,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
       const storeName = store?.storeName ?? "Your store";
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq9, and: and6, sql: sql9, inArray: inArray2 } = await import("drizzle-orm");
+      const { eq: eq11, and: and8, sql: sql11, inArray: inArray2 } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const mismatchSettlements = await db2.select({
         id: pgSettlements2.id,
@@ -17707,11 +19635,11 @@ TeleCRM: ${incomingNotes.trim()}`;
         settledAmount: pgSettlements2.settledAmount,
         pgPaymentId: pgSettlements2.pgPaymentId
       }).from(pgSettlements2).where(
-        and6(
-          eq9(pgSettlements2.storeId, storeId),
-          eq9(pgSettlements2.status, "mismatch")
+        and8(
+          eq11(pgSettlements2.storeId, storeId),
+          eq11(pgSettlements2.status, "mismatch")
         )
-      ).orderBy(sql9`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
+      ).orderBy(sql11`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
       const mismatchOrderIds = mismatchSettlements.map((s) => s.orderId).filter((id) => !!id);
       const mismatchOrders = mismatchOrderIds.length > 0 ? await db2.select({
         id: orders2.id,
@@ -17755,11 +19683,11 @@ TeleCRM: ${incomingNotes.trim()}`;
       );
       const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
       const settledSum = await db2.select({
-        c: sql9`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
+        c: sql11`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
       }).from(pgSettlements2).where(
-        and6(
-          eq9(pgSettlements2.storeId, storeId),
-          eq9(pgSettlements2.status, "settled")
+        and8(
+          eq11(pgSettlements2.storeId, storeId),
+          eq11(pgSettlements2.status, "settled")
         )
       );
       const totalSettledAmount = fmtINR(Number(settledSum[0]?.c ?? 0));
@@ -17908,17 +19836,17 @@ TeleCRM: ${incomingNotes.trim()}`;
       if (!storeId) return res.status(400).json({ error: "Missing storeId" });
       const maxToProcess = Math.min(25, Math.max(1, Number(req.body?.limit ?? 25)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq9, and: and6, isNull: isNull2, sql: sqlT } = await import("drizzle-orm");
+      const { eq: eq11, and: and8, isNull: isNull2, sql: sqlT } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const orphans = await db2.select({
         id: pgSettlements2.id,
         pgPaymentId: pgSettlements2.pgPaymentId,
         pgTransactionAt: pgSettlements2.pgTransactionAt
       }).from(pgSettlements2).where(
-        and6(
-          eq9(pgSettlements2.storeId, storeId),
-          eq9(pgSettlements2.pgName, "payu"),
-          eq9(pgSettlements2.status, "pending"),
+        and8(
+          eq11(pgSettlements2.storeId, storeId),
+          eq11(pgSettlements2.pgName, "payu"),
+          eq11(pgSettlements2.status, "pending"),
           isNull2(pgSettlements2.orderId),
           sqlT`${pgSettlements2.pgTransactionAt} IS NOT NULL`
         )
@@ -17990,9 +19918,9 @@ TeleCRM: ${incomingNotes.trim()}`;
             if (!matchingOrphanId) continue;
             const orderLegacyId = String(o.legacyResourceId);
             const existing = await db2.select({ id: orders2.id }).from(orders2).where(
-              and6(
-                eq9(orders2.storeId, storeId),
-                eq9(orders2.shopifyOrderId, orderLegacyId)
+              and8(
+                eq11(orders2.storeId, storeId),
+                eq11(orders2.shopifyOrderId, orderLegacyId)
               )
             ).limit(1);
             let localOrderId;
@@ -18026,7 +19954,7 @@ TeleCRM: ${incomingNotes.trim()}`;
               orderId: localOrderId,
               orderAmount: o.totalPriceSet?.shopMoney?.amount ?? null,
               updatedAt: /* @__PURE__ */ new Date()
-            }).where(eq9(pgSettlements2.id, matchingOrphanId));
+            }).where(eq11(pgSettlements2.id, matchingOrphanId));
             samples.push({
               pgPaymentId: payuAttr.value,
               found: true,
@@ -18244,8 +20172,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql9 } = await import("drizzle-orm");
-      const result = await db2.execute(sql9`
+      const { sql: sql11 } = await import("drizzle-orm");
+      const result = await db2.execute(sql11`
         SELECT
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
           COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
@@ -18284,8 +20212,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql9 } = await import("drizzle-orm");
-      const result = await db2.execute(sql9`
+      const { sql: sql11 } = await import("drizzle-orm");
+      const result = await db2.execute(sql11`
         SELECT
           utr_number AS utr,
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
@@ -18335,8 +20263,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql9 } = await import("drizzle-orm");
-      const result = await db2.execute(sql9`
+      const { sql: sql11 } = await import("drizzle-orm");
+      const result = await db2.execute(sql11`
         SELECT
           (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
           status,

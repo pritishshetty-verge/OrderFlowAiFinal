@@ -1329,6 +1329,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           urgency: b.urgency,
           scheduledDate: b.scheduledDate ?? null,
           internalNotes: b.internalNotes ?? null,
+          nameSuffix: b.nameSuffix ?? null,
           createdBy: authed.user.id,
           createdByName: authed.user.fullName ?? null,
         });

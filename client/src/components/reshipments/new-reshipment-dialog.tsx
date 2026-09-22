@@ -89,6 +89,9 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
   const [urgency, setUrgency] = useState<"instant" | "scheduled">("instant");
   const [scheduledDate, setScheduledDate] = useState("");
   const [notes, setNotes] = useState("");
+  // Suffix appended to the Shopify order name (#1234 + suffix).
+  // "R" = normal NDR-driven reshipment; "C" = customer-driven return/replacement.
+  const [nameSuffix, setNameSuffix] = useState<"R" | "C">("R");
   const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
 
   // Reset the whole form when the dialog closes.
@@ -102,6 +105,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
       setUrgency("instant");
       setScheduledDate("");
       setNotes("");
+      setNameSuffix("R");
     }
   }, [open]);
 
@@ -219,6 +223,7 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           urgency,
           scheduledDate: urgency === "scheduled" ? scheduledDate : null,
           internalNotes: notes || null,
+          nameSuffix,
         },
       );
       return res.json();
@@ -474,6 +479,37 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
           {/* 3. Reason + urgency + notes */}
           {order && (
             <div className="space-y-3.5">
+              <FormRow label="Order suffix">
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex overflow-hidden rounded-md border">
+                    {(["R", "C"] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setNameSuffix(s)}
+                        className={`h-8 w-14 text-sm font-medium transition-colors ${
+                          nameSuffix === s
+                            ? "bg-brand text-white"
+                            : "bg-transparent text-muted-foreground hover:bg-muted"
+                        }`}
+                        data-testid={`btn-suffix-${s}`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    New order will be{" "}
+                    <span className="font-mono">
+                      {(order.shopifyOrderNumber
+                        ? `#${order.shopifyOrderNumber}`
+                        : `#${order.id.slice(0, 8)}`) + nameSuffix}
+                    </span>{" "}
+                    · <span className="font-medium">{nameSuffix === "R" ? "NDR-driven" : "Customer-driven"}</span>
+                  </span>
+                </div>
+              </FormRow>
+
               <FormRow label="Reason">
                 <Select value={reason} onValueChange={setReason}>
                   <SelectTrigger data-testid="select-reason">

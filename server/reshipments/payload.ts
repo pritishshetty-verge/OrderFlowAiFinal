@@ -33,7 +33,16 @@ export interface ShopifyOrderForReshipment {
   name: string; // e.g. "#1234"
   currency?: string;
   total_price?: string | number;
+  total_discounts?: string | number;
   payment_gateway_names?: string[];
+  // Discount codes attached to the parent order (e.g. TARA10). Preserved
+  // on the reshipment so downstream attribution reports (agent-level GMV,
+  // Shopify Discounts dashboard) credit the same code.
+  discount_codes?: Array<{
+    code: string;
+    amount: string | number;
+    type?: string; // "fixed_amount" | "percentage" | "shipping"
+  }>;
   line_items: Array<{
     variant_id?: string | number | null;
     product_id?: string | number | null;
@@ -74,6 +83,13 @@ export interface BuildReshipmentPayloadArgs {
   scheduledDate?: string | null; // YYYY-MM-DD
   internalNotes?: string | null;
   paymentType: "cod" | "prepaid";
+  /**
+   * Single-character suffix appended to the reshipment order name
+   * (e.g. #1234 + "R" → #1234R). Defaults to "R". Operators can
+   * choose "C" for a customer-driven reshipment vs "R" for a normal
+   * NDR-driven one — makes the source visible at a glance in Shopify.
+   */
+  nameSuffix?: string;
 }
 
 /** The exact JSON body we POST to Shopify. Typed loosely because
@@ -86,6 +102,12 @@ export type ShopifyCreateOrderBody = {
 /** Round to paise the way the ledger engine does — Shopify strings
  *  compare exactly, so any float drift causes a validation error. */
 const money = (v: number) => (Math.round(v * 100) / 100).toFixed(2);
+
+/** Single uppercase A-Z, defaulting to "R" when missing/invalid. */
+function sanitizeSuffix(raw: string | undefined | null): string {
+  const c = (raw ?? "R").toUpperCase().trim();
+  return /^[A-Z]$/.test(c) ? c : "R";
+}
 
 export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): ShopifyCreateOrderBody {
   const isCOD = args.paymentType === "cod";
@@ -115,6 +137,20 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
 
   const originalGateway = args.original.payment_gateway_names?.[0] ?? (isCOD ? "COD" : "manual");
 
+  // Discount inheritance — the reshipment carries the parent's discount
+  // code (e.g. TARA10) so attribution reports credit the same coupon.
+  // We normalise into Shopify's create-order shape (fixed_amount with a
+  // money string) and remember the primary code for the note attribute.
+  const originalDiscountCodes = (args.original.discount_codes ?? [])
+    .filter((d) => !!d?.code)
+    .map((d) => ({
+      code: String(d.code),
+      amount: money(Number(d.amount ?? 0)),
+      type: d.type ?? "fixed_amount",
+    }));
+  const primaryOriginalCode = originalDiscountCodes[0]?.code ?? null;
+  const originalTotalDiscounts = Number(args.original.total_discounts ?? 0);
+
   // Tags — always attach the linkage back to the original so downstream
   // systems (and this app's own webhook handler) can identify a
   // reshipment without a DB round-trip.
@@ -128,8 +164,8 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
   const body: Record<string, unknown> = {
     // `name` — Shopify overwrites this on most plans; we still set it
     // so the intent is explicit, and stores that DO allow custom names
-    // (Shopify Plus) end up with the correct "#1234R" naming.
-    name: `${args.original.name}R`,
+    // (Shopify Plus) end up with the correct "#1234R" (or "C") naming.
+    name: `${args.original.name}${sanitizeSuffix(args.nameSuffix)}`,
     currency: args.original.currency ?? "INR",
     line_items,
     tags: tags.join(", "),
@@ -142,6 +178,9 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
       { name: "reshipment_reason", value: args.reason },
       { name: "reshipment_urgency", value: args.urgency },
       ...(args.scheduledDate ? [{ name: "reshipment_scheduled_date", value: args.scheduledDate }] : []),
+      ...(primaryOriginalCode
+        ? [{ name: "original_discount_code", value: primaryOriginalCode }]
+        : []),
     ],
     shipping_address: {
       ...args.shippingAddress,
@@ -179,15 +218,24 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
     // pending so Shopify shows "Payment pending" and the courier is expected
     // to collect on delivery.
     body.financial_status = "pending";
+    // Apply the parent order's discount codes (e.g. TARA10) so the
+    // reshipment's discount_codes column mirrors the original for
+    // attribution. The courier then collects (subtotal - total_discounts),
+    // which matches what the customer was going to pay on the parent.
+    if (originalDiscountCodes.length) {
+      body.discount_codes = originalDiscountCodes;
+      body.total_discounts = money(originalTotalDiscounts);
+    }
+    const netAmount = Math.max(0, subtotal - originalTotalDiscounts);
     // Shopify rejects sale transactions of zero ("Amount must be greater
     // than zero for sale transactions"), so only attach one when there's
     // actually a value to collect. A ₹0 COD order needs no transaction.
-    if (subtotal > 0) {
+    if (netAmount > 0) {
       body.transactions = [
         {
           kind: "sale",
           status: "pending",
-          amount: money(subtotal),
+          amount: money(netAmount),
           currency: args.original.currency ?? "INR",
           gateway: originalGateway,
         },
@@ -202,9 +250,14 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
     // "Amount must be greater than zero for sale transactions").
     // `financial_status: "paid"` alone marks the order settled, which is
     // what the waybill logic and the merchant's reports read.
+    //
+    // When the parent order had a real code (e.g. TARA10), we reuse its
+    // NAME as the zero-out code so the reshipment appears under the same
+    // coupon in Shopify Discounts / agent attribution reports. Financial
+    // effect is identical (still a 100% fixed_amount off subtotal).
     body.discount_codes = [
       {
-        code: "RESHIPMENT_ALREADY_PAID",
+        code: primaryOriginalCode ?? "RESHIPMENT_ALREADY_PAID",
         amount: money(subtotal),
         type: "fixed_amount",
       },

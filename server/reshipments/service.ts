@@ -36,6 +36,10 @@ export interface CreateReshipmentInput {
   createdBy?: string | null;
   /** Stored alongside the id so the audit survives a rename/delete. */
   createdByName?: string | null;
+  /** Single-letter suffix for the new Shopify order name.
+   *  "R" (default) for standard NDR-driven reshipments, "C" for
+   *  customer-driven ones. Backend clamps to one A-Z char. */
+  nameSuffix?: string | null;
 }
 
 export class ReshipmentError extends Error {
@@ -141,7 +145,12 @@ export async function createReshipment(
       name: shopifyOrder.name,
       currency: shopifyOrder.currency,
       total_price: shopifyOrder.total_price,
+      total_discounts: shopifyOrder.total_discounts,
       payment_gateway_names: shopifyOrder.payment_gateway_names,
+      // Inherit the parent order's discount code(s) — e.g. TARA10 — so
+      // the reshipment shows against the same coupon in Shopify Discounts
+      // and gets credited by agent-attribution reports.
+      discount_codes: shopifyOrder.discount_codes,
       line_items: shopifyOrder.line_items,
     },
     customerName: input.customerName,
@@ -153,6 +162,7 @@ export async function createReshipment(
     scheduledDate: input.scheduledDate,
     internalNotes: input.internalNotes,
     paymentType,
+    nameSuffix: input.nameSuffix ?? undefined,
   });
   const created = await shop.createOrder(payload);
 
