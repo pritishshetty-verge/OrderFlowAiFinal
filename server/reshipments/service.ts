@@ -79,7 +79,12 @@ export async function createReshipment(
     );
   }
 
-  // 2. Duplicate guard — refuse a second live reshipment for the same order.
+  // 2. Duplicate guard — scoped by suffix so an "R" (NDR-driven) and a
+  //    "C" (customer-driven) reshipment for the same original can coexist.
+  //    They represent different intents, and blocking one because the
+  //    other is live would force operators to cancel the R just to log a
+  //    customer replacement.
+  const wantedSuffix = (input.nameSuffix ?? "R").toUpperCase().trim() || "R";
   const existing = await db
     .select()
     .from(reshipmentLogs)
@@ -89,12 +94,17 @@ export async function createReshipment(
         eq(reshipmentLogs.originalOrderId, input.originalOrderId),
         or(...LIVE_STATUSES.map((s) => eq(reshipmentLogs.courierStatus, s))),
       ),
-    )
-    .limit(1);
-  if (existing.length) {
-    const dup = existing[0];
+    );
+  const collision = existing.find((row) => {
+    // newShopifyOrderName looks like "#1234R" or "#1234C" — pull the
+    // trailing letter. Rows created before the suffix feature are all "R".
+    const name = row.newShopifyOrderName ?? "";
+    const suffix = (name.match(/([A-Z])\s*$/i)?.[1] ?? "R").toUpperCase();
+    return suffix === wantedSuffix;
+  });
+  if (collision) {
     throw new ReshipmentError(
-      `A live reshipment already exists for this order (${dup.newShopifyOrderName ?? dup.id}, status: ${dup.courierStatus}). Chase that one instead.`,
+      `A live ${wantedSuffix === "C" ? "customer-driven" : "NDR-driven"} reshipment already exists for this order (${collision.newShopifyOrderName ?? collision.id}, status: ${collision.courierStatus}). Chase that one instead.`,
       409,
     );
   }
@@ -151,6 +161,11 @@ export async function createReshipment(
       // the reshipment shows against the same coupon in Shopify Discounts
       // and gets credited by agent-attribution reports.
       discount_codes: shopifyOrder.discount_codes,
+      // Reference the parent's Shopify customer directly. Without this
+      // Shopify tries to CREATE a new customer from the phone/email we
+      // send and 422s on the phone-uniqueness constraint the moment the
+      // phone is already on another profile.
+      customer: shopifyOrder.customer ? { id: shopifyOrder.customer.id } : null,
       line_items: shopifyOrder.line_items,
     },
     customerName: input.customerName,

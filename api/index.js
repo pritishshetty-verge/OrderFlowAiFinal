@@ -5461,7 +5461,14 @@ function buildReshipmentPayload(args) {
       last_name: args.shippingAddress.last_name ?? args.customerName.split(" ").slice(1).join(" "),
       name: args.shippingAddress.name ?? args.customerName
     },
-    customer: {
+    // Prefer linking to the parent's existing Shopify customer by id.
+    // Sending a fresh {phone, email, first_name...} block makes Shopify
+    // try to CREATE a new customer and 422 with "customer.phone_number
+    // has already been taken" the moment the phone matches any existing
+    // profile (which for a reshipment is basically always). Passing just
+    // the id sidesteps that entirely; only fall back to the create-new
+    // shape when the parent had no linked customer.
+    customer: args.original.customer?.id ? { id: args.original.customer.id } : {
       first_name: args.customerName.split(" ")[0],
       last_name: args.customerName.split(" ").slice(1).join(" ") || void 0,
       phone: args.customerPhone,
@@ -5539,17 +5546,22 @@ async function createReshipment(input) {
       400
     );
   }
+  const wantedSuffix = (input.nameSuffix ?? "R").toUpperCase().trim() || "R";
   const existing = await db.select().from(reshipmentLogs).where(
     and3(
       eq4(reshipmentLogs.storeId, input.storeId),
       eq4(reshipmentLogs.originalOrderId, input.originalOrderId),
       or2(...LIVE_STATUSES.map((s) => eq4(reshipmentLogs.courierStatus, s)))
     )
-  ).limit(1);
-  if (existing.length) {
-    const dup = existing[0];
+  );
+  const collision = existing.find((row2) => {
+    const name = row2.newShopifyOrderName ?? "";
+    const suffix = (name.match(/([A-Z])\s*$/i)?.[1] ?? "R").toUpperCase();
+    return suffix === wantedSuffix;
+  });
+  if (collision) {
     throw new ReshipmentError(
-      `A live reshipment already exists for this order (${dup.newShopifyOrderName ?? dup.id}, status: ${dup.courierStatus}). Chase that one instead.`,
+      `A live ${wantedSuffix === "C" ? "customer-driven" : "NDR-driven"} reshipment already exists for this order (${collision.newShopifyOrderName ?? collision.id}, status: ${collision.courierStatus}). Chase that one instead.`,
       409
     );
   }
@@ -5593,6 +5605,11 @@ async function createReshipment(input) {
       // the reshipment shows against the same coupon in Shopify Discounts
       // and gets credited by agent-attribution reports.
       discount_codes: shopifyOrder.discount_codes,
+      // Reference the parent's Shopify customer directly. Without this
+      // Shopify tries to CREATE a new customer from the phone/email we
+      // send and 422s on the phone-uniqueness constraint the moment the
+      // phone is already on another profile.
+      customer: shopifyOrder.customer ? { id: shopifyOrder.customer.id } : null,
       line_items: shopifyOrder.line_items
     },
     customerName: input.customerName,

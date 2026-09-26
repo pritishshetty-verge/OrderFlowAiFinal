@@ -43,6 +43,11 @@ export interface ShopifyOrderForReshipment {
     amount: string | number;
     type?: string; // "fixed_amount" | "percentage" | "shipping"
   }>;
+  // Parent order's Shopify customer id. When present, the reshipment
+  // reuses this customer instead of creating a new customer record,
+  // which avoids Shopify's 422 "customer.phone_number has already been
+  // taken" when the phone matches an existing profile.
+  customer?: { id?: string | number | null } | null;
   line_items: Array<{
     variant_id?: string | number | null;
     product_id?: string | number | null;
@@ -200,12 +205,21 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
       last_name: args.shippingAddress.last_name ?? args.customerName.split(" ").slice(1).join(" "),
       name: args.shippingAddress.name ?? args.customerName,
     },
-    customer: {
-      first_name: args.customerName.split(" ")[0],
-      last_name: args.customerName.split(" ").slice(1).join(" ") || undefined,
-      phone: args.customerPhone,
-      email: args.customerEmail,
-    },
+    // Prefer linking to the parent's existing Shopify customer by id.
+    // Sending a fresh {phone, email, first_name...} block makes Shopify
+    // try to CREATE a new customer and 422 with "customer.phone_number
+    // has already been taken" the moment the phone matches any existing
+    // profile (which for a reshipment is basically always). Passing just
+    // the id sidesteps that entirely; only fall back to the create-new
+    // shape when the parent had no linked customer.
+    customer: args.original.customer?.id
+      ? { id: args.original.customer.id }
+      : {
+          first_name: args.customerName.split(" ")[0],
+          last_name: args.customerName.split(" ").slice(1).join(" ") || undefined,
+          phone: args.customerPhone,
+          email: args.customerEmail,
+        },
     // We create the order as "unfulfilled" so the merchant's normal
     // fulfillment flow (Delhivery hook in the app) generates the AWB.
     inventory_behaviour: "bypass", // don't decrement stock again
