@@ -16373,8 +16373,8 @@ async function registerRoutes(app2) {
       });
       if (previousStatus !== unifiedStatus) {
         await db.execute(sql10`
-          INSERT INTO order_status_history (order_id, status, source, created_at)
-          VALUES (${orderRow.id}, ${unifiedStatus}, 'admin-resync', NOW())
+          INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
+          VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${"admin-resync from Delhivery live tracking"}, NOW())
         `);
       }
       if (awb) {

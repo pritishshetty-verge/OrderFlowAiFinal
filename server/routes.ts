@@ -6267,9 +6267,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       if (previousStatus !== unifiedStatus) {
+        // order_status_history columns: id, order_id, status,
+        // previous_status, changed_by, note, created_at. `id` is
+        // NOT NULL and prod migrations don't reliably carry the
+        // gen_random_uuid() default, so stamp it explicitly.
+        // Audit trail goes into `note` (there's no `source` column).
         await db.execute(sql`
-          INSERT INTO order_status_history (order_id, status, source, created_at)
-          VALUES (${orderRow.id}, ${unifiedStatus}, 'admin-resync', NOW())
+          INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
+          VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${'admin-resync from Delhivery live tracking'}, NOW())
         `);
       }
 
