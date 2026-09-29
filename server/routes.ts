@@ -6171,6 +6171,149 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Admin: force a single-order resync from Delhivery ───────────────
+  //
+  // Fixes the "OrderFlow says Out for Delivery but the parcel actually
+  // delivered" class of bug — a dropped Delhivery webhook leaves
+  // orders.status stale forever because closeStaleNDR only touches
+  // ndr_events, not orders. This endpoint pulls live tracking, feeds
+  // it through the SAME normaliser the webhook uses, and writes the
+  // canonical status back to orders + shipments + order_status_history.
+  //
+  // Lookup: either the order's Shopify number (#15667 → "15667") or
+  // the OrderFlow row id. Returns before/after so the UI can toast.
+  app.post("/api/admin/orders/:key/resync-tracking", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+
+    const key = String(req.params.key ?? "").trim();
+    if (!key) return res.status(400).json({ error: "Missing order key in path" });
+
+    try {
+      // Resolve the order — by shopify_order_number first (what the UI
+      // has handy), falling back to the OrderFlow uuid.
+      const cleaned = key.replace(/^#/, "");
+      let orderRow: any = null;
+      const byNumber: any = await db.execute(sql`
+        SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
+      `);
+      orderRow = (byNumber?.rows ?? [])[0] ?? null;
+      if (!orderRow) {
+        const byId: any = await db.execute(sql`
+          SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
+        `).catch(() => ({ rows: [] }));
+        orderRow = (byId?.rows ?? [])[0] ?? null;
+      }
+      if (!orderRow) return res.status(404).json({ error: `No order matched "${key}"` });
+
+      const shipmentRow: any = await storage.getShipmentByOrderId(orderRow.id);
+      const awb = shipmentRow?.awb ?? null;
+      if (!awb) {
+        return res.status(422).json({
+          error: "This order has no AWB attached yet — nothing to resync.",
+          orderId: orderRow.id,
+          status: orderRow.status,
+        });
+      }
+
+      // Pull live status via the store's Delhivery client — this is the
+      // authoritative source the courier itself would use.
+      const { getDelhiveryClient } = await import("./services/delhivery");
+      const client = await getDelhiveryClient(orderRow.store_id);
+      const track = await client.trackShipment(awb);
+      if (!track.success) {
+        return res.status(502).json({
+          error: `Delhivery tracking failed for AWB ${awb}: ${track.error ?? "unknown"}`,
+        });
+      }
+
+      // Reconstruct the webhook-shaped payload so we can reuse the same
+      // strict normaliser + unified mapper the live webhook path runs.
+      const { normalizeDelhivery } = await import("./logic/rules/delhivery");
+      const { toUnifiedStatus } = await import("./logic/unifiedStatus");
+      const { SHIPPING_STATUS_LABELS } = await import("@shared/schema");
+      const normalized = normalizeDelhivery({
+        Shipment: {
+          Status: {
+            StatusType: track.statusType ?? "",
+            Status: track.status ?? "",
+            Instructions: track.instructions ?? "",
+            NSLCode: track.statusCode ?? "",
+          },
+          NSLCode: track.statusCode ?? "",
+        },
+      });
+      const unifiedStatus = toUnifiedStatus({ source: "delhivery", rawStatus: normalized.status });
+      const previousStatus = orderRow.status ?? null;
+      const nowIso = new Date();
+
+      // Write the same three sinks the webhook writes: shipment,
+      // order, and (for delivered/rto) the order_status_history row so
+      // the timeline reflects when we saw it.
+      if (shipmentRow) {
+        await storage.updateShipment(shipmentRow.id, {
+          currentStatus: track.status ?? undefined,
+          statusUpdatedAt: nowIso,
+          ...(unifiedStatus === "delivered" && !shipmentRow.deliveredAt
+            ? { deliveredAt: nowIso }
+            : {}),
+        });
+      }
+
+      await storage.updateOrder(orderRow.id, {
+        shipmentStatus: (SHIPPING_STATUS_LABELS as any)[unifiedStatus] || track.status,
+        status: unifiedStatus,
+        isActionable: normalized.isActionable,
+      });
+
+      if (previousStatus !== unifiedStatus) {
+        await db.execute(sql`
+          INSERT INTO order_status_history (order_id, status, source, created_at)
+          VALUES (${orderRow.id}, ${unifiedStatus}, 'admin-resync', NOW())
+        `);
+      }
+
+      // Also let reshipment tracking bump — same mapping the webhook uses.
+      if (awb) {
+        const reshipStatus =
+          unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery"
+            ? "in_transit"
+            : unifiedStatus === "ndr"
+              ? "ndr"
+              : unifiedStatus === "delivered"
+                ? "delivered"
+                : unifiedStatus === "rto_initiated" ||
+                    unifiedStatus === "rto_ofd" ||
+                    unifiedStatus === "rto_delivered"
+                  ? "rto"
+                  : null;
+        if (reshipStatus) {
+          void import("./reshipments/service")
+            .then((s) => s.updateStatusByAwb({ awb, courierStatus: reshipStatus, courierName: "Delhivery" }))
+            .catch(() => {});
+        }
+      }
+
+      return res.json({
+        ok: true,
+        orderId: orderRow.id,
+        orderNumber: orderRow.shopify_order_number,
+        awb,
+        previousStatus,
+        newStatus: unifiedStatus,
+        changed: previousStatus !== unifiedStatus,
+        delhivery: {
+          status: track.status,
+          statusType: track.statusType,
+          instructions: track.instructions,
+        },
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
+      return res.status(500).json({ error: err?.message ?? "Resync failed" });
+    }
+  });
+
   app.all("/api/cron/close-stale-ndr", async (req, res) => {
     const vercelSecret = process.env.CRON_SECRET;
     const customSecret = process.env.NDR_CRON_SECRET;

@@ -158,3 +158,44 @@ test("inventory_behaviour=bypass so reshipment doesn't decrement stock again", (
   assert.equal(p.inventory_behaviour, "bypass");
   assert.equal(p.send_receipt, false);
 });
+
+test("customer: parent's customer.id → link-by-id (no phone/email create block)", () => {
+  const p = buildReshipmentPayload(
+    baseArgs({
+      original: {
+        id: 1,
+        name: "#1",
+        currency: "INR",
+        customer: { id: 5551234567890 },
+        line_items: [{ quantity: 1, price: "100.00" }],
+      },
+    }),
+  ).order;
+  const cust = p.customer as any;
+  assert.deepEqual(cust, { id: 5551234567890 });
+  // Critical: the create-new-customer fields must NOT appear when we
+  // have an id — that's exactly what triggers Shopify's phone-uniqueness 422.
+  assert.equal(cust.phone, undefined);
+  assert.equal(cust.email, undefined);
+  assert.equal(cust.first_name, undefined);
+});
+
+test("customer: no parent id → fall back to create-new-customer shape", () => {
+  const p = buildReshipmentPayload(
+    baseArgs({
+      customerEmail: "priya@example.com",
+      original: {
+        id: 1,
+        name: "#1",
+        currency: "INR",
+        line_items: [{ quantity: 1, price: "100.00" }],
+      },
+    }),
+  ).order;
+  const cust = p.customer as any;
+  assert.equal(cust.first_name, "Priya");
+  assert.equal(cust.last_name, "Nair");
+  assert.equal(cust.phone, "+919812345678");
+  assert.equal(cust.email, "priya@example.com");
+  assert.equal(cust.id, undefined);
+});

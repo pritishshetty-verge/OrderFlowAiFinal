@@ -10,9 +10,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
+import {
   Mail, Phone, Edit, CheckCircle2, Circle, Plus, X, MoreHorizontal, Truck, ExternalLink, Package,
-  ChevronLeft, ChevronRight, Clock, XCircle, MapPin, User, History, FileText
+  ChevronLeft, ChevronRight, Clock, XCircle, MapPin, User, History, FileText, RefreshCw, Loader2
 } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { EmptyState } from "@/components/empty-state";
@@ -112,6 +112,52 @@ export function OrderQuickPreview({
   const [isConfirming, setIsConfirming] = useState(false);
   const [selectedAction, setSelectedAction] = useState<string>("");
   const [pendingAutoAdvance, setPendingAutoAdvance] = useState(false);
+
+  // Force-resync a stale shipment status from Delhivery. The webhook
+  // is usually enough, but dropped scans can leave an order stuck at
+  // e.g. "Out for Delivery" long after the courier actually delivered.
+  // This button hits the admin resync endpoint which re-pulls live
+  // tracking and normalises through the same webhook path.
+  // NB: `currentUserId` is declared just below via localStorage — we
+  // reference it lazily inside the mutation to avoid a TDZ redeclare.
+  const resyncTracking = useMutation({
+    mutationFn: async () => {
+      const key = order?.shopifyOrderNumber ?? order?.id;
+      if (!key) throw new Error("No order key available");
+      const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+      const res = await apiRequest(
+        "POST",
+        `/api/admin/orders/${encodeURIComponent(String(key))}/resync-tracking?currentUserId=${userId ?? ""}`,
+        {},
+      );
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      if (data?.changed) {
+        toast({
+          title: "Status updated",
+          description: `#${data.orderNumber ?? ""} → ${data.newStatus} (was ${data.previousStatus ?? "unknown"}).`,
+        });
+      } else {
+        toast({
+          title: "Already up to date",
+          description: `Delhivery still reports "${data?.delivery?.status ?? data?.newStatus ?? "unchanged"}".`,
+        });
+      }
+      queryClient.invalidateQueries();
+      onStatusUpdate?.();
+    },
+    onError: (err: any) => {
+      const raw = String(err?.message ?? "");
+      const match = raw.match(/^\d+:\s*([\s\S]*)$/);
+      let description = raw || "Try again";
+      if (match) {
+        try { description = JSON.parse(match[1]).error ?? match[1]; }
+        catch { description = match[1]; }
+      }
+      toast({ title: "Couldn't resync tracking", description, variant: "destructive" });
+    },
+  });
   const [editAddressOpen, setEditAddressOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
 
@@ -758,7 +804,30 @@ export function OrderQuickPreview({
               </p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+              <div className="flex items-center gap-1 mb-0.5">
+                <p className="text-xs text-muted-foreground">Status</p>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => resyncTracking.mutate()}
+                      disabled={resyncTracking.isPending}
+                      className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      data-testid="btn-resync-tracking"
+                      aria-label="Re-sync status from Delhivery"
+                    >
+                      {resyncTracking.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Re-sync from Delhivery
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <StatusBadge status={order.status} />
             </div>
             <div>

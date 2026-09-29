@@ -441,7 +441,17 @@ export class DelhiveryClient implements CourierProvider {
   async trackShipment(awb: string): Promise<{
     success: boolean;
     status?: string;
+    // Single-letter macro (UD/DL/RT/PP/PU/CN). The strict normaliser
+    // needs this to disambiguate DL/Delivered vs DL/RTO etc; without
+    // it, "Delivered" text alone falls through the isDL check and the
+    // callers end up leaving orders stuck at in_transit.
+    statusType?: string;
     statusCode?: string;
+    // Delhivery frequently ships OFD signals in Instructions rather
+    // than the Status word ("Dispatched" + "Out for delivery"). Return
+    // it so resync callers can build the same normalised payload the
+    // webhook path receives.
+    instructions?: string;
     location?: string;
     activities?: Array<{
       status: string;
@@ -472,7 +482,9 @@ export class DelhiveryClient implements CourierProvider {
       return {
         success: true,
         status: shipmentData.Status.Status,
+        statusType: (shipmentData.Status as any).StatusType,
         statusCode: shipmentData.Status.StatusCode,
+        instructions: (shipmentData.Status as any).Instructions,
         location: shipmentData.Status.StatusLocation,
         activities,
       };

@@ -5245,6 +5245,11 @@ var init_shopify = __esm({
 });
 
 // server/logic/unifiedStatus.ts
+var unifiedStatus_exports = {};
+__export(unifiedStatus_exports, {
+  isShippingStatus: () => isShippingStatus,
+  toUnifiedStatus: () => toUnifiedStatus
+});
 function safeFallback(raw, source) {
   const lower = (raw || "").toLowerCase();
   const fallback = lower.includes("rto") || lower.includes("return") || lower.includes("rtnd") ? "rto_initiated" : "in_transit";
@@ -5307,6 +5312,9 @@ function toUnifiedStatus(input) {
       return "in_transit";
     }
   }
+}
+function isShippingStatus(value) {
+  return !!value && VALID_STATUSES.has(value);
 }
 var VALID_STATUSES, DELHIVERY_TO_UNIFIED, SHIPROCKET_TO_UNIFIED, SHOPIFY_FULFILLMENT_TO_UNIFIED;
 var init_unifiedStatus = __esm({
@@ -6659,7 +6667,9 @@ var init_delhivery = __esm({
           return {
             success: true,
             status: shipmentData.Status.Status,
+            statusType: shipmentData.Status.StatusType,
             statusCode: shipmentData.Status.StatusCode,
+            instructions: shipmentData.Status.Instructions,
             location: shipmentData.Status.StatusLocation,
             activities
           };
@@ -6912,6 +6922,11 @@ var init_shiprocketWebhook = __esm({
 });
 
 // server/logic/rules/delhivery.ts
+var delhivery_exports2 = {};
+__export(delhivery_exports2, {
+  ACTIONABLE_CODES: () => ACTIONABLE_CODES,
+  normalizeDelhivery: () => normalizeDelhivery
+});
 function normalizeDelhivery(payload) {
   const rawType = (payload.Shipment?.Status?.StatusType || "").toUpperCase().trim();
   const statusText = payload.Shipment?.Status?.Status || "";
@@ -16289,6 +16304,103 @@ async function registerRoutes(app2) {
     } catch (err) {
       console.error("Error in POST /api/tools/track-awbs:", err);
       res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+    }
+  });
+  app2.post("/api/admin/orders/:key/resync-tracking", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    const key = String(req.params.key ?? "").trim();
+    if (!key) return res.status(400).json({ error: "Missing order key in path" });
+    try {
+      const cleaned = key.replace(/^#/, "");
+      let orderRow = null;
+      const byNumber = await db.execute(sql10`
+        SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
+      `);
+      orderRow = (byNumber?.rows ?? [])[0] ?? null;
+      if (!orderRow) {
+        const byId = await db.execute(sql10`
+          SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
+        `).catch(() => ({ rows: [] }));
+        orderRow = (byId?.rows ?? [])[0] ?? null;
+      }
+      if (!orderRow) return res.status(404).json({ error: `No order matched "${key}"` });
+      const shipmentRow = await storage.getShipmentByOrderId(orderRow.id);
+      const awb = shipmentRow?.awb ?? null;
+      if (!awb) {
+        return res.status(422).json({
+          error: "This order has no AWB attached yet \u2014 nothing to resync.",
+          orderId: orderRow.id,
+          status: orderRow.status
+        });
+      }
+      const { getDelhiveryClient: getDelhiveryClient2 } = await Promise.resolve().then(() => (init_delhivery(), delhivery_exports));
+      const client = await getDelhiveryClient2(orderRow.store_id);
+      const track = await client.trackShipment(awb);
+      if (!track.success) {
+        return res.status(502).json({
+          error: `Delhivery tracking failed for AWB ${awb}: ${track.error ?? "unknown"}`
+        });
+      }
+      const { normalizeDelhivery: normalizeDelhivery2 } = await Promise.resolve().then(() => (init_delhivery2(), delhivery_exports2));
+      const { toUnifiedStatus: toUnifiedStatus2 } = await Promise.resolve().then(() => (init_unifiedStatus(), unifiedStatus_exports));
+      const { SHIPPING_STATUS_LABELS: SHIPPING_STATUS_LABELS2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      const normalized = normalizeDelhivery2({
+        Shipment: {
+          Status: {
+            StatusType: track.statusType ?? "",
+            Status: track.status ?? "",
+            Instructions: track.instructions ?? "",
+            NSLCode: track.statusCode ?? ""
+          },
+          NSLCode: track.statusCode ?? ""
+        }
+      });
+      const unifiedStatus = toUnifiedStatus2({ source: "delhivery", rawStatus: normalized.status });
+      const previousStatus = orderRow.status ?? null;
+      const nowIso = /* @__PURE__ */ new Date();
+      if (shipmentRow) {
+        await storage.updateShipment(shipmentRow.id, {
+          currentStatus: track.status ?? void 0,
+          statusUpdatedAt: nowIso,
+          ...unifiedStatus === "delivered" && !shipmentRow.deliveredAt ? { deliveredAt: nowIso } : {}
+        });
+      }
+      await storage.updateOrder(orderRow.id, {
+        shipmentStatus: SHIPPING_STATUS_LABELS2[unifiedStatus] || track.status,
+        status: unifiedStatus,
+        isActionable: normalized.isActionable
+      });
+      if (previousStatus !== unifiedStatus) {
+        await db.execute(sql10`
+          INSERT INTO order_status_history (order_id, status, source, created_at)
+          VALUES (${orderRow.id}, ${unifiedStatus}, 'admin-resync', NOW())
+        `);
+      }
+      if (awb) {
+        const reshipStatus = unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery" ? "in_transit" : unifiedStatus === "ndr" ? "ndr" : unifiedStatus === "delivered" ? "delivered" : unifiedStatus === "rto_initiated" || unifiedStatus === "rto_ofd" || unifiedStatus === "rto_delivered" ? "rto" : null;
+        if (reshipStatus) {
+          void Promise.resolve().then(() => (init_service(), service_exports)).then((s) => s.updateStatusByAwb({ awb, courierStatus: reshipStatus, courierName: "Delhivery" })).catch(() => {
+          });
+        }
+      }
+      return res.json({
+        ok: true,
+        orderId: orderRow.id,
+        orderNumber: orderRow.shopify_order_number,
+        awb,
+        previousStatus,
+        newStatus: unifiedStatus,
+        changed: previousStatus !== unifiedStatus,
+        delhivery: {
+          status: track.status,
+          statusType: track.statusType,
+          instructions: track.instructions
+        }
+      });
+    } catch (err) {
+      console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
+      return res.status(500).json({ error: err?.message ?? "Resync failed" });
     }
   });
   app2.all("/api/cron/close-stale-ndr", async (req, res) => {
