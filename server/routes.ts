@@ -6319,6 +6319,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Systematic shipment-status reconciliation. Sweeps every in-flight
+  // order whose orders.updated_at is older than the freshness cutoff,
+  // pulls live Delhivery tracking, and heals drift through the same
+  // normalise → unify → three-sink write path the webhook uses. Runs
+  // every 3 hours in prod (see vercel.json).
+  app.all("/api/cron/reconcile-shipment-status", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)",
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" &&
+      vercelSecret !== undefined &&
+      auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" &&
+      customSecret !== undefined &&
+      customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { reconcileShipmentStatus } = await import("./cron/reconcile-shipment-status");
+      const result = await reconcileShipmentStatus();
+      console.log(
+        `[cron/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient} transitions=${JSON.stringify(result.transitions)}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[cron/reconcile-shipment-status] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+
   app.all("/api/cron/close-stale-ndr", async (req, res) => {
     const vercelSecret = process.env.CRON_SECRET;
     const customSecret = process.env.NDR_CRON_SECRET;

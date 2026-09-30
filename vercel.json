@@ -26,6 +26,10 @@
       "schedule": "45 21 * * *"
     },
     {
+      "path": "/api/cron/reconcile-shipment-status",
+      "schedule": "0 */3 * * *"
+    },
+    {
       "path": "/api/cron/generate-payroll-cycle",
       "schedule": "30 18 1 * *"
     }

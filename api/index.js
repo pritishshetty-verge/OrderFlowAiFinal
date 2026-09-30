@@ -8241,6 +8241,165 @@ var init_provision = __esm({
   }
 });
 
+// server/cron/reconcile-shipment-status.ts
+var reconcile_shipment_status_exports = {};
+__export(reconcile_shipment_status_exports, {
+  reconcileShipmentStatus: () => reconcileShipmentStatus
+});
+import { sql as sql6 } from "drizzle-orm";
+async function pickCandidates() {
+  const cutoff = new Date(Date.now() - STALE_HOURS2 * 3600 * 1e3).toISOString();
+  const res = await db.execute(sql6`
+    SELECT
+      o.id            AS order_id,
+      o.store_id      AS store_id,
+      o.status        AS current_status,
+      o.updated_at    AS updated_at,
+      s.awb           AS awb
+    FROM orders o
+    LEFT JOIN shipments s ON s.order_id = o.id
+    WHERE o.status IN (
+      'awb_assigned','ready_for_pickup','picked_up','in_transit',
+      'out_for_delivery','ndr','rto_initiated','rto_ofd'
+    )
+      AND o.updated_at < ${cutoff}::timestamptz
+    ORDER BY o.updated_at ASC
+    LIMIT ${BATCH_LIMIT}
+  `);
+  return (res?.rows ?? []).map((r) => ({
+    orderId: r.order_id,
+    storeId: r.store_id ?? null,
+    currentStatus: r.current_status,
+    awb: r.awb ?? null,
+    updatedAt: r.updated_at ?? null
+  }));
+}
+function groupByStore(rows) {
+  const m = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    if (!r.storeId) continue;
+    const arr = m.get(r.storeId) ?? [];
+    arr.push(r);
+    m.set(r.storeId, arr);
+  }
+  return m;
+}
+async function reconcileShipmentStatus() {
+  const result = {
+    scanned: 0,
+    updated: 0,
+    unchanged: 0,
+    errors: 0,
+    noAwb: 0,
+    noClient: 0,
+    errorSamples: [],
+    transitions: {}
+  };
+  const candidates = await pickCandidates();
+  result.scanned = candidates.length;
+  if (!candidates.length) return result;
+  const byStore = groupByStore(candidates);
+  for (const [storeId, rows] of Array.from(byStore.entries())) {
+    let client;
+    try {
+      client = await getDelhiveryClient(storeId);
+    } catch {
+      result.noClient += rows.length;
+      continue;
+    }
+    for (const row of rows) {
+      if (!row.awb) {
+        result.noAwb += 1;
+        continue;
+      }
+      try {
+        const track = await client.trackShipment(row.awb);
+        if (!track.success) {
+          result.errors += 1;
+          if (result.errorSamples.length < 10) {
+            result.errorSamples.push(`${row.awb}: ${track.error ?? "track failed"}`);
+          }
+          continue;
+        }
+        const normalized = normalizeDelhivery({
+          Shipment: {
+            Status: {
+              StatusType: track.statusType ?? "",
+              Status: track.status ?? "",
+              Instructions: track.instructions ?? "",
+              NSLCode: track.statusCode ?? ""
+            },
+            NSLCode: track.statusCode ?? ""
+          }
+        });
+        const unified = toUnifiedStatus({ source: "delhivery", rawStatus: normalized.status });
+        if (unified === row.currentStatus) {
+          result.unchanged += 1;
+          continue;
+        }
+        const shipment = await storage.getShipmentByOrderId(row.orderId);
+        if (shipment) {
+          await storage.updateShipment(shipment.id, {
+            currentStatus: track.status ?? void 0,
+            statusUpdatedAt: /* @__PURE__ */ new Date(),
+            ...unified === "delivered" && !shipment.deliveredAt ? { deliveredAt: /* @__PURE__ */ new Date() } : {}
+          });
+        }
+        await storage.updateOrder(row.orderId, {
+          shipmentStatus: SHIPPING_STATUS_LABELS[unified] || track.status,
+          status: unified,
+          isActionable: normalized.isActionable
+        });
+        await db.execute(sql6`
+          INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
+          VALUES (
+            gen_random_uuid(),
+            ${row.orderId},
+            ${unified},
+            ${row.currentStatus},
+            ${"cron/reconcile-shipment-status: healed from Delhivery live tracking"},
+            NOW()
+          )
+        `);
+        const reshipStatus = unified === "in_transit" || unified === "out_for_delivery" ? "in_transit" : unified === "ndr" ? "ndr" : unified === "delivered" ? "delivered" : unified === "rto_initiated" || unified === "rto_ofd" || unified === "rto_delivered" ? "rto" : null;
+        if (reshipStatus) {
+          void Promise.resolve().then(() => (init_service(), service_exports)).then(
+            (s) => s.updateStatusByAwb({
+              awb: row.awb,
+              courierStatus: reshipStatus,
+              courierName: "Delhivery"
+            })
+          ).catch(() => {
+          });
+        }
+        result.updated += 1;
+        const key = `${row.currentStatus}\u2192${unified}`;
+        result.transitions[key] = (result.transitions[key] ?? 0) + 1;
+      } catch (err) {
+        result.errors += 1;
+        if (result.errorSamples.length < 10) {
+          result.errorSamples.push(`${row.awb}: ${err?.message ?? String(err)}`);
+        }
+      }
+    }
+  }
+  return result;
+}
+var STALE_HOURS2, BATCH_LIMIT;
+var init_reconcile_shipment_status = __esm({
+  "server/cron/reconcile-shipment-status.ts"() {
+    "use strict";
+    init_db();
+    init_storage();
+    init_delhivery();
+    init_delhivery2();
+    init_unifiedStatus();
+    init_schema();
+    STALE_HOURS2 = 6;
+    BATCH_LIMIT = 500;
+  }
+});
+
 // server/razorpay-payroll/mapping.ts
 var mapping_exports = {};
 __export(mapping_exports, {
@@ -8423,7 +8582,7 @@ __export(sync_exports, {
   reconcileMonth: () => reconcileMonth,
   runSync: () => runSync
 });
-import { sql as sql6, desc as desc3 } from "drizzle-orm";
+import { sql as sql7, desc as desc3 } from "drizzle-orm";
 async function buildRecords(year, month) {
   const records = [];
   const skipped = [];
@@ -8436,7 +8595,7 @@ async function buildRecords(year, month) {
       console.warn("[payroll-sync] failed to fetch RazorpayX roster:", err?.message ?? err);
     }
   }
-  const attRes = await db.execute(sql6`
+  const attRes = await db.execute(sql7`
     SELECT a.id, u.email, u.full_name,
            a.date, a.clock_in_time, a.clock_out_time, a.status, a.total_hours
     FROM attendance a
@@ -8469,7 +8628,7 @@ async function buildRecords(year, month) {
     if (isSkipped(mapped)) skipped.push(mapped);
     else records.push(mapped);
   }
-  const leaveRes = await db.execute(sql6`
+  const leaveRes = await db.execute(sql7`
     SELECT l.id, u.email, u.full_name,
            l.leave_type, l.start_date, l.end_date, l.status
     FROM leave_requests l
@@ -8832,7 +8991,7 @@ __export(payroll_metrics_exports, {
   getYtdPaidHolidaysUsed: () => getYtdPaidHolidaysUsed,
   monthRangeUtc: () => monthRangeUtc
 });
-import { sql as sql7 } from "drizzle-orm";
+import { sql as sql8 } from "drizzle-orm";
 function monthRangeUtc(year, month) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
@@ -8840,7 +8999,7 @@ function monthRangeUtc(year, month) {
 }
 async function getAttendanceMetrics(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT
       COUNT(DISTINCT DATE(date)) FILTER (WHERE clock_in_time IS NOT NULL)::int4 AS days_present,
       COUNT(DISTINCT DATE(date)) FILTER (WHERE status = 'leave')::int4         AS days_leave
@@ -8856,7 +9015,7 @@ async function getAttendanceMetrics(userId, year, month) {
   };
 }
 async function getAutoPaidHolidaysCount(state, year, month) {
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT COUNT(*)::int4 AS n
     FROM holidays
     WHERE state = ${state}
@@ -8870,7 +9029,7 @@ async function getAutoPaidHolidaysCount(state, year, month) {
   return (r.rows ?? r)[0]?.n ?? 0;
 }
 async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT COALESCE(SUM(paid_holidays_used), 0)::int4 AS n
     FROM payroll_ledger
     WHERE user_id = ${userId}
@@ -8881,7 +9040,7 @@ async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
 }
 async function getConfirmationDeliveryRatePct(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT
       COUNT(*)::int4                                              AS confirmed,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4          AS delivered
@@ -8896,7 +9055,7 @@ async function getConfirmationDeliveryRatePct(userId, year, month) {
 }
 async function getTeamDeliveryRatePct(year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT
       COUNT(*)::int4                                       AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4   AS delivered
@@ -8913,7 +9072,7 @@ function round22(n) {
 }
 async function getBrandTDRPct(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT
       COUNT(*)::int4                                     AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4 AS delivered
@@ -8928,7 +9087,7 @@ async function getBrandTDRPct(storeId, year, month) {
 }
 async function getBrandNDRDeliveryRate(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT
       COUNT(*)::int4                                                     AS total,
       COUNT(*) FILTER (WHERE resolution = 'delivered')::int4             AS delivered,
@@ -8959,13 +9118,13 @@ async function getBrandNDRDeliveryRate(storeId, year, month) {
 }
 async function getDeliveredGMVForAgent(userId, storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const userRow = await db.execute(sql7`
+  const userRow = await db.execute(sql8`
     SELECT coupon_code FROM users WHERE id = ${userId} LIMIT 1
   `);
   const couponRaw = (userRow?.rows ?? [])[0]?.coupon_code ?? null;
   if (!couponRaw || !couponRaw.trim()) return 0;
   const code = couponRaw.trim().toLowerCase();
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT COALESCE(SUM(CAST(o.total_price AS numeric)), 0)::numeric AS gmv
     FROM orders o
     LEFT JOIN LATERAL (
@@ -9000,7 +9159,7 @@ async function getDeliveredGMVForAgent(userId, storeId, year, month) {
 }
 async function getReshipmentsDeliveredCount(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql7`
+  const r = await db.execute(sql8`
     SELECT COUNT(*)::int4 AS n
     FROM reshipment_logs
     WHERE store_id = ${storeId}
@@ -9614,7 +9773,7 @@ __export(payroll_cycle_exports, {
   refreshCycleTotals: () => refreshCycleTotals,
   updateCycleLedger: () => updateCycleLedger
 });
-import { eq as eq8, and as and5, desc as desc4, sql as sql8 } from "drizzle-orm";
+import { eq as eq8, and as and5, desc as desc4, sql as sql9 } from "drizzle-orm";
 async function buildLedgerRow(args) {
   const { user, storeId, year, month, cycleId, overrides = {}, createdBy = null } = args;
   const baseSalary = Math.max(
@@ -9772,7 +9931,7 @@ async function generateCycle(args) {
   };
 }
 async function refreshCycleTotals(cycleId) {
-  const result = await db.execute(sql8`
+  const result = await db.execute(sql9`
     SELECT COUNT(*)::int4 AS n, COALESCE(SUM(final_payout), 0)::text AS total
     FROM payroll_ledger
     WHERE cycle_id = ${cycleId}
@@ -10671,7 +10830,7 @@ __export(matcher_exports, {
   getOverdueOrders: () => getOverdueOrders,
   matchPendingSettlements: () => matchPendingSettlements
 });
-import { and as and6, eq as eq9, sql as sql9 } from "drizzle-orm";
+import { and as and6, eq as eq9, sql as sql10 } from "drizzle-orm";
 async function matchPendingSettlements(opts) {
   const { storeId, pgName = "payu", toleranceRupees = 1 } = opts;
   const adapter = getPgAdapter(pgName);
@@ -10696,7 +10855,7 @@ async function matchPendingSettlements(opts) {
   };
   for (const s of pending) {
     try {
-      const found = await db.execute(sql9`
+      const found = await db.execute(sql10`
         SELECT o.id, o.total_price, o.shopify_order_number
         FROM orders o
         CROSS JOIN LATERAL jsonb_array_elements(
@@ -10742,7 +10901,7 @@ async function matchPendingSettlements(opts) {
 }
 async function getOverdueOrders(opts) {
   const { storeId, graceDays = 3, limit = 200 } = opts;
-  const windowQuery = await db.execute(sql9`
+  const windowQuery = await db.execute(sql10`
     SELECT
       MIN(settled_at)::timestamptz AS min_settled,
       MAX(settled_at)::timestamptz AS max_settled,
@@ -10763,7 +10922,7 @@ async function getOverdueOrders(opts) {
   const maxSettled = new Date(winRow.max_settled);
   const cutoff = new Date(maxSettled.getTime() - graceDays * 864e5);
   const windowStart = new Date(minSettled.getTime() - graceDays * 864e5);
-  const result = await db.execute(sql9`
+  const result = await db.execute(sql10`
     SELECT
       o.id,
       o.shopify_order_number,
@@ -10917,7 +11076,7 @@ function shouldWebhookAdvance(current) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq10, or as or3, sql as sql10, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3 } from "drizzle-orm";
+import { eq as eq10, or as or3, sql as sql11, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -12509,7 +12668,7 @@ async function resolveUserScrub(req) {
 async function registerRoutes(app2) {
   app2.get("/api/health", async (_req, res) => {
     try {
-      const r = await db.execute(sql10`SELECT 1 AS ok`);
+      const r = await db.execute(sql11`SELECT 1 AS ok`);
       const ok = (r.rows ?? r)[0]?.ok === 1;
       res.status(ok ? 200 : 503).json({
         status: ok ? "ok" : "degraded",
@@ -12948,8 +13107,8 @@ async function registerRoutes(app2) {
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      const agentFilter = authResult.assignedTo ? sql10`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql10``;
-      const storeFilter = authResult.storeId ? sql10`AND ${orders.storeId} = ${authResult.storeId}` : sql10``;
+      const agentFilter = authResult.assignedTo ? sql11`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql11``;
+      const storeFilter = authResult.storeId ? sql11`AND ${orders.storeId} = ${authResult.storeId}` : sql11``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -12965,7 +13124,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt
       }).from(orders).where(
-        sql10`(
+        sql11`(
           -- STRICT MODE: Only match Out for Delivery statuses
           -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
@@ -16314,12 +16473,12 @@ async function registerRoutes(app2) {
     try {
       const cleaned = key.replace(/^#/, "");
       let orderRow = null;
-      const byNumber = await db.execute(sql10`
+      const byNumber = await db.execute(sql11`
         SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
       `);
       orderRow = (byNumber?.rows ?? [])[0] ?? null;
       if (!orderRow) {
-        const byId = await db.execute(sql10`
+        const byId = await db.execute(sql11`
           SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
         `).catch(() => ({ rows: [] }));
         orderRow = (byId?.rows ?? [])[0] ?? null;
@@ -16372,7 +16531,7 @@ async function registerRoutes(app2) {
         isActionable: normalized.isActionable
       });
       if (previousStatus !== unifiedStatus) {
-        await db.execute(sql10`
+        await db.execute(sql11`
           INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
           VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${"admin-resync from Delhivery live tracking"}, NOW())
         `);
@@ -16401,6 +16560,33 @@ async function registerRoutes(app2) {
     } catch (err) {
       console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
       return res.status(500).json({ error: err?.message ?? "Resync failed" });
+    }
+  });
+  app2.all("/api/cron/reconcile-shipment-status", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)"
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk = typeof auth === "string" && vercelSecret !== void 0 && auth === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHeader === "string" && customSecret !== void 0 && customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { reconcileShipmentStatus: reconcileShipmentStatus2 } = await Promise.resolve().then(() => (init_reconcile_shipment_status(), reconcile_shipment_status_exports));
+      const result = await reconcileShipmentStatus2();
+      console.log(
+        `[cron/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient} transitions=${JSON.stringify(result.transitions)}`
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error("[cron/reconcile-shipment-status] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
     }
   });
   app2.all("/api/cron/close-stale-ndr", async (req, res) => {
@@ -19313,7 +19499,7 @@ async function registerRoutes(app2) {
         }
       });
       const agentIds = Object.keys(agentCounts);
-      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql10`${users.id} = ANY(${agentIds})`) : [];
+      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql11`${users.id} = ANY(${agentIds})`) : [];
       const agentNameMap = new Map(agentUsers.map((u) => [u.id, u.name]));
       const topAgents = Object.entries(agentCounts).map(([agentId, count2]) => ({
         agent_id: agentId,
@@ -19755,7 +19941,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
       const storeName = store?.storeName ?? "Your store";
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq11, and: and8, sql: sql11, inArray: inArray2 } = await import("drizzle-orm");
+      const { eq: eq11, and: and8, sql: sql12, inArray: inArray2 } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const mismatchSettlements = await db2.select({
         id: pgSettlements2.id,
@@ -19768,7 +19954,7 @@ TeleCRM: ${incomingNotes.trim()}`;
           eq11(pgSettlements2.storeId, storeId),
           eq11(pgSettlements2.status, "mismatch")
         )
-      ).orderBy(sql11`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
+      ).orderBy(sql12`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
       const mismatchOrderIds = mismatchSettlements.map((s) => s.orderId).filter((id) => !!id);
       const mismatchOrders = mismatchOrderIds.length > 0 ? await db2.select({
         id: orders2.id,
@@ -19812,7 +19998,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       );
       const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
       const settledSum = await db2.select({
-        c: sql11`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
+        c: sql12`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
       }).from(pgSettlements2).where(
         and8(
           eq11(pgSettlements2.storeId, storeId),
@@ -20301,8 +20487,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql11 } = await import("drizzle-orm");
-      const result = await db2.execute(sql11`
+      const { sql: sql12 } = await import("drizzle-orm");
+      const result = await db2.execute(sql12`
         SELECT
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
           COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
@@ -20341,8 +20527,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql11 } = await import("drizzle-orm");
-      const result = await db2.execute(sql11`
+      const { sql: sql12 } = await import("drizzle-orm");
+      const result = await db2.execute(sql12`
         SELECT
           utr_number AS utr,
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
@@ -20392,8 +20578,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql11 } = await import("drizzle-orm");
-      const result = await db2.execute(sql11`
+      const { sql: sql12 } = await import("drizzle-orm");
+      const result = await db2.execute(sql12`
         SELECT
           (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
           status,
