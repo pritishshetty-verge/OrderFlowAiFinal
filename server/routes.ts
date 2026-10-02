@@ -8831,7 +8831,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+      // Resolve the actor from the authenticated session first — the
+      // body-supplied actionBy is only honoured as an admin override.
+      // Without this fallback, any client that forgot to send actionBy
+      // (or any direct caller) silently wrote NULL to ndr_events.action_by,
+      // and Chandi/Tanisha's recovery attribution for payroll went to
+      // zero. For Sept 2026 Glow & Me, 0 of 11,582 events had action_by
+      // populated as a result.
+      const sessionUserId: string | null =
+        (req as any).session?.userId ??
+        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
+        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy: string | null =
+        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
+        sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user (so recovery credit can be recorded).",
+        });
+      }
 
       // Address and phone are now OPTIONAL - one-click reattempt support
       // If not provided, courier will use existing details on file
@@ -8936,7 +8955,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+
+      // Resolve actor from session with body fallback — see the
+      // /api/ndr/:awb/reattempt handler for the full rationale.
+      const sessionUserId: string | null =
+        (req as any).session?.userId ??
+        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
+        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy: string | null =
+        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
+        sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user.",
+        });
+      }
 
       if (!address1 || !phone) {
         return res.status(400).json({ error: "Address and phone are required" });

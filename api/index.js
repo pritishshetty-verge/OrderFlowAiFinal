@@ -18573,7 +18573,14 @@ async function registerRoutes(app2) {
   app2.post("/api/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+      const sessionUserId = req.session?.userId ?? (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ?? (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy = typeof req.body?.actionBy === "string" && req.body.actionBy || sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user (so recovery credit can be recorded)."
+        });
+      }
       const shipment = await storage.getShipmentByAWB(awb);
       if (!shipment) {
         return res.status(404).json({ error: "Shipment not found" });
@@ -18643,7 +18650,14 @@ async function registerRoutes(app2) {
   app2.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+      const sessionUserId = req.session?.userId ?? (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ?? (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy = typeof req.body?.actionBy === "string" && req.body.actionBy || sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user."
+        });
+      }
       if (!address1 || !phone) {
         return res.status(400).json({ error: "Address and phone are required" });
       }
