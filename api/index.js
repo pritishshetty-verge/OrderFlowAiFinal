@@ -4675,6 +4675,26 @@ var init_shopify = __esm({
         }
         return await response.json();
       }
+      /**
+       * Look up an existing Shopify customer by phone number. Returns the
+       * first match's id (or null when there's no hit). Used by the
+       * reshipments local-snapshot path: without this we send a fresh
+       * customer block and Shopify 422s on phone-uniqueness the moment the
+       * number is already on another profile. We'd rather link to the
+       * existing customer and let the order attach there.
+       */
+      async findCustomerByPhone(phone) {
+        const q = encodeURIComponent(`phone:${phone}`);
+        const url = `${this.baseUrl}/customers/search.json?query=${q}&limit=1`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: await this.getHeaders()
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        const first = data?.customers?.[0];
+        return first?.id ? String(first.id) : null;
+      }
       async getShopInfo(customConfig) {
         const storeUrl = customConfig?.storeUrl || this.config.storeUrl;
         const domain = this.sanitizeStoreUrl(storeUrl);
@@ -5602,6 +5622,22 @@ async function createReshipment(input) {
       );
     }
     const codes = Array.isArray(order.discountCodes) ? order.discountCodes : order.discountCode ? [order.discountCode] : [];
+    const customerPhone = input.customerPhone ?? order.customerPhone ?? null;
+    let linkedCustomerId = null;
+    if (customerPhone) {
+      try {
+        linkedCustomerId = await shop.findCustomerByPhone(customerPhone);
+        if (linkedCustomerId) {
+          console.log(
+            `[reshipments] #${order.shopifyOrderNumber ?? order.shopifyOrderId}: linked to existing Shopify customer ${linkedCustomerId} by phone`
+          );
+        }
+      } catch (e) {
+        console.warn(
+          `[reshipments] customer-by-phone lookup failed: ${e?.message ?? e}`
+        );
+      }
+    }
     shopifyOrder = {
       id: order.shopifyOrderId,
       name: order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`,
@@ -5613,8 +5649,9 @@ async function createReshipment(input) {
       // builder defaults to COD/manual
       // Minimal discount-code block so attribution still fires.
       discount_codes: codes.map((code) => ({ code, amount: "0.00", type: "fixed_amount" })),
-      customer: null,
-      // force the create-new-customer branch; we have no Shopify id
+      // Link to the existing customer when we found one; otherwise
+      // null forces the create-new branch (last-resort — rare).
+      customer: linkedCustomerId ? { id: linkedCustomerId } : null,
       email: order.customerEmail ?? void 0,
       line_items: items.map((li) => ({
         variant_id: li.shopifyVariantId ?? void 0,

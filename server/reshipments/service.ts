@@ -161,6 +161,32 @@ export async function createReshipment(
       : order.discountCode
         ? [order.discountCode]
         : [];
+    // Look up the Shopify customer by phone BEFORE building the payload.
+    // Without this, buildReshipmentPayload falls through to the
+    // create-new-customer branch and Shopify 422s on phone-uniqueness
+    // the moment the number is already on an existing profile — which
+    // for a reshipment is essentially always. Linking by id avoids
+    // the collision entirely.
+    const customerPhone = input.customerPhone ?? order.customerPhone ?? null;
+    let linkedCustomerId: string | null = null;
+    if (customerPhone) {
+      try {
+        linkedCustomerId = await shop.findCustomerByPhone(customerPhone);
+        if (linkedCustomerId) {
+          console.log(
+            `[reshipments] #${order.shopifyOrderNumber ?? order.shopifyOrderId}: linked to existing Shopify customer ${linkedCustomerId} by phone`,
+          );
+        }
+      } catch (e: any) {
+        // Lookup failure is non-fatal — payload builder will fall
+        // back to create-new; this just makes a potential 422 louder
+        // in the logs so ops knows what happened.
+        console.warn(
+          `[reshipments] customer-by-phone lookup failed: ${e?.message ?? e}`,
+        );
+      }
+    }
+
     shopifyOrder = {
       id: order.shopifyOrderId,
       name: order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`,
@@ -170,7 +196,9 @@ export async function createReshipment(
       payment_gateway_names: [], // builder defaults to COD/manual
       // Minimal discount-code block so attribution still fires.
       discount_codes: codes.map((code) => ({ code, amount: "0.00", type: "fixed_amount" })),
-      customer: null, // force the create-new-customer branch; we have no Shopify id
+      // Link to the existing customer when we found one; otherwise
+      // null forces the create-new branch (last-resort — rare).
+      customer: linkedCustomerId ? { id: linkedCustomerId } : null,
       email: order.customerEmail ?? undefined,
       line_items: items.map((li) => ({
         variant_id: li.shopifyVariantId ?? undefined,

@@ -193,6 +193,27 @@ export class ShopifyClient {
     return await response.json();
   }
 
+  /**
+   * Look up an existing Shopify customer by phone number. Returns the
+   * first match's id (or null when there's no hit). Used by the
+   * reshipments local-snapshot path: without this we send a fresh
+   * customer block and Shopify 422s on phone-uniqueness the moment the
+   * number is already on another profile. We'd rather link to the
+   * existing customer and let the order attach there.
+   */
+  async findCustomerByPhone(phone: string): Promise<string | null> {
+    const q = encodeURIComponent(`phone:${phone}`);
+    const url = `${this.baseUrl}/customers/search.json?query=${q}&limit=1`;
+    const response = await fetch(url, {
+      method: "GET",
+      headers: await this.getHeaders(),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const first = data?.customers?.[0];
+    return first?.id ? String(first.id) : null;
+  }
+
   async getShopInfo(
     customConfig?: ShopifyConfig & { accessToken?: string },
   ): Promise<any> {
