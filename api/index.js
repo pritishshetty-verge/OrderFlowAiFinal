@@ -9098,11 +9098,16 @@ async function getBrandNDRDeliveryRate(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
   const r = await db.execute(sql8`
     SELECT
-      COUNT(*)::int4                                                     AS total,
-      COUNT(*) FILTER (WHERE resolution = 'delivered')::int4             AS delivered,
-      COUNT(*) FILTER (WHERE resolution = 'returned')::int4              AS returned,
-      COUNT(*) FILTER (WHERE resolution = 'cancelled')::int4             AS cancelled,
-      COUNT(*) FILTER (WHERE resolved = false)::int4                     AS still_open
+      COUNT(DISTINCT order_id)::int4
+        AS total,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'delivered')::int4
+        AS delivered,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'returned')::int4
+        AS returned,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'cancelled')::int4
+        AS cancelled,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolved = false)::int4
+        AS still_open
     FROM ndr_events
     WHERE store_id = ${storeId}
       AND ndr_date >= ${start.toISOString()}::timestamptz
@@ -9170,11 +9175,14 @@ async function getReshipmentsDeliveredCount(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
   const r = await db.execute(sql8`
     SELECT COUNT(*)::int4 AS n
-    FROM reshipment_logs
-    WHERE store_id = ${storeId}
-      AND courier_status = 'delivered'
-      AND updated_at >= ${start.toISOString()}::timestamptz
-      AND updated_at <  ${end.toISOString()}::timestamptz
+    FROM reshipment_logs rl
+    JOIN orders o
+      ON o.shopify_order_id = rl.new_shopify_order_id
+     AND o.store_id = rl.store_id
+    WHERE rl.store_id = ${storeId}
+      AND rl.created_at >= ${start.toISOString()}::timestamptz
+      AND rl.created_at <  ${end.toISOString()}::timestamptz
+      AND o.status = 'delivered'
   `);
   return (r.rows ?? r)[0]?.n ?? 0;
 }

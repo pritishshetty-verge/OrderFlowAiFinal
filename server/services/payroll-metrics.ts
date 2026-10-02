@@ -235,13 +235,28 @@ export async function getBrandNDRDeliveryRate(
   month: number,
 ): Promise<BrandNDRDeliveryRate> {
   const { start, end } = monthRangeUtc(year, month);
+  // Count DISTINCT order_id, not raw event rows. The Compensation
+  // Breakdown PDF defines the metric as
+  //   NDR Delivered Orders ÷ Total NDR Cases
+  // where "cases" means distinct orders that hit NDR, not every
+  // undelivered scan Delhivery pushes. Prior formula divided by raw
+  // event count, which multi-attempt NDRs inflated 4-6× — understating
+  // the recovery rate badly enough to drop Chandi from the 40-49% tier
+  // (₹6,000) to <30% (₹0). Verified for Sept 2026 Glow & Me: raw-event
+  // formula = 9.54% (1105/11582), distinct-order formula = 47.05%
+  // (853/1813).
   const r: any = await db.execute(sql`
     SELECT
-      COUNT(*)::int4                                                     AS total,
-      COUNT(*) FILTER (WHERE resolution = 'delivered')::int4             AS delivered,
-      COUNT(*) FILTER (WHERE resolution = 'returned')::int4              AS returned,
-      COUNT(*) FILTER (WHERE resolution = 'cancelled')::int4             AS cancelled,
-      COUNT(*) FILTER (WHERE resolved = false)::int4                     AS still_open
+      COUNT(DISTINCT order_id)::int4
+        AS total,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'delivered')::int4
+        AS delivered,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'returned')::int4
+        AS returned,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolution = 'cancelled')::int4
+        AS cancelled,
+      COUNT(DISTINCT order_id) FILTER (WHERE resolved = false)::int4
+        AS still_open
     FROM ndr_events
     WHERE store_id = ${storeId}
       AND ndr_date >= ${start.toISOString()}::timestamptz
@@ -328,11 +343,27 @@ export async function getDeliveredGMVForAgent(
 
 // ── Reshipments delivered — for Chandi's per-reship bonus ───────────
 //
-// Count of reshipments whose courier_status reached 'delivered' in the
-// month. Uses updated_at as the "when delivered" proxy because
-// reshipment_logs doesn't store a dedicated delivered_at column and
-// the delivered-status write always updates updated_at. Exclusive of
-// cancelled reshipments (those never dispatched).
+// Counted via the DUPLICATE ORDER's own status (orders.status for the
+// row keyed by reshipment_logs.new_shopify_order_id), NOT via
+// reshipment_logs.courier_status.
+//
+// Why: the duplicate order is a regular orders row that the normal
+// Delhivery webhook maintains. The courier_status column on
+// reshipment_logs depends on a separate webhook hook (updateStatusByAwb)
+// that frequently misses the write — AWB isn't attached on reshipment
+// create, so when the Shopify fulfillment hook later attaches it, the
+// first few scans arrive before our matching key is populated. Result:
+// reshipment_logs.courier_status stays "pending" forever even though
+// the parcel delivered.
+//
+// For Sept 2026 Glow & Me the old formula counted 0 delivered. The
+// join below correctly counted 27 — all stuck at courier_status =
+// 'pending' in the log but delivered per the underlying orders row.
+//
+// Window: the reshipment's own createdAt — stable, won't drift if an
+// admin later touches the row. We count a reshipment as "delivered
+// this month" when it was raised in this month and the duplicate
+// order has reached delivered status by query time.
 export async function getReshipmentsDeliveredCount(
   storeId: string,
   year: number,
@@ -341,11 +372,14 @@ export async function getReshipmentsDeliveredCount(
   const { start, end } = monthRangeUtc(year, month);
   const r: any = await db.execute(sql`
     SELECT COUNT(*)::int4 AS n
-    FROM reshipment_logs
-    WHERE store_id = ${storeId}
-      AND courier_status = 'delivered'
-      AND updated_at >= ${start.toISOString()}::timestamptz
-      AND updated_at <  ${end.toISOString()}::timestamptz
+    FROM reshipment_logs rl
+    JOIN orders o
+      ON o.shopify_order_id = rl.new_shopify_order_id
+     AND o.store_id = rl.store_id
+    WHERE rl.store_id = ${storeId}
+      AND rl.created_at >= ${start.toISOString()}::timestamptz
+      AND rl.created_at <  ${end.toISOString()}::timestamptz
+      AND o.status = 'delivered'
   `);
   return ((r as any).rows ?? r)[0]?.n ?? 0;
 }
