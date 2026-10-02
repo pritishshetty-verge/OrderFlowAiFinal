@@ -8257,7 +8257,10 @@ async function pickCandidates() {
       o.updated_at    AS updated_at,
       s.awb           AS awb
     FROM orders o
-    JOIN stores st ON st.id = o.store_id AND st.is_active = TRUE
+    JOIN stores st
+      ON st.id = o.store_id
+     AND st.delhivery_api_token IS NOT NULL
+     AND length(st.delhivery_api_token) > 0
     LEFT JOIN shipments s ON s.order_id = o.id
     WHERE o.status IN (
       'awb_assigned','ready_for_pickup','picked_up','in_transit',

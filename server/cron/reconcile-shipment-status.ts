@@ -80,9 +80,12 @@ interface Candidate {
 async function pickCandidates(): Promise<Candidate[]> {
   // Pull only what we need. LEFT JOIN shipments — we want the AWB but
   // an order without a shipment row is fine to skip (nothing to query).
-  // INNER JOIN stores + is_active filter so a closed store (OLB-style)
-  // with leftover in-flight orders can't eat the whole batch budget
-  // against a Delhivery client that doesn't exist for it.
+  // INNER JOIN stores WHERE Delhivery is actually configured. Checking
+  // is_active isn't enough — OLB stayed is_active=TRUE after closing,
+  // so a straight is_active filter still ate the whole batch budget on
+  // its leftover in-flight orders against a client that always throws.
+  // Filtering by the presence of a Delhivery token is the authoritative
+  // "can we even call the API for this store" check.
   const cutoff = new Date(Date.now() - STALE_HOURS * 3600 * 1000).toISOString();
   const res: any = await db.execute(sql`
     SELECT
@@ -92,7 +95,10 @@ async function pickCandidates(): Promise<Candidate[]> {
       o.updated_at    AS updated_at,
       s.awb           AS awb
     FROM orders o
-    JOIN stores st ON st.id = o.store_id AND st.is_active = TRUE
+    JOIN stores st
+      ON st.id = o.store_id
+     AND st.delhivery_api_token IS NOT NULL
+     AND length(st.delhivery_api_token) > 0
     LEFT JOIN shipments s ON s.order_id = o.id
     WHERE o.status IN (
       'awb_assigned','ready_for_pickup','picked_up','in_transit',
