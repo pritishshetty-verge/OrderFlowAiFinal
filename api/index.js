@@ -16562,6 +16562,21 @@ async function registerRoutes(app2) {
       return res.status(500).json({ error: err?.message ?? "Resync failed" });
     }
   });
+  app2.post("/api/admin/reconcile-shipment-status", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { reconcileShipmentStatus: reconcileShipmentStatus2 } = await Promise.resolve().then(() => (init_reconcile_shipment_status(), reconcile_shipment_status_exports));
+      const result = await reconcileShipmentStatus2();
+      console.log(
+        `[admin/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient}`
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error("[admin/reconcile-shipment-status] crashed:", err);
+      return res.status(500).json({ error: err?.message ?? "Sweep failed" });
+    }
+  });
   app2.all("/api/cron/reconcile-shipment-status", async (req, res) => {
     const vercelSecret = process.env.CRON_SECRET;
     const customSecret = process.env.NDR_CRON_SECRET;

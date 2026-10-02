@@ -6319,6 +6319,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin-session trigger for the same reconciliation sweep. Uses the
+  // normal admin cookie instead of CRON_SECRET so an admin can heal
+  // drift on demand without touching Vercel env vars. Delegates to the
+  // same reconcileShipmentStatus function the nightly cron runs — zero
+  // behavioural drift between the two paths.
+  app.post("/api/admin/reconcile-shipment-status", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { reconcileShipmentStatus } = await import("./cron/reconcile-shipment-status");
+      const result = await reconcileShipmentStatus();
+      console.log(
+        `[admin/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[admin/reconcile-shipment-status] crashed:", err);
+      return res.status(500).json({ error: err?.message ?? "Sweep failed" });
+    }
+  });
+
   // Systematic shipment-status reconciliation. Sweeps every in-flight
   // order whose orders.updated_at is older than the freshness cutoff,
   // pulls live Delhivery tracking, and heals drift through the same
