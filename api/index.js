@@ -8257,6 +8257,7 @@ async function pickCandidates() {
       o.updated_at    AS updated_at,
       s.awb           AS awb
     FROM orders o
+    JOIN stores st ON st.id = o.store_id AND st.is_active = TRUE
     LEFT JOIN shipments s ON s.order_id = o.id
     WHERE o.status IN (
       'awb_assigned','ready_for_pickup','picked_up','in_transit',
@@ -8293,18 +8294,23 @@ async function reconcileShipmentStatus() {
     noAwb: 0,
     noClient: 0,
     errorSamples: [],
-    transitions: {}
+    transitions: {},
+    storeBreakdown: {},
+    clientErrors: {}
   };
   const candidates = await pickCandidates();
   result.scanned = candidates.length;
   if (!candidates.length) return result;
   const byStore = groupByStore(candidates);
   for (const [storeId, rows] of Array.from(byStore.entries())) {
+    result.storeBreakdown[storeId] = { total: rows.length, noClient: false };
     let client;
     try {
       client = await getDelhiveryClient(storeId);
-    } catch {
+    } catch (e) {
       result.noClient += rows.length;
+      result.storeBreakdown[storeId].noClient = true;
+      result.clientErrors[storeId] = String(e?.message ?? e).slice(0, 200);
       continue;
     }
     for (const row of rows) {

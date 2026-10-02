@@ -180,11 +180,23 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
       const transitions = Object.entries(data?.transitions ?? {})
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ");
+      const clientErrs = Object.entries(data?.clientErrors ?? {})
+        .map(([store, msg]) => `store ${String(store).slice(0, 8)}: ${msg}`)
+        .join(" · ");
+      const body =
+        [
+          `scanned=${data?.scanned ?? 0}`,
+          `healed=${data?.updated ?? 0}`,
+          `unchanged=${data?.unchanged ?? 0}`,
+          `noAwb=${data?.noAwb ?? 0}`,
+          `noClient=${data?.noClient ?? 0}`,
+          `errors=${data?.errors ?? 0}`,
+        ].join("  ") +
+        (transitions ? `\nTransitions → ${transitions}` : "") +
+        (clientErrs ? `\nClient errors → ${clientErrs}` : "");
       toast({
-        title: `Reconciled — ${data?.updated ?? 0} healed, ${data?.unchanged ?? 0} unchanged`,
-        description: transitions
-          ? `Transitions: ${transitions}`
-          : `scanned=${data?.scanned ?? 0}  errors=${data?.errors ?? 0}  noAwb=${data?.noAwb ?? 0}`,
+        title: `Reconcile done — ${data?.updated ?? 0} healed`,
+        description: body,
       });
       queryClient.invalidateQueries();
     },

@@ -61,6 +61,12 @@ export interface ReconcileResult {
   noClient: number;
   errorSamples: string[];
   transitions: Record<string, number>; // "out_for_delivery→delivered" counts
+  // Diagnostic — rows per store so we can see when the sweep is spending
+  // its budget on an inactive/misconfigured store (e.g. OLB with no
+  // Delhivery token) instead of healing the active store's drift.
+  storeBreakdown: Record<string, { total: number; noClient: boolean }>;
+  // Why a store failed to open a Delhivery client (first error per store).
+  clientErrors: Record<string, string>;
 }
 
 interface Candidate {
@@ -74,6 +80,9 @@ interface Candidate {
 async function pickCandidates(): Promise<Candidate[]> {
   // Pull only what we need. LEFT JOIN shipments — we want the AWB but
   // an order without a shipment row is fine to skip (nothing to query).
+  // INNER JOIN stores + is_active filter so a closed store (OLB-style)
+  // with leftover in-flight orders can't eat the whole batch budget
+  // against a Delhivery client that doesn't exist for it.
   const cutoff = new Date(Date.now() - STALE_HOURS * 3600 * 1000).toISOString();
   const res: any = await db.execute(sql`
     SELECT
@@ -83,6 +92,7 @@ async function pickCandidates(): Promise<Candidate[]> {
       o.updated_at    AS updated_at,
       s.awb           AS awb
     FROM orders o
+    JOIN stores st ON st.id = o.store_id AND st.is_active = TRUE
     LEFT JOIN shipments s ON s.order_id = o.id
     WHERE o.status IN (
       'awb_assigned','ready_for_pickup','picked_up','in_transit',
@@ -123,6 +133,8 @@ export async function reconcileShipmentStatus(): Promise<ReconcileResult> {
     noClient: 0,
     errorSamples: [],
     transitions: {},
+    storeBreakdown: {},
+    clientErrors: {},
   };
 
   const candidates = await pickCandidates();
@@ -132,13 +144,17 @@ export async function reconcileShipmentStatus(): Promise<ReconcileResult> {
   const byStore = groupByStore(candidates);
 
   for (const [storeId, rows] of Array.from(byStore.entries())) {
+    result.storeBreakdown[storeId] = { total: rows.length, noClient: false };
     let client;
     try {
       client = await getDelhiveryClient(storeId);
-    } catch {
-      // Delhivery not configured for this store (or store row missing) —
-      // don't spam errors, just count and move on.
+    } catch (e: any) {
+      // Delhivery not configured for this store (or store row missing /
+      // token won't decrypt). Count all its rows + remember why so the
+      // UI can surface it. OLB-style inactive-store rows will land here.
       result.noClient += rows.length;
+      result.storeBreakdown[storeId].noClient = true;
+      result.clientErrors[storeId] = String(e?.message ?? e).slice(0, 200);
       continue;
     }
 
