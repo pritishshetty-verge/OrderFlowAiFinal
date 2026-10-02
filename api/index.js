@@ -5574,9 +5574,11 @@ async function createReshipment(input) {
     );
   }
   const shop = await getShopifyClient(input.storeId);
-  let rawOrder;
+  let shopifyOrder = null;
+  let usedLocalFallback = false;
   try {
-    rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+    const rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+    shopifyOrder = rawOrder?.order ?? rawOrder;
   } catch (e) {
     const msg = String(e?.message ?? e);
     if (/payment required|402/i.test(msg)) {
@@ -5585,18 +5587,54 @@ async function createReshipment(input) {
         409
       );
     }
-    if (/not found|404/i.test(msg)) {
+    if (!/not found|404/i.test(msg)) {
+      throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+    }
+    usedLocalFallback = true;
+  }
+  if (usedLocalFallback) {
+    const { orderItems: orderItems2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+    const items = await db.select().from(orderItems2).where(eq4(orderItems2.orderId, order.id));
+    if (!items.length) {
       throw new ReshipmentError(
-        "That order no longer exists in Shopify (it may have been deleted). Pick a different order.",
-        404
+        "That order isn't in Shopify any more AND we have no local line items for it \u2014 nothing to duplicate. Pick a different order.",
+        422
       );
     }
-    throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+    const codes = Array.isArray(order.discountCodes) ? order.discountCodes : order.discountCode ? [order.discountCode] : [];
+    shopifyOrder = {
+      id: order.shopifyOrderId,
+      name: order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`,
+      currency: "INR",
+      total_price: order.totalPrice,
+      total_discounts: 0,
+      // we don't track parent-level discount totals locally
+      payment_gateway_names: [],
+      // builder defaults to COD/manual
+      // Minimal discount-code block so attribution still fires.
+      discount_codes: codes.map((code) => ({ code, amount: "0.00", type: "fixed_amount" })),
+      customer: null,
+      // force the create-new-customer branch; we have no Shopify id
+      email: order.customerEmail ?? void 0,
+      line_items: items.map((li) => ({
+        variant_id: li.shopifyVariantId ?? void 0,
+        product_id: li.shopifyProductId ?? void 0,
+        title: li.productName,
+        name: li.productName,
+        quantity: li.quantity,
+        price: li.price,
+        sku: li.sku ?? void 0,
+        taxable: true,
+        requires_shipping: true
+      }))
+    };
+    console.log(
+      `[reshipments] #${order.shopifyOrderNumber ?? order.shopifyOrderId}: Shopify 404 \u2192 rebuilt from local snapshot (${items.length} items)`
+    );
   }
-  const shopifyOrder = rawOrder?.order ?? rawOrder;
   if (!shopifyOrder?.line_items?.length) {
     throw new ReshipmentError(
-      "Shopify returned no line items for the original order.",
+      "No line items found for the original order.",
       502
     );
   }

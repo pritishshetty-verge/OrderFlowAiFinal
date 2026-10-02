@@ -111,33 +111,87 @@ export async function createReshipment(
 
   // 3. Fetch the full Shopify order — we need the line_items with
   //    variant_id, and the gateway string exactly as Shopify has it.
+  //    If Shopify 404s (the parent was deleted/archived — common on
+  //    older orders), fall back to our local snapshot: orders +
+  //    order_items carry everything the payload builder needs.
   const shop = await getShopifyClient(input.storeId);
-  let rawOrder: any;
+  let shopifyOrder: any = null;
+  let usedLocalFallback = false;
   try {
-    rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+    const rawOrder = await shop.fetchOrder(order.shopifyOrderId);
+    shopifyOrder = rawOrder?.order ?? rawOrder;
   } catch (e: any) {
     const msg = String(e?.message ?? e);
-    // Shopify returns 402 on frozen/closed stores (unpaid invoice or the
-    // merchant paused the shop). Surfacing the raw status here is useless
-    // to an operator — name the actual problem and the fix.
+    // 402 = frozen/closed shop. Not a per-order problem — tell the
+    // operator to switch stores or resolve the billing issue upstream.
     if (/payment required|402/i.test(msg)) {
       throw new ReshipmentError(
         "This store's Shopify account is frozen or closed, so orders can't be created in it. Switch to an active store using the store switcher, or resolve the Shopify billing issue.",
         409,
       );
     }
-    if (/not found|404/i.test(msg)) {
+    // 404 = the parent order isn't in Shopify any more. Could be
+    // deleted, archived into a tier the API doesn't return, or a
+    // store migration left a stale shopifyOrderId. Rebuild from the
+    // local snapshot instead of forcing the operator to pick again.
+    if (!/not found|404/i.test(msg)) {
+      throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+    }
+    usedLocalFallback = true;
+  }
+
+  if (usedLocalFallback) {
+    // Rebuild a Shopify-shaped order object from local tables. The
+    // payload builder only reads a small subset (id, name, currency,
+    // line_items, discount info) so the shim stays compact.
+    const { orderItems } = await import("@shared/schema");
+    const items = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+    if (!items.length) {
       throw new ReshipmentError(
-        "That order no longer exists in Shopify (it may have been deleted). Pick a different order.",
-        404,
+        "That order isn't in Shopify any more AND we have no local line items for it — nothing to duplicate. Pick a different order.",
+        422,
       );
     }
-    throw new ReshipmentError(`Couldn't read the original order from Shopify: ${msg}`, 502);
+    // local discountCodes is text[], but builder wants [{code, amount, type}].
+    const codes: string[] = Array.isArray(order.discountCodes)
+      ? (order.discountCodes as string[])
+      : order.discountCode
+        ? [order.discountCode]
+        : [];
+    shopifyOrder = {
+      id: order.shopifyOrderId,
+      name: order.shopifyOrderNumber ? `#${order.shopifyOrderNumber}` : `#${order.shopifyOrderId}`,
+      currency: "INR",
+      total_price: order.totalPrice,
+      total_discounts: 0, // we don't track parent-level discount totals locally
+      payment_gateway_names: [], // builder defaults to COD/manual
+      // Minimal discount-code block so attribution still fires.
+      discount_codes: codes.map((code) => ({ code, amount: "0.00", type: "fixed_amount" })),
+      customer: null, // force the create-new-customer branch; we have no Shopify id
+      email: order.customerEmail ?? undefined,
+      line_items: items.map((li) => ({
+        variant_id: li.shopifyVariantId ?? undefined,
+        product_id: li.shopifyProductId ?? undefined,
+        title: li.productName,
+        name: li.productName,
+        quantity: li.quantity,
+        price: li.price,
+        sku: li.sku ?? undefined,
+        taxable: true,
+        requires_shipping: true,
+      })),
+    };
+    console.log(
+      `[reshipments] #${order.shopifyOrderNumber ?? order.shopifyOrderId}: Shopify 404 → rebuilt from local snapshot (${items.length} items)`,
+    );
   }
-  const shopifyOrder = rawOrder?.order ?? rawOrder;
+
   if (!shopifyOrder?.line_items?.length) {
     throw new ReshipmentError(
-      "Shopify returned no line items for the original order.",
+      "No line items found for the original order.",
       502,
     );
   }
