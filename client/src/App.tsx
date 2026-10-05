@@ -91,13 +91,21 @@ function RecoveryAgentGuard({ component: Component }: { component: React.Compone
   return <OperationalGuard component={Component} />;
 }
 
-// Operational front-line roles — Order Confirmation Executive (OCE, stored as
-// `agent`) and NDR/RTO Executive (`ndr_rto`) — are restricted to exactly four
-// surfaces: Overview, Orders, Learning Center, Team. /profile, /login, /signup
-// stay reachable so they can manage their own account without a redirect loop.
-// Anything else (fulfilment, NDR ops, abandoned carts, settings, payroll, …)
-// bounces them to /orders, their primary workspace.
-const OPERATIONAL_ALLOWED_PATHS = [
+// Operational front-line roles. The two roles have DIFFERENT scopes:
+//
+//   • Order Confirmation Executive (OCE, stored as `agent`) — Overview,
+//     Orders, Learning Center, Team. Pure call-and-confirm desk.
+//
+//   • NDR/RTO Executive (`ndr_rto`, e.g. Chandi) — same as above PLUS
+//     the surfaces her job actually spans: /reshipments (she creates
+//     them) and /ndr (she works the queue). Without these two paths
+//     her sidebar links in app-sidebar.tsx bounce to /orders — the
+//     bug we hit on 2026-10-05 where the sidebar entry was visible
+//     but the route guard yanked her back.
+//
+// /profile, /login, /signup stay reachable for both so they can
+// manage their own account without a redirect loop.
+const AGENT_ALLOWED_PATHS = [
   "/",
   "/orders",
   "/learning",
@@ -107,12 +115,27 @@ const OPERATIONAL_ALLOWED_PATHS = [
   "/signup",
 ];
 
+const NDR_RTO_ALLOWED_PATHS = [
+  ...AGENT_ALLOWED_PATHS,
+  "/reshipments",
+  "/ndr",
+  "/fulfil",
+  "/call-logs",
+];
+
 function OperationalGuard({ component: Component }: { component: React.ComponentType }) {
   const [location] = useLocation();
   const userRole = localStorage.getItem("userRole");
 
-  if (userRole === "agent" || userRole === "ndr_rto") {
-    const isAllowed = OPERATIONAL_ALLOWED_PATHS.some(
+  const allowed =
+    userRole === "ndr_rto"
+      ? NDR_RTO_ALLOWED_PATHS
+      : userRole === "agent"
+        ? AGENT_ALLOWED_PATHS
+        : null;
+
+  if (allowed) {
+    const isAllowed = allowed.some(
       (path) =>
         location === path ||
         (path !== "/" && location.startsWith(path + "/")),
