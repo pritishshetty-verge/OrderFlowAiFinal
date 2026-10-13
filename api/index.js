@@ -5939,6 +5939,188 @@ var init_service = __esm({
   }
 });
 
+// server/permissions.ts
+function isFullControlAdmin(user) {
+  return user.role === "admin" && user.adminType === "full_control";
+}
+function isAdmin(user) {
+  return user.role === "admin" || user.role === "developer";
+}
+function isAgent(user) {
+  return user.role === "agent";
+}
+function getUserPermissions(user) {
+  if (!user.permissions) {
+    return {};
+  }
+  return user.permissions;
+}
+function hasPermission(user, category, permission) {
+  if (isAgent(user)) {
+    return false;
+  }
+  if (isFullControlAdmin(user)) {
+    return true;
+  }
+  const permissions = getUserPermissions(user);
+  const categoryPerms = permissions[category];
+  if (!categoryPerms || typeof categoryPerms !== "object") {
+    return false;
+  }
+  return categoryPerms[permission] === true;
+}
+function canAssignOrders(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "assignOrders"));
+}
+function canBulkAssignOrders(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "bulkAssign"));
+}
+function canTriggerAutoAssignment(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "triggerAutoAssignment"));
+}
+function canEditProfiles(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "editProfiles"));
+}
+function canAssignExtensions(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "assignExtensions"));
+}
+function canManageShopify(user) {
+  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "settings", "manageShopify"));
+}
+function canInviteTeamMembers(user) {
+  return isAdmin(user);
+}
+function canInviteAdmins(user) {
+  return isFullControlAdmin(user);
+}
+var init_permissions = __esm({
+  "server/permissions.ts"() {
+    "use strict";
+  }
+});
+
+// server/storeScope.ts
+var storeScope_exports = {};
+__export(storeScope_exports, {
+  STORE_HEADER_NAME: () => STORE_HEADER_NAME,
+  StoreScopeError: () => StoreScopeError,
+  attachStoreScope: () => attachStoreScope,
+  requireStoreScope: () => requireStoreScope,
+  resolveScopeForUser: () => resolveScopeForUser,
+  resolveStoreScope: () => resolveStoreScope
+});
+import { eq as eq5, and as and4, asc as asc2 } from "drizzle-orm";
+async function resolveStoreScope(req) {
+  const sessionUserId = req.session?.userId;
+  if (!sessionUserId) {
+    return null;
+  }
+  const [user] = await db.select().from(users).where(eq5(users.id, sessionUserId)).limit(1);
+  if (!user) {
+    return null;
+  }
+  return resolveScopeForUser(user, req);
+}
+async function resolveScopeForUser(user, req) {
+  const requestedHeader = readHeader(req);
+  if (isAdmin(user)) {
+    if (requestedHeader) {
+      const [row] = await db.select({ id: stores.id }).from(stores).where(eq5(stores.id, requestedHeader)).limit(1);
+      if (!row) {
+        throw new StoreScopeError(
+          404,
+          `Store ${requestedHeader} not found`
+        );
+      }
+      return { storeId: row.id, isAdmin: true, isFallback: false };
+    }
+    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc2(stores.createdAt)).limit(1);
+    if (!fallback) {
+      return null;
+    }
+    return { storeId: fallback.id, isAdmin: true, isFallback: true };
+  }
+  if (requestedHeader) {
+    const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
+      and4(
+        eq5(userStores.userId, user.id),
+        eq5(userStores.storeId, requestedHeader)
+      )
+    ).limit(1);
+    if (!membership) {
+      throw new StoreScopeError(
+        403,
+        "You do not have access to this store"
+      );
+    }
+    return {
+      storeId: membership.storeId,
+      isAdmin: false,
+      isFallback: false
+    };
+  }
+  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
+  if (!first) {
+    throw new StoreScopeError(
+      403,
+      "Your account is not attached to any store. Ask an administrator to grant access."
+    );
+  }
+  return { storeId: first.storeId, isAdmin: false, isFallback: true };
+}
+async function attachStoreScope(req, _res, next) {
+  if (req.path.startsWith("/api/webhooks/")) {
+    return next();
+  }
+  try {
+    const scope = await resolveStoreScope(req);
+    if (scope) req.storeScope = scope;
+    next();
+  } catch (err) {
+    if (err instanceof StoreScopeError) {
+      req.storeScopeError = err;
+      return next();
+    }
+    next(err);
+  }
+}
+function requireStoreScope(req, res) {
+  const stashed = req.storeScopeError;
+  if (stashed) {
+    res.status(stashed.status).json({ error: stashed.message });
+    return null;
+  }
+  if (!req.storeScope) {
+    res.status(401).json({ error: "Authentication required" });
+    return null;
+  }
+  return req.storeScope;
+}
+function readHeader(req) {
+  const raw = req.headers[STORE_HEADER_NAME];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+var STORE_HEADER_NAME, StoreScopeError;
+var init_storeScope = __esm({
+  "server/storeScope.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_permissions();
+    STORE_HEADER_NAME = "x-active-store-id";
+    StoreScopeError = class extends Error {
+      status;
+      constructor(status, message) {
+        super(message);
+        this.status = status;
+        this.name = "StoreScopeError";
+      }
+    };
+  }
+});
+
 // server/resend.ts
 var resend_exports = {};
 __export(resend_exports, {
@@ -11982,167 +12164,8 @@ async function handleFulfillmentUpdate(req, res) {
   }
 }
 
-// server/storeScope.ts
-init_db();
-init_schema();
-import { eq as eq5, and as and4, asc as asc2 } from "drizzle-orm";
-
-// server/permissions.ts
-function isFullControlAdmin(user) {
-  return user.role === "admin" && user.adminType === "full_control";
-}
-function isAdmin(user) {
-  return user.role === "admin" || user.role === "developer";
-}
-function isAgent(user) {
-  return user.role === "agent";
-}
-function getUserPermissions(user) {
-  if (!user.permissions) {
-    return {};
-  }
-  return user.permissions;
-}
-function hasPermission(user, category, permission) {
-  if (isAgent(user)) {
-    return false;
-  }
-  if (isFullControlAdmin(user)) {
-    return true;
-  }
-  const permissions = getUserPermissions(user);
-  const categoryPerms = permissions[category];
-  if (!categoryPerms || typeof categoryPerms !== "object") {
-    return false;
-  }
-  return categoryPerms[permission] === true;
-}
-function canAssignOrders(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "assignOrders"));
-}
-function canBulkAssignOrders(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "bulkAssign"));
-}
-function canTriggerAutoAssignment(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "orderManagement", "triggerAutoAssignment"));
-}
-function canEditProfiles(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "editProfiles"));
-}
-function canAssignExtensions(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "teamManagement", "assignExtensions"));
-}
-function canManageShopify(user) {
-  return isAdmin(user) && (isFullControlAdmin(user) || hasPermission(user, "settings", "manageShopify"));
-}
-function canInviteTeamMembers(user) {
-  return isAdmin(user);
-}
-function canInviteAdmins(user) {
-  return isFullControlAdmin(user);
-}
-
-// server/storeScope.ts
-var STORE_HEADER_NAME = "x-active-store-id";
-var StoreScopeError = class extends Error {
-  status;
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-    this.name = "StoreScopeError";
-  }
-};
-async function resolveStoreScope(req) {
-  const sessionUserId = req.session?.userId;
-  if (!sessionUserId) {
-    return null;
-  }
-  const [user] = await db.select().from(users).where(eq5(users.id, sessionUserId)).limit(1);
-  if (!user) {
-    return null;
-  }
-  const requestedHeader = readHeader(req);
-  if (isAdmin(user)) {
-    if (requestedHeader) {
-      const [row] = await db.select({ id: stores.id }).from(stores).where(eq5(stores.id, requestedHeader)).limit(1);
-      if (!row) {
-        throw new StoreScopeError(
-          404,
-          `Store ${requestedHeader} not found`
-        );
-      }
-      return { storeId: row.id, isAdmin: true, isFallback: false };
-    }
-    const [fallback] = await db.select({ id: stores.id }).from(stores).orderBy(asc2(stores.createdAt)).limit(1);
-    if (!fallback) {
-      return null;
-    }
-    return { storeId: fallback.id, isAdmin: true, isFallback: true };
-  }
-  if (requestedHeader) {
-    const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
-      and4(
-        eq5(userStores.userId, user.id),
-        eq5(userStores.storeId, requestedHeader)
-      )
-    ).limit(1);
-    if (!membership) {
-      throw new StoreScopeError(
-        403,
-        "You do not have access to this store"
-      );
-    }
-    return {
-      storeId: membership.storeId,
-      isAdmin: false,
-      isFallback: false
-    };
-  }
-  const [first] = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq5(userStores.userId, user.id)).orderBy(asc2(userStores.createdAt)).limit(1);
-  if (!first) {
-    throw new StoreScopeError(
-      403,
-      "Your account is not attached to any store. Ask an administrator to grant access."
-    );
-  }
-  return { storeId: first.storeId, isAdmin: false, isFallback: true };
-}
-async function attachStoreScope(req, _res, next) {
-  if (req.path.startsWith("/api/webhooks/")) {
-    return next();
-  }
-  try {
-    const scope = await resolveStoreScope(req);
-    if (scope) req.storeScope = scope;
-    next();
-  } catch (err) {
-    if (err instanceof StoreScopeError) {
-      req.storeScopeError = err;
-      return next();
-    }
-    next(err);
-  }
-}
-function requireStoreScope(req, res) {
-  const stashed = req.storeScopeError;
-  if (stashed) {
-    res.status(stashed.status).json({ error: stashed.message });
-    return null;
-  }
-  if (!req.storeScope) {
-    res.status(401).json({ error: "Authentication required" });
-    return null;
-  }
-  return req.storeScope;
-}
-function readHeader(req) {
-  const raw = req.headers[STORE_HEADER_NAME];
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 // server/routes.ts
+init_storeScope();
 init_schema();
 init_encryption();
 import { ZodError } from "zod";
@@ -12645,9 +12668,10 @@ async function verifyPassword(plaintext, stored) {
 }
 
 // server/routes.ts
+init_permissions();
+init_presence_config();
 import fs4 from "fs";
 import path3 from "path";
-init_presence_config();
 function timingSafeEqualStr(a, b) {
   const ah = crypto7.createHash("sha256").update(a).digest();
   const bh = crypto7.createHash("sha256").update(b).digest();
@@ -13353,11 +13377,29 @@ async function registerRoutes(app2) {
     }
     return { user };
   };
+  const resolveReshipmentScope = async (req, res, user) => {
+    if (req.storeScope) return req.storeScope;
+    const { resolveScopeForUser: resolveScopeForUser2, StoreScopeError: StoreScopeError2 } = await Promise.resolve().then(() => (init_storeScope(), storeScope_exports));
+    try {
+      const scope = await resolveScopeForUser2(user, req);
+      if (!scope) {
+        res.status(400).json({ error: "No store context available for this account." });
+        return null;
+      }
+      return scope;
+    } catch (e) {
+      if (e instanceof StoreScopeError2) {
+        res.status(e.status).json({ error: e.message });
+        return null;
+      }
+      throw e;
+    }
+  };
   app2.post("/api/reshipments", async (req, res) => {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { createReshipment: createReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
       const b = req.body ?? {};
@@ -13429,7 +13471,7 @@ async function registerRoutes(app2) {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const filter = req.query.filter === "attention" ? "attention" : "all";
       const { listReshipments: listReshipments2 } = await Promise.resolve().then(() => (init_service(), service_exports));
@@ -13444,7 +13486,7 @@ async function registerRoutes(app2) {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { updateReshipment: updateReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
       const b = req.body ?? {};
@@ -13482,7 +13524,7 @@ async function registerRoutes(app2) {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { cancelReshipment: cancelReshipment2, ReshipmentError: ReshipmentError2 } = await Promise.resolve().then(() => (init_service(), service_exports));
       const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
@@ -13509,7 +13551,7 @@ async function registerRoutes(app2) {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { getReshipmentStats: getReshipmentStats2 } = await Promise.resolve().then(() => (init_service(), service_exports));
       const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
@@ -20836,6 +20878,7 @@ function serveStatic(app2) {
 init_storage();
 init_db();
 init_shopify();
+init_storeScope();
 init_presence_config();
 var NEON_WS_FINGERPRINT = "Cannot set property message of #<ErrorEvent>";
 process.on("uncaughtException", (err) => {

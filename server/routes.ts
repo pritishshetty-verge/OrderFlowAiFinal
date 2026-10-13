@@ -1282,6 +1282,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { user };
   };
 
+  // Resolve the store for a reshipment action. Prefer the session-based
+  // req.storeScope, but fall back to resolving from the already-
+  // authenticated reshipment user when it's absent. Agents (e.g. the
+  // NDR team) authenticate via currentUserId rather than a session
+  // cookie, so their req.session can be empty/lapsed — which used to
+  // 401 the Create Reshipment action with "Authentication required"
+  // even though the user was proven by requireReshipmentUser. Sends the
+  // right HTTP status and returns null on failure; caller should return.
+  const resolveReshipmentScope = async (
+    req: any,
+    res: any,
+    user: any,
+  ): Promise<{ storeId: string } | null> => {
+    if (req.storeScope) return req.storeScope;
+    const { resolveScopeForUser, StoreScopeError } = await import("./storeScope");
+    try {
+      const scope = await resolveScopeForUser(user, req);
+      if (!scope) {
+        res.status(400).json({ error: "No store context available for this account." });
+        return null;
+      }
+      return scope;
+    } catch (e: any) {
+      if (e instanceof StoreScopeError) {
+        res.status(e.status).json({ error: e.message });
+        return null;
+      }
+      throw e;
+    }
+  };
+
   // POST /api/reshipments — create a duplicate order in Shopify + log it.
   app.post("/api/reshipments", async (req, res) => {
     try {
@@ -1289,7 +1320,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!authed) return;
       // Any agent role can trigger a reshipment (NDR team is agents);
       // the endpoint IS store-scoped so cross-tenant abuse can't happen.
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
 
       const { createReshipment, ReshipmentError } = await import("./reshipments/service");
@@ -1386,7 +1417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const filter = req.query.filter === "attention" ? "attention" : "all";
       const { listReshipments } = await import("./reshipments/service");
@@ -1407,7 +1438,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { updateReshipment, ReshipmentError } = await import("./reshipments/service");
       const b = req.body ?? {};
@@ -1451,7 +1482,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { cancelReshipment, ReshipmentError } = await import("./reshipments/service");
       const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
@@ -1481,7 +1512,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const authed = await requireReshipmentUser(req, res);
       if (!authed) return;
-      const scope = requireStoreScope(req, res);
+      const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
       const { getReshipmentStats } = await import("./reshipments/service");
       const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;

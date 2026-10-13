@@ -113,6 +113,25 @@ export async function resolveStoreScope(
     return null;
   }
 
+  return resolveScopeForUser(user, req);
+}
+
+/**
+ * Resolve a store scope for an ALREADY-RESOLVED user, independent of
+ * the Express session. Write endpoints that authenticate an agent via
+ * `currentUserId` (not a session cookie) use this so the action
+ * doesn't 401 the moment the session lapses while a dialog is open —
+ * the user identity has already been proven by the caller.
+ *
+ * Same rules as the session path: admins can target any store (header
+ * verified, else oldest store); non-admins must have a user_stores
+ * membership for the requested store, else fall back to their oldest
+ * membership.
+ */
+export async function resolveScopeForUser(
+  user: typeof users.$inferSelect,
+  req: Request,
+): Promise<StoreScope | null> {
   const requestedHeader = readHeader(req);
 
   if (isAdmin(user)) {
