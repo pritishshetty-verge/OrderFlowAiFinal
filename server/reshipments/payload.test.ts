@@ -52,7 +52,7 @@ test("COD: cart value intact, financial_status pending, gateway = original COD l
   assert.equal(li[1].quantity, 2);
 });
 
-test("Prepaid: 100% discount zeroes payable, financial_status paid, ₹0 txn with original gateway", () => {
+test("Prepaid: retains real value, marked paid with a SUCCESS txn (not ₹0)", () => {
   const p = buildReshipmentPayload(
     baseArgs({
       paymentType: "prepaid",
@@ -66,16 +66,73 @@ test("Prepaid: 100% discount zeroes payable, financial_status paid, ₹0 txn wit
     }),
   ).order;
 
+  // No discount on the original → no zero-out, full value retained.
+  assert.equal(p.financial_status, "paid");
+  assert.equal(p.discount_codes, undefined, "no discount on original → none applied");
+  const txns = p.transactions as any[];
+  assert.equal(txns.length, 1, "prepaid records a settled transaction for the real value");
+  assert.equal(txns[0].kind, "sale");
+  assert.equal(txns[0].status, "success", "prepaid txn is settled, not pending");
+  assert.equal(txns[0].amount, "1200.00", "retains the full order value — NOT ₹0");
+  assert.equal(txns[0].gateway, "Razorpay");
+});
+
+test("Prepaid with a discount (TARA10): keeps the discount, pays the discounted value", () => {
+  const p = buildReshipmentPayload(
+    baseArgs({
+      paymentType: "prepaid",
+      original: {
+        id: 43,
+        name: "#7778",
+        currency: "INR",
+        payment_gateway_names: ["Razorpay"],
+        total_price: "1080.00",
+        total_discounts: "120.00",
+        discount_codes: [{ code: "TARA10", amount: "120.00", type: "fixed_amount" }],
+        line_items: [{ variant_id: 1, title: "Serum", quantity: 1, price: "1200.00" }],
+      },
+    }),
+  ).order;
+
   assert.equal(p.financial_status, "paid");
   const disc = p.discount_codes as any[];
   assert.equal(disc.length, 1);
-  assert.equal(disc[0].amount, "1200.00");
-  assert.equal(disc[0].type, "fixed_amount");
-  assert.equal(p.total_discounts, "1200.00");
-  // No transactions on prepaid: the payable total is zero and Shopify
-  // rejects zero-amount sale transactions (422 "Amount must be greater
-  // than zero for sale transactions"). financial_status marks it settled.
-  assert.equal(p.transactions, undefined, "prepaid must NOT send a zero-amount transaction");
+  assert.equal(disc[0].code, "TARA10");
+  assert.equal(disc[0].amount, "120.00");
+  assert.equal(p.total_discounts, "120.00");
+  const txns = p.transactions as any[];
+  assert.equal(txns.length, 1);
+  assert.equal(txns[0].status, "success");
+  // subtotal 1200 − discount 120 = 1080, the original discounted value.
+  assert.equal(txns[0].amount, "1080.00");
+});
+
+test("Reshipment of a legacy ₹0 prepaid reshipment is NOT free (safety net)", () => {
+  // A chained reshipment: the parent was a legacy ₹0 prepaid reshipment
+  // whose discount_codes zeroed the whole subtotal and total_price = 0.
+  // The new COD reshipment must still collect the real cart value.
+  const p = buildReshipmentPayload(
+    baseArgs({
+      paymentType: "cod",
+      original: {
+        id: 44,
+        name: "#7779R",
+        currency: "INR",
+        total_price: "0.00",
+        total_discounts: "999.00",
+        discount_codes: [{ code: "RESHIPMENT_ALREADY_PAID", amount: "999.00", type: "fixed_amount" }],
+        line_items: [{ variant_id: 1, title: "Mask", quantity: 1, price: "999.00" }],
+      },
+    }),
+  ).order;
+
+  assert.equal(p.financial_status, "pending");
+  // The self-cancelling discount is dropped so the order isn't ₹0.
+  assert.equal(p.discount_codes, undefined, "self-cancelling discount dropped");
+  const txns = p.transactions as any[];
+  assert.equal(txns.length, 1, "must collect COD, not deliver free");
+  assert.equal(txns[0].status, "pending");
+  assert.equal(txns[0].amount, "999.00");
 });
 
 test("Tags: always Reshipment + Original:<name>; scheduled adds Hold_Until_<date>", () => {
@@ -133,15 +190,19 @@ test("Missing payment_gateway_names on the original falls back to a sane default
   ).order;
   assert.equal((cod.transactions as any[])[0].gateway, "COD");
 
-  // Prepaid carries no transaction at all, so there's no gateway label to
-  // assert — zeroing is done by the 100% discount + financial_status.
+  // Prepaid now records a settled txn for the real value; with no
+  // original gateway it falls back to "manual".
   const prepaid = buildReshipmentPayload(
     baseArgs({
       paymentType: "prepaid",
       original: { id: 2, name: "#2", line_items: [{ quantity: 1, price: "10" }] },
     }),
   ).order;
-  assert.equal(prepaid.transactions, undefined);
+  const pTxns = prepaid.transactions as any[];
+  assert.equal(pTxns.length, 1);
+  assert.equal(pTxns[0].status, "success");
+  assert.equal(pTxns[0].amount, "10.00");
+  assert.equal(pTxns[0].gateway, "manual");
   assert.equal(prepaid.financial_status, "paid");
 });
 

@@ -227,57 +227,66 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
     send_fulfillment_receipt: false,
   };
 
+  // ── Pricing: the reshipment retains the ORIGINAL order's value ──────
+  //
+  // Both COD and prepaid clone the real line-item prices and the real
+  // discount (e.g. TARA10). The payable total is therefore the same as
+  // the parent's: subtotal − discount. We NEVER zero the order out.
+  //   • COD   → financial_status "pending" + a pending sale txn so the
+  //             courier collects the right cash on delivery.
+  //   • Prepaid → financial_status "paid" + a SUCCESS sale txn for the
+  //             same value, so accounts get a correct invoice (not ₹0)
+  //             and reports show it as actually paid.
+  //
+  // `appliedDiscount` is summed from the discount CODES we attach (not
+  // the parent's total_discounts field) so the txn amount always matches
+  // the total Shopify computes from line_items − discount_codes.
+  const appliedDiscount = originalDiscountCodes.reduce(
+    (s, d) => s + Number(d.amount ?? 0),
+    0,
+  );
+  let payable = Math.round((subtotal - appliedDiscount) * 100) / 100;
+
+  // Safety net: a positive-value order must never become free. If the
+  // inherited discount wipes the whole subtotal (bad data, or a chained
+  // reshipment whose parent was a legacy ₹0 prepaid reshipment), drop
+  // the self-cancelling discount and fall back to the parent's real
+  // total, else the raw subtotal. This is what prevents "delivered for
+  // free" COD and ₹0 prepaid invoices.
+  const parentTotal = Number(args.original.total_price ?? NaN);
+  let keepDiscount = true;
+  if (payable <= 0 && subtotal > 0) {
+    keepDiscount = false;
+    payable = Number.isFinite(parentTotal) && parentTotal > 0 ? parentTotal : subtotal;
+  }
+
+  if (keepDiscount && originalDiscountCodes.length) {
+    body.discount_codes = originalDiscountCodes;
+    body.total_discounts = money(appliedDiscount);
+  }
+
+  const txnBase = {
+    kind: "sale" as const,
+    amount: money(payable),
+    currency: args.original.currency ?? "INR",
+    gateway: originalGateway,
+  };
+
   if (isCOD) {
-    // COD → cart value intact, gateway = original COD label, financial_status
-    // pending so Shopify shows "Payment pending" and the courier is expected
-    // to collect on delivery.
     body.financial_status = "pending";
-    // Apply the parent order's discount codes (e.g. TARA10) so the
-    // reshipment's discount_codes column mirrors the original for
-    // attribution. The courier then collects (subtotal - total_discounts),
-    // which matches what the customer was going to pay on the parent.
-    if (originalDiscountCodes.length) {
-      body.discount_codes = originalDiscountCodes;
-      body.total_discounts = money(originalTotalDiscounts);
-    }
-    const netAmount = Math.max(0, subtotal - originalTotalDiscounts);
-    // Shopify rejects sale transactions of zero ("Amount must be greater
-    // than zero for sale transactions"), so only attach one when there's
-    // actually a value to collect. A ₹0 COD order needs no transaction.
-    if (netAmount > 0) {
-      body.transactions = [
-        {
-          kind: "sale",
-          status: "pending",
-          amount: money(netAmount),
-          currency: args.original.currency ?? "INR",
-          gateway: originalGateway,
-        },
-      ];
+    // Shopify rejects a zero-amount sale txn; a genuinely free order
+    // (payable 0 with no subtotal) simply carries none.
+    if (payable > 0) {
+      body.transactions = [{ ...txnBase, status: "pending" }];
     }
   } else {
-    // Prepaid → 100% order-level discount zeroes the payable total so the
-    // courier collects nothing and Shopify doesn't double-count revenue.
-    //
-    // Deliberately NO transactions array: the payable total is zero, and
-    // Shopify rejects a zero-amount `sale` transaction outright (422
-    // "Amount must be greater than zero for sale transactions").
-    // `financial_status: "paid"` alone marks the order settled, which is
-    // what the waybill logic and the merchant's reports read.
-    //
-    // When the parent order had a real code (e.g. TARA10), we reuse its
-    // NAME as the zero-out code so the reshipment appears under the same
-    // coupon in Shopify Discounts / agent attribution reports. Financial
-    // effect is identical (still a 100% fixed_amount off subtotal).
-    body.discount_codes = [
-      {
-        code: primaryOriginalCode ?? "RESHIPMENT_ALREADY_PAID",
-        amount: money(subtotal),
-        type: "fixed_amount",
-      },
-    ];
-    body.total_discounts = money(subtotal);
+    // Prepaid: already paid on the original, so record it as settled for
+    // the REAL value — not a ₹0 order. A success txn makes the ledger /
+    // invoice correct.
     body.financial_status = "paid";
+    if (payable > 0) {
+      body.transactions = [{ ...txnBase, status: "success" }];
+    }
   }
 
   return { order: body };

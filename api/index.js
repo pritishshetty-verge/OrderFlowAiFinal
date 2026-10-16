@@ -5509,34 +5509,37 @@ function buildReshipmentPayload(args) {
     send_receipt: false,
     send_fulfillment_receipt: false
   };
+  const appliedDiscount = originalDiscountCodes.reduce(
+    (s, d) => s + Number(d.amount ?? 0),
+    0
+  );
+  let payable = Math.round((subtotal - appliedDiscount) * 100) / 100;
+  const parentTotal = Number(args.original.total_price ?? NaN);
+  let keepDiscount = true;
+  if (payable <= 0 && subtotal > 0) {
+    keepDiscount = false;
+    payable = Number.isFinite(parentTotal) && parentTotal > 0 ? parentTotal : subtotal;
+  }
+  if (keepDiscount && originalDiscountCodes.length) {
+    body.discount_codes = originalDiscountCodes;
+    body.total_discounts = money(appliedDiscount);
+  }
+  const txnBase = {
+    kind: "sale",
+    amount: money(payable),
+    currency: args.original.currency ?? "INR",
+    gateway: originalGateway
+  };
   if (isCOD) {
     body.financial_status = "pending";
-    if (originalDiscountCodes.length) {
-      body.discount_codes = originalDiscountCodes;
-      body.total_discounts = money(originalTotalDiscounts);
-    }
-    const netAmount = Math.max(0, subtotal - originalTotalDiscounts);
-    if (netAmount > 0) {
-      body.transactions = [
-        {
-          kind: "sale",
-          status: "pending",
-          amount: money(netAmount),
-          currency: args.original.currency ?? "INR",
-          gateway: originalGateway
-        }
-      ];
+    if (payable > 0) {
+      body.transactions = [{ ...txnBase, status: "pending" }];
     }
   } else {
-    body.discount_codes = [
-      {
-        code: primaryOriginalCode ?? "RESHIPMENT_ALREADY_PAID",
-        amount: money(subtotal),
-        type: "fixed_amount"
-      }
-    ];
-    body.total_discounts = money(subtotal);
     body.financial_status = "paid";
+    if (payable > 0) {
+      body.transactions = [{ ...txnBase, status: "success" }];
+    }
   }
   return { order: body };
 }
