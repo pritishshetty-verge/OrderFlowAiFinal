@@ -3,6 +3,9 @@ import { createServer, type Server } from "http";
 import crypto from "node:crypto";
 import { generatePayuHash, verifyPayuHash, getPayuKey, RETURN_FEE_AMOUNT } from "./services/payu";
 import { canManuallySetStatus, canSchedulePickup, shouldWebhookAdvance } from "./logic/returnGuards";
+import { normalizeOrderNumber, normalizeAwb, findVerifiedOrder } from "./logic/publicOrderLookup";
+import { perIpLimiter, wrongContactLimiter, wrongContactKey, clientIp } from "./logic/publicRateLimit";
+import { buildTrackingView } from "./logic/trackingView";
 import { storage } from "./storage";
 import { db } from "./db";
 import {
@@ -3817,38 +3820,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ error: "orderNumber and customerEmailOrPhone are required" });
       }
 
-      const normalizedNumber = String(orderNumber).trim().replace(/^#/, "");
-      // Try the bare number, then the #-prefixed variant Shopify sometimes stores.
-      const order =
-        (await storage.getOrderByShopifyOrderNumber(
-          normalizedNumber,
-          storeId || undefined,
-        )) ||
-        (await storage.getOrderByShopifyOrderNumber(
-          `#${normalizedNumber}`,
-          storeId || undefined,
-        ));
+      // Rate limiting (shared limiters, also used by the tracking lookup):
+      // a per-IP burst cap plus a per-order wrong-contact cap so the identity
+      // gate can't be brute-forced. See server/logic/publicRateLimit.ts.
+      const ip = clientIp(req);
+      const ipCheck = perIpLimiter.hit(ip);
+      if (!ipCheck.allowed) {
+        res.setHeader("Retry-After", String(ipCheck.retryAfterSec));
+        return res
+          .status(429)
+          .json({ error: "Too many requests. Please slow down and try again shortly." });
+      }
+      const wcKey = wrongContactKey(storeId || undefined, normalizeOrderNumber(orderNumber));
+      if (wrongContactLimiter.isBlocked(wcKey)) {
+        return res
+          .status(429)
+          .json({ error: "Too many failed attempts for this order. Please try again later." });
+      }
 
-      // Generic failure — never reveal whether the order exists until the
-      // contact detail is also verified.
-      const fail = () =>
-        res.status(404).json({
-          error:
-            "No matching order found. Check the order number and email/phone.",
+      const order = await findVerifiedOrder(storage, {
+        orderNumber,
+        contact: customerEmailOrPhone,
+        storeId,
+      });
+      // Generic failure — never reveal whether the order number or the contact
+      // was wrong. Count the miss against the wrong-contact limiter.
+      if (!order) {
+        wrongContactLimiter.hit(wcKey);
+        return res.status(404).json({
+          error: "No matching order found. Check the order number and email/phone.",
         });
-      if (!order) return fail();
-
-      // Identity check: email (case-insensitive) OR phone (last 10 digits).
-      const probe = String(customerEmailOrPhone).trim().toLowerCase();
-      const probeDigits = probe.replace(/\D/g, "");
-      const emailMatch =
-        !!order.customerEmail && order.customerEmail.toLowerCase() === probe;
-      const orderPhoneDigits = (order.customerPhone || "").replace(/\D/g, "");
-      const phoneMatch =
-        probeDigits.length >= 6 &&
-        orderPhoneDigits.length >= 6 &&
-        orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
-      if (!emailMatch && !phoneMatch) return fail();
+      }
 
       const items = await storage.getOrderItems(order.id);
 
@@ -3892,16 +3894,108 @@ export async function registerRoutes(app: Express): Promise<Server> {
         items: itemsMapped,
       };
 
-      console.log(
-        "Sending lookup response:",
-        JSON.stringify(responseOrder, null, 2),
-      );
+      // Log the order id only — the previous line wrote customer names + items.
+      console.log("Returns lookup matched order:", order.id);
 
       // Keep `items` at the top level too for backwards-compatibility.
       res.json({ order: responseOrder, items: itemsMapped });
     } catch (error) {
       console.error("Error in public returns lookup:", error);
       res.status(500).json({ error: "Lookup failed" });
+    }
+  });
+
+  // Public order tracking. Two lookup modes:
+  //   - { orderNumber, customerEmailOrPhone } -> verified view: includes order
+  //     number, placed date and items.
+  //   - { awb } -> status-only view: no order number, date, items or PII.
+  // Store scope is derived from the request Origin, never client-supplied.
+  app.post("/api/public/tracking/lookup", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const body = req.body ?? {};
+      const orderNumberRaw = body.orderNumber;
+      const contactRaw = body.customerEmailOrPhone;
+      const awbRaw = body.awb;
+
+      // Per-IP burst cap (shared with the returns lookup).
+      const ip = clientIp(req);
+      const ipCheck = perIpLimiter.hit(ip);
+      if (!ipCheck.allowed) {
+        res.setHeader("Retry-After", String(ipCheck.retryAfterSec));
+        return res
+          .status(429)
+          .json({ error: "Too many requests. Please slow down and try again shortly." });
+      }
+
+      // Authoritative store scope from the browser Origin (maps glowandme.in
+      // to the Glow&Me store; falls back to the primary store).
+      const storeId = await storage.getStoreIdForCheckoutUrl(req.headers.origin);
+
+      const notFound = () =>
+        res.status(404).json({
+          found: false,
+          error: "We couldn't find a matching order. Check the details and try again.",
+        });
+
+      // ── Verified lookup: order number + contact ──────────────────────────
+      if (orderNumberRaw || contactRaw) {
+        if (!orderNumberRaw || !contactRaw) {
+          return res
+            .status(400)
+            .json({ error: "orderNumber and customerEmailOrPhone are required" });
+        }
+        const wcKey = wrongContactKey(storeId, normalizeOrderNumber(orderNumberRaw));
+        if (wrongContactLimiter.isBlocked(wcKey)) {
+          return res
+            .status(429)
+            .json({ error: "Too many failed attempts for this order. Please try again later." });
+        }
+        const order = await findVerifiedOrder(storage, {
+          orderNumber: orderNumberRaw,
+          contact: contactRaw,
+          storeId,
+        });
+        if (!order) {
+          wrongContactLimiter.hit(wcKey);
+          return notFound();
+        }
+        const [shipment, history, items] = await Promise.all([
+          storage.getShipmentByOrderId(order.id),
+          storage.getOrderHistory(order.id),
+          storage.getOrderItems(order.id),
+        ]);
+        return res.json(
+          buildTrackingView({ order, shipment, history, items, includeOrderDetails: true }),
+        );
+      }
+
+      // ── AWB lookup: status only ──────────────────────────────────────────
+      if (awbRaw) {
+        const awb = normalizeAwb(awbRaw);
+        if (!awb) {
+          return res.status(400).json({ error: "A valid tracking number is required" });
+        }
+        const order = await storage.getOrderByTrackingNumber(awb);
+        // Unknown AWB, or an order from another store -> same generic 404.
+        if (!order || (storeId && order.storeId && order.storeId !== storeId)) {
+          return notFound();
+        }
+        const [shipment, history] = await Promise.all([
+          storage.getShipmentByOrderId(order.id),
+          storage.getOrderHistory(order.id),
+        ]);
+        return res.json(
+          buildTrackingView({ order, shipment, history, items: [], includeOrderDetails: false }),
+        );
+      }
+
+      return res.status(400).json({
+        error: "Provide either an order number with email/phone, or a tracking number.",
+      });
+    } catch (error) {
+      console.error("Error in public tracking lookup:", error);
+      return res.status(500).json({ error: "Tracking is unavailable right now." });
     }
   });
 

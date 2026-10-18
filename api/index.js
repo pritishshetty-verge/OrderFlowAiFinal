@@ -9133,8 +9133,8 @@ function parseDate(raw) {
     const d2 = new Date(trimmed);
     return Number.isNaN(d2.getTime()) ? null : d2.toISOString();
   }
-  const iso = trimmed.replace(" ", "T") + "+05:30";
-  const d = new Date(iso);
+  const iso2 = trimmed.replace(" ", "T") + "+05:30";
+  const d = new Date(iso2);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 var COLUMN_ALIASES, SUCCESS_STATUS_VALUES, DEFAULT_MDR_PCT, DEFAULT_GST_ON_FEE_PCT, payuAdapter;
@@ -9589,6 +9589,284 @@ function canSchedulePickup(current, returnFeePaid) {
 }
 function shouldWebhookAdvance(current) {
   return current === "PENDING_FEE";
+}
+
+// server/logic/publicOrderLookup.ts
+function normalizeOrderNumber(raw) {
+  return String(raw ?? "").trim().replace(/^#/, "");
+}
+function normalizeAwb(raw) {
+  const cleaned = String(raw ?? "").replace(/[\s-]/g, "").toUpperCase();
+  return /^[A-Z0-9]{8,25}$/.test(cleaned) ? cleaned : null;
+}
+function contactMatchesOrder(order, contact) {
+  const probe = String(contact ?? "").trim().toLowerCase();
+  if (!probe) return false;
+  const emailMatch = !!order.customerEmail && order.customerEmail.toLowerCase() === probe;
+  if (emailMatch) return true;
+  const probeDigits = probe.replace(/\D/g, "");
+  const orderPhoneDigits = (order.customerPhone || "").replace(/\D/g, "");
+  return probeDigits.length >= 6 && orderPhoneDigits.length >= 6 && orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
+}
+async function findVerifiedOrder(storage3, params) {
+  const contact = String(params.contact ?? "").trim();
+  if (!contact) return null;
+  const number = normalizeOrderNumber(params.orderNumber);
+  if (!number) return null;
+  const storeId = params.storeId || void 0;
+  const order = await storage3.getOrderByShopifyOrderNumber(number, storeId) || await storage3.getOrderByShopifyOrderNumber(`#${number}`, storeId);
+  if (!order) return null;
+  if (!contactMatchesOrder(order, contact)) return null;
+  return order;
+}
+
+// server/logic/publicRateLimit.ts
+var SlidingWindowLimiter = class {
+  /**
+   * @param limit     max hits allowed per key within the window
+   * @param windowMs  window length in milliseconds
+   */
+  constructor(limit, windowMs) {
+    this.limit = limit;
+    this.windowMs = windowMs;
+  }
+  windows = /* @__PURE__ */ new Map();
+  /** Drop timestamps that have aged out of the window. */
+  prune(hits, now) {
+    const cutoff = now - this.windowMs;
+    return hits.filter((t) => t > cutoff);
+  }
+  /**
+   * Record a hit for `key`. Returns whether it is allowed, and (when blocked)
+   * how many seconds until the oldest in-window hit expires.
+   */
+  hit(key) {
+    const now = Date.now();
+    const existing = this.windows.get(key)?.hits ?? [];
+    const recent = this.prune(existing, now);
+    if (recent.length >= this.limit) {
+      const oldest = recent[0];
+      const retryAfterSec = Math.max(1, Math.ceil((oldest + this.windowMs - now) / 1e3));
+      this.windows.set(key, { hits: recent });
+      return { allowed: false, retryAfterSec };
+    }
+    recent.push(now);
+    this.windows.set(key, { hits: recent });
+    return { allowed: true, retryAfterSec: 0 };
+  }
+  /** True if `key` is currently at/over the limit. Does NOT record a hit. */
+  isBlocked(key) {
+    const now = Date.now();
+    const recent = this.prune(this.windows.get(key)?.hits ?? [], now);
+    if (recent.length > 0) this.windows.set(key, { hits: recent });
+    else this.windows.delete(key);
+    return recent.length >= this.limit;
+  }
+};
+function clientIp(req) {
+  const xff = req.headers["x-forwarded-for"];
+  const xffFirst = Array.isArray(xff) ? xff[0] : xff;
+  if (xffFirst) {
+    const first = xffFirst.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  const xReal = req.headers["x-real-ip"];
+  const xRealVal = Array.isArray(xReal) ? xReal[0] : xReal;
+  if (xRealVal && xRealVal.trim()) return xRealVal.trim();
+  return req.ip || "unknown";
+}
+var perIpLimiter = new SlidingWindowLimiter(20, 6e4);
+var wrongContactLimiter = new SlidingWindowLimiter(6, 15 * 6e4);
+function wrongContactKey(storeId, orderNumber) {
+  return `${storeId ?? "default"}::${orderNumber}`;
+}
+
+// server/logic/trackingView.ts
+var STEPS = [
+  { key: "ORDER_CONFIRMED", label: "Order confirmed", headline: "Order confirmed" },
+  { key: "PACKED", label: "Packed", headline: "Packed and ready to ship" },
+  { key: "PICKED_UP", label: "Picked up", headline: "Picked up by the courier" },
+  { key: "IN_TRANSIT", label: "In transit", headline: "On the way" },
+  { key: "OUT_FOR_DELIVERY", label: "Out for delivery", headline: "Out for delivery today" },
+  { key: "DELIVERED", label: "Delivered", headline: "Delivered" }
+];
+var IDX = {
+  ORDER_CONFIRMED: 0,
+  PACKED: 1,
+  PICKED_UP: 2,
+  IN_TRANSIT: 3,
+  OUT_FOR_DELIVERY: 4,
+  DELIVERED: 5
+};
+var STATUS_TO_STEP = {
+  pending: 0,
+  assigned: 0,
+  confirmed: 0,
+  unfulfilled: 0,
+  awb_assigned: 1,
+  ready_for_pickup: 1,
+  picked_up: 2,
+  in_transit: 3,
+  out_for_delivery: 4,
+  delivered: 5
+};
+var PRE_SHIP = /* @__PURE__ */ new Set(["pending", "assigned", "confirmed", "unfulfilled"]);
+var EXCEPTION_OF = {
+  ndr: "delivery_attempt_failed",
+  rto_initiated: "returning",
+  rto_ofd: "returning",
+  rto_delivered: "returned",
+  lost: "lost",
+  cancelled: "cancelled"
+};
+var EXCEPTIONS = {
+  delivery_attempt_failed: {
+    group: "attention",
+    headline: "Delivery attempt failed",
+    message: "We tried to deliver your order but couldn't reach you. Please contact us and we'll arrange another delivery."
+  },
+  returning: {
+    group: "attention",
+    headline: "On its way back to us",
+    message: "Your order is being returned to us. Please contact us if you'd still like to receive it."
+  },
+  returned: {
+    group: "attention",
+    headline: "Returned to us",
+    message: "Your order has come back to us. Please contact us and we'll help you reorder or sort it out."
+  },
+  lost: {
+    group: "attention",
+    headline: "Shipment delayed",
+    message: "There's an issue with your shipment in transit. Please contact us and we'll make it right."
+  },
+  cancelled: {
+    group: "cancelled",
+    headline: "Order cancelled",
+    message: "This order was cancelled. Please contact us if you have any questions."
+  }
+};
+var DELHIVERY_URL = (awb) => `https://www.delhivery.com/track-v2/package/${awb}`;
+function iso(d) {
+  if (!d) return null;
+  const dt = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+function buildTrackingView(args) {
+  const { order, shipment, history, items, includeOrderDetails } = args;
+  const rawStatus = (order.status || "").toLowerCase().trim();
+  const awb = shipment?.awb || order.trackingNumber || null;
+  const hasAwb = !!awb;
+  const sortedHistory = [...history ?? []].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+  const firstHistoryAtForStep = (stepIdx) => {
+    for (const row of sortedHistory) {
+      const s = (row.status || "").toLowerCase().trim();
+      if (STATUS_TO_STEP[s] === stepIdx) return iso(row.createdAt);
+    }
+    return null;
+  };
+  const stepAt = (stepIdx) => {
+    if (stepIdx === IDX.ORDER_CONFIRMED) {
+      return includeOrderDetails ? iso(order.shopifyCreatedAt) : firstHistoryAtForStep(0);
+    }
+    const histAt = firstHistoryAtForStep(stepIdx);
+    if (histAt) return histAt;
+    if (stepIdx === IDX.PICKED_UP) return iso(shipment?.pickedUpAt);
+    if (stepIdx === IDX.DELIVERED) return iso(shipment?.deliveredAt);
+    return null;
+  };
+  const furthestInHistory = () => {
+    let max = -1;
+    for (const row of sortedHistory) {
+      const s = (row.status || "").toLowerCase().trim();
+      const idx = STATUS_TO_STEP[s];
+      if (idx !== void 0 && idx > max) max = idx;
+    }
+    return max;
+  };
+  const courier = order.courierName || shipment?.courierName || null;
+  const courierLc = (courier || "").toLowerCase();
+  const isDelhiveryOrEmpty = courierLc === "" || courierLc.includes("delhivery");
+  const trackingUrl = (() => {
+    if (isDelhiveryOrEmpty && awb) return DELHIVERY_URL(awb);
+    return order.trackingUrl || shipment?.trackingUrl || "";
+  })();
+  const lastUpdatedAt = iso(shipment?.statusUpdatedAt) || (sortedHistory.length ? iso(sortedHistory[sortedHistory.length - 1].createdAt) : null) || iso(order.shopifyCreatedAt);
+  const orderNumber = includeOrderDetails ? `#${String(order.shopifyOrderNumber ?? "").replace(/^#/, "")}` : null;
+  const placedAt = includeOrderDetails ? iso(order.shopifyCreatedAt) : null;
+  const mappedItems = includeOrderDetails ? (items ?? []).map((it) => ({
+    name: it.productName,
+    variant: it.variantTitle ?? null,
+    quantity: it.quantity,
+    image: it.imageUrl ?? null
+  })) : [];
+  const exceptionKey = EXCEPTION_OF[rawStatus];
+  if (exceptionKey) {
+    const cfg = EXCEPTIONS[exceptionKey];
+    let furthest = Math.max(furthestInHistory(), 0);
+    if (exceptionKey === "delivery_attempt_failed") {
+      furthest = Math.max(furthest, IDX.OUT_FOR_DELIVERY);
+    }
+    const steps2 = STEPS.map((s, i) => ({
+      key: s.key,
+      label: s.label,
+      done: i <= furthest,
+      current: false,
+      // exceptions never mark a current step
+      at: i <= furthest ? stepAt(i) : null
+    }));
+    return {
+      found: true,
+      orderNumber,
+      placedAt,
+      status: exceptionKey,
+      statusGroup: cfg.group,
+      headline: cfg.headline,
+      message: cfg.message,
+      steps: steps2,
+      courier,
+      awb,
+      trackingUrl,
+      estimatedDelivery: null,
+      // not in progress
+      lastUpdatedAt,
+      items: mappedItems
+    };
+  }
+  let ci = STATUS_TO_STEP[rawStatus];
+  if (ci === void 0) {
+    ci = hasAwb ? IDX.PACKED : IDX.ORDER_CONFIRMED;
+  } else if (PRE_SHIP.has(rawStatus) && hasAwb) {
+    ci = IDX.PACKED;
+  }
+  const currentStepKey = STEPS[ci].key;
+  const currentDef = STEPS[ci];
+  const statusGroup = ci === IDX.DELIVERED ? "delivered" : "in_progress";
+  const steps = STEPS.map((s, i) => ({
+    key: s.key,
+    label: s.label,
+    done: i <= ci,
+    current: i === ci,
+    at: i <= ci ? stepAt(i) : null
+  }));
+  return {
+    found: true,
+    orderNumber,
+    placedAt,
+    status: currentStepKey,
+    statusGroup,
+    headline: currentDef.headline,
+    message: null,
+    steps,
+    courier,
+    awb,
+    trackingUrl,
+    estimatedDelivery: statusGroup === "in_progress" ? iso(shipment?.estimatedDeliveryDate) : null,
+    lastUpdatedAt,
+    items: mappedItems
+  };
 }
 
 // server/routes.ts
@@ -13417,24 +13695,27 @@ async function registerRoutes(app2) {
       if (!orderNumber || !customerEmailOrPhone) {
         return res.status(400).json({ error: "orderNumber and customerEmailOrPhone are required" });
       }
-      const normalizedNumber = String(orderNumber).trim().replace(/^#/, "");
-      const order = await storage.getOrderByShopifyOrderNumber(
-        normalizedNumber,
-        storeId || void 0
-      ) || await storage.getOrderByShopifyOrderNumber(
-        `#${normalizedNumber}`,
-        storeId || void 0
-      );
-      const fail = () => res.status(404).json({
-        error: "No matching order found. Check the order number and email/phone."
+      const ip = clientIp(req);
+      const ipCheck = perIpLimiter.hit(ip);
+      if (!ipCheck.allowed) {
+        res.setHeader("Retry-After", String(ipCheck.retryAfterSec));
+        return res.status(429).json({ error: "Too many requests. Please slow down and try again shortly." });
+      }
+      const wcKey = wrongContactKey(storeId || void 0, normalizeOrderNumber(orderNumber));
+      if (wrongContactLimiter.isBlocked(wcKey)) {
+        return res.status(429).json({ error: "Too many failed attempts for this order. Please try again later." });
+      }
+      const order = await findVerifiedOrder(storage, {
+        orderNumber,
+        contact: customerEmailOrPhone,
+        storeId
       });
-      if (!order) return fail();
-      const probe = String(customerEmailOrPhone).trim().toLowerCase();
-      const probeDigits = probe.replace(/\D/g, "");
-      const emailMatch = !!order.customerEmail && order.customerEmail.toLowerCase() === probe;
-      const orderPhoneDigits = (order.customerPhone || "").replace(/\D/g, "");
-      const phoneMatch = probeDigits.length >= 6 && orderPhoneDigits.length >= 6 && orderPhoneDigits.slice(-10) === probeDigits.slice(-10);
-      if (!emailMatch && !phoneMatch) return fail();
+      if (!order) {
+        wrongContactLimiter.hit(wcKey);
+        return res.status(404).json({
+          error: "No matching order found. Check the order number and email/phone."
+        });
+      }
       const items = await storage.getOrderItems(order.id);
       const cleanNumber = order.shopifyOrderNumber ? String(order.shopifyOrderNumber).replace(/^#/, "") : null;
       const itemsMapped = items.map((it) => ({
@@ -13468,14 +13749,80 @@ async function registerRoutes(app2) {
         // nested items so `order.items` works on the frontend
         items: itemsMapped
       };
-      console.log(
-        "Sending lookup response:",
-        JSON.stringify(responseOrder, null, 2)
-      );
+      console.log("Returns lookup matched order:", order.id);
       res.json({ order: responseOrder, items: itemsMapped });
     } catch (error) {
       console.error("Error in public returns lookup:", error);
       res.status(500).json({ error: "Lookup failed" });
+    }
+  });
+  app2.post("/api/public/tracking/lookup", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const body = req.body ?? {};
+      const orderNumberRaw = body.orderNumber;
+      const contactRaw = body.customerEmailOrPhone;
+      const awbRaw = body.awb;
+      const ip = clientIp(req);
+      const ipCheck = perIpLimiter.hit(ip);
+      if (!ipCheck.allowed) {
+        res.setHeader("Retry-After", String(ipCheck.retryAfterSec));
+        return res.status(429).json({ error: "Too many requests. Please slow down and try again shortly." });
+      }
+      const storeId = await storage.getStoreIdForCheckoutUrl(req.headers.origin);
+      const notFound = () => res.status(404).json({
+        found: false,
+        error: "We couldn't find a matching order. Check the details and try again."
+      });
+      if (orderNumberRaw || contactRaw) {
+        if (!orderNumberRaw || !contactRaw) {
+          return res.status(400).json({ error: "orderNumber and customerEmailOrPhone are required" });
+        }
+        const wcKey = wrongContactKey(storeId, normalizeOrderNumber(orderNumberRaw));
+        if (wrongContactLimiter.isBlocked(wcKey)) {
+          return res.status(429).json({ error: "Too many failed attempts for this order. Please try again later." });
+        }
+        const order = await findVerifiedOrder(storage, {
+          orderNumber: orderNumberRaw,
+          contact: contactRaw,
+          storeId
+        });
+        if (!order) {
+          wrongContactLimiter.hit(wcKey);
+          return notFound();
+        }
+        const [shipment, history, items] = await Promise.all([
+          storage.getShipmentByOrderId(order.id),
+          storage.getOrderHistory(order.id),
+          storage.getOrderItems(order.id)
+        ]);
+        return res.json(
+          buildTrackingView({ order, shipment, history, items, includeOrderDetails: true })
+        );
+      }
+      if (awbRaw) {
+        const awb = normalizeAwb(awbRaw);
+        if (!awb) {
+          return res.status(400).json({ error: "A valid tracking number is required" });
+        }
+        const order = await storage.getOrderByTrackingNumber(awb);
+        if (!order || storeId && order.storeId && order.storeId !== storeId) {
+          return notFound();
+        }
+        const [shipment, history] = await Promise.all([
+          storage.getShipmentByOrderId(order.id),
+          storage.getOrderHistory(order.id)
+        ]);
+        return res.json(
+          buildTrackingView({ order, shipment, history, items: [], includeOrderDetails: false })
+        );
+      }
+      return res.status(400).json({
+        error: "Provide either an order number with email/phone, or a tracking number."
+      });
+    } catch (error) {
+      console.error("Error in public tracking lookup:", error);
+      return res.status(500).json({ error: "Tracking is unavailable right now." });
     }
   });
   app2.post("/api/public/returns/create", async (req, res) => {
