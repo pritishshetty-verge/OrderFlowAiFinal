@@ -1,5 +1,4 @@
 import { PageLayout } from "@/components/page-layout";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -45,87 +44,103 @@ export default function WebhookLogsPage() {
 
   return (
     <PageLayout title="API Logs">
-      <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="p-6 space-y-4">
+        {/* Toolbar — count on the left, refresh on the right, same gutter as the table */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
           <Badge variant="outline" data-testid="badge-log-count">
             {logs?.length ?? 0} logs
           </Badge>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="button-refresh-logs"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/webhook-logs"] })}
+          >
+            <RefreshCw className="w-4 h-4 mr-1.5" />
+            Refresh
+          </Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid="button-refresh-logs"
-          onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/webhook-logs"] })}
-        >
-          <RefreshCw className="w-4 h-4 mr-1" />
-          Refresh
-        </Button>
-      </div>
 
-      <Card>
-        {isLoading ? (
-          <div className="p-4 space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        ) : !logs || logs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <FileJson className="w-12 h-12 mb-3 opacity-40" />
-            <p className="text-sm font-medium">No webhook logs yet</p>
-            <p className="text-xs mt-1">Incoming payloads from TeleCRM will appear here</p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Event Type</TableHead>
-                <TableHead className="text-right">Payload</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.map((log) => (
-                <TableRow key={log.id} data-testid={`row-webhook-log-${log.id}`}>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="text-sm" data-testid={`text-log-time-${log.id}`}>
-                        {formatTime(log.createdAt)}
-                      </span>
-                      <span className="text-xs text-muted-foreground">{timeAgo(log.createdAt)}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" data-testid={`badge-source-${log.id}`}>
-                      {log.source}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className="text-sm text-muted-foreground"
-                      data-testid={`text-event-type-${log.id}`}
-                    >
-                      {log.eventType || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid={`button-view-payload-${log.id}`}
-                      onClick={() => setSelectedLog(log)}
-                    >
-                      <Eye className="w-4 h-4 mr-1" />
-                      View Payload
-                    </Button>
-                  </TableCell>
-                </TableRow>
+        <div className="rounded-lg border bg-card">
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full" />
               ))}
-            </TableBody>
-          </Table>
-        )}
-      </Card>
+            </div>
+          ) : !logs || logs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <FileJson className="w-12 h-12 mb-3 opacity-40" />
+              <p className="text-sm font-medium">No webhook logs yet</p>
+              <p className="text-xs mt-1">Incoming courier/CRM payloads will appear here</p>
+            </div>
+          ) : (
+            <div className="relative overflow-x-auto">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur-sm">
+                  <TableRow className="[&_th]:h-9 [&_th]:px-3 [&_th]:text-[11px] [&_th]:font-medium [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
+                    <TableHead className="w-[230px]">Time</TableHead>
+                    <TableHead className="w-[130px]">Source</TableHead>
+                    <TableHead>Event Type</TableHead>
+                    <TableHead className="text-right w-[150px]">Payload</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="[&_td]:py-2.5 [&_td]:px-3 [&_td]:text-[13px] [&_td]:align-middle">
+                  {logs.map((log) => (
+                    <TableRow
+                      key={log.id}
+                      className="hover:bg-muted/30"
+                      data-testid={`row-webhook-log-${log.id}`}
+                    >
+                      <TableCell>
+                        <div className="flex flex-col leading-tight">
+                          <span
+                            className="text-foreground tabular-nums whitespace-nowrap"
+                            data-testid={`text-log-time-${log.id}`}
+                          >
+                            {formatTime(log.createdAt)}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground mt-0.5">
+                            {timeAgo(log.createdAt)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className="font-normal"
+                          data-testid={`badge-source-${log.id}`}
+                        >
+                          {log.source}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="font-mono text-[12px] text-muted-foreground tabular-nums"
+                          data-testid={`text-event-type-${log.id}`}
+                        >
+                          {log.eventType || "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid={`button-view-payload-${log.id}`}
+                          onClick={() => setSelectedLog(log)}
+                        >
+                          <Eye className="w-4 h-4 mr-1.5" />
+                          View Payload
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      </div>
 
       <Dialog open={!!selectedLog} onOpenChange={(open) => !open && setSelectedLog(null)}>
         <DialogContent className="max-w-2xl max-h-[80vh]">
