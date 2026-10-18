@@ -3043,27 +3043,29 @@ var init_storage = __esm({
       async listUnresolvedNDREvents(filters) {
         const baseConds = [eq(ndrEvents.resolved, false)];
         if (filters?.storeId) baseConds.push(eq(ndrEvents.storeId, filters.storeId));
+        const { rawNdrData: _rawNdrData, ...ndrListColumns } = getTableColumns(ndrEvents);
         if (filters?.assignedTo) {
           const conds = [
             ...baseConds,
             eq(orders.assignedTo, filters.assignedTo)
           ];
-          let query2 = db.select({ ndrEvent: ndrEvents }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds)).orderBy(desc(ndrEvents.createdAt));
+          let query2 = db.select(ndrListColumns).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds)).orderBy(desc(ndrEvents.createdAt));
           if (filters?.limit) {
             query2 = query2.limit(filters.limit);
           }
           if (filters?.offset) {
             query2 = query2.offset(filters.offset);
           }
-          const results = await query2;
-          const events2 = results.map((r) => r.ndrEvent);
-          const countResult2 = await db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds));
+          const [events2, countResult2] = await Promise.all([
+            query2,
+            db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds))
+          ]);
           return {
             events: events2,
             total: countResult2[0]?.count || 0
           };
         }
-        const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
+        const baseQuery = db.select(ndrListColumns).from(ndrEvents).where(and(...baseConds));
         let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
         if (filters?.limit) {
           query = query.limit(filters.limit);
@@ -3071,8 +3073,10 @@ var init_storage = __esm({
         if (filters?.offset) {
           query = query.offset(filters.offset);
         }
-        const events = await query;
-        const countResult = await db.select({ count: count() }).from(ndrEvents).where(and(...baseConds));
+        const [events, countResult] = await Promise.all([
+          query,
+          db.select({ count: count() }).from(ndrEvents).where(and(...baseConds))
+        ]);
         return {
           events,
           total: countResult[0]?.count || 0
@@ -11620,7 +11624,7 @@ function buildTrackingView(args) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq10, or as or3, sql as sql11, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3 } from "drizzle-orm";
+import { eq as eq10, or as or3, sql as sql11, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3, inArray as inArray2 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -18915,22 +18919,31 @@ async function registerRoutes(app2) {
         storeId: authResult.storeId
         // Phase 2: scope to active store
       });
-      const enrichedEvents = await Promise.all(
-        result.events.map(async (event) => {
-          const order = await storage.getOrder(event.orderId);
-          return {
-            ...event,
-            // Order-level NDR fields from Delhivery webhook
-            nslCode: order?.nslCode || null,
-            failureReason: order?.failureReason || event.ndrReason,
-            lastFailedAt: order?.lastFailedAt || event.ndrDate,
-            // Additional order context for display
-            shopifyOrderNumber: order?.shopifyOrderNumber,
-            customerName: order?.customerName,
-            customerPhone: order?.customerPhone
-          };
-        })
-      );
+      const orderIds = Array.from(new Set(result.events.map((e) => e.orderId)));
+      const orderRows = orderIds.length ? await db.select({
+        id: orders.id,
+        nslCode: orders.nslCode,
+        failureReason: orders.failureReason,
+        lastFailedAt: orders.lastFailedAt,
+        shopifyOrderNumber: orders.shopifyOrderNumber,
+        customerName: orders.customerName,
+        customerPhone: orders.customerPhone
+      }).from(orders).where(inArray2(orders.id, orderIds)) : [];
+      const ordersById = new Map(orderRows.map((o) => [o.id, o]));
+      const enrichedEvents = result.events.map((event) => {
+        const order = ordersById.get(event.orderId);
+        return {
+          ...event,
+          // Order-level NDR fields from Delhivery webhook
+          nslCode: order?.nslCode || null,
+          failureReason: order?.failureReason || event.ndrReason,
+          lastFailedAt: order?.lastFailedAt || event.ndrDate,
+          // Additional order context for display
+          shopifyOrderNumber: order?.shopifyOrderNumber,
+          customerName: order?.customerName,
+          customerPhone: order?.customerPhone
+        };
+      });
       res.json({
         events: enrichedEvents,
         total: result.total
@@ -20445,7 +20458,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
       const storeName = store?.storeName ?? "Your store";
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq11, and: and8, sql: sql12, inArray: inArray2 } = await import("drizzle-orm");
+      const { eq: eq11, and: and8, sql: sql12, inArray: inArray3 } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const mismatchSettlements = await db2.select({
         id: pgSettlements2.id,
@@ -20464,7 +20477,7 @@ TeleCRM: ${incomingNotes.trim()}`;
         id: orders2.id,
         shopifyOrderNumber: orders2.shopifyOrderNumber,
         customerEmail: orders2.customerEmail
-      }).from(orders2).where(inArray2(orders2.id, mismatchOrderIds)) : [];
+      }).from(orders2).where(inArray3(orders2.id, mismatchOrderIds)) : [];
       const orderById = new Map(mismatchOrders.map((o) => [o.id, o]));
       const mask = (e) => {
         if (!e) return "\u2014";

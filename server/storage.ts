@@ -133,6 +133,16 @@ import { parsePostgresArray } from "@shared/postgresArray";
  */
 export type OrderListItem = Omit<Order, "rawShopifyData">;
 
+/**
+ * Row shape returned by `listUnresolvedNDREvents`.
+ *
+ * `rawNdrData` is the full courier webhook payload (~360 B of a ~640 B
+ * row). Nothing on the NDR board reads it, so the list select leaves
+ * it out; `getNDREventsByOrderId` / `findRecentNDREvent` still return
+ * the full `NdrEvent`.
+ */
+export type NdrEventListItem = Omit<NdrEvent, "rawNdrData">;
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -339,7 +349,7 @@ export interface IStorage {
   getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]>;
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
-  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }>;
+  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEventListItem[]; total: number }>;
   findRecentNDREvent(awb: string, ndrDate: Date, windowMinutes?: number): Promise<NdrEvent | undefined>;
   resolveOpenNDREvents(awb: string, resolution: "delivered" | "returned" | "cancelled", resolvedAt?: Date): Promise<number>;
   listStaleUnresolvedNDREvents(olderThanHours: number, limit?: number): Promise<NdrEvent[]>;
@@ -2518,12 +2528,15 @@ export class DbStorage implements IStorage {
       .limit(limit);
   }
 
-  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }> {
+  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEventListItem[]; total: number }> {
     // Phase 2: storeId is the multi-store scope. Either branch below
     // (agent-filtered or admin-wide) adds it to the WHERE clause when
     // present so an NDR list for store A never includes store B.
     const baseConds = [eq(ndrEvents.resolved, false)];
     if (filters?.storeId) baseConds.push(eq(ndrEvents.storeId, filters.storeId));
+
+    // See NdrEventListItem for why rawNdrData is left out of the select.
+    const { rawNdrData: _rawNdrData, ...ndrListColumns } = getTableColumns(ndrEvents);
 
     // If assignedTo is specified (agent filter), join with orders to filter by assignment
     if (filters?.assignedTo) {
@@ -2532,7 +2545,7 @@ export class DbStorage implements IStorage {
         eq(orders.assignedTo, filters.assignedTo),
       ];
       // Get NDR events joined with orders to filter by agent assignment
-      let query = db.select({ ndrEvent: ndrEvents })
+      let query = db.select(ndrListColumns)
         .from(ndrEvents)
         .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
         .where(and(...conds))
@@ -2545,15 +2558,16 @@ export class DbStorage implements IStorage {
         query = query.offset(filters.offset) as any;
       }
 
-      const results = await query;
-      const events = results.map(r => r.ndrEvent);
-
-      // Count for pagination
-      const countResult = await db
-        .select({ count: count() })
-        .from(ndrEvents)
-        .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
-        .where(and(...conds));
+      // The page and the pagination count are independent, so run
+      // them concurrently instead of paying two round trips in series.
+      const [events, countResult] = await Promise.all([
+        query,
+        db
+          .select({ count: count() })
+          .from(ndrEvents)
+          .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
+          .where(and(...conds)),
+      ]);
 
       return {
         events,
@@ -2563,7 +2577,7 @@ export class DbStorage implements IStorage {
 
     // Admin path: no assignedTo filter, return all unresolved NDR events
     // (still scoped to the active store when storeId is set).
-    const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
+    const baseQuery = db.select(ndrListColumns).from(ndrEvents).where(and(...baseConds));
 
     let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
 
@@ -2575,12 +2589,13 @@ export class DbStorage implements IStorage {
       query = query.offset(filters.offset) as any;
     }
 
-    const events = await query;
-
-    const countResult = await db
-      .select({ count: count() })
-      .from(ndrEvents)
-      .where(and(...baseConds));
+    const [events, countResult] = await Promise.all([
+      query,
+      db
+        .select({ count: count() })
+        .from(ndrEvents)
+        .where(and(...baseConds)),
+    ]);
 
     return {
       events,
