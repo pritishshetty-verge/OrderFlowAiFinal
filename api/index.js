@@ -2205,45 +2205,33 @@ var init_storage = __esm({
           conditions.push(sql2`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
         }
         const whereClause = conditions.length > 0 ? and(...conditions) : void 0;
-        let countQuery = db.select({ value: count() }).from(orders);
-        if (whereClause) {
-          countQuery = countQuery.where(whereClause);
-        }
-        const [{ value: total }] = await countQuery;
+        const totalQuery = db.select({ value: count() }).from(orders).where(whereClause);
         const statsConditions = [];
         if (filters?.storeId) statsConditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
         const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : void 0;
-        let totalCountQuery = db.select({ value: count() }).from(orders);
-        if (statsWhereClause) {
-          totalCountQuery = totalCountQuery.where(statsWhereClause);
-        }
-        const [{ value: statsTotal }] = await totalCountQuery;
-        let pendingQuery = db.select({ value: count() }).from(orders);
-        const pendingConditions = [...statsConditions];
-        pendingConditions.push(sql2`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
-        pendingQuery = pendingQuery.where(and(...pendingConditions));
-        const [{ value: pendingCount }] = await pendingQuery;
-        let confirmedQuery = db.select({ value: count() }).from(orders);
-        const confirmedConditions = [...statsConditions, eq(orders.callStatus, "Confirmed")];
-        confirmedQuery = confirmedQuery.where(and(...confirmedConditions));
-        const [{ value: confirmedCount }] = await confirmedQuery;
-        let followUpQuery = db.select({ value: count() }).from(orders);
-        const followUpConditions = [...statsConditions, eq(orders.callStatus, "Follow Up")];
-        followUpQuery = followUpQuery.where(and(...followUpConditions));
-        const [{ value: followUpCount }] = await followUpQuery;
-        let cancelledQuery = db.select({ value: count() }).from(orders);
-        const cancelledConditions = [...statsConditions, eq(orders.callStatus, "Cancelled")];
-        cancelledQuery = cancelledQuery.where(and(...cancelledConditions));
-        const [{ value: cancelledCount }] = await cancelledQuery;
-        const ordersWithAgent = await db.select({
-          order: orders,
+        const statsQuery = db.select({
+          total: count(),
+          // Pending includes rows that have never been called (NULL callStatus).
+          pending: sql2`count(*) filter (where ${orders.callStatus} is null or ${orders.callStatus} = 'Pending')`.mapWith(Number),
+          confirmed: sql2`count(*) filter (where ${orders.callStatus} = 'Confirmed')`.mapWith(Number),
+          followUp: sql2`count(*) filter (where ${orders.callStatus} = 'Follow Up')`.mapWith(Number),
+          cancelled: sql2`count(*) filter (where ${orders.callStatus} = 'Cancelled')`.mapWith(Number)
+        }).from(orders).where(statsWhereClause);
+        const { rawShopifyData: _rawShopifyData, ...orderListColumns } = getTableColumns(orders);
+        const pageQuery = db.select({
+          order: orderListColumns,
           assignedToUser: {
             id: users.id,
             username: users.username,
             fullName: users.fullName
           }
         }).from(orders).leftJoin(users, eq(orders.assignedTo, users.id)).where(whereClause).orderBy(filters?.sortOrder === "asc" ? asc(orders.shopifyCreatedAt) : desc(orders.shopifyCreatedAt)).limit(filters?.limit ?? 50).offset(filters?.offset ?? 0);
+        const [[{ value: total }], [stats], ordersWithAgent] = await Promise.all([
+          totalQuery,
+          statsQuery,
+          pageQuery
+        ]);
         const ordersList = ordersWithAgent.map((row) => ({
           ...row.order,
           shipmentStatus: row.order.shipmentStatus || null,
@@ -2254,13 +2242,7 @@ var init_storage = __esm({
         return {
           orders: ordersList,
           total,
-          stats: {
-            total: statsTotal,
-            pending: pendingCount,
-            confirmed: confirmedCount,
-            followUp: followUpCount,
-            cancelled: cancelledCount
-          }
+          stats
         };
       }
       async exportOrders(filters) {

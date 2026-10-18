@@ -124,6 +124,15 @@ import {
 } from "@shared/schema";
 import { parsePostgresArray } from "@shared/postgresArray";
 
+/**
+ * Row shape returned by listOrders. Identical to Order minus
+ * `rawShopifyData`: that jsonb column is ~80% of every row (≈5 KB each,
+ * ≈800 KB per 50-row page) and nothing reads it from a list — the
+ * Orders page, the assignment engine and the route all ignore it. It
+ * is still available via getOrder() for single-order views.
+ */
+export type OrderListItem = Omit<Order, "rawShopifyData">;
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -175,7 +184,7 @@ export interface IStorage {
     limit?: number;
     offset?: number;
   }): Promise<{
-    orders: Order[]; 
+    orders: OrderListItem[];
     total: number;
     stats: {
       total: number;
@@ -993,7 +1002,7 @@ export class DbStorage implements IStorage {
     limit?: number;
     offset?: number;
   }): Promise<{
-    orders: Order[]; 
+    orders: OrderListItem[];
     total: number;
     stats: {
       total: number;
@@ -1089,58 +1098,36 @@ export class DbStorage implements IStorage {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count for current filter
-    let countQuery = db.select({ value: count() }).from(orders);
-    if (whereClause) {
-      countQuery = countQuery.where(whereClause) as any;
-    }
-    const [{ value: total }] = await countQuery;
+    // Total matching the current filter (drives pagination).
+    const totalQuery = db.select({ value: count() }).from(orders).where(whereClause);
 
-    // Get global stats (respects assignedTo filter for role-based access, but ignores callStatus filter)
-    // This ensures agents see their own stats, admins see all stats.
-    // Phase 2: also restrict the stats panel to the active store so
-    // cross-store totals don't leak through the dashboard chips.
+    // Stats chips: respect the store + assignedTo scope (role-based access)
+    // but ignore the callStatus/tab filter, so agents see their own numbers
+    // and admins see the store's. One round trip with conditional aggregates
+    // instead of five separate COUNT(*) queries.
     const statsConditions = [];
     if (filters?.storeId) statsConditions.push(eq(orders.storeId, filters.storeId));
     if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
     const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : undefined;
 
-    // Count all orders for this user/global scope
-    let totalCountQuery = db.select({ value: count() }).from(orders);
-    if (statsWhereClause) {
-      totalCountQuery = totalCountQuery.where(statsWhereClause) as any;
-    }
-    const [{ value: statsTotal }] = await totalCountQuery;
-
-    // Count pending orders (callStatus is NULL or 'Pending')
-    let pendingQuery = db.select({ value: count() }).from(orders);
-    const pendingConditions = [...statsConditions];
-    pendingConditions.push(sql`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
-    pendingQuery = pendingQuery.where(and(...pendingConditions)) as any;
-    const [{ value: pendingCount }] = await pendingQuery;
-
-    // Count confirmed orders
-    let confirmedQuery = db.select({ value: count() }).from(orders);
-    const confirmedConditions = [...statsConditions, eq(orders.callStatus, 'Confirmed')];
-    confirmedQuery = confirmedQuery.where(and(...confirmedConditions)) as any;
-    const [{ value: confirmedCount }] = await confirmedQuery;
-
-    // Count follow-up orders
-    let followUpQuery = db.select({ value: count() }).from(orders);
-    const followUpConditions = [...statsConditions, eq(orders.callStatus, 'Follow Up')];
-    followUpQuery = followUpQuery.where(and(...followUpConditions)) as any;
-    const [{ value: followUpCount }] = await followUpQuery;
-
-    // Count cancelled orders
-    let cancelledQuery = db.select({ value: count() }).from(orders);
-    const cancelledConditions = [...statsConditions, eq(orders.callStatus, 'Cancelled')];
-    cancelledQuery = cancelledQuery.where(and(...cancelledConditions)) as any;
-    const [{ value: cancelledCount }] = await cancelledQuery;
-
-    // Get paginated orders with assigned user info - LEFT JOIN users table
-    const ordersWithAgent = await db
+    const statsQuery = db
       .select({
-        order: orders,
+        total: count(),
+        // Pending includes rows that have never been called (NULL callStatus).
+        pending: sql<number>`count(*) filter (where ${orders.callStatus} is null or ${orders.callStatus} = 'Pending')`.mapWith(Number),
+        confirmed: sql<number>`count(*) filter (where ${orders.callStatus} = 'Confirmed')`.mapWith(Number),
+        followUp: sql<number>`count(*) filter (where ${orders.callStatus} = 'Follow Up')`.mapWith(Number),
+        cancelled: sql<number>`count(*) filter (where ${orders.callStatus} = 'Cancelled')`.mapWith(Number),
+      })
+      .from(orders)
+      .where(statsWhereClause);
+
+    // Paginated page with assigned user info - LEFT JOIN users table.
+    // See OrderListItem for why rawShopifyData is left out of the select.
+    const { rawShopifyData: _rawShopifyData, ...orderListColumns } = getTableColumns(orders);
+    const pageQuery = db
+      .select({
+        order: orderListColumns,
         assignedToUser: {
           id: users.id,
           username: users.username,
@@ -1154,6 +1141,14 @@ export class DbStorage implements IStorage {
       .limit(filters?.limit ?? 50)
       .offset(filters?.offset ?? 0);
 
+    // The three queries are independent; run them concurrently so the
+    // request costs one round trip's wall time instead of seven.
+    const [[{ value: total }], [stats], ordersWithAgent] = await Promise.all([
+      totalQuery,
+      statsQuery,
+      pageQuery,
+    ]);
+
     // Transform results to include assignedToUser and ensure tags is always an array
     // Explicitly include shipmentStatus to ensure it's not dropped during serialization
     const ordersList = ordersWithAgent.map(row => ({
@@ -1166,13 +1161,7 @@ export class DbStorage implements IStorage {
     return { 
       orders: ordersList, 
       total,
-      stats: {
-        total: statsTotal,
-        pending: pendingCount,
-        confirmed: confirmedCount,
-        followUp: followUpCount,
-        cancelled: cancelledCount,
-      }
+      stats
     };
   }
 
