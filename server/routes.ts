@@ -6586,6 +6586,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Retention sweep for inbound webhook logs (Delhivery status pushes).
+  // Display/debug only — /api-logs reads just the latest 50, nothing re-reads
+  // old payloads — but they accrue ~3.6k rows/day unbounded. Delete anything
+  // older than the retention window (7 days).
+  app.all("/api/cron/prune-webhook-logs", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    if (!vercelSecret) {
+      return res.status(503).json({ error: "No cron secret configured (set CRON_SECRET)" });
+    }
+    const auth = req.headers.authorization;
+    if (typeof auth !== "string" || auth !== `Bearer ${vercelSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const retentionDays = 7;
+      const deleted = await storage.pruneInboundWebhookLogs(retentionDays);
+      console.log(`[cron/prune-webhook-logs] deleted=${deleted} older than ${retentionDays}d`);
+      return res.json({ ok: true, deleted, retentionDays });
+    } catch (err: any) {
+      console.error("[cron/prune-webhook-logs] failed:", err);
+      return res.status(500).json({ error: "Prune failed", detail: err?.message ?? String(err) });
+    }
+  });
+
   // Smart presence — caller's own status. Frontend polls this for the
   // countdown banner. Returns the calling user's idle state computed
   // from their lastActiveAt against the configured threshold. Cheap:

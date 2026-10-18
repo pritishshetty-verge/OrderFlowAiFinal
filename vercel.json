@@ -32,6 +32,10 @@
     {
       "path": "/api/cron/generate-payroll-cycle",
       "schedule": "30 18 1 * *"
+    },
+    {
+      "path": "/api/cron/prune-webhook-logs",
+      "schedule": "0 2 * * *"
     }
   ]
 }

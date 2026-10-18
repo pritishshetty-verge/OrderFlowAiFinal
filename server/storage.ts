@@ -533,6 +533,7 @@ export interface IStorage {
   // Inbound Webhook Logs
   createInboundWebhookLog(data: InsertInboundWebhookLog): Promise<InboundWebhookLog>;
   getInboundWebhookLogs(limit?: number): Promise<InboundWebhookLog[]>;
+  pruneInboundWebhookLogs(retentionDays?: number): Promise<number>;
 
   // ── PG Settlements (reconciliation) ────────────────────────────────
   // The match engine writes here on every CSV ingest / cron run. The
@@ -4152,6 +4153,18 @@ export class DbStorage implements IStorage {
       .from(inboundWebhookLogs)
       .orderBy(desc(inboundWebhookLogs.createdAt))
       .limit(limit);
+  }
+
+  // Retention sweep: delete inbound webhook logs older than N days. These
+  // rows are display/debug only (the /api-logs page reads just the latest 50
+  // and nothing re-reads old payloads), so they're safe to age out. Returns
+  // the number of rows deleted.
+  async pruneInboundWebhookLogs(retentionDays: number = 7): Promise<number> {
+    const result: any = await db.execute(sql`
+      DELETE FROM inbound_webhook_logs
+      WHERE created_at < now() - make_interval(days => ${retentionDays})
+    `);
+    return result?.rowCount ?? 0;
   }
 
   // ============================================================================

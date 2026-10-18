@@ -4043,6 +4043,17 @@ var init_storage = __esm({
       async getInboundWebhookLogs(limit = 50) {
         return await db.select().from(inboundWebhookLogs).orderBy(desc(inboundWebhookLogs.createdAt)).limit(limit);
       }
+      // Retention sweep: delete inbound webhook logs older than N days. These
+      // rows are display/debug only (the /api-logs page reads just the latest 50
+      // and nothing re-reads old payloads), so they're safe to age out. Returns
+      // the number of rows deleted.
+      async pruneInboundWebhookLogs(retentionDays = 7) {
+        const result = await db.execute(sql3`
+      DELETE FROM inbound_webhook_logs
+      WHERE created_at < now() - make_interval(days => ${retentionDays})
+    `);
+        return result?.rowCount ?? 0;
+      }
       // ============================================================================
       // PG SETTLEMENTS (Reconciliation)
       // ============================================================================
@@ -17234,6 +17245,25 @@ async function registerRoutes(app2) {
     } catch (err) {
       console.error("[cron/close-stale-ndr] sweep crashed:", err);
       return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+  app2.all("/api/cron/prune-webhook-logs", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    if (!vercelSecret) {
+      return res.status(503).json({ error: "No cron secret configured (set CRON_SECRET)" });
+    }
+    const auth = req.headers.authorization;
+    if (typeof auth !== "string" || auth !== `Bearer ${vercelSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const retentionDays = 7;
+      const deleted = await storage.pruneInboundWebhookLogs(retentionDays);
+      console.log(`[cron/prune-webhook-logs] deleted=${deleted} older than ${retentionDays}d`);
+      return res.json({ ok: true, deleted, retentionDays });
+    } catch (err) {
+      console.error("[cron/prune-webhook-logs] failed:", err);
+      return res.status(500).json({ error: "Prune failed", detail: err?.message ?? String(err) });
     }
   });
   app2.get("/api/presence/me", async (req, res) => {
