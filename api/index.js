@@ -1865,13 +1865,37 @@ var init_postgresArray = __esm({
   }
 });
 
+// server/logic/activeOrder.ts
+import { and, notInArray, sql as sql2 } from "drizzle-orm";
+function activeOrderCondition() {
+  return and(
+    notInArray(
+      sql2`lower(trim(coalesce(${orders.callStatus}, '')))`,
+      [...CLOSED_CALL_STATUSES]
+    ),
+    notInArray(
+      sql2`lower(trim(coalesce(${orders.fulfillmentStatus}, '')))`,
+      [...CLOSED_FULFILLMENT_STATUSES]
+    )
+  );
+}
+var CLOSED_CALL_STATUSES, CLOSED_FULFILLMENT_STATUSES;
+var init_activeOrder = __esm({
+  "server/logic/activeOrder.ts"() {
+    "use strict";
+    init_schema();
+    CLOSED_CALL_STATUSES = ["confirmed", "cancelled"];
+    CLOSED_FULFILLMENT_STATUSES = ["fulfilled", "partial"];
+  }
+});
+
 // server/storage.ts
 var storage_exports = {};
 __export(storage_exports, {
   DbStorage: () => DbStorage,
   storage: () => storage
 });
-import { eq, and, desc, asc, or, count, gte, lte, lt, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
+import { eq, and as and2, desc, asc, or, count, gte, lte, lt, sql as sql3, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
 function getRandomAvatar() {
   return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
 }
@@ -1883,6 +1907,7 @@ var init_storage = __esm({
     init_presence_config();
     init_schema();
     init_postgresArray();
+    init_activeOrder();
     AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
     DbStorage = class {
       // ============================================================================
@@ -1931,7 +1956,7 @@ var init_storage = __esm({
         if (filters?.isActive !== void 0)
           conditions.push(eq(users.isActive, filters.isActive));
         if (conditions.length > 0) {
-          return await db.select().from(users).where(and(...conditions));
+          return await db.select().from(users).where(and2(...conditions));
         }
         return await db.select().from(users);
       }
@@ -2010,7 +2035,7 @@ var init_storage = __esm({
        */
       async getCustomerByShopifyId(shopifyId, storeId) {
         const [customer] = await db.select().from(customers).where(
-          and(
+          and2(
             eq(customers.shopifyCustomerId, shopifyId),
             eq(customers.storeId, storeId)
           )
@@ -2031,7 +2056,7 @@ var init_storage = __esm({
       async getCustomersByShopifyIds(shopifyIds, storeId) {
         if (shopifyIds.length === 0) return [];
         return await db.select().from(customers).where(
-          and(
+          and2(
             eq(customers.storeId, storeId),
             inArray(customers.shopifyCustomerId, shopifyIds)
           )
@@ -2061,7 +2086,7 @@ var init_storage = __esm({
        */
       async getOrderByShopifyId(shopifyId, storeId) {
         const [order] = await db.select().from(orders).where(
-          and(
+          and2(
             eq(orders.shopifyOrderId, shopifyId),
             eq(orders.storeId, storeId)
           )
@@ -2082,7 +2107,7 @@ var init_storage = __esm({
       async getOrderByShopifyOrderNumber(orderNumber, storeId) {
         const conds = [eq(orders.shopifyOrderNumber, orderNumber)];
         if (storeId) conds.push(eq(orders.storeId, storeId));
-        const [order] = await db.select().from(orders).where(and(...conds)).orderBy(desc(orders.createdAt)).limit(1);
+        const [order] = await db.select().from(orders).where(and2(...conds)).orderBy(desc(orders.createdAt)).limit(1);
         return order;
       }
       async getOrderByTrackingNumber(trackingNumber) {
@@ -2108,7 +2133,7 @@ var init_storage = __esm({
       async getExistingShopifyOrderIds(shopifyIds, storeId) {
         if (shopifyIds.length === 0) return /* @__PURE__ */ new Set();
         const rows = await db.select({ shopifyOrderId: orders.shopifyOrderId }).from(orders).where(
-          and(
+          and2(
             eq(orders.storeId, storeId),
             inArray(orders.shopifyOrderId, shopifyIds)
           )
@@ -2132,7 +2157,7 @@ var init_storage = __esm({
        */
       async getMaxShopifyOrderId(storeId) {
         const rows = await db.execute(
-          sql2`
+          sql3`
         SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id
         FROM ${orders}
         WHERE ${orders.storeId} = ${storeId}
@@ -2152,7 +2177,7 @@ var init_storage = __esm({
         if (filters?.status) conditions.push(eq(orders.status, filters.status));
         if (filters?.callStatus) {
           if (filters.callStatus === "Pending") {
-            conditions.push(sql2`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
+            conditions.push(sql3`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
           } else {
             conditions.push(eq(orders.callStatus, filters.callStatus));
           }
@@ -2161,11 +2186,11 @@ var init_storage = __esm({
           const pm = filters.paymentMethod.toLowerCase();
           if (pm === "cod") {
             conditions.push(
-              sql2`LOWER(${orders.paymentMethod}) LIKE '%cod%'`
+              sql3`LOWER(${orders.paymentMethod}) LIKE '%cod%'`
             );
           } else if (pm === "prepaid") {
             conditions.push(
-              sql2`${orders.paymentMethod} IS NOT NULL AND LOWER(${orders.paymentMethod}) NOT LIKE '%cod%'`
+              sql3`${orders.paymentMethod} IS NOT NULL AND LOWER(${orders.paymentMethod}) NOT LIKE '%cod%'`
             );
           } else {
             conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
@@ -2175,14 +2200,14 @@ var init_storage = __esm({
           conditions.push(eq(orders.assignedTo, filters.assignedTo));
         if (filters?.agentId) {
           if (filters.agentId === "unassigned") {
-            conditions.push(sql2`${orders.assignedTo} IS NULL`);
+            conditions.push(sql3`${orders.assignedTo} IS NULL`);
           } else {
             conditions.push(eq(orders.assignedTo, filters.agentId));
           }
         }
         if (filters?.search && filters.search.trim()) {
           const searchPattern = `%${filters.search.trim()}%`;
-          conditions.push(sql2`(
+          conditions.push(sql3`(
         ${orders.shopifyOrderNumber} ILIKE ${searchPattern} OR
         ${orders.customerName} ILIKE ${searchPattern} OR
         ${orders.customerPhone} ILIKE ${searchPattern} OR
@@ -2199,21 +2224,21 @@ var init_storage = __esm({
           conditions.push(lte(orders.shopifyCreatedAt, endOfDay));
         }
         if (filters?.tag && filters.tag.trim()) {
-          conditions.push(sql2`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
+          conditions.push(sql3`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
         }
-        const whereClause = conditions.length > 0 ? and(...conditions) : void 0;
+        const whereClause = conditions.length > 0 ? and2(...conditions) : void 0;
         const totalQuery = db.select({ value: count() }).from(orders).where(whereClause);
         const statsConditions = [];
         if (filters?.storeId) statsConditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.assignedTo) statsConditions.push(eq(orders.assignedTo, filters.assignedTo));
-        const statsWhereClause = statsConditions.length > 0 ? and(...statsConditions) : void 0;
+        const statsWhereClause = statsConditions.length > 0 ? and2(...statsConditions) : void 0;
         const statsQuery = db.select({
           total: count(),
           // Pending includes rows that have never been called (NULL callStatus).
-          pending: sql2`count(*) filter (where ${orders.callStatus} is null or ${orders.callStatus} = 'Pending')`.mapWith(Number),
-          confirmed: sql2`count(*) filter (where ${orders.callStatus} = 'Confirmed')`.mapWith(Number),
-          followUp: sql2`count(*) filter (where ${orders.callStatus} = 'Follow Up')`.mapWith(Number),
-          cancelled: sql2`count(*) filter (where ${orders.callStatus} = 'Cancelled')`.mapWith(Number)
+          pending: sql3`count(*) filter (where ${orders.callStatus} is null or ${orders.callStatus} = 'Pending')`.mapWith(Number),
+          confirmed: sql3`count(*) filter (where ${orders.callStatus} = 'Confirmed')`.mapWith(Number),
+          followUp: sql3`count(*) filter (where ${orders.callStatus} = 'Follow Up')`.mapWith(Number),
+          cancelled: sql3`count(*) filter (where ${orders.callStatus} = 'Cancelled')`.mapWith(Number)
         }).from(orders).where(statsWhereClause);
         const { rawShopifyData: _rawShopifyData, ...orderListColumns } = getTableColumns(orders);
         const pageQuery = db.select({
@@ -2242,13 +2267,37 @@ var init_storage = __esm({
           stats
         };
       }
+      async getAgentOrderLoads(filters) {
+        const result = /* @__PURE__ */ new Map();
+        if (filters?.agentIds && filters.agentIds.length === 0) return result;
+        const conditions = [isNotNull(orders.assignedTo)];
+        if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
+        if (filters?.agentIds) conditions.push(inArray(orders.assignedTo, filters.agentIds));
+        const rows = await db.select({
+          agentId: orders.assignedTo,
+          assignedOrders: count(),
+          activeOrders: sql3`count(*) filter (where ${activeOrderCondition()})`.mapWith(Number),
+          // mapWith(column) decodes the driver's timestamp string the same
+          // way a selected assignedAt column would (UTC), so callers get a Date.
+          lastAssignedAt: sql3`max(${orders.assignedAt})`.mapWith(orders.assignedAt)
+        }).from(orders).where(and2(...conditions)).groupBy(orders.assignedTo);
+        for (const row of rows) {
+          if (!row.agentId) continue;
+          result.set(row.agentId, {
+            assignedOrders: row.assignedOrders,
+            activeOrders: row.activeOrders,
+            lastAssignedAt: row.lastAssignedAt ?? null
+          });
+        }
+        return result;
+      }
       async exportOrders(filters) {
         const conditions = [];
         if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.status) conditions.push(eq(orders.status, filters.status));
         if (filters?.callStatus) {
           if (filters.callStatus === "Pending") {
-            conditions.push(sql2`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
+            conditions.push(sql3`(${orders.callStatus} IS NULL OR ${orders.callStatus} = 'Pending')`);
           } else {
             conditions.push(eq(orders.callStatus, filters.callStatus));
           }
@@ -2257,14 +2306,14 @@ var init_storage = __esm({
         if (filters?.assignedTo) conditions.push(eq(orders.assignedTo, filters.assignedTo));
         if (filters?.agentId) {
           if (filters.agentId === "unassigned") {
-            conditions.push(sql2`${orders.assignedTo} IS NULL`);
+            conditions.push(sql3`${orders.assignedTo} IS NULL`);
           } else {
             conditions.push(eq(orders.assignedTo, filters.agentId));
           }
         }
         if (filters?.search && filters.search.trim()) {
           const searchPattern = `%${filters.search.trim()}%`;
-          conditions.push(sql2`(
+          conditions.push(sql3`(
         ${orders.shopifyOrderNumber} ILIKE ${searchPattern} OR
         ${orders.customerName} ILIKE ${searchPattern} OR
         ${orders.customerPhone} ILIKE ${searchPattern} OR
@@ -2281,9 +2330,9 @@ var init_storage = __esm({
           conditions.push(lte(orders.shopifyCreatedAt, endOfDay));
         }
         if (filters?.tag && filters.tag.trim()) {
-          conditions.push(sql2`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
+          conditions.push(sql3`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
         }
-        const whereClause = conditions.length > 0 ? and(...conditions) : void 0;
+        const whereClause = conditions.length > 0 ? and2(...conditions) : void 0;
         let query = db.select({
           id: orders.id,
           shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -2315,7 +2364,7 @@ var init_storage = __esm({
             orderId: orderItems.orderId,
             productName: orderItems.productName,
             quantity: orderItems.quantity
-          }).from(orderItems).where(sql2`${orderItems.orderId} IN (${sql2.join(orderIds.map((id) => sql2`${id}`), sql2`, `)})`);
+          }).from(orderItems).where(sql3`${orderItems.orderId} IN (${sql3.join(orderIds.map((id) => sql3`${id}`), sql3`, `)})`);
           const itemsByOrder = {};
           for (const item of allItems) {
             if (!itemsByOrder[item.orderId]) {
@@ -2430,7 +2479,7 @@ var init_storage = __esm({
        * (so the admin knows to re-sync products if it's non-zero).
        */
       async backfillOrderItemImages(storeId) {
-        const updateResult = await db.execute(sql2`
+        const updateResult = await db.execute(sql3`
       WITH updated AS (
         UPDATE order_items oi
         SET    image_url = p.image_url
@@ -2445,7 +2494,7 @@ var init_storage = __esm({
       SELECT COUNT(*)::int4 AS n FROM updated
     `);
         const updated = (updateResult.rows ?? updateResult)[0]?.n ?? 0;
-        const missingResult = await db.execute(sql2`
+        const missingResult = await db.execute(sql3`
       SELECT COUNT(DISTINCT oi.shopify_variant_id)::int4 AS n
       FROM   order_items oi
       WHERE  oi.store_id = ${storeId}
@@ -2510,7 +2559,7 @@ var init_storage = __esm({
         if (filters?.status)
           conditions.push(eq(leaveRequests.status, filters.status));
         if (conditions.length > 0) {
-          return await db.select().from(leaveRequests).where(and(...conditions)).orderBy(desc(leaveRequests.createdAt));
+          return await db.select().from(leaveRequests).where(and2(...conditions)).orderBy(desc(leaveRequests.createdAt));
         }
         return await db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
       }
@@ -2565,11 +2614,11 @@ var init_storage = __esm({
       // Uses SQL DATE comparison to avoid timezone issues
       async autoCloseGhostSessions(userId, currentDateStr) {
         const ghostSessions = await db.select().from(attendance).where(
-          and(
+          and2(
             eq(attendance.userId, userId),
             isNull(attendance.clockOutTime),
             isNotNull(attendance.clockInTime),
-            sql2`DATE(${attendance.date}) < DATE(${currentDateStr})`
+            sql3`DATE(${attendance.date}) < DATE(${currentDateStr})`
           )
         );
         for (const session2 of ghostSessions) {
@@ -2605,9 +2654,9 @@ var init_storage = __esm({
       // Uses SQL DATE comparison to match just the date portion
       async getAttendanceByDate(userId, dateStr) {
         const [record] = await db.select().from(attendance).where(
-          and(
+          and2(
             eq(attendance.userId, userId),
-            sql2`DATE(${attendance.date}) = DATE(${dateStr})`
+            sql3`DATE(${attendance.date}) = DATE(${dateStr})`
           )
         );
         return record;
@@ -2619,7 +2668,7 @@ var init_storage = __esm({
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         const [record] = await db.select().from(attendance).where(
-          and(
+          and2(
             eq(attendance.userId, userId),
             gte(attendance.date, today),
             lte(attendance.date, tomorrow)
@@ -2633,7 +2682,7 @@ var init_storage = __esm({
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         const records = await db.select().from(attendance).where(
-          and(
+          and2(
             gte(attendance.date, today),
             lte(attendance.date, tomorrow)
           )
@@ -2702,7 +2751,7 @@ var init_storage = __esm({
         }
         const query = db.select().from(attendance).orderBy(desc(attendance.date));
         if (conditions.length > 0) {
-          return await query.where(and(...conditions));
+          return await query.where(and2(...conditions));
         }
         return await query;
       }
@@ -2715,7 +2764,7 @@ var init_storage = __esm({
           conditions.push(gte(holidays.date, `${year}-01-01`));
           conditions.push(lte(holidays.date, `${year}-12-31`));
         }
-        return await db.select().from(holidays).where(and(...conditions)).orderBy(asc(holidays.date));
+        return await db.select().from(holidays).where(and2(...conditions)).orderBy(asc(holidays.date));
       }
       // ============================================================================
       // PAYROLL LEDGER
@@ -2731,7 +2780,7 @@ var init_storage = __esm({
       }
       async getPayrollLedgerByPeriod(userId, year, month) {
         const [row] = await db.select().from(payrollLedger).where(
-          and(
+          and2(
             eq(payrollLedger.userId, userId),
             eq(payrollLedger.year, year),
             eq(payrollLedger.month, month)
@@ -2744,7 +2793,7 @@ var init_storage = __esm({
         return row;
       }
       async listPayrollLedger(year, month) {
-        return await db.select().from(payrollLedger).where(and(eq(payrollLedger.year, year), eq(payrollLedger.month, month))).orderBy(desc(payrollLedger.createdAt));
+        return await db.select().from(payrollLedger).where(and2(eq(payrollLedger.year, year), eq(payrollLedger.month, month))).orderBy(desc(payrollLedger.createdAt));
       }
       async updatePayrollLedgerDispatch(id, data) {
         await db.update(payrollLedger).set({
@@ -2771,7 +2820,7 @@ var init_storage = __esm({
       }
       async getActiveBreak(attendanceId) {
         const [activeBreak] = await db.select().from(attendanceBreaks).where(
-          and(
+          and2(
             eq(attendanceBreaks.attendanceId, attendanceId),
             isNull(attendanceBreaks.breakEnd)
           )
@@ -2783,7 +2832,7 @@ var init_storage = __esm({
       }
       async closeOpenBreaksForAttendance(attendanceId, endTime) {
         await db.update(attendanceBreaks).set({ breakEnd: endTime }).where(
-          and(
+          and2(
             eq(attendanceBreaks.attendanceId, attendanceId),
             isNull(attendanceBreaks.breakEnd)
           )
@@ -2826,7 +2875,7 @@ var init_storage = __esm({
       async getRecentCallByPhone(customerPhone, minutesAgo = 10) {
         const cutoffTime = new Date(Date.now() - minutesAgo * 60 * 1e3);
         const [call] = await db.select().from(calls).where(
-          and(
+          and2(
             eq(calls.customerPhone, customerPhone),
             gte(calls.calledAt, cutoffTime)
           )
@@ -2843,7 +2892,7 @@ var init_storage = __esm({
         const offset = (page - 1) * limit;
         const agentId = options?.agentId;
         const whereCondition = agentId ? eq(calls.agentId, agentId) : void 0;
-        const countQuery = db.select({ count: sql2`count(*)::int` }).from(calls);
+        const countQuery = db.select({ count: sql3`count(*)::int` }).from(calls);
         const [countResult] = agentId ? await countQuery.where(whereCondition) : await countQuery;
         const total = countResult.count;
         const baseQuery = db.select({
@@ -2882,20 +2931,20 @@ var init_storage = __esm({
         if (unreadOnly) {
           conditions.push(eq(notifications.isRead, false));
         }
-        return await db.select().from(notifications).where(and(...conditions)).orderBy(desc(notifications.createdAt));
+        return await db.select().from(notifications).where(and2(...conditions)).orderBy(desc(notifications.createdAt));
       }
       async markNotificationAsRead(id) {
         const [updated] = await db.update(notifications).set({ isRead: true, readAt: /* @__PURE__ */ new Date() }).where(eq(notifications.id, id)).returning();
         return updated;
       }
       async markAllNotificationsAsRead(userId) {
-        await db.update(notifications).set({ isRead: true, readAt: /* @__PURE__ */ new Date() }).where(and(
+        await db.update(notifications).set({ isRead: true, readAt: /* @__PURE__ */ new Date() }).where(and2(
           eq(notifications.userId, userId),
           eq(notifications.isRead, false)
         ));
       }
       async getUnreadNotificationCount(userId) {
-        const result = await db.select({ count: count() }).from(notifications).where(and(
+        const result = await db.select({ count: count() }).from(notifications).where(and2(
           eq(notifications.userId, userId),
           eq(notifications.isRead, false)
         ));
@@ -2903,7 +2952,7 @@ var init_storage = __esm({
       }
       async getDueFollowups() {
         const now = /* @__PURE__ */ new Date();
-        return await db.select().from(orders).where(and(
+        return await db.select().from(orders).where(and2(
           lte(orders.followupAt, now),
           eq(orders.callStatus, "Follow Up")
         ));
@@ -3006,7 +3055,7 @@ var init_storage = __esm({
         const lo = new Date(ndrDate.getTime() - windowMs);
         const hi = new Date(ndrDate.getTime() + windowMs);
         const [existing] = await db.select().from(ndrEvents).where(
-          and(
+          and2(
             eq(ndrEvents.awb, awb),
             gte(ndrEvents.ndrDate, lo),
             lte(ndrEvents.ndrDate, hi)
@@ -3025,7 +3074,7 @@ var init_storage = __esm({
           resolvedAt,
           resolution,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(and(eq(ndrEvents.awb, awb), eq(ndrEvents.resolved, false))).returning({ id: ndrEvents.id });
+        }).where(and2(eq(ndrEvents.awb, awb), eq(ndrEvents.resolved, false))).returning({ id: ndrEvents.id });
         return updated.length;
       }
       // Fallback-poll candidates. If Delhivery ever drops a delivery webhook
@@ -3035,7 +3084,7 @@ var init_storage = __esm({
       // re-check them against the live tracking API and close them.
       async listStaleUnresolvedNDREvents(olderThanHours, limit = 200) {
         const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1e3);
-        return await db.select().from(ndrEvents).where(and(eq(ndrEvents.resolved, false), lt(ndrEvents.ndrDate, cutoff))).orderBy(asc(ndrEvents.ndrDate)).limit(limit);
+        return await db.select().from(ndrEvents).where(and2(eq(ndrEvents.resolved, false), lt(ndrEvents.ndrDate, cutoff))).orderBy(asc(ndrEvents.ndrDate)).limit(limit);
       }
       async listUnresolvedNDREvents(filters) {
         const baseConds = [eq(ndrEvents.resolved, false)];
@@ -3045,7 +3094,7 @@ var init_storage = __esm({
             ...baseConds,
             eq(orders.assignedTo, filters.assignedTo)
           ];
-          let query2 = db.select({ ndrEvent: ndrEvents }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds)).orderBy(desc(ndrEvents.createdAt));
+          let query2 = db.select({ ndrEvent: ndrEvents }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and2(...conds)).orderBy(desc(ndrEvents.createdAt));
           if (filters?.limit) {
             query2 = query2.limit(filters.limit);
           }
@@ -3054,13 +3103,13 @@ var init_storage = __esm({
           }
           const results = await query2;
           const events2 = results.map((r) => r.ndrEvent);
-          const countResult2 = await db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and(...conds));
+          const countResult2 = await db.select({ count: count() }).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and2(...conds));
           return {
             events: events2,
             total: countResult2[0]?.count || 0
           };
         }
-        const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
+        const baseQuery = db.select().from(ndrEvents).where(and2(...baseConds));
         let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
         if (filters?.limit) {
           query = query.limit(filters.limit);
@@ -3069,7 +3118,7 @@ var init_storage = __esm({
           query = query.offset(filters.offset);
         }
         const events = await query;
-        const countResult = await db.select({ count: count() }).from(ndrEvents).where(and(...baseConds));
+        const countResult = await db.select({ count: count() }).from(ndrEvents).where(and2(...baseConds));
         return {
           events,
           total: countResult[0]?.count || 0
@@ -3107,7 +3156,7 @@ var init_storage = __esm({
           conditions.push(eq(courses.isPublished, filters.isPublished));
         }
         if (conditions.length > 0) {
-          query = query.where(and(...conditions));
+          query = query.where(and2(...conditions));
         }
         return await query;
       }
@@ -3152,13 +3201,13 @@ var init_storage = __esm({
         if (isPublished !== void 0) {
           conditions.push(eq(lessons.isPublished, isPublished));
         }
-        return await db.select().from(lessons).where(and(...conditions)).orderBy(asc(lessons.order));
+        return await db.select().from(lessons).where(and2(...conditions)).orderBy(asc(lessons.order));
       }
       // ============================================================================
       // LEARNING CENTER - USER PROGRESS
       // ============================================================================
       async getUserLessonProgress(userId, lessonId) {
-        const [progress] = await db.select().from(userLessonProgress).where(and(eq(userLessonProgress.userId, userId), eq(userLessonProgress.lessonId, lessonId)));
+        const [progress] = await db.select().from(userLessonProgress).where(and2(eq(userLessonProgress.userId, userId), eq(userLessonProgress.lessonId, lessonId)));
         return progress;
       }
       async createOrUpdateLessonProgress(progress) {
@@ -3179,7 +3228,7 @@ var init_storage = __esm({
         }
         const lessonIds = courseLessons.map((l) => l.id);
         const progressRecords = await db.select().from(userLessonProgress).where(
-          and(
+          and2(
             eq(userLessonProgress.userId, userId),
             eq(userLessonProgress.isCompleted, true)
           )
@@ -3189,7 +3238,7 @@ var init_storage = __esm({
         return { completedLessons, totalLessons, percentage };
       }
       async getUserCompletedCourses(userId) {
-        const completedLessons = await db.select().from(userLessonProgress).where(and(eq(userLessonProgress.userId, userId), eq(userLessonProgress.isCompleted, true)));
+        const completedLessons = await db.select().from(userLessonProgress).where(and2(eq(userLessonProgress.userId, userId), eq(userLessonProgress.isCompleted, true)));
         const allCourses = await this.listCourses({ isPublished: true });
         const completedCourseIds = [];
         for (const course of allCourses) {
@@ -3281,7 +3330,7 @@ var init_storage = __esm({
         if (filters?.category) {
           conditions.push(eq(resources.category, filters.category));
         }
-        return await db.select().from(resources).where(and(...conditions)).orderBy(desc(resources.createdAt));
+        return await db.select().from(resources).where(and2(...conditions)).orderBy(desc(resources.createdAt));
       }
       async incrementResourceDownload(id) {
         const resource = await this.getResource(id);
@@ -3297,7 +3346,7 @@ var init_storage = __esm({
         return checklist;
       }
       async getOnboardingChecklistByRole(role) {
-        const [checklist] = await db.select().from(onboardingChecklists).where(and(eq(onboardingChecklists.role, role), eq(onboardingChecklists.isActive, true))).orderBy(asc(onboardingChecklists.order)).limit(1);
+        const [checklist] = await db.select().from(onboardingChecklists).where(and2(eq(onboardingChecklists.role, role), eq(onboardingChecklists.isActive, true))).orderBy(asc(onboardingChecklists.order)).limit(1);
         return checklist;
       }
       async createOnboardingChecklist(checklist) {
@@ -3356,7 +3405,7 @@ var init_storage = __esm({
        */
       async getProductByVariantId(shopifyVariantId, storeId) {
         const [product] = await db.select().from(products).where(
-          and(
+          and2(
             eq(products.shopifyVariantId, shopifyVariantId),
             eq(products.storeId, storeId)
           )
@@ -3500,8 +3549,8 @@ var init_storage = __esm({
       async getDashboardMetrics(userId, startDate, endDate, storeId) {
         const buildAttributionCondition = (userIdParam) => or(
           eq(orderStatusHistory.changedBy, userIdParam),
-          and(
-            sql2`${orderStatusHistory.changedBy} IS NULL`,
+          and2(
+            sql3`${orderStatusHistory.changedBy} IS NULL`,
             eq(orderAssignments.userId, userIdParam)
           )
         );
@@ -3518,61 +3567,61 @@ var init_storage = __esm({
         if (endDate) {
           assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
         }
-        const assignedOrderIds = await db.selectDistinct({ orderId: orderAssignments.orderId }).from(orderAssignments).where(assignmentConditions.length > 0 ? and(...assignmentConditions) : void 0);
-        const confirmedInRangeConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+        const assignedOrderIds = await db.selectDistinct({ orderId: orderAssignments.orderId }).from(orderAssignments).where(assignmentConditions.length > 0 ? and2(...assignmentConditions) : void 0);
+        const confirmedInRangeConditions = [sql3`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
         if (storeId) confirmedInRangeConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedInRangeConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
-        const confirmedOrderIds = await db.selectDistinct({ orderId: orderStatusHistory.orderId }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedInRangeConditions));
+        const confirmedOrderIds = await db.selectDistinct({ orderId: orderStatusHistory.orderId }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and2(...confirmedInRangeConditions));
         const allAssignedIds = /* @__PURE__ */ new Set([
           ...assignedOrderIds.map((r) => r.orderId),
           ...confirmedOrderIds.map((r) => r.orderId)
         ]);
         const assignedCount = allAssignedIds.size;
-        const confirmedConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
+        const confirmedConditions = [sql3`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
         if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedConditions.push(buildAttributionCondition(userId));
-        const [confirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedConditions));
-        const cancelledConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
+        const [confirmedResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and2(...confirmedConditions));
+        const cancelledConditions = [sql3`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
         if (storeId) cancelledConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) cancelledConditions.push(buildAttributionCondition(userId));
-        const [cancelledResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...cancelledConditions));
-        const shippedConditions = [sql2`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
+        const [cancelledResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and2(...cancelledConditions));
+        const shippedConditions = [sql3`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
         if (storeId) shippedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) shippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) shippedConditions.push(buildAttributionCondition(userId));
-        const [shippedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...shippedConditions));
-        const deliveredConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'delivered'`];
+        const [shippedResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and2(...shippedConditions));
+        const deliveredConditions = [sql3`LOWER(${orderStatusHistory.status}) = 'delivered'`];
         if (storeId) deliveredConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) deliveredConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) deliveredConditions.push(buildAttributionCondition(userId));
-        const [deliveredResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...deliveredConditions));
-        const rtoStatusCondition = sql2`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
+        const [deliveredResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and2(...deliveredConditions));
+        const rtoStatusCondition = sql3`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
         const rtoConditions = [rtoStatusCondition];
         if (storeId) rtoConditions.push(eq(orders.storeId, storeId));
         if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
         if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
         if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
-        const [rtoResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...rtoConditions));
+        const [rtoResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and2(...rtoConditions));
         const followUpConditions = [eq(orders.callStatus, "Follow Up")];
         if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
         if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
-        const [followUpResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...followUpConditions));
+        const [followUpResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and2(...followUpConditions));
         const aiConfirmedConditions = [
-          sql2`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
-          sql2`${orderStatusHistory.changedBy} IS NULL`
+          sql3`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
+          sql3`${orderStatusHistory.changedBy} IS NULL`
         ];
         if (storeId) aiConfirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
-        const [aiConfirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).where(and(...aiConfirmedConditions));
+        const [aiConfirmedResult] = await db.select({ count: sql3`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).where(and2(...aiConfirmedConditions));
         return {
           assignedOrders: assignedCount,
           confirmedOrders: Number(confirmedResult?.count) || 0,
@@ -3596,8 +3645,8 @@ var init_storage = __esm({
         const safeTimezone = timezone || "UTC";
         const buildAttributionCondition = (userIdParam) => or(
           eq(orderStatusHistory.changedBy, userIdParam),
-          and(
-            sql2`${orderStatusHistory.changedBy} IS NULL`,
+          and2(
+            sql3`${orderStatusHistory.changedBy} IS NULL`,
             eq(orderAssignments.userId, userIdParam)
           )
         );
@@ -3606,12 +3655,12 @@ var init_storage = __esm({
         if (startDate) conditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) conditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) conditions.push(buildAttributionCondition(userId));
-        conditions.push(sql2`LOWER(${orderStatusHistory.status}) IN ('confirmed', 'cancelled', 'follow up', 'follow_up')`);
+        conditions.push(sql3`LOWER(${orderStatusHistory.status}) IN ('confirmed', 'cancelled', 'follow up', 'follow_up')`);
         const results = await db.select({
           orderId: orderStatusHistory.orderId,
-          status: sql2`LOWER(${orderStatusHistory.status})`,
+          status: sql3`LOWER(${orderStatusHistory.status})`,
           createdAt: orderStatusHistory.createdAt
-        }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(conditions.length > 0 ? and(...conditions) : void 0);
+        }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(conditions.length > 0 ? and2(...conditions) : void 0);
         const hourlyData = /* @__PURE__ */ new Map();
         for (let h = 0; h < 24; h++) {
           hourlyData.set(h, { confirmed: /* @__PURE__ */ new Set(), cancelled: /* @__PURE__ */ new Set(), followUp: /* @__PURE__ */ new Set() });
@@ -3669,7 +3718,7 @@ var init_storage = __esm({
        */
       async getAppSetting(storeId, key) {
         const [setting] = await db.select().from(appSettings).where(
-          and(eq(appSettings.storeId, storeId), eq(appSettings.key, key))
+          and2(eq(appSettings.storeId, storeId), eq(appSettings.key, key))
         );
         return setting;
       }
@@ -3691,13 +3740,13 @@ var init_storage = __esm({
       }
       async getDistinctPaymentMethods(storeId) {
         const results = await db.selectDistinct({ paymentMethod: orders.paymentMethod }).from(orders).where(
-          and(eq(orders.storeId, storeId), isNotNull(orders.paymentMethod))
+          and2(eq(orders.storeId, storeId), isNotNull(orders.paymentMethod))
         );
         return results.map((r) => r.paymentMethod).filter((m) => m !== null && m !== "");
       }
       async getDistinctTags() {
         const result = await db.execute(
-          sql2`SELECT DISTINCT UNNEST(tags) AS tag FROM orders WHERE tags IS NOT NULL ORDER BY tag`
+          sql3`SELECT DISTINCT UNNEST(tags) AS tag FROM orders WHERE tags IS NOT NULL ORDER BY tag`
         );
         return result.rows.map((r) => r.tag).filter((t) => t !== null && t !== "");
       }
@@ -3715,25 +3764,25 @@ var init_storage = __esm({
        * guaranteed to exist before any request. Safe/cheap to run every cold start.
        */
       async ensureSchemaPatches() {
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS recovery_status TEXT NOT NULL DEFAULT 'PENDING'`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS raw_data JSONB`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE users
         ADD COLUMN IF NOT EXISTS module_access JSONB`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE users
         ADD COLUMN IF NOT EXISTS coupon_code TEXT`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       CREATE UNIQUE INDEX IF NOT EXISTS users_coupon_code_key
         ON users (coupon_code) WHERE coupon_code IS NOT NULL`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE orders
         ADD COLUMN IF NOT EXISTS discount_codes JSONB`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       UPDATE orders
       SET discount_codes = COALESCE(
         (SELECT jsonb_agg(elem->>'code')
@@ -3743,10 +3792,10 @@ var init_storage = __esm({
       WHERE discount_codes IS NULL
         AND raw_shopify_data ? 'discount_codes'
         AND jsonb_typeof(raw_shopify_data->'discount_codes') = 'array'`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS converted_order_id VARCHAR`);
-        await db.execute(sql2`
+        await db.execute(sql3`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS converted_at TIMESTAMP`);
       }
@@ -3786,11 +3835,11 @@ var init_storage = __esm({
             cartValue: data.cartValue,
             items: data.items,
             rawData: data.rawData,
-            customerName: sql2`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
-            customerPhone: sql2`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
-            customerEmail: sql2`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
-            checkoutUrl: sql2`COALESCE(${data.checkoutUrl ?? null}, ${abandonedCheckouts.checkoutUrl})`,
-            address: sql2`COALESCE(${data.address ?? null}, ${abandonedCheckouts.address})`
+            customerName: sql3`COALESCE(${data.customerName ?? null}, ${abandonedCheckouts.customerName})`,
+            customerPhone: sql3`COALESCE(${data.customerPhone ?? null}, ${abandonedCheckouts.customerPhone})`,
+            customerEmail: sql3`COALESCE(${data.customerEmail ?? null}, ${abandonedCheckouts.customerEmail})`,
+            checkoutUrl: sql3`COALESCE(${data.checkoutUrl ?? null}, ${abandonedCheckouts.checkoutUrl})`,
+            address: sql3`COALESCE(${data.address ?? null}, ${abandonedCheckouts.address})`
           }
         }).returning();
         return checkout;
@@ -3867,12 +3916,12 @@ var init_storage = __esm({
         if (!last10 && !emailNorm) return void 0;
         const conditions = [];
         if (last10) {
-          conditions.push(sql2`RIGHT(REGEXP_REPLACE(COALESCE(${abandonedCheckouts.customerPhone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`);
+          conditions.push(sql3`RIGHT(REGEXP_REPLACE(COALESCE(${abandonedCheckouts.customerPhone}, ''), '[^0-9]', '', 'g'), 10) = ${last10}`);
         }
         if (emailNorm) {
-          conditions.push(sql2`LOWER(${abandonedCheckouts.customerEmail}) = ${emailNorm}`);
+          conditions.push(sql3`LOWER(${abandonedCheckouts.customerEmail}) = ${emailNorm}`);
         }
-        const [row] = await db.select().from(abandonedCheckouts).where(and(eq(abandonedCheckouts.isRecovered, false), or(...conditions))).orderBy(desc(abandonedCheckouts.createdAt)).limit(1);
+        const [row] = await db.select().from(abandonedCheckouts).where(and2(eq(abandonedCheckouts.isRecovered, false), or(...conditions))).orderBy(desc(abandonedCheckouts.createdAt)).limit(1);
         return row;
       }
       /** Mark an abandoned checkout converted by a matched order (Feature 1). */
@@ -3902,7 +3951,7 @@ var init_storage = __esm({
       async getConvertedOrdersForCoupon(couponCode) {
         const code = couponCode.trim().toLowerCase();
         if (!code) return [];
-        const deliveredAt = sql2`COALESCE(
+        const deliveredAt = sql3`COALESCE(
       (SELECT MAX(s.delivered_at) FROM ${shipments} s WHERE s.order_id = "orders"."id"),
       (SELECT MAX(h.created_at) FROM ${orderStatusHistory} h
          WHERE h.order_id = "orders"."id" AND h.status = 'delivered')
@@ -3910,13 +3959,13 @@ var init_storage = __esm({
         return await db.select({ ...getTableColumns(orders), deliveredAt }).from(orders).where(
           or(
             // Legacy single-code column, tokenised.
-            sql2`EXISTS (
+            sql3`EXISTS (
             SELECT 1
             FROM regexp_split_to_table(LOWER(COALESCE(${orders.discountCode}, '')), '[^a-z0-9]+') AS tok(token)
             WHERE tok.token = ${code}
           )`,
             // discount_codes JSONB array — tokenise each element.
-            sql2`EXISTS (
+            sql3`EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) AS dc(code_str),
                  regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
@@ -3966,16 +4015,16 @@ var init_storage = __esm({
               pgSettlements.pgPaymentId
             ],
             set: {
-              settledAmount: sql2`EXCLUDED.settled_amount`,
-              grossAmount: sql2`EXCLUDED.gross_amount`,
-              feeDeducted: sql2`EXCLUDED.fee_deducted`,
-              taxOnFee: sql2`EXCLUDED.tax_on_fee`,
-              utrNumber: sql2`EXCLUDED.utr_number`,
-              settledAt: sql2`EXCLUDED.settled_at`,
-              pgTransactionAt: sql2`EXCLUDED.pg_transaction_at`,
-              rawPayload: sql2`EXCLUDED.raw_payload`,
-              sourceFile: sql2`EXCLUDED.source_file`,
-              updatedAt: sql2`NOW()`
+              settledAmount: sql3`EXCLUDED.settled_amount`,
+              grossAmount: sql3`EXCLUDED.gross_amount`,
+              feeDeducted: sql3`EXCLUDED.fee_deducted`,
+              taxOnFee: sql3`EXCLUDED.tax_on_fee`,
+              utrNumber: sql3`EXCLUDED.utr_number`,
+              settledAt: sql3`EXCLUDED.settled_at`,
+              pgTransactionAt: sql3`EXCLUDED.pg_transaction_at`,
+              rawPayload: sql3`EXCLUDED.raw_payload`,
+              sourceFile: sql3`EXCLUDED.source_file`,
+              updatedAt: sql3`NOW()`
             }
           }).returning({ id: pgSettlements.id });
           processed += result.length;
@@ -3995,7 +4044,7 @@ var init_storage = __esm({
        */
       async getPgSettlementByPaymentId(storeId, pgName, pgPaymentId) {
         const [row] = await db.select().from(pgSettlements).where(
-          and(
+          and2(
             storeId === null ? isNull(pgSettlements.storeId) : eq(pgSettlements.storeId, storeId),
             eq(pgSettlements.pgName, pgName),
             eq(pgSettlements.pgPaymentId, pgPaymentId)
@@ -4023,16 +4072,16 @@ var init_storage = __esm({
           const safe = filters.q.trim().replace(/[%_\\]/g, (m) => "\\" + m);
           const pattern = `%${safe}%`;
           conds.push(
-            sql2`(
+            sql3`(
           ${pgSettlements.pgPaymentId} ILIKE ${pattern}
           OR ${pgSettlements.pgOrderId} ILIKE ${pattern}
           OR ${pgSettlements.utrNumber} ILIKE ${pattern}
         )`
           );
         }
-        const where = conds.length > 0 ? and(...conds) : void 0;
+        const where = conds.length > 0 ? and2(...conds) : void 0;
         const [{ count: total }] = await db.select({ count: count() }).from(pgSettlements).where(where);
-        const rows = await db.select().from(pgSettlements).where(where).orderBy(sql2`${pgSettlements.settledAt} DESC NULLS LAST`).limit(pageSize).offset((page - 1) * pageSize);
+        const rows = await db.select().from(pgSettlements).where(where).orderBy(sql3`${pgSettlements.settledAt} DESC NULLS LAST`).limit(pageSize).offset((page - 1) * pageSize);
         return { rows, total: Number(total) };
       }
       async updatePgSettlementStatus(id, status) {
@@ -4061,7 +4110,7 @@ var init_storage = __esm({
         const rows = await db.select({
           status: pgSettlements.status,
           count: count()
-        }).from(pgSettlements).where(and(...conds)).groupBy(pgSettlements.status);
+        }).from(pgSettlements).where(and2(...conds)).groupBy(pgSettlements.status);
         const out = {
           pending: 0,
           overdue: 0,
@@ -4082,13 +4131,13 @@ var init_storage = __esm({
       }
       async findReconUploadByHash(storeId, pgName, fileHash) {
         const [row] = await db.select().from(reconUploads).where(
-          and(
+          and2(
             storeId === null ? isNull(reconUploads.storeId) : eq(reconUploads.storeId, storeId),
             eq(reconUploads.pgName, pgName),
             eq(reconUploads.fileHash, fileHash),
             // Skip "duplicate" status rows so re-warning doesn't compound —
             // we only care about the original successful ingest.
-            sql2`${reconUploads.status} != 'duplicate'`
+            sql3`${reconUploads.status} != 'duplicate'`
           )
         ).orderBy(desc(reconUploads.createdAt)).limit(1);
         return row;
@@ -4099,7 +4148,7 @@ var init_storage = __esm({
       async getExistingPgPaymentIds(storeId, pgName, pgPaymentIds) {
         if (pgPaymentIds.length === 0) return /* @__PURE__ */ new Set();
         const rows = await db.select({ pgPaymentId: pgSettlements.pgPaymentId }).from(pgSettlements).where(
-          and(
+          and2(
             storeId === null ? isNull(pgSettlements.storeId) : eq(pgSettlements.storeId, storeId),
             eq(pgSettlements.pgName, pgName),
             inArray(pgSettlements.pgPaymentId, pgPaymentIds)
@@ -4117,12 +4166,12 @@ var init_storage = __esm({
       async getActivePgRateCard(storeId, pgName) {
         const now = /* @__PURE__ */ new Date();
         const [card] = await db.select().from(pgRateCards).where(
-          and(
+          and2(
             eq(pgRateCards.storeId, storeId),
             eq(pgRateCards.pgName, pgName),
             eq(pgRateCards.isActive, true),
-            sql2`(${pgRateCards.validFrom} IS NULL OR ${pgRateCards.validFrom} <= ${now.toISOString()})`,
-            sql2`(${pgRateCards.validTo} IS NULL OR ${pgRateCards.validTo} >= ${now.toISOString()})`
+            sql3`(${pgRateCards.validFrom} IS NULL OR ${pgRateCards.validFrom} <= ${now.toISOString()})`,
+            sql3`(${pgRateCards.validTo} IS NULL OR ${pgRateCards.validTo} >= ${now.toISOString()})`
           )
         ).orderBy(desc(pgRateCards.createdAt)).limit(1);
         return card;
@@ -4130,7 +4179,7 @@ var init_storage = __esm({
       async listPgRateCards(storeId, pgName) {
         const conds = [eq(pgRateCards.storeId, storeId)];
         if (pgName) conds.push(eq(pgRateCards.pgName, pgName));
-        return await db.select().from(pgRateCards).where(and(...conds)).orderBy(desc(pgRateCards.createdAt));
+        return await db.select().from(pgRateCards).where(and2(...conds)).orderBy(desc(pgRateCards.createdAt));
       }
       /**
        * Save a rate card. When `isActive: true`, deactivates every other
@@ -4140,7 +4189,7 @@ var init_storage = __esm({
       async upsertPgRateCard(data) {
         if (data.isActive !== false && data.storeId) {
           await db.update(pgRateCards).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(
-            and(
+            and2(
               eq(pgRateCards.storeId, data.storeId),
               eq(pgRateCards.pgName, data.pgName),
               eq(pgRateCards.isActive, true)
@@ -4159,7 +4208,7 @@ var init_storage = __esm({
       // ── Smart presence helpers (idle + auto-logout) ───────────────────
       async getMonthlyAttendanceReport(year, month) {
         const idleTotalMin = getAutoLogoutTotalMin();
-        const result = await db.execute(sql2`
+        const result = await db.execute(sql3`
       WITH month_attendance AS (
         SELECT
           a.id,
@@ -4250,7 +4299,7 @@ var init_storage = __esm({
         return row;
       }
       async heartbeatUser(userId) {
-        await db.execute(sql2`
+        await db.execute(sql3`
       UPDATE users
       SET last_active_at = NOW()
       WHERE id = ${userId}
@@ -4258,7 +4307,7 @@ var init_storage = __esm({
     `);
       }
       async findAutoLogoutCandidates(thresholdMinutes) {
-        const result = await db.execute(sql2`
+        const result = await db.execute(sql3`
       SELECT
         u.id AS user_id,
         a.id AS attendance_id,
@@ -4302,7 +4351,7 @@ var init_storage = __esm({
           autoCloseReason: reason,
           totalHours: totalHours.toFixed(2),
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(and(eq(attendance.id, attendanceId), isNull(attendance.autoClosedAt)));
+        }).where(and2(eq(attendance.id, attendanceId), isNull(attendance.autoClosedAt)));
         return (result.rowCount ?? 0) > 0;
       }
       async reactivateAttendance(attendanceId, adminId) {
@@ -4327,9 +4376,9 @@ var init_storage = __esm({
           autoClosedAt: attendance.autoClosedAt,
           autoCloseReason: attendance.autoCloseReason
         }).from(attendance).where(
-          and(
+          and2(
             eq(attendance.userId, userId),
-            sql2`DATE(${attendance.date}) = DATE(${dateStr})`
+            sql3`DATE(${attendance.date}) = DATE(${dateStr})`
           )
         );
         if (!row || !row.autoClosedAt) {
@@ -5550,10 +5599,10 @@ __export(service_exports, {
   updateReshipment: () => updateReshipment,
   updateStatusByAwb: () => updateStatusByAwb
 });
-import { and as and3, desc as desc2, eq as eq4, or as or2, sql as sql3 } from "drizzle-orm";
+import { and as and4, desc as desc2, eq as eq4, or as or2, sql as sql4 } from "drizzle-orm";
 async function createReshipment(input) {
   const [order] = await db.select().from(orders).where(
-    and3(eq4(orders.id, input.originalOrderId), eq4(orders.storeId, input.storeId))
+    and4(eq4(orders.id, input.originalOrderId), eq4(orders.storeId, input.storeId))
   ).limit(1);
   if (!order) {
     throw new ReshipmentError("Original order not found in this store.", 404);
@@ -5566,7 +5615,7 @@ async function createReshipment(input) {
   }
   const wantedSuffix = (input.nameSuffix ?? "R").toUpperCase().trim() || "R";
   const existing = await db.select().from(reshipmentLogs).where(
-    and3(
+    and4(
       eq4(reshipmentLogs.storeId, input.storeId),
       eq4(reshipmentLogs.originalOrderId, input.originalOrderId),
       or2(...LIVE_STATUSES.map((s) => eq4(reshipmentLogs.courierStatus, s)))
@@ -5723,25 +5772,25 @@ async function createReshipment(input) {
   return row;
 }
 async function listReshipments(storeId, filter = "all", opts = {}) {
-  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql3`TRUE`;
+  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql4`TRUE`;
   if (filter === "attention") {
     return db.select(rowShape).from(reshipmentLogs).leftJoin(orders, eq4(orders.id, reshipmentLogs.originalOrderId)).leftJoin(users, eq4(users.id, reshipmentLogs.createdBy)).where(
-      and3(
+      and4(
         eq4(reshipmentLogs.storeId, storeId),
         scopeCreator,
         or2(
           eq4(reshipmentLogs.courierStatus, "ndr"),
           eq4(reshipmentLogs.courierStatus, "rto"),
-          sql3`${orders.status} IN ('rto_initiated','rto_ofd','rto_delivered')`
+          sql4`${orders.status} IN ('rto_initiated','rto_ofd','rto_delivered')`
         )
       )
     ).orderBy(desc2(reshipmentLogs.createdAt));
   }
-  return db.select(rowShape).from(reshipmentLogs).leftJoin(users, eq4(users.id, reshipmentLogs.createdBy)).where(and3(eq4(reshipmentLogs.storeId, storeId), scopeCreator)).orderBy(desc2(reshipmentLogs.createdAt));
+  return db.select(rowShape).from(reshipmentLogs).leftJoin(users, eq4(users.id, reshipmentLogs.createdBy)).where(and4(eq4(reshipmentLogs.storeId, storeId), scopeCreator)).orderBy(desc2(reshipmentLogs.createdAt));
 }
 async function getReshipmentStats(storeId, opts = {}) {
-  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql3`TRUE`;
-  const res = await db.execute(sql3`
+  const scopeCreator = opts.createdByOnly ? eq4(reshipmentLogs.createdBy, opts.createdByOnly) : sql4`TRUE`;
+  const res = await db.execute(sql4`
     SELECT
       COUNT(*)::int4 AS total,
       COUNT(*) FILTER (WHERE courier_status = 'delivered')::int4 AS delivered,
@@ -5752,7 +5801,7 @@ async function getReshipmentStats(storeId, opts = {}) {
       COUNT(*) FILTER (WHERE courier_status = 'cancelled')::int4 AS cancelled
     FROM reshipment_logs
     WHERE store_id = ${storeId}
-      ${opts.createdByOnly ? sql3`AND created_by = ${opts.createdByOnly}` : sql3``}
+      ${opts.createdByOnly ? sql4`AND created_by = ${opts.createdByOnly}` : sql4``}
   `);
   const r = (res.rows ?? res)[0] ?? {};
   return {
@@ -5767,10 +5816,10 @@ async function getReshipmentStats(storeId, opts = {}) {
 }
 async function getReshipmentOr404(storeId, id, createdByOnly) {
   const [row] = await db.select().from(reshipmentLogs).where(
-    and3(
+    and4(
       eq4(reshipmentLogs.id, id),
       eq4(reshipmentLogs.storeId, storeId),
-      createdByOnly ? eq4(reshipmentLogs.createdBy, createdByOnly) : sql3`TRUE`
+      createdByOnly ? eq4(reshipmentLogs.createdBy, createdByOnly) : sql4`TRUE`
     )
   ).limit(1);
   if (!row) throw new ReshipmentError("Reshipment not found.", 404);
@@ -5861,7 +5910,7 @@ async function updateFromFulfillment(params) {
     courierName: params.courierName ?? void 0,
     updatedAt: /* @__PURE__ */ new Date()
   }).where(
-    and3(
+    and4(
       eq4(reshipmentLogs.storeId, params.storeId),
       eq4(reshipmentLogs.newShopifyOrderId, params.newShopifyOrderId)
     )
@@ -5873,11 +5922,11 @@ async function updateStatusByAwb(params) {
     courierName: params.courierName ?? void 0,
     updatedAt: /* @__PURE__ */ new Date()
   }).where(
-    and3(
+    and4(
       eq4(reshipmentLogs.trackingAwb, params.awb),
       // Cancelled is terminal — a late courier scan must not resurrect
       // a reshipment the operator already called off.
-      sql3`${reshipmentLogs.courierStatus} <> 'cancelled'`
+      sql4`${reshipmentLogs.courierStatus} <> 'cancelled'`
     )
   ).returning({ id: reshipmentLogs.id });
   return rows.length;
@@ -5920,7 +5969,7 @@ var init_service = __esm({
       createdBy: reshipmentLogs.createdBy,
       // Live join wins for display; the stored column is the durable audit
       // record for when the user is later renamed or removed.
-      createdByName: sql3`COALESCE(${users.fullName}, ${reshipmentLogs.createdByName})`,
+      createdByName: sql4`COALESCE(${users.fullName}, ${reshipmentLogs.createdByName})`,
       cancelledAt: reshipmentLogs.cancelledAt,
       cancelledBy: reshipmentLogs.cancelledBy,
       createdAt: reshipmentLogs.createdAt,
@@ -5999,7 +6048,7 @@ __export(storeScope_exports, {
   resolveScopeForUser: () => resolveScopeForUser,
   resolveStoreScope: () => resolveStoreScope
 });
-import { eq as eq5, and as and4, asc as asc2 } from "drizzle-orm";
+import { eq as eq5, and as and5, asc as asc2 } from "drizzle-orm";
 async function resolveStoreScope(req) {
   const sessionUserId = req.session?.userId;
   if (!sessionUserId) {
@@ -6032,7 +6081,7 @@ async function resolveScopeForUser(user, req) {
   }
   if (requestedHeader) {
     const [membership] = await db.select({ storeId: userStores.storeId }).from(userStores).where(
-      and4(
+      and5(
         eq5(userStores.userId, user.id),
         eq5(userStores.storeId, requestedHeader)
       )
@@ -8072,7 +8121,7 @@ var meta_exports = {};
 __export(meta_exports, {
   syncMetaInsights: () => syncMetaInsights
 });
-import { eq as eq7, sql as sql5 } from "drizzle-orm";
+import { eq as eq7, sql as sql6 } from "drizzle-orm";
 function sumAction(list, type = PURCHASE_ACTION_TYPE) {
   if (!list) return 0;
   const row = list.find((a) => a.action_type === type);
@@ -8190,11 +8239,11 @@ async function syncMetaInsights(storeId, startDate, endDate) {
     await db.insert(marketingMetrics).values(upsertRows).onConflictDoUpdate({
       target: [marketingMetrics.date, marketingMetrics.storeId],
       set: {
-        fbSpend: sql5`excluded.fb_spend`,
-        fbGmv: sql5`excluded.fb_gmv`,
-        fbOrders: sql5`excluded.fb_orders`,
-        fbRoas: sql5`excluded.fb_roas`,
-        updatedAt: sql5`now()`
+        fbSpend: sql6`excluded.fb_spend`,
+        fbGmv: sql6`excluded.fb_gmv`,
+        fbOrders: sql6`excluded.fb_orders`,
+        fbRoas: sql6`excluded.fb_roas`,
+        updatedAt: sql6`now()`
       }
     });
   }
@@ -8493,10 +8542,10 @@ var reconcile_shipment_status_exports = {};
 __export(reconcile_shipment_status_exports, {
   reconcileShipmentStatus: () => reconcileShipmentStatus
 });
-import { sql as sql6 } from "drizzle-orm";
+import { sql as sql7 } from "drizzle-orm";
 async function pickCandidates() {
   const cutoff = new Date(Date.now() - STALE_HOURS2 * 3600 * 1e3).toISOString();
-  const res = await db.execute(sql6`
+  const res = await db.execute(sql7`
     SELECT
       o.id            AS order_id,
       o.store_id      AS store_id,
@@ -8606,7 +8655,7 @@ async function reconcileShipmentStatus() {
           status: unified,
           isActionable: normalized.isActionable
         });
-        await db.execute(sql6`
+        await db.execute(sql7`
           INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
           VALUES (
             gen_random_uuid(),
@@ -8838,7 +8887,7 @@ __export(sync_exports, {
   reconcileMonth: () => reconcileMonth,
   runSync: () => runSync
 });
-import { sql as sql7, desc as desc3 } from "drizzle-orm";
+import { sql as sql8, desc as desc3 } from "drizzle-orm";
 async function buildRecords(year, month) {
   const records = [];
   const skipped = [];
@@ -8851,7 +8900,7 @@ async function buildRecords(year, month) {
       console.warn("[payroll-sync] failed to fetch RazorpayX roster:", err?.message ?? err);
     }
   }
-  const attRes = await db.execute(sql7`
+  const attRes = await db.execute(sql8`
     SELECT a.id, u.email, u.full_name,
            a.date, a.clock_in_time, a.clock_out_time, a.status, a.total_hours
     FROM attendance a
@@ -8884,7 +8933,7 @@ async function buildRecords(year, month) {
     if (isSkipped(mapped)) skipped.push(mapped);
     else records.push(mapped);
   }
-  const leaveRes = await db.execute(sql7`
+  const leaveRes = await db.execute(sql8`
     SELECT l.id, u.email, u.full_name,
            l.leave_type, l.start_date, l.end_date, l.status
     FROM leave_requests l
@@ -9247,7 +9296,7 @@ __export(payroll_metrics_exports, {
   getYtdPaidHolidaysUsed: () => getYtdPaidHolidaysUsed,
   monthRangeUtc: () => monthRangeUtc
 });
-import { sql as sql8 } from "drizzle-orm";
+import { sql as sql9 } from "drizzle-orm";
 function monthRangeUtc(year, month) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
@@ -9255,7 +9304,7 @@ function monthRangeUtc(year, month) {
 }
 async function getAttendanceMetrics(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT
       COUNT(DISTINCT DATE(date)) FILTER (WHERE clock_in_time IS NOT NULL)::int4 AS days_present,
       COUNT(DISTINCT DATE(date)) FILTER (WHERE status = 'leave')::int4         AS days_leave
@@ -9271,7 +9320,7 @@ async function getAttendanceMetrics(userId, year, month) {
   };
 }
 async function getAutoPaidHolidaysCount(state, year, month) {
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT COUNT(*)::int4 AS n
     FROM holidays
     WHERE state = ${state}
@@ -9285,7 +9334,7 @@ async function getAutoPaidHolidaysCount(state, year, month) {
   return (r.rows ?? r)[0]?.n ?? 0;
 }
 async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT COALESCE(SUM(paid_holidays_used), 0)::int4 AS n
     FROM payroll_ledger
     WHERE user_id = ${userId}
@@ -9296,7 +9345,7 @@ async function getYtdPaidHolidaysUsed(userId, year, upToMonthExclusive) {
 }
 async function getConfirmationDeliveryRatePct(userId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT
       COUNT(*)::int4                                              AS confirmed,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4          AS delivered
@@ -9311,7 +9360,7 @@ async function getConfirmationDeliveryRatePct(userId, year, month) {
 }
 async function getTeamDeliveryRatePct(year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT
       COUNT(*)::int4                                       AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4   AS delivered
@@ -9328,7 +9377,7 @@ function round22(n) {
 }
 async function getBrandTDRPct(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT
       COUNT(*)::int4                                     AS total,
       COUNT(*) FILTER (WHERE status = 'delivered')::int4 AS delivered
@@ -9343,7 +9392,7 @@ async function getBrandTDRPct(storeId, year, month) {
 }
 async function getBrandNDRDeliveryRate(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT
       COUNT(DISTINCT order_id)::int4
         AS total,
@@ -9379,13 +9428,13 @@ async function getBrandNDRDeliveryRate(storeId, year, month) {
 }
 async function getDeliveredGMVForAgent(userId, storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const userRow = await db.execute(sql8`
+  const userRow = await db.execute(sql9`
     SELECT coupon_code FROM users WHERE id = ${userId} LIMIT 1
   `);
   const couponRaw = (userRow?.rows ?? [])[0]?.coupon_code ?? null;
   if (!couponRaw || !couponRaw.trim()) return 0;
   const code = couponRaw.trim().toLowerCase();
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT COALESCE(SUM(CAST(o.total_price AS numeric)), 0)::numeric AS gmv
     FROM orders o
     LEFT JOIN LATERAL (
@@ -9420,7 +9469,7 @@ async function getDeliveredGMVForAgent(userId, storeId, year, month) {
 }
 async function getReshipmentsDeliveredCount(storeId, year, month) {
   const { start, end } = monthRangeUtc(year, month);
-  const r = await db.execute(sql8`
+  const r = await db.execute(sql9`
     SELECT COUNT(*)::int4 AS n
     FROM reshipment_logs rl
     JOIN orders o
@@ -10036,7 +10085,7 @@ __export(payroll_cycle_exports, {
   refreshCycleTotals: () => refreshCycleTotals,
   updateCycleLedger: () => updateCycleLedger
 });
-import { eq as eq8, and as and5, desc as desc4, sql as sql9 } from "drizzle-orm";
+import { eq as eq8, and as and6, desc as desc4, sql as sql10 } from "drizzle-orm";
 async function buildLedgerRow(args) {
   const { user, storeId, year, month, cycleId, overrides = {}, createdBy = null } = args;
   const baseSalary = Math.max(
@@ -10136,7 +10185,7 @@ async function buildLedgerRow(args) {
 async function generateCycle(args) {
   const { storeId, year, month, generatedBy = null } = args;
   const [existing] = await db.select().from(payrollCycles).where(
-    and5(
+    and6(
       eq8(payrollCycles.storeId, storeId),
       eq8(payrollCycles.year, year),
       eq8(payrollCycles.month, month)
@@ -10164,7 +10213,7 @@ async function generateCycle(args) {
     totalPayout: "0",
     generatedBy
   }).returning();
-  const eligible = await db.select().from(users).where(and5(eq8(users.isActive, true)));
+  const eligible = await db.select().from(users).where(and6(eq8(users.isActive, true)));
   const withSalary = eligible.filter(
     (u) => u.baseSalary != null && Number(u.baseSalary) > 0 && u.compensationProfile != null && u.compensationProfile !== ""
   );
@@ -10194,7 +10243,7 @@ async function generateCycle(args) {
   };
 }
 async function refreshCycleTotals(cycleId) {
-  const result = await db.execute(sql9`
+  const result = await db.execute(sql10`
     SELECT COUNT(*)::int4 AS n, COALESCE(SUM(final_payout), 0)::text AS total
     FROM payroll_ledger
     WHERE cycle_id = ${cycleId}
@@ -10290,7 +10339,7 @@ async function updateCycleLedger(args) {
     cycleId: cycle.id,
     overrides
   });
-  const [existing] = await db.select().from(payrollLedger).where(and5(eq8(payrollLedger.cycleId, cycleId), eq8(payrollLedger.userId, userId))).limit(1);
+  const [existing] = await db.select().from(payrollLedger).where(and6(eq8(payrollLedger.cycleId, cycleId), eq8(payrollLedger.userId, userId))).limit(1);
   let saved;
   if (existing) {
     const [updated] = await db.update(payrollLedger).set({ ...rebuilt, updatedAt: /* @__PURE__ */ new Date() }).where(eq8(payrollLedger.id, existing.id)).returning();
@@ -11093,7 +11142,7 @@ __export(matcher_exports, {
   getOverdueOrders: () => getOverdueOrders,
   matchPendingSettlements: () => matchPendingSettlements
 });
-import { and as and6, eq as eq9, sql as sql10 } from "drizzle-orm";
+import { and as and7, eq as eq9, sql as sql11 } from "drizzle-orm";
 async function matchPendingSettlements(opts) {
   const { storeId, pgName = "payu", toleranceRupees = 1 } = opts;
   const adapter = getPgAdapter(pgName);
@@ -11103,7 +11152,7 @@ async function matchPendingSettlements(opts) {
   const activeCard = await storage.getActivePgRateCard(storeId, pgName);
   const rules = activeCard?.rules;
   const pending = await db.select().from(pgSettlements).where(
-    and6(
+    and7(
       eq9(pgSettlements.storeId, storeId),
       eq9(pgSettlements.pgName, pgName),
       eq9(pgSettlements.status, "pending")
@@ -11118,7 +11167,7 @@ async function matchPendingSettlements(opts) {
   };
   for (const s of pending) {
     try {
-      const found = await db.execute(sql10`
+      const found = await db.execute(sql11`
         SELECT o.id, o.total_price, o.shopify_order_number
         FROM orders o
         CROSS JOIN LATERAL jsonb_array_elements(
@@ -11164,7 +11213,7 @@ async function matchPendingSettlements(opts) {
 }
 async function getOverdueOrders(opts) {
   const { storeId, graceDays = 3, limit = 200 } = opts;
-  const windowQuery = await db.execute(sql10`
+  const windowQuery = await db.execute(sql11`
     SELECT
       MIN(settled_at)::timestamptz AS min_settled,
       MAX(settled_at)::timestamptz AS max_settled,
@@ -11185,7 +11234,7 @@ async function getOverdueOrders(opts) {
   const maxSettled = new Date(winRow.max_settled);
   const cutoff = new Date(maxSettled.getTime() - graceDays * 864e5);
   const windowStart = new Date(minSettled.getTime() - graceDays * 864e5);
-  const result = await db.execute(sql10`
+  const result = await db.execute(sql11`
     SELECT
       o.id,
       o.shopify_order_number,
@@ -11617,15 +11666,15 @@ function buildTrackingView(args) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq10, or as or3, sql as sql11, desc as desc5, gte as gte2, lte as lte2, and as and7, asc as asc3 } from "drizzle-orm";
+import { eq as eq10, or as or3, sql as sql12, desc as desc5, gte as gte2, lte as lte2, and as and8, asc as asc3 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
 init_schema();
-import { eq as eq2, and as and2 } from "drizzle-orm";
+import { eq as eq2, and as and3 } from "drizzle-orm";
 async function triggerWebhooks(eventType, payload) {
   try {
-    const activeWebhooks = await db.select().from(webhooks).where(and2(eq2(webhooks.eventType, eventType), eq2(webhooks.isActive, true)));
+    const activeWebhooks = await db.select().from(webhooks).where(and3(eq2(webhooks.eventType, eventType), eq2(webhooks.isActive, true)));
     if (activeWebhooks.length === 0) return;
     console.log(`[Webhooks] Firing ${activeWebhooks.length} webhook(s) for event: ${eventType}`);
     const results = await Promise.allSettled(
@@ -11680,30 +11729,19 @@ var OrderAssignmentEngine = class {
       console.log("\u26A0\uFE0F  No eligible agents available for assignment");
       return null;
     }
-    const agentWorkloads = await Promise.all(
-      eligibleAgents.map(async (agent) => {
-        const assignedOrders = await this.storage.listOrders({
-          assignedTo: agent.id,
-          // Count orders that are still active (not completed/cancelled/delivered)
-          status: void 0
-          // We'll filter in memory
-        });
-        const activeOrders = assignedOrders.orders.filter((order) => {
-          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
-          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
-          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
-          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
-          return !agentFinished && !warehouseFinished;
-        });
-        const lastAssignmentTime = assignedOrders.orders.length > 0 ? Math.max(...assignedOrders.orders.map((o) => new Date(o.assignedAt || 0).getTime())) : 0;
-        return {
-          agentId: agent.id,
-          agentName: agent.fullName,
-          workload: activeOrders.length,
-          lastAssignmentTime
-        };
-      })
-    );
+    const loads = await this.storage.getAgentOrderLoads({
+      agentIds: eligibleAgents.map((agent) => agent.id)
+    });
+    const agentWorkloads = eligibleAgents.map((agent) => {
+      const load = loads.get(agent.id);
+      return {
+        agentId: agent.id,
+        agentName: agent.fullName,
+        workload: load?.activeOrders ?? 0,
+        // Most recent assignment time (max(assigned_at) across all their orders)
+        lastAssignmentTime: load?.lastAssignedAt?.getTime() ?? 0
+      };
+    });
     agentWorkloads.sort((a, b) => {
       if (a.workload !== b.workload) {
         return a.workload - b.workload;
@@ -11818,31 +11856,23 @@ var OrderAssignmentEngine = class {
       if (attendance2.status === "break") return "break";
       return "online";
     };
-    const workloads = await Promise.all(
-      agents.map(async (agent) => {
-        const assignedOrders = await this.storage.listOrders({
-          assignedTo: agent.id
-        });
-        const activeOrders = assignedOrders.orders.filter((order) => {
-          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
-          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
-          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
-          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
-          return !agentFinished && !warehouseFinished;
-        });
-        const accountStatus = agent.presenceStatus || "present";
-        const liveStatus = getLiveStatus(agent.id, accountStatus);
-        return {
-          agentId: agent.id,
-          agentName: agent.fullName,
-          role: agent.role,
-          presenceStatus: accountStatus,
-          liveStatus,
-          assignedOrders: assignedOrders.total,
-          activeOrders: activeOrders.length
-        };
-      })
-    );
+    const loads = await this.storage.getAgentOrderLoads({
+      agentIds: agents.map((agent) => agent.id)
+    });
+    const workloads = agents.map((agent) => {
+      const load = loads.get(agent.id);
+      const accountStatus = agent.presenceStatus || "present";
+      const liveStatus = getLiveStatus(agent.id, accountStatus);
+      return {
+        agentId: agent.id,
+        agentName: agent.fullName,
+        role: agent.role,
+        presenceStatus: accountStatus,
+        liveStatus,
+        assignedOrders: load?.assignedOrders ?? 0,
+        activeOrders: load?.activeOrders ?? 0
+      };
+    });
     return workloads;
   }
 };
@@ -12443,7 +12473,7 @@ import axios3 from "axios";
 // server/services/analytics.ts
 init_db();
 init_schema();
-import { sql as sql4 } from "drizzle-orm";
+import { sql as sql5 } from "drizzle-orm";
 function computeTierRtoPct(rtoRaw, totalRaw) {
   const n = Number(rtoRaw) || 0;
   const d = Number(totalRaw) || 0;
@@ -12473,9 +12503,9 @@ function enumerateDays(startDate, endDate) {
 }
 async function getPareMetrics(dateRange) {
   const { startDate, endDate, storeId } = dateRange;
-  const storeFilter = storeId ? sql4`AND ${orders}.store_id = ${storeId}` : sql4``;
-  const mmStoreFilter = storeId ? sql4`AND mm.store_id = ${storeId}` : sql4``;
-  const query = sql4`
+  const storeFilter = storeId ? sql5`AND ${orders}.store_id = ${storeId}` : sql5``;
+  const mmStoreFilter = storeId ? sql5`AND mm.store_id = ${storeId}` : sql5``;
+  const query = sql5`
     SELECT
       (DATE_TRUNC('day', processed_at AT TIME ZONE 'Asia/Kolkata'))::date::text AS day,
 
@@ -13047,7 +13077,7 @@ async function resolveUserScrub(req) {
 async function registerRoutes(app2) {
   app2.get("/api/health", async (_req, res) => {
     try {
-      const r = await db.execute(sql11`SELECT 1 AS ok`);
+      const r = await db.execute(sql12`SELECT 1 AS ok`);
       const ok = (r.rows ?? r)[0]?.ok === 1;
       res.status(ok ? 200 : 503).json({
         status: ok ? "ok" : "degraded",
@@ -13486,8 +13516,8 @@ async function registerRoutes(app2) {
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      const agentFilter = authResult.assignedTo ? sql11`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql11``;
-      const storeFilter = authResult.storeId ? sql11`AND ${orders.storeId} = ${authResult.storeId}` : sql11``;
+      const agentFilter = authResult.assignedTo ? sql12`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql12``;
+      const storeFilter = authResult.storeId ? sql12`AND ${orders.storeId} = ${authResult.storeId}` : sql12``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -13503,7 +13533,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt
       }).from(orders).where(
-        sql11`(
+        sql12`(
           -- STRICT MODE: Only match Out for Delivery statuses
           -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
@@ -14726,7 +14756,7 @@ async function registerRoutes(app2) {
         `[shopify-sync] preloaded ${allProducts.length} products (${productByVariant.size} variants, ${productByProduct.size} parents)`
       );
       const activeOrderCreatedWebhooks = await db.select().from(webhooks).where(
-        and7(eq10(webhooks.eventType, "order.created"), eq10(webhooks.isActive, true))
+        and8(eq10(webhooks.eventType, "order.created"), eq10(webhooks.isActive, true))
       );
       const shouldFireWebhooks = activeOrderCreatedWebhooks.length > 0;
       if (!shouldFireWebhooks) {
@@ -16418,7 +16448,7 @@ async function registerRoutes(app2) {
       }
       if (toDelete.length > 0) {
         await db.delete(userStores).where(
-          and7(
+          and8(
             eq10(userStores.userId, targetId),
             or3(...toDelete.map((id) => eq10(userStores.storeId, id)))
           )
@@ -16938,12 +16968,12 @@ async function registerRoutes(app2) {
     try {
       const cleaned = key.replace(/^#/, "");
       let orderRow = null;
-      const byNumber = await db.execute(sql11`
+      const byNumber = await db.execute(sql12`
         SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
       `);
       orderRow = (byNumber?.rows ?? [])[0] ?? null;
       if (!orderRow) {
-        const byId = await db.execute(sql11`
+        const byId = await db.execute(sql12`
           SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
         `).catch(() => ({ rows: [] }));
         orderRow = (byId?.rows ?? [])[0] ?? null;
@@ -16996,7 +17026,7 @@ async function registerRoutes(app2) {
         isActionable: normalized.isActionable
       });
       if (previousStatus !== unifiedStatus) {
-        await db.execute(sql11`
+        await db.execute(sql12`
           INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
           VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${"admin-resync from Delhivery live tracking"}, NOW())
         `);
@@ -17605,7 +17635,7 @@ async function registerRoutes(app2) {
     if (!auth.ok) return;
     try {
       const { payrollLedger: ledgerTable, payrollCycles: cyclesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const [ledger] = await db.select().from(ledgerTable).where(and7(eq10(ledgerTable.cycleId, req.params.id), eq10(ledgerTable.userId, req.params.userId))).limit(1);
+      const [ledger] = await db.select().from(ledgerTable).where(and8(eq10(ledgerTable.cycleId, req.params.id), eq10(ledgerTable.userId, req.params.userId))).limit(1);
       if (!ledger) return res.status(404).json({ error: "Ledger row not found for this cycle+user" });
       const user = await storage.getUser(req.params.userId);
       if (!user) return res.status(404).json({ error: "User not found" });
@@ -19924,7 +19954,7 @@ async function registerRoutes(app2) {
         createdAt: orders.createdAt,
         fulfillmentStatus: orders.fulfillmentStatus
       }).from(orders);
-      const allOrders = conditions.length > 0 ? await baseSelect.where(and7(...conditions)) : await baseSelect;
+      const allOrders = conditions.length > 0 ? await baseSelect.where(and8(...conditions)) : await baseSelect;
       const shippedOrders = allOrders.filter(
         (o) => o.fulfillmentStatus === "fulfilled" || o.fulfillmentStatus === "partial" || o.shipmentStatus
       );
@@ -19993,7 +20023,7 @@ async function registerRoutes(app2) {
         }
       });
       const agentIds = Object.keys(agentCounts);
-      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql11`${users.id} = ANY(${agentIds})`) : [];
+      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql12`${users.id} = ANY(${agentIds})`) : [];
       const agentNameMap = new Map(agentUsers.map((u) => [u.id, u.name]));
       const topAgents = Object.entries(agentCounts).map(([agentId, count2]) => ({
         agent_id: agentId,
@@ -20435,7 +20465,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
       const storeName = store?.storeName ?? "Your store";
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq11, and: and8, sql: sql12, inArray: inArray2 } = await import("drizzle-orm");
+      const { eq: eq11, and: and9, sql: sql13, inArray: inArray2 } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const mismatchSettlements = await db2.select({
         id: pgSettlements2.id,
@@ -20444,11 +20474,11 @@ TeleCRM: ${incomingNotes.trim()}`;
         settledAmount: pgSettlements2.settledAmount,
         pgPaymentId: pgSettlements2.pgPaymentId
       }).from(pgSettlements2).where(
-        and8(
+        and9(
           eq11(pgSettlements2.storeId, storeId),
           eq11(pgSettlements2.status, "mismatch")
         )
-      ).orderBy(sql12`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
+      ).orderBy(sql13`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
       const mismatchOrderIds = mismatchSettlements.map((s) => s.orderId).filter((id) => !!id);
       const mismatchOrders = mismatchOrderIds.length > 0 ? await db2.select({
         id: orders2.id,
@@ -20492,9 +20522,9 @@ TeleCRM: ${incomingNotes.trim()}`;
       );
       const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
       const settledSum = await db2.select({
-        c: sql12`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
+        c: sql13`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
       }).from(pgSettlements2).where(
-        and8(
+        and9(
           eq11(pgSettlements2.storeId, storeId),
           eq11(pgSettlements2.status, "settled")
         )
@@ -20645,14 +20675,14 @@ TeleCRM: ${incomingNotes.trim()}`;
       if (!storeId) return res.status(400).json({ error: "Missing storeId" });
       const maxToProcess = Math.min(25, Math.max(1, Number(req.body?.limit ?? 25)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq11, and: and8, isNull: isNull2, sql: sqlT } = await import("drizzle-orm");
+      const { eq: eq11, and: and9, isNull: isNull2, sql: sqlT } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const orphans = await db2.select({
         id: pgSettlements2.id,
         pgPaymentId: pgSettlements2.pgPaymentId,
         pgTransactionAt: pgSettlements2.pgTransactionAt
       }).from(pgSettlements2).where(
-        and8(
+        and9(
           eq11(pgSettlements2.storeId, storeId),
           eq11(pgSettlements2.pgName, "payu"),
           eq11(pgSettlements2.status, "pending"),
@@ -20727,7 +20757,7 @@ TeleCRM: ${incomingNotes.trim()}`;
             if (!matchingOrphanId) continue;
             const orderLegacyId = String(o.legacyResourceId);
             const existing = await db2.select({ id: orders2.id }).from(orders2).where(
-              and8(
+              and9(
                 eq11(orders2.storeId, storeId),
                 eq11(orders2.shopifyOrderId, orderLegacyId)
               )
@@ -20981,8 +21011,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql12 } = await import("drizzle-orm");
-      const result = await db2.execute(sql12`
+      const { sql: sql13 } = await import("drizzle-orm");
+      const result = await db2.execute(sql13`
         SELECT
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
           COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
@@ -21021,8 +21051,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql12 } = await import("drizzle-orm");
-      const result = await db2.execute(sql12`
+      const { sql: sql13 } = await import("drizzle-orm");
+      const result = await db2.execute(sql13`
         SELECT
           utr_number AS utr,
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
@@ -21072,8 +21102,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql12 } = await import("drizzle-orm");
-      const result = await db2.execute(sql12`
+      const { sql: sql13 } = await import("drizzle-orm");
+      const result = await db2.execute(sql13`
         SELECT
           (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
           status,

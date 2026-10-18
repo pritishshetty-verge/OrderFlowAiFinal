@@ -123,6 +123,7 @@ import {
   type AdminPermissions,
 } from "@shared/schema";
 import { parsePostgresArray } from "@shared/postgresArray";
+import { activeOrderCondition } from "./logic/activeOrder";
 
 /**
  * Row shape returned by listOrders. Identical to Order minus
@@ -132,6 +133,13 @@ import { parsePostgresArray } from "@shared/postgresArray";
  * is still available via getOrder() for single-order views.
  */
 export type OrderListItem = Omit<Order, "rawShopifyData">;
+
+/** One row of getAgentOrderLoads(): the aggregate load of a single agent. */
+export interface AgentOrderLoad {
+  assignedOrders: number;
+  activeOrders: number;
+  lastAssignedAt: Date | null;
+}
 
 export interface IStorage {
   // Users
@@ -193,6 +201,19 @@ export interface IStorage {
       cancelled: number;
     };
   }>;
+  /**
+   * Per-agent order load in ONE aggregate query, keyed by assigned_to.
+   * `activeOrders` uses the same "active" predicate as
+   * server/logic/activeOrder.ts; `assignedOrders` is every order the
+   * agent holds; `lastAssignedAt` is max(assigned_at). Agents with no
+   * assigned orders are absent from the map. Replaces the old pattern
+   * of listOrders({ assignedTo }) + in-memory filter, which silently
+   * capped each agent at listOrders' default page of 50 rows.
+   */
+  getAgentOrderLoads(filters?: {
+    storeId?: string;
+    agentIds?: string[];
+  }): Promise<Map<string, AgentOrderLoad>>;
   exportOrders(filters?: {
     storeId?: string; // Phase 2: scope CSV export to the active store
     status?: string;
@@ -1155,6 +1176,41 @@ export class DbStorage implements IStorage {
       total,
       stats
     };
+  }
+
+  async getAgentOrderLoads(filters?: {
+    storeId?: string;
+    agentIds?: string[];
+  }): Promise<Map<string, AgentOrderLoad>> {
+    const result = new Map<string, AgentOrderLoad>();
+    if (filters?.agentIds && filters.agentIds.length === 0) return result;
+
+    const conditions = [isNotNull(orders.assignedTo)];
+    if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
+    if (filters?.agentIds) conditions.push(inArray(orders.assignedTo, filters.agentIds));
+
+    const rows = await db
+      .select({
+        agentId: orders.assignedTo,
+        assignedOrders: count(),
+        activeOrders: sql<number>`count(*) filter (where ${activeOrderCondition()})`.mapWith(Number),
+        // mapWith(column) decodes the driver's timestamp string the same
+        // way a selected assignedAt column would (UTC), so callers get a Date.
+        lastAssignedAt: sql<Date | null>`max(${orders.assignedAt})`.mapWith(orders.assignedAt),
+      })
+      .from(orders)
+      .where(and(...conditions))
+      .groupBy(orders.assignedTo);
+
+    for (const row of rows) {
+      if (!row.agentId) continue;
+      result.set(row.agentId, {
+        assignedOrders: row.assignedOrders,
+        activeOrders: row.activeOrders,
+        lastAssignedAt: row.lastAssignedAt ?? null,
+      });
+    }
+    return result;
   }
 
   async exportOrders(filters?: {
