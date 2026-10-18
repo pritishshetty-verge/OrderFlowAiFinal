@@ -141,6 +141,16 @@ export interface AgentOrderLoad {
   lastAssignedAt: Date | null;
 }
 
+/**
+ * Row shape returned by `listUnresolvedNDREvents`.
+ *
+ * `rawNdrData` is the full courier webhook payload (~360 B of a ~640 B
+ * row). Nothing on the NDR board reads it, so the list select leaves
+ * it out; `getNDREventsByOrderId` / `findRecentNDREvent` still return
+ * the full `NdrEvent`.
+ */
+export type NdrEventListItem = Omit<NdrEvent, "rawNdrData">;
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -359,7 +369,7 @@ export interface IStorage {
   getNDREventsByShipmentId(shipmentId: string): Promise<NdrEvent[]>;
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
-  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }>;
+  listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEventListItem[]; total: number }>;
   findRecentNDREvent(awb: string, ndrDate: Date, windowMinutes?: number): Promise<NdrEvent | undefined>;
   resolveOpenNDREvents(awb: string, resolution: "delivered" | "returned" | "cancelled", resolvedAt?: Date): Promise<number>;
   listStaleUnresolvedNDREvents(olderThanHours: number, limit?: number): Promise<NdrEvent[]>;
@@ -2566,12 +2576,15 @@ export class DbStorage implements IStorage {
       .limit(limit);
   }
 
-  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }> {
+  async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEventListItem[]; total: number }> {
     // Phase 2: storeId is the multi-store scope. Either branch below
     // (agent-filtered or admin-wide) adds it to the WHERE clause when
     // present so an NDR list for store A never includes store B.
     const baseConds = [eq(ndrEvents.resolved, false)];
     if (filters?.storeId) baseConds.push(eq(ndrEvents.storeId, filters.storeId));
+
+    // See NdrEventListItem for why rawNdrData is left out of the select.
+    const { rawNdrData: _rawNdrData, ...ndrListColumns } = getTableColumns(ndrEvents);
 
     // If assignedTo is specified (agent filter), join with orders to filter by assignment
     if (filters?.assignedTo) {
@@ -2580,7 +2593,7 @@ export class DbStorage implements IStorage {
         eq(orders.assignedTo, filters.assignedTo),
       ];
       // Get NDR events joined with orders to filter by agent assignment
-      let query = db.select({ ndrEvent: ndrEvents })
+      let query = db.select(ndrListColumns)
         .from(ndrEvents)
         .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
         .where(and(...conds))
@@ -2593,15 +2606,16 @@ export class DbStorage implements IStorage {
         query = query.offset(filters.offset) as any;
       }
 
-      const results = await query;
-      const events = results.map(r => r.ndrEvent);
-
-      // Count for pagination
-      const countResult = await db
-        .select({ count: count() })
-        .from(ndrEvents)
-        .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
-        .where(and(...conds));
+      // The page and the pagination count are independent, so run
+      // them concurrently instead of paying two round trips in series.
+      const [events, countResult] = await Promise.all([
+        query,
+        db
+          .select({ count: count() })
+          .from(ndrEvents)
+          .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
+          .where(and(...conds)),
+      ]);
 
       return {
         events,
@@ -2611,7 +2625,7 @@ export class DbStorage implements IStorage {
 
     // Admin path: no assignedTo filter, return all unresolved NDR events
     // (still scoped to the active store when storeId is set).
-    const baseQuery = db.select().from(ndrEvents).where(and(...baseConds));
+    const baseQuery = db.select(ndrListColumns).from(ndrEvents).where(and(...baseConds));
 
     let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
 
@@ -2623,12 +2637,13 @@ export class DbStorage implements IStorage {
       query = query.offset(filters.offset) as any;
     }
 
-    const events = await query;
-
-    const countResult = await db
-      .select({ count: count() })
-      .from(ndrEvents)
-      .where(and(...baseConds));
+    const [events, countResult] = await Promise.all([
+      query,
+      db
+        .select({ count: count() })
+        .from(ndrEvents)
+        .where(and(...baseConds)),
+    ]);
 
     return {
       events,
@@ -3362,7 +3377,7 @@ export class DbStorage implements IStorage {
       assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
 
-    const assignedOrderIds = await db
+    const assignedOrderIdsQ = db
       .selectDistinct({ orderId: orderAssignments.orderId })
       .from(orderAssignments)
       .where(assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined);
@@ -3374,19 +3389,12 @@ export class DbStorage implements IStorage {
     if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
 
-    const confirmedOrderIds = await db
+    const confirmedOrderIdsQ = db
       .selectDistinct({ orderId: orderStatusHistory.orderId })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...confirmedInRangeConditions));
     
-    // Combine both sets (UNION in JS) and count unique order IDs
-    const allAssignedIds = new Set([
-      ...assignedOrderIds.map(r => r.orderId),
-      ...confirmedOrderIds.map(r => r.orderId)
-    ]);
-    const assignedCount = allAssignedIds.size;
-
     // Query 2: Confirmed Orders (LOWER(status) = 'confirmed' in history within date range)
     const confirmedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
     if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
@@ -3394,7 +3402,7 @@ export class DbStorage implements IStorage {
     if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedConditions.push(buildAttributionCondition(userId));
 
-    const [confirmedResult] = await db
+    const confirmedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3407,7 +3415,7 @@ export class DbStorage implements IStorage {
     if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) cancelledConditions.push(buildAttributionCondition(userId));
 
-    const [cancelledResult] = await db
+    const cancelledResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3421,7 +3429,7 @@ export class DbStorage implements IStorage {
     if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) shippedConditions.push(buildAttributionCondition(userId));
 
-    const [shippedResult] = await db
+    const shippedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3434,7 +3442,7 @@ export class DbStorage implements IStorage {
     if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) deliveredConditions.push(buildAttributionCondition(userId));
 
-    const [deliveredResult] = await db
+    const deliveredResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3454,7 +3462,7 @@ export class DbStorage implements IStorage {
     if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
     if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
 
-    const [rtoResult] = await db
+    const rtoResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
@@ -3465,7 +3473,7 @@ export class DbStorage implements IStorage {
     if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
     if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
 
-    const [followUpResult] = await db
+    const followUpResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
@@ -3480,10 +3488,42 @@ export class DbStorage implements IStorage {
     if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
 
-    const [aiConfirmedResult] = await db
+    const aiConfirmedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .where(and(...aiConfirmedConditions));
+
+    // All nine aggregates are independent of each other (each only
+    // reads from the base tables with its own filters), so they run
+    // concurrently: one round trip to Neon instead of nine in series.
+    const [
+      assignedOrderIds,
+      confirmedOrderIds,
+      [confirmedResult],
+      [cancelledResult],
+      [shippedResult],
+      [deliveredResult],
+      [rtoResult],
+      [followUpResult],
+      [aiConfirmedResult],
+    ] = await Promise.all([
+      assignedOrderIdsQ,
+      confirmedOrderIdsQ,
+      confirmedResultQ,
+      cancelledResultQ,
+      shippedResultQ,
+      deliveredResultQ,
+      rtoResultQ,
+      followUpResultQ,
+      aiConfirmedResultQ,
+    ]);
+
+    // Combine both sets (UNION in JS) and count unique order IDs
+    const allAssignedIds = new Set([
+      ...assignedOrderIds.map(r => r.orderId),
+      ...confirmedOrderIds.map(r => r.orderId)
+    ]);
+    const assignedCount = allAssignedIds.size;
 
     return {
       assignedOrders: assignedCount,

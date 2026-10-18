@@ -20,7 +20,7 @@ import {
   type InsertReturnItem,
   type User,
 } from "@shared/schema";
-import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
+import { eq, or, sql, desc, gte, lte, and, asc, inArray } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient, getShopifyClient } from "./shopify";
@@ -8887,23 +8887,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         storeId: authResult.storeId, // Phase 2: scope to active store
       });
 
-      // Enrich each NDR event with order-level NDR fields
-      const enrichedEvents = await Promise.all(
-        result.events.map(async (event) => {
-          const order = await storage.getOrder(event.orderId);
-          return {
-            ...event,
-            // Order-level NDR fields from Delhivery webhook
-            nslCode: order?.nslCode || null,
-            failureReason: order?.failureReason || event.ndrReason,
-            lastFailedAt: order?.lastFailedAt || event.ndrDate,
-            // Additional order context for display
-            shopifyOrderNumber: order?.shopifyOrderNumber,
-            customerName: order?.customerName,
-            customerPhone: order?.customerPhone,
-          };
-        })
-      );
+      // Enrich each NDR event with order-level NDR fields. One lookup
+      // for the whole page, selecting only the six columns used below:
+      // a per-event getOrder() pulled the full row (raw_shopify_data
+      // alone is ~5 KB) 50 times through a 10-connection pool.
+      const orderIds = Array.from(new Set(result.events.map((e) => e.orderId)));
+      const orderRows = orderIds.length
+        ? await db
+            .select({
+              id: orders.id,
+              nslCode: orders.nslCode,
+              failureReason: orders.failureReason,
+              lastFailedAt: orders.lastFailedAt,
+              shopifyOrderNumber: orders.shopifyOrderNumber,
+              customerName: orders.customerName,
+              customerPhone: orders.customerPhone,
+            })
+            .from(orders)
+            .where(inArray(orders.id, orderIds))
+        : [];
+      const ordersById = new Map(orderRows.map((o) => [o.id, o]));
+      const enrichedEvents = result.events.map((event) => {
+        const order = ordersById.get(event.orderId);
+        return {
+          ...event,
+          // Order-level NDR fields from Delhivery webhook
+          nslCode: order?.nslCode || null,
+          failureReason: order?.failureReason || event.ndrReason,
+          lastFailedAt: order?.lastFailedAt || event.ndrDate,
+          // Additional order context for display
+          shopifyOrderNumber: order?.shopifyOrderNumber,
+          customerName: order?.customerName,
+          customerPhone: order?.customerPhone,
+        };
+      });
 
       res.json({ 
         events: enrichedEvents, 
