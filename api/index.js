@@ -1922,9 +1922,6 @@ var init_storage = __esm({
       // going through the auth flow). The bcrypt-hashed value is the only
       // thing that should ever land in users.password — callers must hash
       // before invoking this.
-      async setUserPassword(id, hashedPassword) {
-        await db.update(users).set({ password: hashedPassword, updatedAt: /* @__PURE__ */ new Date() }).where(eq(users.id, id));
-      }
       async deleteUser(id) {
         await db.delete(users).where(eq(users.id, id));
       }
@@ -12927,14 +12924,10 @@ function isBcryptHash(stored) {
 }
 async function verifyPassword(plaintext, stored) {
   if (!stored || typeof plaintext !== "string" || plaintext.length === 0) {
-    return { ok: false, needsRehash: false };
+    return false;
   }
-  if (isBcryptHash(stored)) {
-    const ok2 = await bcrypt.compare(plaintext, stored);
-    return { ok: ok2, needsRehash: false };
-  }
-  const ok = plaintext === stored;
-  return { ok, needsRehash: ok };
+  if (!isBcryptHash(stored)) return false;
+  return bcrypt.compare(plaintext, stored);
 }
 
 // server/routes.ts
@@ -16119,15 +16112,12 @@ async function registerRoutes(app2) {
         await verifyPassword(password, TIMING_DECOY);
         return res.status(401).json({ error: "Invalid email or password." });
       }
-      const { ok, needsRehash } = await verifyPassword(password, user.password);
+      const ok = await verifyPassword(password, user.password);
       if (!ok) {
         return res.status(401).json({ error: "Invalid email or password." });
       }
       if (!user.isActive) {
         return res.status(403).json({ error: "This account has been deactivated. Contact your admin." });
-      }
-      if (needsRehash) {
-        hashPassword(password).then((hashed) => storage.setUserPassword(user.id, hashed)).catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
       }
       req.session.userId = user.id;
       await new Promise(

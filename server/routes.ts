@@ -4870,12 +4870,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //
   // Behaviour:
   //   1. Look up user by email.
-  //   2. Verify password via bcryptjs (handles both bcrypt-shaped
-  //      hashes and legacy plaintext rows during the cutover — see
-  //      server/auth.ts verifyPassword for the migration logic).
-  //   3. If the row is still plaintext, silently re-hash and write
-  //      back so the next login takes the secure path.
-  //   4. Return the user (password stripped) for the client's
+  //   2. Verify password via bcryptjs (server/auth.ts verifyPassword).
+  //   3. Return the user (password stripped) for the client's
   //      transitional localStorage shim. Phase 2 will replace this
   //      with a real signed session cookie.
   //
@@ -4900,22 +4896,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid email or password." });
       }
 
-      const { ok, needsRehash } = await verifyPassword(password, user.password);
+      const ok = await verifyPassword(password, user.password);
       if (!ok) {
         return res.status(401).json({ error: "Invalid email or password." });
       }
 
       if (!user.isActive) {
         return res.status(403).json({ error: "This account has been deactivated. Contact your admin." });
-      }
-
-      // Transitional rehash: the row was plaintext; write the bcrypt
-      // form back so the next login takes the secure path. Don't
-      // block the response on this — fire and forget.
-      if (needsRehash) {
-        hashPassword(password)
-          .then((hashed) => storage.setUserPassword(user.id, hashed))
-          .catch((err) => console.warn(`[auth] background rehash failed for ${email}: ${err?.message}`));
       }
 
       // Establish a real server-side session. After this line the

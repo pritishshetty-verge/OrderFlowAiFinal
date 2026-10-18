@@ -20,7 +20,7 @@ async function main() {
     process.exit(0);
   }
   const u = r.rows[0];
-  const { ok } = await verifyPassword(CANDIDATE, u.password);
+  const ok = await verifyPassword(CANDIDATE, u.password);
   console.log(
     `RESULT: found — active=${u.is_active} role=${u.role} | "${CANDIDATE}" matches = ${ok}`,
   );

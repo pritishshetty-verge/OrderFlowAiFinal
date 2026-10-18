@@ -141,7 +141,6 @@ export interface IStorage {
   getUserByAgentExtension(agentExtension: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: UpdateUser): Promise<User | undefined>;
-  setUserPassword(id: string, hashedPassword: string): Promise<void>;
   deleteUser(id: string): Promise<void>;
   listUsers(filters?: { role?: string; isActive?: boolean }): Promise<User[]>;
 
@@ -647,13 +646,6 @@ export class DbStorage implements IStorage {
   // going through the auth flow). The bcrypt-hashed value is the only
   // thing that should ever land in users.password — callers must hash
   // before invoking this.
-  async setUserPassword(id: string, hashedPassword: string): Promise<void> {
-    await db
-      .update(users)
-      .set({ password: hashedPassword, updatedAt: new Date() })
-      .where(eq(users.id, id));
-  }
-
   async deleteUser(id: string): Promise<void> {
     await db.delete(users).where(eq(users.id, id));
   }

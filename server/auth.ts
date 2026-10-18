@@ -34,12 +34,10 @@ export async function hashPassword(plaintext: string): Promise<string> {
 }
 
 /**
- * Detect whether a stored password value is bcrypt-shaped. Used by the
- * transitional login path to decide between secure compare and the
- * legacy plaintext compare. The check is intentionally narrow — it
- * matches the bcrypt prefix family ($2a$ / $2b$ / $2y$) — so a
- * plaintext password that happens to look bcrypt-ish (very rare) is
- * still treated as a hash and fails verification cleanly.
+ * Detect whether a stored password value is bcrypt-shaped ($2a$ / $2b$ /
+ * $2y$ prefix family). verifyPassword uses it as a guard so a malformed
+ * or non-hash stored value fails verification cleanly instead of making
+ * bcrypt.compare throw on an invalid salt.
  */
 export function isBcryptHash(stored: string | null | undefined): boolean {
   if (!stored) return false;
@@ -47,38 +45,21 @@ export function isBcryptHash(stored: string | null | undefined): boolean {
 }
 
 /**
- * Verify a plaintext password against a stored value.
+ * Verify a plaintext password against a stored bcrypt hash.
  *
- * Transitional behaviour during the bcrypt rollout:
- *   - If `stored` is bcrypt-shaped → secure constant-time compare via
- *     bcrypt.compare. Standard and correct.
- *   - If `stored` is a legacy plaintext password (no users have been
- *     migrated yet) → plain string compare AND signal back that the
- *     row needs upgrading. The login route then re-hashes the
- *     password and writes the bcrypt form back to the row, so the
- *     next login takes the secure path automatically.
- *
- * This keeps the existing 4 plaintext rows working through the
- * cutover without a forced password reset. Once Phase 2 ships the
- * forced-rotation, this helper can drop the `legacy` branch and the
- * function reduces to bcrypt.compare.
+ * Only bcrypt-shaped values can verify. The transitional plaintext
+ * compare that carried the original rows through the bcrypt cutover was
+ * removed once an audit confirmed every users.password value is a
+ * bcrypt hash (7/7 rows, 2026-10-18); a plaintext stored value now
+ * always fails.
  */
 export async function verifyPassword(
   plaintext: string,
   stored: string | null | undefined,
-): Promise<{ ok: boolean; needsRehash: boolean }> {
+): Promise<boolean> {
   if (!stored || typeof plaintext !== "string" || plaintext.length === 0) {
-    return { ok: false, needsRehash: false };
+    return false;
   }
-  if (isBcryptHash(stored)) {
-    const ok = await bcrypt.compare(plaintext, stored);
-    return { ok, needsRehash: false };
-  }
-  // Legacy plaintext path. Constant-time-ish compare to avoid leaking
-  // timing info about password length matches. (Strict timing safety
-  // requires fixed-length comparison, which we can't guarantee here
-  // without knowing the password length up front; the leakage window
-  // is small and disappears as soon as users migrate.)
-  const ok = plaintext === stored;
-  return { ok, needsRehash: ok };
+  if (!isBcryptHash(stored)) return false;
+  return bcrypt.compare(plaintext, stored);
 }
