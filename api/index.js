@@ -3525,53 +3525,48 @@ var init_storage = __esm({
         if (endDate) {
           assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
         }
-        const assignedOrderIds = await db.selectDistinct({ orderId: orderAssignments.orderId }).from(orderAssignments).where(assignmentConditions.length > 0 ? and(...assignmentConditions) : void 0);
+        const assignedOrderIdsQ = db.selectDistinct({ orderId: orderAssignments.orderId }).from(orderAssignments).where(assignmentConditions.length > 0 ? and(...assignmentConditions) : void 0);
         const confirmedInRangeConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
         if (storeId) confirmedInRangeConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedInRangeConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
-        const confirmedOrderIds = await db.selectDistinct({ orderId: orderStatusHistory.orderId }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedInRangeConditions));
-        const allAssignedIds = /* @__PURE__ */ new Set([
-          ...assignedOrderIds.map((r) => r.orderId),
-          ...confirmedOrderIds.map((r) => r.orderId)
-        ]);
-        const assignedCount = allAssignedIds.size;
+        const confirmedOrderIdsQ = db.selectDistinct({ orderId: orderStatusHistory.orderId }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedInRangeConditions));
         const confirmedConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
         if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) confirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) confirmedConditions.push(buildAttributionCondition(userId));
-        const [confirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedConditions));
+        const confirmedResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...confirmedConditions));
         const cancelledConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'cancelled'`];
         if (storeId) cancelledConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) cancelledConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) cancelledConditions.push(buildAttributionCondition(userId));
-        const [cancelledResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...cancelledConditions));
+        const cancelledResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...cancelledConditions));
         const shippedConditions = [sql2`LOWER(${orderStatusHistory.status}) IN ('shipped', 'fulfilled')`];
         if (storeId) shippedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) shippedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) shippedConditions.push(buildAttributionCondition(userId));
-        const [shippedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...shippedConditions));
+        const shippedResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...shippedConditions));
         const deliveredConditions = [sql2`LOWER(${orderStatusHistory.status}) = 'delivered'`];
         if (storeId) deliveredConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) deliveredConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
         if (userId) deliveredConditions.push(buildAttributionCondition(userId));
-        const [deliveredResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...deliveredConditions));
+        const deliveredResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId)).where(and(...deliveredConditions));
         const rtoStatusCondition = sql2`(LOWER(${orders.shipmentStatus}) = 'rto' OR ${orders.status} IN ('rto_initiated', 'rto_delivered'))`;
         const rtoConditions = [rtoStatusCondition];
         if (storeId) rtoConditions.push(eq(orders.storeId, storeId));
         if (userId) rtoConditions.push(eq(orderAssignments.userId, userId));
         if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
         if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
-        const [rtoResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...rtoConditions));
+        const rtoResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...rtoConditions));
         const followUpConditions = [eq(orders.callStatus, "Follow Up")];
         if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
         if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
-        const [followUpResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...followUpConditions));
+        const followUpResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orders.id})` }).from(orders).leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId)).where(and(...followUpConditions));
         const aiConfirmedConditions = [
           sql2`${orderStatusHistory.note} = 'Auto-confirmed by Scalysis AI'`,
           sql2`${orderStatusHistory.changedBy} IS NULL`
@@ -3579,7 +3574,33 @@ var init_storage = __esm({
         if (storeId) aiConfirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
         if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
         if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
-        const [aiConfirmedResult] = await db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).where(and(...aiConfirmedConditions));
+        const aiConfirmedResultQ = db.select({ count: sql2`COUNT(DISTINCT ${orderStatusHistory.orderId})` }).from(orderStatusHistory).where(and(...aiConfirmedConditions));
+        const [
+          assignedOrderIds,
+          confirmedOrderIds,
+          [confirmedResult],
+          [cancelledResult],
+          [shippedResult],
+          [deliveredResult],
+          [rtoResult],
+          [followUpResult],
+          [aiConfirmedResult]
+        ] = await Promise.all([
+          assignedOrderIdsQ,
+          confirmedOrderIdsQ,
+          confirmedResultQ,
+          cancelledResultQ,
+          shippedResultQ,
+          deliveredResultQ,
+          rtoResultQ,
+          followUpResultQ,
+          aiConfirmedResultQ
+        ]);
+        const allAssignedIds = /* @__PURE__ */ new Set([
+          ...assignedOrderIds.map((r) => r.orderId),
+          ...confirmedOrderIds.map((r) => r.orderId)
+        ]);
+        const assignedCount = allAssignedIds.size;
         return {
           assignedOrders: assignedCount,
           confirmedOrders: Number(confirmedResult?.count) || 0,

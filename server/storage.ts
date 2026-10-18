@@ -3329,7 +3329,7 @@ export class DbStorage implements IStorage {
       assignmentConditions.push(lte(orderAssignments.createdAt, endDate));
     }
 
-    const assignedOrderIds = await db
+    const assignedOrderIdsQ = db
       .selectDistinct({ orderId: orderAssignments.orderId })
       .from(orderAssignments)
       .where(assignmentConditions.length > 0 ? and(...assignmentConditions) : undefined);
@@ -3341,19 +3341,12 @@ export class DbStorage implements IStorage {
     if (endDate) confirmedInRangeConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedInRangeConditions.push(buildAttributionCondition(userId));
 
-    const confirmedOrderIds = await db
+    const confirmedOrderIdsQ = db
       .selectDistinct({ orderId: orderStatusHistory.orderId })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
       .where(and(...confirmedInRangeConditions));
     
-    // Combine both sets (UNION in JS) and count unique order IDs
-    const allAssignedIds = new Set([
-      ...assignedOrderIds.map(r => r.orderId),
-      ...confirmedOrderIds.map(r => r.orderId)
-    ]);
-    const assignedCount = allAssignedIds.size;
-
     // Query 2: Confirmed Orders (LOWER(status) = 'confirmed' in history within date range)
     const confirmedConditions = [sql`LOWER(${orderStatusHistory.status}) = 'confirmed'`];
     if (storeId) confirmedConditions.push(eq(orderStatusHistory.storeId, storeId));
@@ -3361,7 +3354,7 @@ export class DbStorage implements IStorage {
     if (endDate) confirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) confirmedConditions.push(buildAttributionCondition(userId));
 
-    const [confirmedResult] = await db
+    const confirmedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3374,7 +3367,7 @@ export class DbStorage implements IStorage {
     if (endDate) cancelledConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) cancelledConditions.push(buildAttributionCondition(userId));
 
-    const [cancelledResult] = await db
+    const cancelledResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3388,7 +3381,7 @@ export class DbStorage implements IStorage {
     if (endDate) shippedConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) shippedConditions.push(buildAttributionCondition(userId));
 
-    const [shippedResult] = await db
+    const shippedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3401,7 +3394,7 @@ export class DbStorage implements IStorage {
     if (endDate) deliveredConditions.push(lte(orderStatusHistory.createdAt, endDate));
     if (userId) deliveredConditions.push(buildAttributionCondition(userId));
 
-    const [deliveredResult] = await db
+    const deliveredResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .leftJoin(orderAssignments, eq(orderStatusHistory.orderId, orderAssignments.orderId))
@@ -3421,7 +3414,7 @@ export class DbStorage implements IStorage {
     if (startDate) rtoConditions.push(gte(orders.updatedAt, startDate));
     if (endDate) rtoConditions.push(lte(orders.updatedAt, endDate));
 
-    const [rtoResult] = await db
+    const rtoResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
@@ -3432,7 +3425,7 @@ export class DbStorage implements IStorage {
     if (storeId) followUpConditions.push(eq(orders.storeId, storeId));
     if (userId) followUpConditions.push(eq(orderAssignments.userId, userId));
 
-    const [followUpResult] = await db
+    const followUpResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orders.id})` })
       .from(orders)
       .leftJoin(orderAssignments, eq(orders.id, orderAssignments.orderId))
@@ -3447,10 +3440,42 @@ export class DbStorage implements IStorage {
     if (startDate) aiConfirmedConditions.push(gte(orderStatusHistory.createdAt, startDate));
     if (endDate) aiConfirmedConditions.push(lte(orderStatusHistory.createdAt, endDate));
 
-    const [aiConfirmedResult] = await db
+    const aiConfirmedResultQ = db
       .select({ count: sql<number>`COUNT(DISTINCT ${orderStatusHistory.orderId})` })
       .from(orderStatusHistory)
       .where(and(...aiConfirmedConditions));
+
+    // All nine aggregates are independent of each other (each only
+    // reads from the base tables with its own filters), so they run
+    // concurrently: one round trip to Neon instead of nine in series.
+    const [
+      assignedOrderIds,
+      confirmedOrderIds,
+      [confirmedResult],
+      [cancelledResult],
+      [shippedResult],
+      [deliveredResult],
+      [rtoResult],
+      [followUpResult],
+      [aiConfirmedResult],
+    ] = await Promise.all([
+      assignedOrderIdsQ,
+      confirmedOrderIdsQ,
+      confirmedResultQ,
+      cancelledResultQ,
+      shippedResultQ,
+      deliveredResultQ,
+      rtoResultQ,
+      followUpResultQ,
+      aiConfirmedResultQ,
+    ]);
+
+    // Combine both sets (UNION in JS) and count unique order IDs
+    const allAssignedIds = new Set([
+      ...assignedOrderIds.map(r => r.orderId),
+      ...confirmedOrderIds.map(r => r.orderId)
+    ]);
+    const assignedCount = allAssignedIds.size;
 
     return {
       assignedOrders: assignedCount,
