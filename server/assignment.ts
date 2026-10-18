@@ -1,5 +1,4 @@
 import type { IStorage } from "./storage";
-import type { User, Order } from "@shared/schema";
 
 /**
  * Round-robin assignment algorithm for distributing COD orders
@@ -34,45 +33,25 @@ export class OrderAssignmentEngine {
       return null;
     }
 
-    // Count assigned orders for each agent
-    const agentWorkloads = await Promise.all(
-      eligibleAgents.map(async (agent) => {
-        const assignedOrders = await this.storage.listOrders({
-          assignedTo: agent.id,
-          // Count orders that are still active (not completed/cancelled/delivered)
-          status: undefined, // We'll filter in memory
-        });
+    // Count active orders for each agent in one aggregate query.
+    // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
+    // — see server/logic/activeOrder.ts. Previously this fetched a page of
+    // 50 rows per agent and filtered in memory, so any agent holding more
+    // than 50 orders had their workload under-counted.
+    const loads = await this.storage.getAgentOrderLoads({
+      agentIds: eligibleAgents.map((agent) => agent.id),
+    });
 
-        // Count only truly active orders using the AND rule:
-        // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
-        // This means an order is active ONLY when BOTH agent AND warehouse haven't finished
-        const activeOrders = assignedOrders.orders.filter((order) => {
-          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
-          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
-          
-          // Condition A: Agent hasn't finished (call_status NOT confirmed/cancelled)
-          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
-          
-          // Condition B: Warehouse hasn't finished (fulfillment_status NOT fulfilled/partial)
-          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
-          
-          // Active ONLY if BOTH haven't finished
-          return !agentFinished && !warehouseFinished;
-        });
-
-        // Find most recent assignment time
-        const lastAssignmentTime = assignedOrders.orders.length > 0
-          ? Math.max(...assignedOrders.orders.map((o) => new Date(o.assignedAt || 0).getTime()))
-          : 0;
-
-        return {
-          agentId: agent.id,
-          agentName: agent.fullName,
-          workload: activeOrders.length,
-          lastAssignmentTime,
-        };
-      })
-    );
+    const agentWorkloads = eligibleAgents.map((agent) => {
+      const load = loads.get(agent.id);
+      return {
+        agentId: agent.id,
+        agentName: agent.fullName,
+        workload: load?.activeOrders ?? 0,
+        // Most recent assignment time (max(assigned_at) across all their orders)
+        lastAssignmentTime: load?.lastAssignedAt?.getTime() ?? 0,
+      };
+    });
 
     // Sort by workload (ascending), then by last assignment time (ascending)
     // This gives us round-robin: agent with least orders gets next one
@@ -237,43 +216,28 @@ export class OrderAssignmentEngine {
       return "online";
     };
 
-    const workloads = await Promise.all(
-      agents.map(async (agent) => {
-        const assignedOrders = await this.storage.listOrders({
-          assignedTo: agent.id,
-        });
+    // One aggregate query for every agent's total + active counts.
+    // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
+    // — see server/logic/activeOrder.ts.
+    const loads = await this.storage.getAgentOrderLoads({
+      agentIds: agents.map((agent) => agent.id),
+    });
 
-        // Count only truly active orders using the AND rule:
-        // Active = (call_status NOT IN [confirmed, cancelled]) AND (fulfillment_status NOT IN [fulfilled, partial])
-        // This means an order is active ONLY when BOTH agent AND warehouse haven't finished
-        const activeOrders = assignedOrders.orders.filter((order) => {
-          const callStatus = ((order.callStatus || "") + "").trim().toLowerCase();
-          const fulfillmentStatus = ((order.fulfillmentStatus || "") + "").trim().toLowerCase();
-          
-          // Condition A: Agent hasn't finished (call_status NOT confirmed/cancelled)
-          const agentFinished = callStatus === "confirmed" || callStatus === "cancelled";
-          
-          // Condition B: Warehouse hasn't finished (fulfillment_status NOT fulfilled/partial)
-          const warehouseFinished = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
-          
-          // Active ONLY if BOTH haven't finished
-          return !agentFinished && !warehouseFinished;
-        });
+    const workloads = agents.map((agent) => {
+      const load = loads.get(agent.id);
+      const accountStatus = agent.presenceStatus || "present";
+      const liveStatus = getLiveStatus(agent.id, accountStatus);
 
-        const accountStatus = agent.presenceStatus || "present";
-        const liveStatus = getLiveStatus(agent.id, accountStatus);
-
-        return {
-          agentId: agent.id,
-          agentName: agent.fullName,
-          role: agent.role,
-          presenceStatus: accountStatus,
-          liveStatus,
-          assignedOrders: assignedOrders.total,
-          activeOrders: activeOrders.length,
-        };
-      })
-    );
+      return {
+        agentId: agent.id,
+        agentName: agent.fullName,
+        role: agent.role,
+        presenceStatus: accountStatus,
+        liveStatus,
+        assignedOrders: load?.assignedOrders ?? 0,
+        activeOrders: load?.activeOrders ?? 0,
+      };
+    });
 
     return workloads;
   }
