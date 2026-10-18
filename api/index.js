@@ -3896,31 +3896,68 @@ var init_storage = __esm({
         }
         return match.id;
       }
-      async getAbandonedCheckouts() {
-        const results = await db.select({
+      /**
+       * Visibility rule for the Abandoned Carts page (Fastrr's own pattern):
+       * only carts with a real NAME and a SHIPPING ADDRESS. Phone-only
+       * "Guest" drop-offs are hidden. Used to live in the browser; it has to
+       * be in SQL now that the page is paginated server-side.
+       */
+      abandonedCheckoutVisibleCondition() {
+        return sql3`(
+      NULLIF(TRIM(${abandonedCheckouts.customerName}), '') IS NOT NULL
+      AND LOWER(TRIM(${abandonedCheckouts.customerName})) <> 'guest'
+      AND NULLIF(TRIM(${abandonedCheckouts.address}), '') IS NOT NULL
+    )`;
+      }
+      abandonedCheckoutListConditions(filters) {
+        const conditions = [this.abandonedCheckoutVisibleCondition()];
+        if (filters?.search && filters.search.trim()) {
+          const pattern = `%${filters.search.trim()}%`;
+          conditions.push(sql3`(
+        ${abandonedCheckouts.customerName} ILIKE ${pattern} OR
+        ${abandonedCheckouts.customerPhone} ILIKE ${pattern}
+      )`);
+        }
+        if (filters?.recoveryStatus) {
+          conditions.push(eq(abandonedCheckouts.recoveryStatus, filters.recoveryStatus));
+        }
+        if (filters?.checkoutStage) {
+          conditions.push(eq(abandonedCheckouts.checkoutStage, filters.checkoutStage));
+        }
+        return and2(...conditions);
+      }
+      async listAbandonedCheckouts(filters) {
+        const whereClause = this.abandonedCheckoutListConditions(filters);
+        const { rawData: _rawData, ...listColumns } = getTableColumns(abandonedCheckouts);
+        const pageQuery = db.select({ ...listColumns, assignedAgentName: users.fullName }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).where(whereClause).orderBy(desc(abandonedCheckouts.createdAt), desc(abandonedCheckouts.id)).limit(filters?.limit ?? 50).offset(filters?.offset ?? 0);
+        const totalQuery = db.select({ value: count() }).from(abandonedCheckouts).where(whereClause);
+        const stagesQuery = db.select({ stage: abandonedCheckouts.checkoutStage }).from(abandonedCheckouts).where(and2(this.abandonedCheckoutVisibleCondition(), isNotNull(abandonedCheckouts.checkoutStage))).groupBy(abandonedCheckouts.checkoutStage).orderBy(desc(sql3`max(${abandonedCheckouts.createdAt})`));
+        const [rows, [{ value: total }], stageRows] = await Promise.all([
+          pageQuery,
+          totalQuery,
+          stagesQuery
+        ]);
+        return {
+          rows,
+          total,
+          stages: stageRows.map((r) => r.stage).filter((s) => !!s)
+        };
+      }
+      async exportAbandonedCheckouts(filters) {
+        return db.select({
           id: abandonedCheckouts.id,
-          // storeId added in Phase 1 (multi-store schema). Nullable
-          // until backfill flips it NOT NULL.
-          storeId: abandonedCheckouts.storeId,
-          externalId: abandonedCheckouts.externalId,
+          createdAt: abandonedCheckouts.createdAt,
           customerName: abandonedCheckouts.customerName,
           customerPhone: abandonedCheckouts.customerPhone,
           customerEmail: abandonedCheckouts.customerEmail,
-          items: abandonedCheckouts.items,
           cartValue: abandonedCheckouts.cartValue,
-          checkoutUrl: abandonedCheckouts.checkoutUrl,
           checkoutStage: abandonedCheckouts.checkoutStage,
-          address: abandonedCheckouts.address,
-          assignedTo: abandonedCheckouts.assignedTo,
-          isRecovered: abandonedCheckouts.isRecovered,
-          recoveryStatus: abandonedCheckouts.recoveryStatus,
-          rawData: abandonedCheckouts.rawData,
-          convertedOrderId: abandonedCheckouts.convertedOrderId,
-          convertedAt: abandonedCheckouts.convertedAt,
-          createdAt: abandonedCheckouts.createdAt,
-          assignedAgentName: users.fullName
-        }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).orderBy(desc(abandonedCheckouts.createdAt));
-        return results;
+          recoveryStatus: abandonedCheckouts.recoveryStatus
+        }).from(abandonedCheckouts).where(this.abandonedCheckoutListConditions(filters)).orderBy(desc(abandonedCheckouts.createdAt), desc(abandonedCheckouts.id));
+      }
+      async getAbandonedCheckout(id) {
+        const [row] = await db.select({ ...getTableColumns(abandonedCheckouts), assignedAgentName: users.fullName }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).where(eq(abandonedCheckouts.id, id)).limit(1);
+        return row;
       }
       /** Update the telecalling recovery status; keep isRecovered in sync. */
       async updateAbandonedCheckoutStatus(id, status) {
@@ -13340,13 +13377,62 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: "Failed to process webhook" });
     }
   });
+  const parseAbandonedCheckoutFilters = (query) => {
+    const { search, status, stage } = query;
+    const filters = {};
+    if (typeof search === "string" && search.trim()) filters.search = search.trim();
+    if (typeof status === "string" && status && status !== "all") {
+      if (!ABANDONED_RECOVERY_STATUSES.includes(status)) {
+        return { error: `Invalid status. Must be one of: ${ABANDONED_RECOVERY_STATUSES.join(", ")}` };
+      }
+      filters.recoveryStatus = status;
+    }
+    if (typeof stage === "string" && stage && stage !== "all") filters.checkoutStage = stage;
+    return { filters };
+  };
   app2.get("/api/abandoned-checkouts", async (req, res) => {
     try {
-      const checkouts = await storage.getAbandonedCheckouts();
-      res.json(checkouts);
+      const parsed = parseAbandonedCheckoutFilters(req.query);
+      if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+      const { limit, page } = req.query;
+      const parsedLimit = Math.min(Math.max(parseInt(String(limit ?? "")) || 50, 1), 200);
+      const parsedPage = Math.max(parseInt(String(page ?? "")) || 1, 1);
+      const result = await storage.listAbandonedCheckouts({
+        ...parsed.filters,
+        limit: parsedLimit,
+        offset: (parsedPage - 1) * parsedLimit
+      });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching abandoned checkouts:", error);
       res.status(500).json({ error: "Failed to fetch abandoned checkouts" });
+    }
+  });
+  app2.get("/api/abandoned-checkouts/export", async (req, res) => {
+    try {
+      const parsed = parseAbandonedCheckoutFilters(req.query);
+      if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+      const rows = await storage.exportAbandonedCheckouts(parsed.filters);
+      res.json({ rows });
+    } catch (error) {
+      console.error("Error exporting abandoned checkouts:", error);
+      res.status(500).json({ error: "Failed to export abandoned checkouts" });
+    }
+  });
+  app2.get("/api/abandoned-checkouts/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        return res.status(400).json({ error: "Invalid checkout id" });
+      }
+      const checkout = await storage.getAbandonedCheckout(id);
+      if (!checkout) {
+        return res.status(404).json({ error: "Abandoned checkout not found" });
+      }
+      res.json(checkout);
+    } catch (error) {
+      console.error("Error fetching abandoned checkout:", error);
+      res.status(500).json({ error: "Failed to fetch abandoned checkout" });
     }
   });
   app2.patch("/api/abandoned-checkouts/:id/status", async (req, res) => {

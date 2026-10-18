@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { PageLayout } from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,9 +46,28 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AbandonedCheckout } from "@shared/schema";
 
-interface AbandonedCheckoutRow extends AbandonedCheckout {
+// List rows come without rawData (the ~1.9 KB Fastrr payload); the drawer
+// fetches the full row for the selected cart via /api/abandoned-checkouts/:id.
+interface AbandonedCheckoutRow extends Omit<AbandonedCheckout, "rawData"> {
   assignedAgentName: string | null;
 }
+
+interface AbandonedCheckoutDetail extends AbandonedCheckout {
+  assignedAgentName: string | null;
+}
+
+// Same shape as /api/orders: one page of rows plus the total matching the
+// filter. `stages` is the distinct checkout stages across visible carts.
+interface AbandonedCheckoutsResponse {
+  rows: AbandonedCheckoutRow[];
+  total: number;
+  stages: string[];
+}
+
+type AbandonedCheckoutExportRow = Pick<
+  AbandonedCheckout,
+  "id" | "createdAt" | "customerName" | "customerPhone" | "customerEmail" | "cartValue" | "checkoutStage" | "recoveryStatus"
+>;
 
 interface CartItem {
   name?: string;
@@ -315,78 +334,107 @@ export default function AbandonedCartsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [stageFilter, setStageFilter] = useState("all");
 
-  const { data: checkouts, isLoading } = useQuery<AbandonedCheckoutRow[]>({
-    queryKey: ["/api/abandoned-checkouts"],
+  // Debounce search (500 ms, as on the Orders page) so typing does not
+  // fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      // Back to page 1 together with the new search term, so the query key
+      // never combines the new term with the old page number.
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Query-string filters shared by the list and the CSV export. The
+  // visibility rule (real name, not "Guest", has an address), the
+  // name/phone search and both filters are applied server-side.
+  const filterParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (stageFilter !== "all") params.set("stage", stageFilter);
+    return params;
+  }, [debouncedSearch, statusFilter, stageFilter]);
+
+  const listQueryKey = ["/api/abandoned-checkouts", page, pageSize, filterParams.toString()] as const;
+  const { data, isLoading, isPlaceholderData } = useQuery<AbandonedCheckoutsResponse>({
+    queryKey: listQueryKey,
+    queryFn: async () => {
+      const params = new URLSearchParams(filterParams);
+      params.set("page", String(page));
+      params.set("limit", String(pageSize));
+      const res = await apiRequest("GET", `/api/abandoned-checkouts?${params.toString()}`);
+      return res.json();
+    },
+    // Keep the previous page on screen while the next one loads.
+    placeholderData: keepPreviousData,
     // Near-real-time so the "Converted" cue (set by the order-create listener
     // when a customer orders outside the fast-checkout window) appears without a
     // manual refresh, keeping agents off already-converted carts.
     refetchInterval: 30_000,
   });
 
-  // Fastrr visibility pattern: only carts with a real NAME and a SHIPPING
-  // ADDRESS. Phone-only "Guest" drop-offs are hidden.
-  const baseVisible = useMemo(() => {
-    return (checkouts ?? []).filter((c) => {
-      const name = (c.customerName ?? "").trim();
-      const hasName = name.length > 0 && name.toLowerCase() !== "guest";
-      const hasAddress = (c.address ?? "").trim().length > 0;
-      return hasName && hasAddress;
-    });
-  }, [checkouts]);
-
-  // Distinct checkout stages present in the data (for the Filter popover).
-  const availableStages = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of baseVisible) {
-      if (c.checkoutStage) map.set(c.checkoutStage, humanize(c.checkoutStage));
-    }
-    return Array.from(map.entries());
-  }, [baseVisible]);
-
-  // Search (name/phone, case-insensitive) + Recovery Status + Checkout Stage.
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return baseVisible.filter((c) => {
-      if (q) {
-        const name = (c.customerName ?? "").toLowerCase();
-        const phone = (c.customerPhone ?? "").toLowerCase();
-        if (!name.includes(q) && !phone.includes(q)) return false;
-      }
-      if (statusFilter !== "all" && (c.recoveryStatus ?? "PENDING") !== statusFilter) return false;
-      if (stageFilter !== "all" && c.checkoutStage !== stageFilter) return false;
-      return true;
-    });
-  }, [baseVisible, searchQuery, statusFilter, stageFilter]);
-
-  const total = filtered.length;
+  const pageRows = data?.rows ?? [];
+  const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / pageSize) || 1;
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * pageSize;
-  const end = Math.min(start + pageSize, total);
-  const pageRows = filtered.slice(start, end);
+  const end = Math.min(start + pageRows.length, total);
 
+  // Distinct checkout stages present in the data (for the Filter popover).
+  const availableStages = useMemo(
+    () => (data?.stages ?? []).map((raw) => [raw, humanize(raw)] as [string, string]),
+    [data?.stages],
+  );
+
+  // Back to page 1 whenever the page size or any filter changes. Done in
+  // the same state update as the change (not an effect) so the query key
+  // never briefly combines the new filter with the old page number.
+  const resetToFirstPage = () => setPage(1);
+  const changeStatusFilter = (value: string) => { setStatusFilter(value); resetToFirstPage(); };
+  const changeStageFilter = (value: string) => { setStageFilter(value); resetToFirstPage(); };
+  const changePageSize = (value: number) => { setPageSize(value); resetToFirstPage(); };
+
+  // If rows disappeared under us (status change + filter, polling), fall back
+  // to the last page that still exists.
   useEffect(() => {
-    setPage(1);
-  }, [pageSize, total]);
+    if (!isPlaceholderData && page > totalPages) setPage(totalPages);
+  }, [page, totalPages, isPlaceholderData]);
 
   const activeFilters: { key: string; label: string; clear: () => void }[] = [];
   if (statusFilter !== "all") {
-    activeFilters.push({ key: "status", label: `Status: ${humanize(statusFilter)}`, clear: () => setStatusFilter("all") });
+    activeFilters.push({ key: "status", label: `Status: ${humanize(statusFilter)}`, clear: () => changeStatusFilter("all") });
   }
   if (stageFilter !== "all") {
-    activeFilters.push({ key: "stage", label: `Stage: ${humanize(stageFilter)}`, clear: () => setStageFilter("all") });
+    activeFilters.push({ key: "stage", label: `Stage: ${humanize(stageFilter)}`, clear: () => changeStageFilter("all") });
   }
   const activeCount = activeFilters.length;
 
-  // Export the currently-filtered list as a CSV download.
-  const handleExport = () => {
+  // Export the currently-filtered list (all pages) as a CSV download. The
+  // server returns only the CSV columns; the file is built here so dates
+  // stay in the user's timezone.
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    setExporting(true);
+    let rows: AbandonedCheckoutExportRow[];
+    try {
+      const res = await apiRequest("GET", `/api/abandoned-checkouts/export?${filterParams.toString()}`);
+      rows = ((await res.json()) as { rows: AbandonedCheckoutExportRow[] }).rows;
+    } catch {
+      toast({ title: "Export failed", description: "Please try again.", variant: "destructive" });
+      setExporting(false);
+      return;
+    }
+    setExporting(false);
     const headers = ["Date", "Name", "Phone", "Email", "Cart Value", "Checkout Stage", "Status"];
     const esc = (v: unknown) => {
       const s = v == null ? "" : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const lines = [headers.join(",")];
-    for (const c of filtered) {
+    for (const c of rows) {
       lines.push(
         [
           format(new Date(c.createdAt), "do MMMM , h:mm aaa"),
@@ -408,7 +456,7 @@ export default function AbandonedCartsPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast({ title: "Export ready", description: `${filtered.length} carts exported.` });
+    toast({ title: "Export ready", description: `${rows.length} carts exported.` });
   };
 
   const statusMutation = useMutation({
@@ -418,9 +466,13 @@ export default function AbandonedCartsPage() {
     onSuccess: (_data, vars) => {
       // Flip the badge instantly (table + drawer), then reconcile in the
       // background. Silent — no success toast, matching the Orders page.
-      queryClient.setQueryData<AbandonedCheckoutRow[]>(
-        ["/api/abandoned-checkouts"],
-        (old) => old?.map((c) => (c.id === vars.id ? { ...c, recoveryStatus: vars.status } : c)),
+      queryClient.setQueryData<AbandonedCheckoutsResponse>(
+        listQueryKey,
+        (old) =>
+          old && {
+            ...old,
+            rows: old.rows.map((c) => (c.id === vars.id ? { ...c, recoveryStatus: vars.status } : c)),
+          },
       );
       queryClient.invalidateQueries({ queryKey: ["/api/abandoned-checkouts"] });
       setSelected((prev) => (prev ? { ...prev, recoveryStatus: vars.status } : prev));
@@ -436,14 +488,39 @@ export default function AbandonedCartsPage() {
   };
 
   const selectedItems = asItems(selected?.items);
-  // Prev/next navigation within the currently-filtered list.
-  const selectedIndex = selected ? filtered.findIndex((c) => c.id === selected.id) : -1;
-  const canPrev = selectedIndex > 0;
-  const canNext = selectedIndex >= 0 && selectedIndex < filtered.length - 1;
-  const goPrev = () => { if (canPrev) setSelected(filtered[selectedIndex - 1]); };
-  const goNext = () => { if (canNext) setSelected(filtered[selectedIndex + 1]); };
+  // Prev/next navigation within the currently-filtered list. Stepping past
+  // either end of the page turns the page and selects the first/last row
+  // of the new page once it arrives.
+  const [pendingSelect, setPendingSelect] = useState<"first" | "last" | null>(null);
+  const selectedIndex = selected ? pageRows.findIndex((c) => c.id === selected.id) : -1;
+  const canPrev = selectedIndex > 0 || (selectedIndex === 0 && safePage > 1);
+  const canNext = selectedIndex >= 0 && (selectedIndex < pageRows.length - 1 || safePage < totalPages);
+  const goPrev = () => {
+    if (!canPrev) return;
+    if (selectedIndex > 0) setSelected(pageRows[selectedIndex - 1]);
+    else { setPendingSelect("last"); setPage(safePage - 1); }
+  };
+  const goNext = () => {
+    if (!canNext) return;
+    if (selectedIndex < pageRows.length - 1) setSelected(pageRows[selectedIndex + 1]);
+    else { setPendingSelect("first"); setPage(safePage + 1); }
+  };
+  useEffect(() => {
+    if (!pendingSelect || isPlaceholderData || pageRows.length === 0) return;
+    setSelected(pendingSelect === "first" ? pageRows[0] : pageRows[pageRows.length - 1]);
+    setPendingSelect(null);
+  }, [pendingSelect, isPlaceholderData, pageRows]);
+
+  // The full row (with Fastrr's raw payload) for the selected cart only.
+  const { data: selectedDetail, isPending: detailPending } = useQuery<AbandonedCheckoutDetail>({
+    queryKey: ["/api/abandoned-checkouts", selected?.id],
+    enabled: !!selected,
+  });
+  const pricingLoading = !!selected && detailPending;
   // Detailed price breakdown parsed from Fastrr's raw payload.
-  const pricing = selected ? parsePricing(selected.rawData, selectedItems, selected.cartValue) : null;
+  const pricing = selected
+    ? parsePricing(selectedDetail?.id === selected.id ? selectedDetail.rawData : null, selectedItems, selected.cartValue)
+    : null;
 
   return (
     <PageLayout title="Abandoned Checkouts" description="Track and recover abandoned carts from Fastrr">
@@ -480,7 +557,7 @@ export default function AbandonedCartsPage() {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recovery Status</Label>
-                      <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <Select value={statusFilter} onValueChange={changeStatusFilter}>
                         <SelectTrigger data-testid="select-status-filter"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Statuses</SelectItem>
@@ -492,7 +569,7 @@ export default function AbandonedCartsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Checkout Stage</Label>
-                      <Select value={stageFilter} onValueChange={setStageFilter}>
+                      <Select value={stageFilter} onValueChange={changeStageFilter}>
                         <SelectTrigger data-testid="select-stage-filter"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All Stages</SelectItem>
@@ -503,7 +580,7 @@ export default function AbandonedCartsPage() {
                       </Select>
                     </div>
                     {activeCount > 0 && (
-                      <Button variant="ghost" size="sm" className="w-full" onClick={() => { setStatusFilter("all"); setStageFilter("all"); }} data-testid="button-clear-filters">
+                      <Button variant="ghost" size="sm" className="w-full" onClick={() => { setStatusFilter("all"); setStageFilter("all"); resetToFirstPage(); }} data-testid="button-clear-filters">
                         Clear all filters
                       </Button>
                     )}
@@ -511,7 +588,7 @@ export default function AbandonedCartsPage() {
                 </PopoverContent>
               </Popover>
 
-              <Button variant="outline" onClick={handleExport} data-testid="button-export-csv">
+              <Button variant="outline" onClick={handleExport} disabled={exporting} data-testid="button-export-csv">
                 <Download className="h-4 w-4 mr-2" />
                 Export CSV
               </Button>
@@ -637,7 +714,7 @@ export default function AbandonedCartsPage() {
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Rows per page:</span>
-                    <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                    <Select value={String(pageSize)} onValueChange={(v) => changePageSize(Number(v))}>
                       <SelectTrigger className="w-[80px]" data-testid="select-page-size">
                         <SelectValue />
                       </SelectTrigger>
@@ -697,7 +774,7 @@ export default function AbandonedCartsPage() {
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
                     <span className="text-xs text-muted-foreground min-w-[60px] text-center" data-testid="text-cart-position">
-                      {selectedIndex + 1} of {filtered.length}
+                      {selectedIndex >= 0 ? start + selectedIndex + 1 : "–"} of {total}
                     </span>
                     <Button variant="ghost" size="icon" onClick={goNext} disabled={!canNext} className="h-7 w-7" data-testid="button-next-cart">
                       <ChevronRight className="h-4 w-4" />
@@ -798,6 +875,13 @@ export default function AbandonedCartsPage() {
                 {/* Price breakdown — parsed from Fastrr payload (Orders UI). */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Payment</p>
+                  {pricingLoading ? (
+                    <div className="space-y-2" data-testid="skeleton-pricing">
+                      <Skeleton className="h-3.5 w-full" />
+                      <Skeleton className="h-3.5 w-2/3" />
+                      <Skeleton className="h-4 w-full" />
+                    </div>
+                  ) : (
                   <div className="space-y-1.5">
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">Subtotal</span>
@@ -834,7 +918,8 @@ export default function AbandonedCartsPage() {
                       <span>{formatINR(pricing?.total ?? 0)}</span>
                     </div>
                   </div>
-                  {pricing && !pricing.hasRawData && (
+                  )}
+                  {!pricingLoading && pricing && !pricing.hasRawData && (
                     <p className="text-[11px] text-muted-foreground mt-2" data-testid="text-breakdown-unavailable">
                       Detailed breakdown unavailable for older carts
                     </p>
