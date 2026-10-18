@@ -151,6 +151,34 @@ export interface AgentOrderLoad {
  */
 export type NdrEventListItem = Omit<NdrEvent, "rawNdrData">;
 
+/**
+ * Row shape returned by `listAbandonedCheckouts`.
+ *
+ * `rawData` is the full Fastrr webhook payload (~1.9 KB of a ~2.8 KB
+ * row, ~70% of the JSON). The Abandoned Carts table never reads it;
+ * only the details drawer does, for the price breakdown of ONE cart,
+ * and that goes through `getAbandonedCheckout(id)` which returns the
+ * full row. `items` stays: the Cart Details hover card reads it.
+ */
+export type AbandonedCheckoutListItem = Omit<AbandonedCheckout, "rawData"> & {
+  assignedAgentName: string | null;
+};
+
+/**
+ * Filters for the Abandoned Carts list and its CSV export. The three
+ * user filters mirror what the page used to apply in the browser;
+ * the visibility rule (real name, not "Guest", has an address) is
+ * always applied.
+ */
+export interface AbandonedCheckoutListFilters {
+  /** Case-insensitive substring match on customer name or phone. */
+  search?: string;
+  /** One of ABANDONED_RECOVERY_STATUSES. */
+  recoveryStatus?: string;
+  /** Exact checkout_stage value. */
+  checkoutStage?: string;
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -480,7 +508,21 @@ export interface IStorage {
   // Abandoned Checkouts
   createAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
   upsertAbandonedCheckout(data: InsertAbandonedCheckout): Promise<AbandonedCheckout>;
-  getAbandonedCheckouts(): Promise<AbandonedCheckout[]>;
+  /**
+   * One page of the Abandoned Carts table plus the total matching the
+   * filter (drives pagination) and the distinct checkout stages among
+   * visible carts (drives the Stage filter's options).
+   */
+  listAbandonedCheckouts(filters?: AbandonedCheckoutListFilters & {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ rows: AbandonedCheckoutListItem[]; total: number; stages: string[] }>;
+  /** Every visible cart matching the filter, CSV columns only, newest first. */
+  exportAbandonedCheckouts(filters?: AbandonedCheckoutListFilters): Promise<
+    Pick<AbandonedCheckout, "id" | "createdAt" | "customerName" | "customerPhone" | "customerEmail" | "cartValue" | "checkoutStage" | "recoveryStatus">[]
+  >;
+  /** Full row (including rawData) for the details drawer. */
+  getAbandonedCheckout(id: number): Promise<(AbandonedCheckout & { assignedAgentName: string | null }) | undefined>;
   updateAbandonedCheckoutStatus(id: number, status: string): Promise<AbandonedCheckout | undefined>;
   getAbandonedCheckoutByContact(phone?: string | null, email?: string | null): Promise<AbandonedCheckout | undefined>;
   markAbandonedCheckoutConverted(id: number, orderId: string): Promise<void>;
@@ -3869,35 +3911,111 @@ export class DbStorage implements IStorage {
     return match.id;
   }
 
-  async getAbandonedCheckouts(): Promise<(AbandonedCheckout & { assignedAgentName: string | null })[]> {
-    const results = await db
+  /**
+   * Visibility rule for the Abandoned Carts page (Fastrr's own pattern):
+   * only carts with a real NAME and a SHIPPING ADDRESS. Phone-only
+   * "Guest" drop-offs are hidden. Used to live in the browser; it has to
+   * be in SQL now that the page is paginated server-side.
+   */
+  private abandonedCheckoutVisibleCondition() {
+    return sql`(
+      NULLIF(TRIM(${abandonedCheckouts.customerName}), '') IS NOT NULL
+      AND LOWER(TRIM(${abandonedCheckouts.customerName})) <> 'guest'
+      AND NULLIF(TRIM(${abandonedCheckouts.address}), '') IS NOT NULL
+    )`;
+  }
+
+  private abandonedCheckoutListConditions(filters?: AbandonedCheckoutListFilters) {
+    const conditions = [this.abandonedCheckoutVisibleCondition()];
+    if (filters?.search && filters.search.trim()) {
+      const pattern = `%${filters.search.trim()}%`;
+      conditions.push(sql`(
+        ${abandonedCheckouts.customerName} ILIKE ${pattern} OR
+        ${abandonedCheckouts.customerPhone} ILIKE ${pattern}
+      )`);
+    }
+    if (filters?.recoveryStatus) {
+      conditions.push(eq(abandonedCheckouts.recoveryStatus, filters.recoveryStatus));
+    }
+    if (filters?.checkoutStage) {
+      conditions.push(eq(abandonedCheckouts.checkoutStage, filters.checkoutStage));
+    }
+    return and(...conditions);
+  }
+
+  async listAbandonedCheckouts(filters?: AbandonedCheckoutListFilters & {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ rows: AbandonedCheckoutListItem[]; total: number; stages: string[] }> {
+    const whereClause = this.abandonedCheckoutListConditions(filters);
+
+    // See AbandonedCheckoutListItem for why rawData is left out.
+    const { rawData: _rawData, ...listColumns } = getTableColumns(abandonedCheckouts);
+    const pageQuery = db
+      .select({ ...listColumns, assignedAgentName: users.fullName })
+      .from(abandonedCheckouts)
+      .leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id))
+      .where(whereClause)
+      .orderBy(desc(abandonedCheckouts.createdAt), desc(abandonedCheckouts.id))
+      .limit(filters?.limit ?? 50)
+      .offset(filters?.offset ?? 0);
+
+    const totalQuery = db
+      .select({ value: count() })
+      .from(abandonedCheckouts)
+      .where(whereClause);
+
+    // Stage filter options: distinct stages among ALL visible carts
+    // (not just the current filter), in order of most recent
+    // appearance — the order the browser-side version produced.
+    const stagesQuery = db
+      .select({ stage: abandonedCheckouts.checkoutStage })
+      .from(abandonedCheckouts)
+      .where(and(this.abandonedCheckoutVisibleCondition(), isNotNull(abandonedCheckouts.checkoutStage)))
+      .groupBy(abandonedCheckouts.checkoutStage)
+      .orderBy(desc(sql`max(${abandonedCheckouts.createdAt})`));
+
+    // Independent queries: one round trip of wall time, not three.
+    const [rows, [{ value: total }], stageRows] = await Promise.all([
+      pageQuery,
+      totalQuery,
+      stagesQuery,
+    ]);
+
+    return {
+      rows,
+      total,
+      stages: stageRows.map((r) => r.stage).filter((s): s is string => !!s),
+    };
+  }
+
+  async exportAbandonedCheckouts(filters?: AbandonedCheckoutListFilters) {
+    return db
       .select({
         id: abandonedCheckouts.id,
-        // storeId added in Phase 1 (multi-store schema). Nullable
-        // until backfill flips it NOT NULL.
-        storeId: abandonedCheckouts.storeId,
-        externalId: abandonedCheckouts.externalId,
+        createdAt: abandonedCheckouts.createdAt,
         customerName: abandonedCheckouts.customerName,
         customerPhone: abandonedCheckouts.customerPhone,
         customerEmail: abandonedCheckouts.customerEmail,
-        items: abandonedCheckouts.items,
         cartValue: abandonedCheckouts.cartValue,
-        checkoutUrl: abandonedCheckouts.checkoutUrl,
         checkoutStage: abandonedCheckouts.checkoutStage,
-        address: abandonedCheckouts.address,
-        assignedTo: abandonedCheckouts.assignedTo,
-        isRecovered: abandonedCheckouts.isRecovered,
         recoveryStatus: abandonedCheckouts.recoveryStatus,
-        rawData: abandonedCheckouts.rawData,
-        convertedOrderId: abandonedCheckouts.convertedOrderId,
-        convertedAt: abandonedCheckouts.convertedAt,
-        createdAt: abandonedCheckouts.createdAt,
-        assignedAgentName: users.fullName,
       })
       .from(abandonedCheckouts)
+      .where(this.abandonedCheckoutListConditions(filters))
+      .orderBy(desc(abandonedCheckouts.createdAt), desc(abandonedCheckouts.id));
+  }
+
+  async getAbandonedCheckout(
+    id: number,
+  ): Promise<(AbandonedCheckout & { assignedAgentName: string | null }) | undefined> {
+    const [row] = await db
+      .select({ ...getTableColumns(abandonedCheckouts), assignedAgentName: users.fullName })
+      .from(abandonedCheckouts)
       .leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id))
-      .orderBy(desc(abandonedCheckouts.createdAt));
-    return results;
+      .where(eq(abandonedCheckouts.id, id))
+      .limit(1);
+    return row;
   }
 
   /** Update the telecalling recovery status; keep isRecovered in sync. */

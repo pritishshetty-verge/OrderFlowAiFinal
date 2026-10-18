@@ -787,14 +787,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // GET abandoned checkouts with assigned agent name
+  // Shared parsing for the Abandoned Carts list and its CSV export:
+  // search (name/phone), recovery status, checkout stage. Returns a
+  // 400 message for an unknown status instead of silently matching
+  // nothing. Same query-string names the page used to filter on locally.
+  const parseAbandonedCheckoutFilters = (
+    query: Record<string, unknown>,
+  ): { filters: { search?: string; recoveryStatus?: string; checkoutStage?: string } } | { error: string } => {
+    const { search, status, stage } = query;
+    const filters: { search?: string; recoveryStatus?: string; checkoutStage?: string } = {};
+    if (typeof search === "string" && search.trim()) filters.search = search.trim();
+    if (typeof status === "string" && status && status !== "all") {
+      if (!(ABANDONED_RECOVERY_STATUSES as readonly string[]).includes(status)) {
+        return { error: `Invalid status. Must be one of: ${ABANDONED_RECOVERY_STATUSES.join(", ")}` };
+      }
+      filters.recoveryStatus = status;
+    }
+    if (typeof stage === "string" && stage && stage !== "all") filters.checkoutStage = stage;
+    return { filters };
+  };
+
+  // GET one page of abandoned checkouts (with assigned agent name).
+  // Same shape as /api/orders: { rows, total } plus the distinct stages
+  // for the Stage filter. rawData is left out of list rows — see
+  // AbandonedCheckoutListItem; the drawer fetches /:id for it.
   app.get("/api/abandoned-checkouts", async (req, res) => {
     try {
-      const checkouts = await storage.getAbandonedCheckouts();
-      res.json(checkouts);
+      const parsed = parseAbandonedCheckoutFilters(req.query as Record<string, unknown>);
+      if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+
+      const { limit, page } = req.query;
+      const parsedLimit = Math.min(Math.max(parseInt(String(limit ?? "")) || 50, 1), 200);
+      const parsedPage = Math.max(parseInt(String(page ?? "")) || 1, 1);
+
+      const result = await storage.listAbandonedCheckouts({
+        ...parsed.filters,
+        limit: parsedLimit,
+        offset: (parsedPage - 1) * parsedLimit,
+      });
+      res.json(result);
     } catch (error) {
       console.error("Error fetching abandoned checkouts:", error);
       res.status(500).json({ error: "Failed to fetch abandoned checkouts" });
+    }
+  });
+
+  // Every visible cart matching the current filters, CSV columns only.
+  // The browser builds the CSV (as it did from the in-memory list), so
+  // dates stay in the user's timezone. Registered before /:id.
+  app.get("/api/abandoned-checkouts/export", async (req, res) => {
+    try {
+      const parsed = parseAbandonedCheckoutFilters(req.query as Record<string, unknown>);
+      if ("error" in parsed) return res.status(400).json({ error: parsed.error });
+      const rows = await storage.exportAbandonedCheckouts(parsed.filters);
+      res.json({ rows });
+    } catch (error) {
+      console.error("Error exporting abandoned checkouts:", error);
+      res.status(500).json({ error: "Failed to export abandoned checkouts" });
+    }
+  });
+
+  // One abandoned checkout, full row including rawData (price breakdown
+  // in the details drawer).
+  app.get("/api/abandoned-checkouts/:id", async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id)) {
+        return res.status(400).json({ error: "Invalid checkout id" });
+      }
+      const checkout = await storage.getAbandonedCheckout(id);
+      if (!checkout) {
+        return res.status(404).json({ error: "Abandoned checkout not found" });
+      }
+      res.json(checkout);
+    } catch (error) {
+      console.error("Error fetching abandoned checkout:", error);
+      res.status(500).json({ error: "Failed to fetch abandoned checkout" });
     }
   });
 
