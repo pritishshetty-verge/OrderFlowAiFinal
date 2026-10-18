@@ -194,7 +194,8 @@ async function processDelhiveryScan(body: any): Promise<void> {
   try {
     console.log('[Delhivery Webhook] Processing scan:', JSON.stringify(body).substring(0, 500));
 
-    // TEMPORARY raw-payload capture (non-fatal). Remove once keys confirmed.
+    // Persist the raw payload (non-fatal) — surfaced on the /api-logs page via
+    // GET inbound webhook logs, so keep this even after field mapping settles.
     try {
       const capturedAwb = body?.Shipment?.AWB || body?.AWB || body?.awb || body?.waybill || 'unknown';
       await storage.createInboundWebhookLog({

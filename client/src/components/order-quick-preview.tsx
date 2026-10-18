@@ -80,10 +80,6 @@ interface OrderQuickPreviewProps {
   totalOrders: number;
   onNavigate: (direction: "prev" | "next") => void;
   onStatusUpdate?: () => void;
-  onEditCustomer?: () => void;
-  onInvoice?: () => void;
-  onRefund?: () => void;
-  onEditOrder?: () => void;
   /** Safe Global View: Pass 'global' to allow agents to read any order's details */
   scope?: 'global' | undefined;
 }
@@ -96,10 +92,6 @@ export function OrderQuickPreview({
   totalOrders,
   onNavigate,
   onStatusUpdate,
-  onEditCustomer,
-  onInvoice,
-  onRefund,
-  onEditOrder,
   scope,
 }: OrderQuickPreviewProps) {
   const { toast } = useToast();
@@ -122,7 +114,7 @@ export function OrderQuickPreview({
   // reference it lazily inside the mutation to avoid a TDZ redeclare.
   const resyncTracking = useMutation({
     mutationFn: async () => {
-      const key = order?.shopifyOrderNumber ?? order?.id;
+      const key = order?.id;
       if (!key) throw new Error("No order key available");
       const userId = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
       const res = await apiRequest(

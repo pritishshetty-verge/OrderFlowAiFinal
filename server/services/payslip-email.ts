@@ -1,7 +1,7 @@
 import fs from "fs";
 import { getUncachableResendClient } from "../resend";
 import { formatINR } from "./payroll";
-import type { PayslipData, PayslipFile } from "./payslip-pdf";
+import { capitalizeFirst, type PayslipData, type PayslipFile } from "./payslip-pdf";
 
 // ─────────────────────────────────────────────────────────────────────
 // Payslip email dispatch
@@ -204,7 +204,4 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string),
   );
-}
-function capitalizeFirst(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }

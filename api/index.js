@@ -1810,16 +1810,7 @@ var init_presence_config = __esm({
   }
 });
 
-// server/storage.ts
-var storage_exports = {};
-__export(storage_exports, {
-  DbStorage: () => DbStorage,
-  storage: () => storage
-});
-import { eq, and, desc, asc, or, count, gte, lte, lt, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
-function getRandomAvatar() {
-  return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
-}
+// shared/postgresArray.ts
 function parsePostgresArray(value) {
   if (!value) return [];
   if (Array.isArray(value)) return value;
@@ -1868,6 +1859,22 @@ function parsePostgresArray(value) {
   result.push(current);
   return result;
 }
+var init_postgresArray = __esm({
+  "shared/postgresArray.ts"() {
+    "use strict";
+  }
+});
+
+// server/storage.ts
+var storage_exports = {};
+__export(storage_exports, {
+  DbStorage: () => DbStorage,
+  storage: () => storage
+});
+import { eq, and, desc, asc, or, count, gte, lte, lt, sql as sql2, isNull, isNotNull, inArray, getTableColumns } from "drizzle-orm";
+function getRandomAvatar() {
+  return AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)];
+}
 var AVATAR_OPTIONS, DbStorage, storage;
 var init_storage = __esm({
   "server/storage.ts"() {
@@ -1875,6 +1882,7 @@ var init_storage = __esm({
     init_db();
     init_presence_config();
     init_schema();
+    init_postgresArray();
     AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
     DbStorage = class {
       // ============================================================================
@@ -9456,6 +9464,7 @@ var init_payroll_metrics = __esm({
 // server/services/payslip-pdf.ts
 var payslip_pdf_exports = {};
 __export(payslip_pdf_exports, {
+  capitalizeFirst: () => capitalizeFirst,
   renderPayslipPdf: () => renderPayslipPdf,
   renderPayslipPdfBuffer: () => renderPayslipPdfBuffer
 });
@@ -9941,7 +9950,7 @@ function buildPayslipHtml(d, period) {
           <tr><td style="padding:24px 32px;border-bottom:1px solid #e2e8f0;">
             <p style="margin:0 0 4px 0;color:#0f172a;font-weight:600;font-size:14px;">${escapeHtml(d.employee.fullName)}</p>
             <p style="margin:0;color:#64748b;font-size:12.5px;">${escapeHtml(d.employee.email)}</p>
-            ${d.employee.holidayState ? `<p style="margin:6px 0 0 0;color:#64748b;font-size:12px;">Holiday calendar: ${capitalizeFirst2(d.employee.holidayState)}</p>` : ""}
+            ${d.employee.holidayState ? `<p style="margin:6px 0 0 0;color:#64748b;font-size:12px;">Holiday calendar: ${capitalizeFirst(d.employee.holidayState)}</p>` : ""}
           </td></tr>
 
           <tr><td style="padding:20px 32px 8px 32px;">
@@ -10011,15 +10020,13 @@ function escapeHtml(s) {
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
   );
 }
-function capitalizeFirst2(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-}
 var MONTH_NAMES2, COMPANY_NAME2, COMPANY_ADDRESS2;
 var init_payslip_email = __esm({
   "server/services/payslip-email.ts"() {
     "use strict";
     init_resend();
     init_payroll();
+    init_payslip_pdf();
     MONTH_NAMES2 = [
       "January",
       "February",
@@ -16636,7 +16643,8 @@ async function registerRoutes(app2) {
         if (!targetUser) {
           try {
             fs4.unlinkSync(file.path);
-          } catch {
+          } catch (e) {
+            console.warn("[kyc] failed to remove uploaded file:", e);
           }
           return res.status(404).json({ error: "User not found" });
         }
@@ -16666,7 +16674,8 @@ async function registerRoutes(app2) {
         if (file?.path) {
           try {
             fs4.unlinkSync(file.path);
-          } catch {
+          } catch (e) {
+            console.warn("[kyc] failed to remove uploaded file:", e);
           }
         }
         console.error("Error uploading KYC document:", err);

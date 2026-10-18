@@ -120,68 +120,9 @@ import {
   type PgRateCard,
   type InsertPgRateCard,
   type PgRateCardRules,
+  type AdminPermissions,
 } from "@shared/schema";
-
-/**
- * Parses PostgreSQL text array format into JavaScript array.
- * PostgreSQL returns text[] as strings like: {tag1,"tag with spaces",tag3}
- * Handles: null, undefined, already-parsed arrays, raw strings, escaped quotes (""), empty elements.
- */
-function parsePostgresArray(value: unknown): string[] {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'string') return [];
-  
-  const str = value.trim();
-  if (!str.startsWith('{') || !str.endsWith('}')) return [];
-  
-  const inner = str.slice(1, -1);
-  if (inner === '') return [];
-  
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  let i = 0;
-  
-  while (i < inner.length) {
-    const char = inner[i];
-    
-    if (inQuotes) {
-      if (char === '"') {
-        if (inner[i + 1] === '"') {
-          current += '"';
-          i += 2;
-          continue;
-        } else {
-          inQuotes = false;
-          i++;
-          continue;
-        }
-      } else if (char === '\\' && i + 1 < inner.length) {
-        current += inner[i + 1];
-        i += 2;
-        continue;
-      }
-    } else {
-      if (char === '"') {
-        inQuotes = true;
-        i++;
-        continue;
-      } else if (char === ',') {
-        result.push(current);
-        current = '';
-        i++;
-        continue;
-      }
-    }
-    
-    current += char;
-    i++;
-  }
-  
-  result.push(current);
-  return result;
-}
+import { parsePostgresArray } from "@shared/postgresArray";
 
 export interface IStorage {
   // Users
@@ -201,7 +142,7 @@ export interface IStorage {
   getInviteByToken(token: string): Promise<Invite | undefined>;
   getInviteByEmail(email: string): Promise<Invite | undefined>;
   updateInviteStatus(id: string, status: 'accepted' | 'expired'): Promise<void>;
-  updateInvitePermissions(id: string, adminType: string, permissions: any): Promise<Invite | undefined>;
+  updateInvitePermissions(id: string, adminType: string, permissions: AdminPermissions | null): Promise<Invite | undefined>;
   listPendingInvites(): Promise<Invite[]>;
 
   // Customers
@@ -775,7 +716,7 @@ export class DbStorage implements IStorage {
     return invite;
   }
 
-  async reactivateUser(id: string, updates: { role?: string; adminType?: string | null; permissions?: any }): Promise<User> {
+  async reactivateUser(id: string, updates: { role?: string; adminType?: string | null; permissions?: AdminPermissions | null }): Promise<User> {
     const [user] = await db
       .update(users)
       .set({
@@ -790,7 +731,7 @@ export class DbStorage implements IStorage {
     return user;
   }
 
-  async updateInvitePermissions(id: string, adminType: string, permissions: any): Promise<Invite | undefined> {
+  async updateInvitePermissions(id: string, adminType: string, permissions: AdminPermissions | null): Promise<Invite | undefined> {
     const [invite] = await db
       .update(invites)
       .set({ 

@@ -855,18 +855,6 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
           // Refresh the orders list when status is updated in the modal
           queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
         }}
-        onEditCustomer={() => {
-          // TODO: Implement edit customer dialog
-        }}
-        onInvoice={() => {
-          // TODO: Implement invoice generation
-        }}
-        onRefund={() => {
-          // TODO: Implement refund dialog
-        }}
-        onEditOrder={() => {
-          // TODO: Implement edit order dialog
-        }}
         // SAFE GLOBAL VIEW: Pass scope to allow agents to read any order's details when in global view
         scope={!hasFullOrderRead && isGlobalView ? 'global' : undefined}
       />

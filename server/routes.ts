@@ -18,6 +18,7 @@ import {
   type MetaAdAccountConfig,
   type InsertReturn,
   type InsertReturnItem,
+  type User,
 } from "@shared/schema";
 import { eq, or, sql, desc, gte, lte, and, asc } from "drizzle-orm";
 import { triggerWebhooks } from "./services/webhooks";
@@ -273,7 +274,7 @@ function redactPayrollForAgent<T extends UserRecord | undefined | null>(
  * default is redaction. This intentionally never throws — callers
  * apply the returned scrub function blindly to the response payload.
  */
-async function resolveUserScrub(req: any): Promise<{
+async function resolveUserScrub(req: Request): Promise<{
   isAdmin: boolean;
   scrub: <T extends UserRecord | undefined | null>(u: T) => T;
 }> {
@@ -1264,9 +1265,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //  the store can view the log.
   // ═══════════════════════════════════════════════════════════════════
   const requireReshipmentUser = async (
-    req: any,
-    res: any,
-  ): Promise<{ user: any } | null> => {
+    req: Request,
+    res: Response,
+  ): Promise<{ user: User } | null> => {
     const uid =
       typeof req.query.userId === "string"
         ? req.query.userId
@@ -1294,9 +1295,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // even though the user was proven by requireReshipmentUser. Sends the
   // right HTTP status and returns null on failure; caller should return.
   const resolveReshipmentScope = async (
-    req: any,
-    res: any,
-    user: any,
+    req: Request,
+    res: Response,
+    user: User,
   ): Promise<{ storeId: string } | null> => {
     if (req.storeScope) return req.storeScope;
     const { resolveScopeForUser, StoreScopeError } = await import("./storeScope");
@@ -4614,20 +4615,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // USERS API
   // ============================================================================
 
-  // Get current authenticated user (disabled - using localStorage auth temporarily)
-  // TODO: Re-enable when proper JWT/session auth is implemented
-  // app.get("/api/me", async (req, res) => {
-  //   try {
-  //     if (!req.user) {
-  //       return res.status(401).json({ error: "Not authenticated" });
-  //     }
-  //     res.json(req.user);
-  //   } catch (error) {
-  //     console.error("Error fetching current user:", error);
-  //     res.status(500).json({ error: "Failed to fetch current user" });
-  //   }
-  // });
-
   // Get user by email (public endpoint for login and profile)
   app.get("/api/users/by-email/:email", async (req, res) => {
     try {
@@ -4668,7 +4655,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // fallback (mirrors the rest of this file's transitional auth). An admin may
   // inspect another agent by passing `?userId=`.
   // ============================================================================
-  const resolveAgentTarget = async (req: any): Promise<
+  const resolveAgentTarget = async (req: Request): Promise<
     | { ok: true; user: UserRecord }
     | { ok: false; status: number; error: string }
   > => {
@@ -5796,7 +5783,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Best-effort cleanup of the just-uploaded file before erroring.
           try {
             fs.unlinkSync(file.path);
-          } catch {}
+          } catch (e) {
+            console.warn("[kyc] failed to remove uploaded file:", e);
+          }
           return res.status(404).json({ error: "User not found" });
         }
         if (targetUser.kycDocumentUrl) {
@@ -5828,7 +5817,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (file?.path) {
           try {
             fs.unlinkSync(file.path);
-          } catch {}
+          } catch (e) {
+            console.warn("[kyc] failed to remove uploaded file:", e);
+          }
         }
         console.error("Error uploading KYC document:", err);
         res.status(500).json({ error: "Failed to upload KYC document" });
@@ -6950,7 +6941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth: every endpoint demands `currentUserId` and rejects non-admins
   // with 403. Same convention as /api/analytics/pare.
 
-  async function requireAdmin(req: any, res: any): Promise<{ ok: true } | { ok: false }> {
+  async function requireAdmin(req: Request, res: Response): Promise<{ ok: true } | { ok: false }> {
     const requesterId = typeof req.query.currentUserId === "string"
       ? req.query.currentUserId
       : typeof req.body?.currentUserId === "string"
