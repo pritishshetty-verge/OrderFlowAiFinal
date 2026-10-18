@@ -33,6 +33,16 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Keep the framework in its own long-lived chunk so a page or
+        // app change doesn't invalidate the cached React runtime.
+        // Pages are already split by React.lazy in client/src/App.tsx.
+        manualChunks: {
+          vendor: ["react", "react-dom", "@tanstack/react-query"],
+        },
+      },
+    },
   },
   server: {
     fs: {

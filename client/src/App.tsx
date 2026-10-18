@@ -12,38 +12,61 @@ import { AuthProvider } from "@/hooks/use-auth";
 import { StoreProvider } from "@/hooks/use-store";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
-import OverviewPage from "@/pages/analytics";
-import ParePage from "@/pages/pare";
-import OrdersPage from "@/pages/orders";
-import FulfilPage from "@/pages/fulfil";
-import NDRPage from "@/pages/ndr";
-import ReshipmentsPage from "@/pages/reshipments";
-import TeamPage from "@/pages/team";
-import PayrollPage from "@/pages/payroll";
-import SettingsPage from "@/pages/settings";
-import ProfilePage from "@/pages/profile";
-import ShopifySetupPage from "@/pages/shopify-setup";
-import ShopifyWebhooksPage from "@/pages/shopify-webhooks";
-import LearningCenterPage from "@/pages/learning-center";
-import CourseDetailPage from "@/pages/course-detail";
-import LessonPage from "@/pages/lesson";
-import AdminLearningDashboard from "@/pages/admin-learning-dashboard";
-import AdminCourseForm from "@/pages/admin-course-form";
-import AdminLessonForm from "@/pages/admin-lesson-form";
-import CallLogsPage from "@/pages/call-logs";
-import AbandonedCartsPage from "@/pages/AbandonedCarts";
-import MyConvertedOrdersPage from "@/pages/my-converted-orders";
-import LearningCenterPlaceholder from "@/pages/LearningCenter";
-import TeamsPlaceholder from "@/pages/Teams";
-import WebhooksSettingsPage from "@/pages/webhooks-settings";
-import WebhookLogsPage from "@/pages/webhook-logs";
-import IntegrationsPage from "@/pages/integrations";
-import ProductsPage from "@/pages/products";
-import ReturnsPage from "@/pages/returns";
-import AttendanceReportPage from "@/pages/attendance-report";
 import NotFound from "@/pages/not-found";
 import { PresenceBanner } from "@/components/presence-banner";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
+import { Loader2 } from "lucide-react";
+
+// Route-level code splitting. Every page below is fetched on first
+// navigation instead of in the entry chunk; login/signup/not-found
+// stay eager because they are the first thing a cold visitor sees.
+// Guards call <Component /> only after their role/auth checks pass,
+// and React.lazy triggers the import() on first render, so a
+// redirected user never downloads the chunk for a page they can't
+// open.
+const OverviewPage = lazy(() => import("@/pages/analytics"));
+const ParePage = lazy(() => import("@/pages/pare"));
+const OrdersPage = lazy(() => import("@/pages/orders"));
+const FulfilPage = lazy(() => import("@/pages/fulfil"));
+const NDRPage = lazy(() => import("@/pages/ndr"));
+const ReshipmentsPage = lazy(() => import("@/pages/reshipments"));
+const TeamPage = lazy(() => import("@/pages/team"));
+const PayrollPage = lazy(() => import("@/pages/payroll"));
+const SettingsPage = lazy(() => import("@/pages/settings"));
+const ProfilePage = lazy(() => import("@/pages/profile"));
+const ShopifySetupPage = lazy(() => import("@/pages/shopify-setup"));
+const ShopifyWebhooksPage = lazy(() => import("@/pages/shopify-webhooks"));
+const LearningCenterPage = lazy(() => import("@/pages/learning-center"));
+const CourseDetailPage = lazy(() => import("@/pages/course-detail"));
+const LessonPage = lazy(() => import("@/pages/lesson"));
+const AdminLearningDashboard = lazy(() => import("@/pages/admin-learning-dashboard"));
+const AdminCourseForm = lazy(() => import("@/pages/admin-course-form"));
+const AdminLessonForm = lazy(() => import("@/pages/admin-lesson-form"));
+const CallLogsPage = lazy(() => import("@/pages/call-logs"));
+const AbandonedCartsPage = lazy(() => import("@/pages/AbandonedCarts"));
+const MyConvertedOrdersPage = lazy(() => import("@/pages/my-converted-orders"));
+const LearningCenterPlaceholder = lazy(() => import("@/pages/LearningCenter"));
+const TeamsPlaceholder = lazy(() => import("@/pages/Teams"));
+const WebhooksSettingsPage = lazy(() => import("@/pages/webhooks-settings"));
+const WebhookLogsPage = lazy(() => import("@/pages/webhook-logs"));
+const IntegrationsPage = lazy(() => import("@/pages/integrations"));
+const ProductsPage = lazy(() => import("@/pages/products"));
+const ReturnsPage = lazy(() => import("@/pages/returns"));
+const AttendanceReportPage = lazy(() => import("@/pages/attendance-report"));
+
+// Suspense fallback for the route area while a page chunk loads.
+// Mirrors the inline Loader2 spinners used across the app's
+// dialogs and buttons so chunk loading reads as ordinary loading.
+function RouteFallback() {
+  return (
+    <div
+      className="flex flex-1 items-center justify-center p-8"
+      data-testid="route-loading"
+    >
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const [, setLocation] = useLocation();
@@ -213,106 +236,108 @@ function Router() {
   const userRole = localStorage.getItem("userRole") || "admin";
   
   return (
-    <Switch>
-      <Route path="/login" component={LoginPage} />
-      <Route path="/signup" component={SignupPage} />
-      <Route path="/">
-        {() => <RecoveryAgentGuard component={OverviewPage} />}
-      </Route>
-      <Route path="/orders">
-        {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole as any} />} />}
-      </Route>
-      <Route path="/fulfil">
-        {() => <ChatSupportGuard component={FulfilPage} />}
-      </Route>
-      <Route path="/ndr">
-        {() => <ChatSupportGuard component={NDRPage} />}
-      </Route>
-      <Route path="/reshipments">
-        {() => <ChatSupportGuard component={ReshipmentsPage} />}
-      </Route>
-      <Route path="/team">
-        {() => <RecoveryAgentGuard component={TeamPage} />}
-      </Route>
-      <Route path="/payroll">
-        {() => <AdminOnlyGuard component={PayrollPage} />}
-      </Route>
-      <Route path="/pare">
-        {() => <AdminOnlyGuard component={ParePage} />}
-      </Route>
-      <Route path="/profile">
-        {() => <ProtectedRoute component={ProfilePage} />}
-      </Route>
-      <Route path="/settings">
-        {() => <RecoveryAgentGuard component={SettingsPage} />}
-      </Route>
-      <Route path="/settings/shopify/setup">
-        {() => <ChatSupportGuard component={ShopifySetupPage} />}
-      </Route>
-      <Route path="/settings/shopify/webhooks">
-        {() => <ChatSupportGuard component={ShopifyWebhooksPage} />}
-      </Route>
-      <Route path="/learning">
-        {() => <ChatSupportGuard component={LearningCenterPage} />}
-      </Route>
-      <Route path="/learning/courses/:slug">
-        {() => <ChatSupportGuard component={CourseDetailPage} />}
-      </Route>
-      <Route path="/learning/lessons/:slug">
-        {() => <ChatSupportGuard component={LessonPage} />}
-      </Route>
-      <Route path="/learning/admin">
-        {() => <ChatSupportGuard component={AdminLearningDashboard} />}
-      </Route>
-      <Route path="/learning/admin/courses/:id">
-        {() => <ChatSupportGuard component={AdminCourseForm} />}
-      </Route>
-      <Route path="/learning/admin/lessons/:id">
-        {() => <ChatSupportGuard component={AdminLessonForm} />}
-      </Route>
-      <Route path="/call-logs">
-        {() => <ChatSupportGuard component={CallLogsPage} />}
-      </Route>
-      <Route path="/abandoned-carts">
-        {() => <ChatSupportGuard component={AbandonedCartsPage} />}
-      </Route>
-      <Route path="/my-converted-orders">
-        {() => {
-          // ISE-only surface. Admins have no coupon so the page is empty for
-          // them anyway — bounce them to Overview instead of showing an
-          // empty "no coupon code" state, and keep the page out of reach by
-          // direct URL, matching its removal from the admin sidebar.
-          const role = localStorage.getItem("userRole");
-          if (role === "admin") return <Redirect to="/" />;
-          return <ChatSupportGuard component={MyConvertedOrdersPage} />;
-        }}
-      </Route>
-      <Route path="/learning-center">
-        {() => <ChatSupportGuard component={LearningCenterPlaceholder} />}
-      </Route>
-      <Route path="/teams">
-        {() => <ChatSupportGuard component={TeamsPlaceholder} />}
-      </Route>
-      <Route path="/webhooks">
-        {() => <ChatSupportGuard component={WebhooksSettingsPage} />}
-      </Route>
-      <Route path="/api-logs">
-        {() => <AdminOnlyGuard component={WebhookLogsPage} />}
-      </Route>
-      <Route path="/integrations">
-        {() => <AdminOnlyGuard component={IntegrationsPage} />}
-      </Route>
-      <Route path="/products">
-        {() => <AdminOnlyGuard component={ProductsPage} />}
-      </Route>
-      <Route path="/returns">
-        {() => <AdminOnlyGuard component={ReturnsPage} />}
-      </Route>
-      <Route path="/reports/attendance">
-        {() => <AdminOnlyGuard component={AttendanceReportPage} />}
-      </Route>
-      <Route component={NotFound} />
-    </Switch>
+    <Suspense fallback={<RouteFallback />}>
+      <Switch>
+        <Route path="/login" component={LoginPage} />
+        <Route path="/signup" component={SignupPage} />
+        <Route path="/">
+          {() => <RecoveryAgentGuard component={OverviewPage} />}
+        </Route>
+        <Route path="/orders">
+          {() => <ProtectedRoute component={() => <OrdersPage userRole={userRole as any} />} />}
+        </Route>
+        <Route path="/fulfil">
+          {() => <ChatSupportGuard component={FulfilPage} />}
+        </Route>
+        <Route path="/ndr">
+          {() => <ChatSupportGuard component={NDRPage} />}
+        </Route>
+        <Route path="/reshipments">
+          {() => <ChatSupportGuard component={ReshipmentsPage} />}
+        </Route>
+        <Route path="/team">
+          {() => <RecoveryAgentGuard component={TeamPage} />}
+        </Route>
+        <Route path="/payroll">
+          {() => <AdminOnlyGuard component={PayrollPage} />}
+        </Route>
+        <Route path="/pare">
+          {() => <AdminOnlyGuard component={ParePage} />}
+        </Route>
+        <Route path="/profile">
+          {() => <ProtectedRoute component={ProfilePage} />}
+        </Route>
+        <Route path="/settings">
+          {() => <RecoveryAgentGuard component={SettingsPage} />}
+        </Route>
+        <Route path="/settings/shopify/setup">
+          {() => <ChatSupportGuard component={ShopifySetupPage} />}
+        </Route>
+        <Route path="/settings/shopify/webhooks">
+          {() => <ChatSupportGuard component={ShopifyWebhooksPage} />}
+        </Route>
+        <Route path="/learning">
+          {() => <ChatSupportGuard component={LearningCenterPage} />}
+        </Route>
+        <Route path="/learning/courses/:slug">
+          {() => <ChatSupportGuard component={CourseDetailPage} />}
+        </Route>
+        <Route path="/learning/lessons/:slug">
+          {() => <ChatSupportGuard component={LessonPage} />}
+        </Route>
+        <Route path="/learning/admin">
+          {() => <ChatSupportGuard component={AdminLearningDashboard} />}
+        </Route>
+        <Route path="/learning/admin/courses/:id">
+          {() => <ChatSupportGuard component={AdminCourseForm} />}
+        </Route>
+        <Route path="/learning/admin/lessons/:id">
+          {() => <ChatSupportGuard component={AdminLessonForm} />}
+        </Route>
+        <Route path="/call-logs">
+          {() => <ChatSupportGuard component={CallLogsPage} />}
+        </Route>
+        <Route path="/abandoned-carts">
+          {() => <ChatSupportGuard component={AbandonedCartsPage} />}
+        </Route>
+        <Route path="/my-converted-orders">
+          {() => {
+            // ISE-only surface. Admins have no coupon so the page is empty for
+            // them anyway — bounce them to Overview instead of showing an
+            // empty "no coupon code" state, and keep the page out of reach by
+            // direct URL, matching its removal from the admin sidebar.
+            const role = localStorage.getItem("userRole");
+            if (role === "admin") return <Redirect to="/" />;
+            return <ChatSupportGuard component={MyConvertedOrdersPage} />;
+          }}
+        </Route>
+        <Route path="/learning-center">
+          {() => <ChatSupportGuard component={LearningCenterPlaceholder} />}
+        </Route>
+        <Route path="/teams">
+          {() => <ChatSupportGuard component={TeamsPlaceholder} />}
+        </Route>
+        <Route path="/webhooks">
+          {() => <ChatSupportGuard component={WebhooksSettingsPage} />}
+        </Route>
+        <Route path="/api-logs">
+          {() => <AdminOnlyGuard component={WebhookLogsPage} />}
+        </Route>
+        <Route path="/integrations">
+          {() => <AdminOnlyGuard component={IntegrationsPage} />}
+        </Route>
+        <Route path="/products">
+          {() => <AdminOnlyGuard component={ProductsPage} />}
+        </Route>
+        <Route path="/returns">
+          {() => <AdminOnlyGuard component={ReturnsPage} />}
+        </Route>
+        <Route path="/reports/attendance">
+          {() => <AdminOnlyGuard component={AttendanceReportPage} />}
+        </Route>
+        <Route component={NotFound} />
+      </Switch>
+    </Suspense>
   );
 }
 
