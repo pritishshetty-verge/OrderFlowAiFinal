@@ -44,11 +44,13 @@ export const PERSONAL_RECOVERY_TIERS = [
 // ── Working-day helpers ──────────────────────────────────────────────
 
 /**
- * Count of weekdays (Mon-Fri) in the given calendar month. Saturdays
- * and Sundays do not contribute. The user's holiday calendar is NOT
- * subtracted here — paid holidays factor in via the numerator of the
- * base-pay ratio (treated as "paid present days") rather than by
- * shrinking the denominator.
+ * Count of working days (Mon–Sat) in the given calendar month.
+ * Verge Scales runs a 6-day work week, so Sundays are the only
+ * off-day. Aligns with STANDARD_WORKING_DAYS_PER_MONTH = 26.
+ *
+ * The user's holiday calendar is NOT subtracted here — paid holidays
+ * factor in via the numerator of the base-pay ratio (treated as
+ * "paid present days") rather than by shrinking the denominator.
  *
  * @param year  Full year (e.g. 2026)
  * @param month 1-indexed month (1=Jan, 12=Dec)
@@ -57,13 +59,13 @@ export function expectedWorkingDays(year: number, month: number): number {
   if (!Number.isInteger(month) || month < 1 || month > 12) {
     throw new Error(`Invalid month: ${month}`);
   }
-  // Date(year, month, 0) → last day of `month` (because day 0 is "the
-  // day before day 1"). Iterate inclusive 1…lastDay and tally Mon-Fri.
+  // Date(year, month, 0) → last day of `month`. Iterate 1…lastDay
+  // and tally every day except Sunday (dow === 0).
   const lastDay = new Date(year, month, 0).getDate();
   let count = 0;
   for (let d = 1; d <= lastDay; d++) {
-    const dow = new Date(year, month - 1, d).getDay(); // 0=Sun, 6=Sat
-    if (dow !== 0 && dow !== 6) count++;
+    const dow = new Date(year, month - 1, d).getDay();
+    if (dow !== 0) count++;
   }
   return count;
 }
@@ -104,22 +106,24 @@ export function calculateBasePay(input: BasePayInputs): BasePayResult {
   return { ratio, amount, capped };
 }
 
-// ── Incentive: Order Confirmation ────────────────────────────────────
+// ── Incentive: Order Confirmation (Earned Commission = 10% × GMV) ──
+//
+// Per the Compensation Breakdown PDF, the ORDER_CONFIRMATION profile
+// pays a flat 10% commission on the Delivered GMV attributable to
+// the agent — NOT a tiered confirmation-rate bonus. Tanisha is the
+// canonical example.
+export const EARNED_COMMISSION_RATE = 0.10;
 
 /**
- * Tiered bonus based on personal delivery rate of orders confirmed by
- * this agent in the month.
- *   75–84.99% → ₹5,000   |   85–89.99% → ₹7,500   |   90%+ → ₹10,000
- * Below 75% → ₹0.
+ * Earned Commission bonus for the ORDER_CONFIRMATION profile.
+ * `deliveredGmv` is the sum of order totals delivered from this
+ * agent's confirmed orders in the month (see
+ * getDeliveredGMVForAgent in payroll-metrics.ts).
+ * Returns 0 when the number is null / non-finite / negative.
  */
-export function calculateConfirmationBonus(deliveryRatePct: number | null | undefined): number {
-  if (deliveryRatePct == null || !Number.isFinite(deliveryRatePct)) return 0;
-  for (const tier of ORDER_CONFIRMATION_TIERS) {
-    if (deliveryRatePct >= tier.minPct && deliveryRatePct < tier.maxPct) {
-      return tier.bonus;
-    }
-  }
-  return 0;
+export function calculateConfirmationBonus(deliveredGmv: number | null | undefined): number {
+  if (deliveredGmv == null || !Number.isFinite(deliveredGmv) || deliveredGmv <= 0) return 0;
+  return round2(deliveredGmv * EARNED_COMMISSION_RATE);
 }
 
 // ── Incentive: NDR/RTO (stackable) ───────────────────────────────────
@@ -164,11 +168,64 @@ export function calculateNdrRtoBonus(input: NdrRtoInputs): NdrRtoResult {
 // — it's a base-pay-only ladder. The orchestrator handles unknown
 // profiles gracefully (no incentive component fires) so adding new
 // profiles in future doesn't require an engine change.
+// DEVELOPER: admin-level access role with a dedicated compensation
+// profile (base pay + admin-added line items, no auto-computed
+// variable bonus). Keeps the metric-driven profiles clean while
+// letting devs receive payslips.
 export type CompensationProfile =
   | "ORDER_CONFIRMATION"
   | "NDR_RTO"
   | "CHAT_SUPPORT"
+  | "DEVELOPER"
   | null;
+
+// Developer's "Manager bonus" auto-computed from BOTH store
+// performance AND the reportee's individual performance.
+// Tiered TDR ladder:
+//   brand TDR ≥ 80%   →  ₹5,000
+//   brand TDR ≥ 60%   →  ₹3,000
+//   below            →  ₹0
+// Gated on reportee attendance ratio ≥ 80% — if the direct report
+// isn't showing up, no manager bonus regardless of TDR.
+// Editable in the payslip modal for manual override.
+export const DEVELOPER_MANAGER_TIERS = [
+  { minPct: 80, bonus: 5000 },
+  { minPct: 60, bonus: 3000 },
+] as const;
+export const DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT = 80;
+
+export function calculateDeveloperManagerBonus(args: {
+  brandTdrPct: number | null | undefined;
+  /** Reportee attendance ratio 0-100 (daysPresent/expected × 100). */
+  reporteeAttendancePct: number | null | undefined;
+}): number {
+  const tdr = args.brandTdrPct;
+  const att = args.reporteeAttendancePct;
+  if (tdr == null || !Number.isFinite(tdr)) return 0;
+  if (att == null || !Number.isFinite(att)) return 0;
+  if (att < DEVELOPER_MANAGER_REPORTEE_ATTENDANCE_THRESHOLD_PCT) return 0;
+  for (const tier of DEVELOPER_MANAGER_TIERS) {
+    if (tdr >= tier.minPct) return tier.bonus;
+  }
+  return 0;
+}
+
+// Default reimbursement (₹) suggested for a fresh payslip. The admin
+// can edit this to 0 for employees without a reimbursement line
+// (per the Compensation Breakdown PDF, Tanisha + Chandi get 349;
+// Satish + Nandakishore have no reimbursement mentioned).
+export const DEFAULT_REIMBURSEMENT = 349;
+
+// Per the Payroll PRD: standard full-time month is 26 working days
+// (8 hours/day, 5 days/week baseline). Used as the denominator for
+// unpaid-leave pro-rata deduction so a day off costs baseSalary / 26,
+// not baseSalary / (variable Mon-Fri count that changes each month).
+export const STANDARD_WORKING_DAYS_PER_MONTH = 26;
+
+export interface LineItem {
+  label: string;
+  amount: number;
+}
 
 export interface PayrollMathInputs {
   // Base-pay inputs
@@ -176,17 +233,37 @@ export interface PayrollMathInputs {
   expectedWorkingDays: number;
   daysPresent: number;
   paidHolidaysUsed: number;
+  // Unpaid leaves — each subtracts (baseSalary / STANDARD_WORKING_DAYS_PER_MONTH)
+  // from the base amount, per PRD "Attendance Deductions" rule.
+  unpaidLeaves?: number | null;
 
   // Incentive inputs (kept optional — admin may zero them via override)
   compensationProfile: CompensationProfile;
+  // Legacy tier-based delivery rate — retained for schema/audit but
+  // NOT used by the current ORDER_CONFIRMATION formula (see
+  // deliveredGmv below). Kept nullable so old callers still compile.
   deliveryRatePct?: number | null;
+  // Sum of delivered order totals from this agent's confirmed
+  // orders in the month. Drives the ORDER_CONFIRMATION variable
+  // (Earned Commission = 10% × deliveredGmv).
+  deliveredGmv?: number | null;
   teamDeliveryRatePct?: number | null;
   personalRecoveryRatePct?: number | null;
   reshipsCount?: number | null;
+
+  // Reimbursement — legacy single-value field. New payslips express
+  // reimbursement as one of the lineItems below.
+  reimbursement?: number | null;
+
+  // Custom Fixed-Pay line items (from "+ Add component" UI). Each
+  // { label, amount } sums into the final payout AND flows through
+  // as one entry in the RazorpayX "Additions" array on approval.
+  lineItems?: LineItem[] | null;
 }
 
 export interface PayrollMathResult {
   base: BasePayResult;
+  unpaidLeaveDeduction: number;
   incentives: {
     confirmationBonus: number;
     teamDeliveryBonus: number;
@@ -194,6 +271,9 @@ export interface PayrollMathResult {
     reshipsBonus: number;
     total: number;
   };
+  reimbursement: number;
+  lineItems: LineItem[];
+  lineItemsTotal: number;
   finalPayout: number;
 }
 
@@ -203,12 +283,21 @@ export interface PayrollMathResult {
  * result. Components not relevant to the profile are zeroed.
  */
 export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
-  const base = calculateBasePay({
-    baseSalary: input.baseSalary,
-    expectedWorkingDays: input.expectedWorkingDays,
-    daysPresent: input.daysPresent,
-    paidHolidaysUsed: input.paidHolidaysUsed,
-  });
+  // DEVELOPER is a flat-salary role (Nandakishore) — full base
+  // regardless of daily attendance, like a salaried manager. Every
+  // other profile prorates by attendance ratio via calculateBasePay.
+  const base = input.compensationProfile === "DEVELOPER"
+    ? {
+        ratio: 1,
+        amount: round2(Math.max(0, input.baseSalary)),
+        capped: false,
+      }
+    : calculateBasePay({
+        baseSalary: input.baseSalary,
+        expectedWorkingDays: input.expectedWorkingDays,
+        daysPresent: input.daysPresent,
+        paidHolidaysUsed: input.paidHolidaysUsed,
+      });
 
   let confirmationBonus = 0;
   let teamDeliveryBonus = 0;
@@ -216,7 +305,9 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
   let reshipsBonus = 0;
 
   if (input.compensationProfile === "ORDER_CONFIRMATION") {
-    confirmationBonus = calculateConfirmationBonus(input.deliveryRatePct);
+    // Earned Commission = 10% × Delivered GMV. Falls back to 0 if
+    // GMV wasn't provided (e.g. legacy /api/payroll/run callers).
+    confirmationBonus = calculateConfirmationBonus(input.deliveredGmv);
   } else if (input.compensationProfile === "NDR_RTO") {
     const ndr = calculateNdrRtoBonus({
       teamDeliveryRatePct: input.teamDeliveryRatePct,
@@ -228,11 +319,33 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     reshipsBonus = ndr.reshipsBonus;
   }
 
+  // Unpaid-leave pro-rata deduction (per PRD): each unpaid day costs
+  // baseSalary / STANDARD_WORKING_DAYS_PER_MONTH. Clamped so a runaway
+  // count can't push finalPayout negative.
+  const unpaidDays = Math.max(0, Math.floor(Number(input.unpaidLeaves ?? 0)));
+  const perDayRate = input.baseSalary > 0
+    ? input.baseSalary / STANDARD_WORKING_DAYS_PER_MONTH
+    : 0;
+  const unpaidLeaveDeduction = round2(Math.min(base.amount, unpaidDays * perDayRate));
+
   const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus;
-  const finalPayout = round2(base.amount + total);
+  const reimbursement = Math.max(0, Number(input.reimbursement ?? 0));
+
+  // Custom Fixed-Pay line items — cleaned + summed. Non-numeric or
+  // negative amounts are dropped rather than silently negating other
+  // components.
+  const lineItems: LineItem[] = (input.lineItems ?? [])
+    .filter((li) => li && typeof li.label === "string" && Number.isFinite(Number(li.amount)))
+    .map((li) => ({ label: String(li.label).slice(0, 80), amount: Math.max(0, Number(li.amount)) }));
+  const lineItemsTotal = round2(lineItems.reduce((s, li) => s + li.amount, 0));
+
+  const finalPayout = round2(
+    base.amount - unpaidLeaveDeduction + total + reimbursement + lineItemsTotal,
+  );
 
   return {
     base,
+    unpaidLeaveDeduction,
     incentives: {
       confirmationBonus,
       teamDeliveryBonus,
@@ -240,6 +353,9 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
       reshipsBonus,
       total,
     },
+    reimbursement,
+    lineItems,
+    lineItemsTotal,
     finalPayout,
   };
 }

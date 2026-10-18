@@ -13,10 +13,13 @@ export function isFullControlAdmin(user: User): boolean {
 }
 
 /**
- * Check if a user is any type of admin (full or partial control)
+ * Check if a user is any type of admin (full or partial control).
+ * Includes `developer` — devs have admin-level UI access per the
+ * Platform Review, but carry their own compensation profile so
+ * payroll math treats them separately from regular admins.
  */
 export function isAdmin(user: User): boolean {
-  return user.role === "admin";
+  return user.role === "admin" || user.role === "developer";
 }
 
 /**

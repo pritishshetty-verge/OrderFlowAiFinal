@@ -8,7 +8,8 @@ import { OrderQuickPreview } from "@/components/order-quick-preview";
 import { AssignOrderDialog } from "@/components/assign-order-dialog";
 import { OrderProgressBar } from "@/components/order-progress-bar";
 import { Card, CardContent } from "@/components/ui/card";
-import { Package } from "lucide-react";
+import { Package, RefreshCw, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { TableBodySkeleton } from "@/components/skeletons";
@@ -160,6 +161,54 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   }, [isGlobalView]);
   
   const isAdmin = userRole === "admin";
+
+  // Admin-only: force a reconciliation of every stale in-flight order
+  // against live Delhivery tracking. Same backend sweep that runs on
+  // the 3-hour cron — this is the manual trigger when drift needs to
+  // be flushed before computing a metric (payroll month-end etc.).
+  const reconcile = useMutation({
+    mutationFn: async () => {
+      const uid = typeof window !== "undefined" ? localStorage.getItem("userId") : null;
+      const res = await apiRequest(
+        "POST",
+        `/api/admin/reconcile-shipment-status?currentUserId=${uid ?? ""}`,
+        {},
+      );
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      const transitions = Object.entries(data?.transitions ?? {})
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+      const clientErrs = Object.entries(data?.clientErrors ?? {})
+        .map(([store, msg]) => `store ${String(store).slice(0, 8)}: ${msg}`)
+        .join(" · ");
+      const body =
+        [
+          `scanned=${data?.scanned ?? 0}`,
+          `healed=${data?.updated ?? 0}`,
+          `unchanged=${data?.unchanged ?? 0}`,
+          `noAwb=${data?.noAwb ?? 0}`,
+          `noClient=${data?.noClient ?? 0}`,
+          `errors=${data?.errors ?? 0}`,
+        ].join("  ") +
+        (transitions ? `\nTransitions → ${transitions}` : "") +
+        (clientErrs ? `\nClient errors → ${clientErrs}` : "");
+      toast({
+        title: `Reconcile done — ${data?.updated ?? 0} healed`,
+        description: body,
+      });
+      queryClient.invalidateQueries();
+    },
+    onError: (err: any) => {
+      const raw = String(err?.message ?? "");
+      const m = raw.match(/^\d+:\s*([\s\S]*)$/);
+      let description = raw || "Try again";
+      if (m) { try { description = JSON.parse(m[1]).error ?? m[1]; } catch { description = m[1]; } }
+      toast({ title: "Reconcile failed", description, variant: "destructive" });
+    },
+  });
+
   // Roles with org-wide order visibility (mirrors server's
   // ORDER_FULL_READ_ROLES in routes.ts). These users see every order by
   // default — the "Personal / Global" toggle and the client-side
@@ -677,6 +726,25 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
     <PageLayout
       title="Orders"
       description={userRole === "agent" ? "Manage your assigned orders" : "Manage all Shopify orders"}
+      actions={
+        isAdmin ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => reconcile.mutate()}
+            disabled={reconcile.isPending}
+            data-testid="btn-reconcile-shipments"
+            title="Pulls live Delhivery status for every non-terminal order and heals drift. Runs auto every 3h; this is the manual kick."
+          >
+            {reconcile.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            Reconcile stale statuses
+          </Button>
+        ) : null
+      }
     >
       <div className="p-6 space-y-6">
         {/* Progress bar - always visible for agents (uses separate stats query) */}

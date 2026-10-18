@@ -12,9 +12,15 @@ interface PageLayoutProps {
   title?: string;
   description?: string;
   actions?: React.ReactNode;
+  /**
+   * Suppress the header notifications bell. Used by pages where a
+   * badge/alert would be a distraction (e.g. /payroll — financial
+   * processing, per PRD §2 "Clean Interface").
+   */
+  hideNotifications?: boolean;
 }
 
-export function PageLayout({ children, title, description, actions }: PageLayoutProps) {
+export function PageLayout({ children, title, description, actions, hideNotifications }: PageLayoutProps) {
   const isConnected = true; //todo: remove mock functionality
   const userRole = localStorage.getItem("userRole");
   const isAgent = userRole === "agent";
@@ -59,7 +65,7 @@ export function PageLayout({ children, title, description, actions }: PageLayout
             </Tooltip>
           )}
           <ConnectionStatus connected={isConnected} />
-          <NotificationsBell />
+          {!hideNotifications && <NotificationsBell />}
         </div>
       </header>
 

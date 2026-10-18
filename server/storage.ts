@@ -390,6 +390,9 @@ export interface IStorage {
   getNDREventsByOrderId(orderId: string): Promise<NdrEvent[]>;
   updateNDREvent(id: string, data: Partial<InsertNdrEvent>): Promise<NdrEvent | undefined>;
   listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }>;
+  findRecentNDREvent(awb: string, ndrDate: Date, windowMinutes?: number): Promise<NdrEvent | undefined>;
+  resolveOpenNDREvents(awb: string, resolution: "delivered" | "returned" | "cancelled", resolvedAt?: Date): Promise<number>;
+  listStaleUnresolvedNDREvents(olderThanHours: number, limit?: number): Promise<NdrEvent[]>;
 
   // Learning Center - Courses
   getCourse(id: string): Promise<Course | undefined>;
@@ -2513,6 +2516,76 @@ export class DbStorage implements IStorage {
       .where(eq(ndrEvents.id, id))
       .returning();
     return updated;
+  }
+
+  // Dedupe helper. Delhivery/Shiprocket occasionally re-fire the same NDR
+  // webhook (network hiccup, retry logic). Without a guard we insert a
+  // duplicate ndr_events row per re-fire, inflating the denominator of
+  // NDR Delivery Rate. Match on (awb, ndrDate) within a small window — a
+  // real second NDR attempt for the same AWB won't happen within minutes
+  // of the first. Returns the existing row if a near-duplicate is found.
+  async findRecentNDREvent(
+    awb: string,
+    ndrDate: Date,
+    windowMinutes = 5,
+  ): Promise<NdrEvent | undefined> {
+    const windowMs = windowMinutes * 60 * 1000;
+    const lo = new Date(ndrDate.getTime() - windowMs);
+    const hi = new Date(ndrDate.getTime() + windowMs);
+    const [existing] = await db
+      .select()
+      .from(ndrEvents)
+      .where(
+        and(
+          eq(ndrEvents.awb, awb),
+          gte(ndrEvents.ndrDate, lo),
+          lte(ndrEvents.ndrDate, hi),
+        ),
+      )
+      .orderBy(desc(ndrEvents.ndrDate))
+      .limit(1);
+    return existing;
+  }
+
+  // Terminal-status closer. When a shipment finally delivers / RTOs /
+  // cancels, mark every unresolved ndr_events row for that AWB as
+  // resolved with the right resolution. This is what makes NDR Delivery
+  // Rate (delivered NDRs / total NDRs) computable — closes the loop.
+  // Returns the number of rows updated.
+  async resolveOpenNDREvents(
+    awb: string,
+    resolution: "delivered" | "returned" | "cancelled",
+    resolvedAt: Date = new Date(),
+  ): Promise<number> {
+    const updated = await db
+      .update(ndrEvents)
+      .set({
+        resolved: true,
+        resolvedAt,
+        resolution,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(ndrEvents.awb, awb), eq(ndrEvents.resolved, false)))
+      .returning({ id: ndrEvents.id });
+    return updated.length;
+  }
+
+  // Fallback-poll candidates. If Delhivery ever drops a delivery webhook
+  // (they occasionally do), the corresponding ndr_events row stays open
+  // forever and never counts toward Delivery Rate. This picks up rows
+  // whose ndr_date is older than `olderThanHours` so the poll cron can
+  // re-check them against the live tracking API and close them.
+  async listStaleUnresolvedNDREvents(
+    olderThanHours: number,
+    limit = 200,
+  ): Promise<NdrEvent[]> {
+    const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+    return await db
+      .select()
+      .from(ndrEvents)
+      .where(and(eq(ndrEvents.resolved, false), lt(ndrEvents.ndrDate, cutoff)))
+      .orderBy(asc(ndrEvents.ndrDate))
+      .limit(limit);
   }
 
   async listUnresolvedNDREvents(filters?: { limit?: number; offset?: number; assignedTo?: string; storeId?: string }): Promise<{ events: NdrEvent[]; total: number }> {

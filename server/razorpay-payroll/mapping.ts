@@ -40,25 +40,37 @@ export function istTime(ts: Date | string): string {
 
 // ── Leave-type mapping ──────────────────────────────────────────────
 // RazorpayX leave-type is an integer ID specific to YOUR payroll account.
-// Fill these in with the real IDs from your RazorpayX leave config, and
-// set `paid: false` for any type that should map to "unpaid-leave".
-//
-// TODO(confirm-with-boss): replace the placeholder IDs (0) with the real
-// RazorpayX leave-type IDs before going live. Until confirmed, leave sync
-// stays in preview only.
+// Verge Scales' account only has two leave types configured (RazorpayX
+// support ticket #1180164, 2026-08-19):
+//   - Casual Leave  → id 0
+//   - Medical Leave → id 1
+// OrderFlow's `leave_type` enum has three values (sick / casual /
+// vacation). Mapping:
+//   - sick     → Medical (1)
+//   - casual   → Casual  (0)
+//   - vacation → Casual  (0)  — no separate earned/vacation type exists
+//     on the RazorpayX side yet; treated as casual until it's added.
+// Any leave type with a NEGATIVE id is treated as "not configured" and
+// skipped at sync time; that's the escape hatch if we add a new
+// OrderFlow leave type before mirroring it in RazorpayX.
 export interface LeaveTypeMapping {
   razorpayLeaveTypeId: number;
   paid: boolean;
 }
 export const LEAVE_TYPE_MAP: Record<string, LeaveTypeMapping> = {
-  sick: { razorpayLeaveTypeId: 0, paid: true },
+  sick: { razorpayLeaveTypeId: 1, paid: true },
   casual: { razorpayLeaveTypeId: 0, paid: true },
   vacation: { razorpayLeaveTypeId: 0, paid: true },
 };
 
-/** Have the leave-type IDs been configured (not all placeholder 0)? */
+/**
+ * True iff every leave type in the map has a real (non-negative)
+ * RazorpayX id. Used by the payroll-sync UI to gate the "leave sync
+ * enabled" pill.
+ */
 export function leaveTypesConfigured(): boolean {
-  return Object.values(LEAVE_TYPE_MAP).some((m) => m.razorpayLeaveTypeId > 0);
+  const values = Object.values(LEAVE_TYPE_MAP);
+  return values.length > 0 && values.every((m) => m.razorpayLeaveTypeId >= 0);
 }
 
 // ── Result shapes ───────────────────────────────────────────────────
@@ -168,10 +180,10 @@ export function mapLeaveRow(
     skipped.push({ reason: `unmapped leave type "${row.leaveType}"`, sourceId: row.id, email: row.email });
     return { mapped, skipped };
   }
-  // Guard: RazorpayX rejects leave-type 0 (its valid-list is per-account
-  // and these IDs start as placeholders). Until real leave-type IDs are
-  // configured, skip leave rather than emit a value the live API rejects.
-  if (!map.razorpayLeaveTypeId || map.razorpayLeaveTypeId <= 0) {
+  // Guard: negative id = not configured (see LEAVE_TYPE_MAP comment).
+  // 0 is a real Casual Leave id in Verge Scales' RazorpayX account, so
+  // we cannot use "falsy" or "<= 0" as the skip check.
+  if (map.razorpayLeaveTypeId < 0) {
     skipped.push({ reason: `leave type "${row.leaveType}" not configured (set RazorpayX leave-type ID)`, sourceId: row.id, email: row.email });
     return { mapped, skipped };
   }

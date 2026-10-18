@@ -147,6 +147,38 @@ export class ShopifyClient {
     return await response.json();
   }
 
+  /**
+   * Create a new order in Shopify. Used by the reshipments flow to
+   * duplicate an existing order with the correct financial framing
+   * (see server/reshipments/payload.ts for the body shape).
+   *
+   * Returns the freshly created order object so callers can persist
+   * its shopify id and generated name (e.g. "#1234-R1").
+   */
+  async createOrder(body: { order: Record<string, unknown> }): Promise<any> {
+    const url = `${this.baseUrl}/orders.json`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...(await this.getHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      // Surface Shopify's validation errors — they're the useful bit
+      // (e.g. `{"errors":{"line_items":["variant_id is invalid"]}}`).
+      const errorBody = await response.text();
+      throw new Error(
+        `Shopify createOrder failed: ${response.status} ${response.statusText} — ${errorBody.slice(0, 400)}`,
+      );
+    }
+
+    const data = await response.json();
+    return data.order;
+  }
+
   async fetchCustomer(customerId: string): Promise<any> {
     const url = `${this.baseUrl}/customers/${customerId}.json`;
     const response = await fetch(url, {
@@ -159,6 +191,27 @@ export class ShopifyClient {
     }
 
     return await response.json();
+  }
+
+  /**
+   * Look up an existing Shopify customer by phone number. Returns the
+   * first match's id (or null when there's no hit). Used by the
+   * reshipments local-snapshot path: without this we send a fresh
+   * customer block and Shopify 422s on phone-uniqueness the moment the
+   * number is already on another profile. We'd rather link to the
+   * existing customer and let the order attach there.
+   */
+  async findCustomerByPhone(phone: string): Promise<string | null> {
+    const q = encodeURIComponent(`phone:${phone}`);
+    const url = `${this.baseUrl}/customers/search.json?query=${q}&limit=1`;
+    const response = await fetch(url, {
+      method: "GET",
+      headers: await this.getHeaders(),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const first = data?.customers?.[0];
+    return first?.id ? String(first.id) : null;
   }
 
   async getShopInfo(
@@ -1062,13 +1115,30 @@ async function loadShopifyConfigForStore(
   // that's required at construct time is storeUrl — we want a usable
   // ShopifyClient even when credentials haven't been entered yet
   // (e.g. the admin just connected a store but hasn't run the test).
-  return {
-    storeUrl: row.storeUrl,
-    apiKey: row.apiKey ? decrypt(row.apiKey) : "",
-    apiSecret: row.apiSecret ? decrypt(row.apiSecret) : "",
-    webhookSecret: row.webhookSecret ? decrypt(row.webhookSecret) : undefined,
-    useClientCredentials: true,
-  };
+  try {
+    return {
+      storeUrl: row.storeUrl,
+      apiKey: row.apiKey ? decrypt(row.apiKey) : "",
+      apiSecret: row.apiSecret ? decrypt(row.apiSecret) : "",
+      webhookSecret: row.webhookSecret ? decrypt(row.webhookSecret) : undefined,
+      useClientCredentials: true,
+    };
+  } catch (e: any) {
+    // Local dev against a prod-copy DB: rows are encrypted with the
+    // prod SESSION_SECRET, which this environment doesn't have. Fall
+    // back to env credentials — but ONLY when the env shop domain
+    // matches this store's URL, so we can never point one tenant's
+    // API calls at another tenant's shop.
+    if (row.storeUrl && row.storeUrl === shopDomain && initialConfig.apiKey) {
+      console.warn(
+        `[Shopify] decrypt failed for store ${storeId}; using env credentials for ${shopDomain} (local dev fallback)`,
+      );
+      return { ...initialConfig, storeUrl: row.storeUrl };
+    }
+    throw new Error(
+      `[Shopify] cannot decrypt credentials for store ${storeId} and env fallback doesn't match (${row.storeUrl} vs ${shopDomain}): ${e?.message ?? e}`,
+    );
+  }
 }
 
 /**

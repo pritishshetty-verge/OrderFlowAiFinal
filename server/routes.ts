@@ -24,7 +24,7 @@ import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient, getShopifyClient } from "./shopify";
 import { requireStoreScope } from "./storeScope";
-import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema } from "@shared/schema";
+import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema, pincodeTiers } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
 import { OrderAssignmentEngine } from "./assignment";
@@ -32,6 +32,7 @@ import axios from "axios";
 import { sendInvitationEmail } from "./resend";
 import { kycUpload, resolveKycFilePath, KYC_UPLOAD_DIR } from "./upload";
 import { getPareMetrics } from "./services/analytics";
+import { closeStaleNDREvents } from "./cron/close-stale-ndr";
 import { hashPassword, verifyPassword } from "./auth";
 import fs from "fs";
 import path from "path";
@@ -1254,6 +1255,277 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error computing Pare metrics:", error);
       res.status(500).json({ error: "Failed to compute Pare metrics" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  RESHIPMENTS  —  duplicate-order flow when a parcel fails
+  //  delivery. Admin + agents on the NDR team can create; anyone in
+  //  the store can view the log.
+  // ═══════════════════════════════════════════════════════════════════
+  const requireReshipmentUser = async (
+    req: any,
+    res: any,
+  ): Promise<{ user: any } | null> => {
+    const uid =
+      typeof req.query.userId === "string"
+        ? req.query.userId
+        : typeof req.body?.userId === "string"
+          ? req.body.userId
+          : null;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthorized: userId required." });
+      return null;
+    }
+    const user = await storage.getUser(uid);
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized: user not found." });
+      return null;
+    }
+    return { user };
+  };
+
+  // Resolve the store for a reshipment action. Prefer the session-based
+  // req.storeScope, but fall back to resolving from the already-
+  // authenticated reshipment user when it's absent. Agents (e.g. the
+  // NDR team) authenticate via currentUserId rather than a session
+  // cookie, so their req.session can be empty/lapsed — which used to
+  // 401 the Create Reshipment action with "Authentication required"
+  // even though the user was proven by requireReshipmentUser. Sends the
+  // right HTTP status and returns null on failure; caller should return.
+  const resolveReshipmentScope = async (
+    req: any,
+    res: any,
+    user: any,
+  ): Promise<{ storeId: string } | null> => {
+    if (req.storeScope) return req.storeScope;
+    const { resolveScopeForUser, StoreScopeError } = await import("./storeScope");
+    try {
+      const scope = await resolveScopeForUser(user, req);
+      if (!scope) {
+        res.status(400).json({ error: "No store context available for this account." });
+        return null;
+      }
+      return scope;
+    } catch (e: any) {
+      if (e instanceof StoreScopeError) {
+        res.status(e.status).json({ error: e.message });
+        return null;
+      }
+      throw e;
+    }
+  };
+
+  // POST /api/reshipments — create a duplicate order in Shopify + log it.
+  app.post("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      // Any agent role can trigger a reshipment (NDR team is agents);
+      // the endpoint IS store-scoped so cross-tenant abuse can't happen.
+      const scope = await resolveReshipmentScope(req, res, authed.user);
+      if (!scope) return;
+
+      const { createReshipment, ReshipmentError } = await import("./reshipments/service");
+      const b = req.body ?? {};
+      // Minimal server-side validation — the Zod schema on the client
+      // does the heavy lifting, but we defend the DB either way.
+      const required = [
+        "originalOrderId",
+        "customerName",
+        "customerPhone",
+        "shippingAddress",
+        "reason",
+        "urgency",
+      ] as const;
+      for (const k of required) {
+        if (!b[k]) return res.status(400).json({ error: `Missing field: ${k}` });
+      }
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res
+          .status(400)
+          .json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      if (!b.shippingAddress.address1 || !b.shippingAddress.zip) {
+        return res
+          .status(400)
+          .json({ error: "shippingAddress.address1 and .zip are required." });
+      }
+
+      try {
+        const row = await createReshipment({
+          storeId: scope.storeId,
+          originalOrderId: b.originalOrderId,
+          customerName: b.customerName,
+          customerPhone: b.customerPhone,
+          shippingAddress: b.shippingAddress,
+          reason: b.reason,
+          urgency: b.urgency,
+          scheduledDate: b.scheduledDate ?? null,
+          internalNotes: b.internalNotes ?? null,
+          nameSuffix: b.nameSuffix ?? null,
+          createdBy: authed.user.id,
+          createdByName: authed.user.fullName ?? null,
+        });
+        res.status(201).json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] create failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to create reshipment." });
+    }
+  });
+
+  // GET /api/pincode/:zip — resolve a 6-digit Indian pincode to city +
+  // state. Uses the existing pincode_tiers table (19.5k rows). No auth
+  // gate — same treatment as other read-only lookups.
+  app.get("/api/pincode/:zip", async (req, res) => {
+    try {
+      const zip = String(req.params.zip ?? "").trim();
+      if (!/^\d{6}$/.test(zip)) {
+        return res.status(400).json({ error: "Pincode must be 6 digits." });
+      }
+      const rows = await db
+        .select()
+        .from(pincodeTiers)
+        .where(eq(pincodeTiers.pincode, zip))
+        .limit(1);
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Pincode not found." });
+      res.json({
+        pincode: row.pincode,
+        city: row.city,
+        state: row.state,
+        tier: row.tier,
+      });
+    } catch (error: any) {
+      console.error("[pincode] lookup failed:", error);
+      res.status(500).json({ error: "Failed to resolve pincode." });
+    }
+  });
+
+  // GET /api/reshipments?filter=all|attention — dashboard rows.
+  // Access model (payroll incentives depend on this being tight):
+  //   admin     → all rows in the store, createdByName populated
+  //   non-admin → ONLY rows they created themselves. The createdBy
+  //               filter comes from the resolved-session user id, not
+  //               anything the client passes.
+  app.get("/api/reshipments", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = await resolveReshipmentScope(req, res, authed.user);
+      if (!scope) return;
+      const filter = req.query.filter === "attention" ? "attention" : "all";
+      const { listReshipments } = await import("./reshipments/service");
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      res.json(await listReshipments(scope.storeId, filter, { createdByOnly }));
+    } catch (error: any) {
+      console.error("[reshipments] list failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to list reshipments." });
+    }
+  });
+
+  // PATCH /api/reshipments/:id — edit a PENDING reshipment. Address and
+  // phone changes are pushed to the Shopify duplicate too, otherwise the
+  // courier would still ship to the address we're fixing.
+  app.patch("/api/reshipments/:id", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = await resolveReshipmentScope(req, res, authed.user);
+      if (!scope) return;
+      const { updateReshipment, ReshipmentError } = await import("./reshipments/service");
+      const b = req.body ?? {};
+      if (b.urgency === "scheduled" && !b.scheduledDate) {
+        return res
+          .status(400)
+          .json({ error: "scheduledDate is required when urgency=scheduled." });
+      }
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      try {
+        const row = await updateReshipment(
+          scope.storeId,
+          req.params.id,
+          {
+            customerPhone: b.customerPhone,
+            shippingAddress: b.shippingAddress,
+            reason: b.reason,
+            urgency: b.urgency,
+            scheduledDate: b.scheduledDate ?? null,
+            internalNotes: b.internalNotes,
+          },
+          { createdByOnly },
+        );
+        res.json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] update failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to update reshipment." });
+    }
+  });
+
+  // POST /api/reshipments/:id/cancel — cancel a PENDING reshipment and
+  // the Shopify duplicate behind it. Shopify is cancelled first; if that
+  // fails nothing is marked cancelled here.
+  app.post("/api/reshipments/:id/cancel", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = await resolveReshipmentScope(req, res, authed.user);
+      if (!scope) return;
+      const { cancelReshipment, ReshipmentError } = await import("./reshipments/service");
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      try {
+        const row = await cancelReshipment(
+          scope.storeId,
+          req.params.id,
+          authed.user.id,
+          { createdByOnly },
+        );
+        res.json(row);
+      } catch (err: any) {
+        if (err instanceof ReshipmentError) {
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+    } catch (error: any) {
+      console.error("[reshipments] cancel failed:", error);
+      res.status(500).json({ error: error?.message ?? "Failed to cancel reshipment." });
+    }
+  });
+
+  // GET /api/reshipments/stats — counts by status. Agents see THEIR
+  // numbers (payroll transparency); admins see the store total.
+  app.get("/api/reshipments/stats", async (req, res) => {
+    try {
+      const authed = await requireReshipmentUser(req, res);
+      if (!authed) return;
+      const scope = await resolveReshipmentScope(req, res, authed.user);
+      if (!scope) return;
+      const { getReshipmentStats } = await import("./reshipments/service");
+      const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
+      const stats = await getReshipmentStats(scope.storeId, { createdByOnly });
+      res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
+    } catch (error: any) {
+      console.error("[reshipments] stats failed:", error);
+      res
+        .status(500)
+        .json({ error: error?.message ?? "Failed to fetch stats." });
     }
   });
 
@@ -5423,10 +5695,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Capture the "before" state so we can detect payroll-relevant
+      // changes and re-sync RazorpayX after the update.
+      const beforeUser = await storage.getUser(req.params.id);
+
       const user = await storage.updateUser(req.params.id, validatedData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+
+      // Auto-sync to RazorpayX when a payroll-relevant field changed
+      // (baseSalary, payrollEmail, fullName). Fire-and-forget — never
+      // fail the PATCH on a RazorpayX outage. The provisionUser
+      // function is idempotent: it looks up first, creates only if
+      // missing, always pushes the current salary.
+      const payrollChanged = beforeUser && (
+        String(beforeUser.baseSalary ?? "") !== String(user.baseSalary ?? "") ||
+        (beforeUser.payrollEmail ?? "") !== (user.payrollEmail ?? "") ||
+        (beforeUser.fullName ?? "") !== (user.fullName ?? "")
+      );
+      if (payrollChanged && user.baseSalary != null && Number(user.baseSalary) > 0) {
+        void import("./razorpay-payroll/provision")
+          .then(({ provisionUser }) => provisionUser(user.id))
+          .then((r) => {
+            console.log(
+              `[razorpay-provision/patch] ${user.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) — ${r.message}`,
+            );
+          })
+          .catch((err) => {
+            console.error(`[razorpay-provision/patch] uncaught for ${user.email}:`, err);
+          });
+      }
+
       // PATCH is admin-only at the auth layer above; safe to leave
       // payroll fields. Always strip password.
       res.json(stripPassword(user));
@@ -5903,6 +6203,339 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (err: any) {
       console.error("[cron/auto-logout] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  // Nightly NDR fallback poll — catches ndr_events rows whose terminal-
+  // status webhook never arrived (Delhivery occasionally drops one).
+  // Without this the row stays open forever and never counts toward
+  // NDR Delivery Rate on the payroll page, making Chandi's numbers
+  // look worse than reality. Full logic + thresholds live in
+  // server/cron/close-stale-ndr.ts.
+  //
+  // Auth mirrors attendance-auto-logout: Vercel Bearer OR a custom
+  // header for ad-hoc curling.
+
+  // Bulk AWB status lookup — admin-only quick tool. Takes an array
+  // of Delhivery AWBs, hits the tracking API via the store's
+  // configured client, returns a simplified status per AWB. Used by
+  // the standalone /tools/awb-tracker.html and by ad-hoc console
+  // pastes for on-call debugging.
+  app.post("/api/tools/track-awbs", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const rawAwbs = Array.isArray(req.body?.awbs) ? req.body.awbs : [];
+      const awbs = rawAwbs
+        .map((s: any) => String(s ?? "").trim())
+        .filter((s: string) => s.length > 0)
+        .slice(0, 100); // safety cap
+      if (!awbs.length) return res.status(400).json({ error: "Pass { awbs: [...] } in body" });
+
+      // Store scope resolution mirrors /api/payroll/cycles — query
+      // param first, then middleware scope, then first active store.
+      const { stores: storesTable } = await import("@shared/schema");
+      let storeId: string | null =
+        (typeof req.query.storeId === "string" && req.query.storeId) || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db
+          .select({ id: storesTable.id, isActive: storesTable.isActive })
+          .from(storesTable)
+          .where(eq(storesTable.id, req.storeScope.storeId))
+          .limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .limit(1);
+        storeId = live?.id ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+
+      const { getDelhiveryClient } = await import("./services/delhivery");
+      const client = await getDelhiveryClient(storeId);
+
+      const simplify = (status: string | undefined, statusType: string | undefined) => {
+        const s = (status ?? "").toLowerCase();
+        if (s === "delivered") return "Delivered";
+        if (s.includes("rto") && s.includes("deliver")) return "RTO Delivered";
+        if (statusType === "RT" || s.includes("rto") || s.includes("return")) return "In Transit (RTO)";
+        if (statusType === "UD") return "NDR";
+        if (s.includes("transit") || s === "dispatched" || s === "manifested" || s === "in transit" || s.includes("out for delivery")) return "In Transit";
+        return status ?? "Unknown";
+      };
+
+      const results = await Promise.all(
+        awbs.map(async (awb: string) => {
+          try {
+            const track = await client.trackShipment(awb);
+            if (!track.success) return { awb, simplified: "Error", status: track.error ?? "Unknown", location: "", scannedAt: "" };
+            const activities = track.activities ?? [];
+            const latest = activities[0];
+            return {
+              awb,
+              simplified: simplify(track.status, track.statusCode),
+              status: track.status ?? "Unknown",
+              location: track.location ?? latest?.location ?? "",
+              scannedAt: latest?.datetime ?? "",
+            };
+          } catch (e: any) {
+            return { awb, simplified: "Error", status: e?.message ?? String(e), location: "", scannedAt: "" };
+          }
+        }),
+      );
+
+      res.json({ storeId, results });
+    } catch (err: any) {
+      console.error("Error in POST /api/tools/track-awbs:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+    }
+  });
+
+  // ── Admin: force a single-order resync from Delhivery ───────────────
+  //
+  // Fixes the "OrderFlow says Out for Delivery but the parcel actually
+  // delivered" class of bug — a dropped Delhivery webhook leaves
+  // orders.status stale forever because closeStaleNDR only touches
+  // ndr_events, not orders. This endpoint pulls live tracking, feeds
+  // it through the SAME normaliser the webhook uses, and writes the
+  // canonical status back to orders + shipments + order_status_history.
+  //
+  // Lookup: either the order's Shopify number (#15667 → "15667") or
+  // the OrderFlow row id. Returns before/after so the UI can toast.
+  app.post("/api/admin/orders/:key/resync-tracking", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+
+    const key = String(req.params.key ?? "").trim();
+    if (!key) return res.status(400).json({ error: "Missing order key in path" });
+
+    try {
+      // Resolve the order — by shopify_order_number first (what the UI
+      // has handy), falling back to the OrderFlow uuid.
+      const cleaned = key.replace(/^#/, "");
+      let orderRow: any = null;
+      const byNumber: any = await db.execute(sql`
+        SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
+      `);
+      orderRow = (byNumber?.rows ?? [])[0] ?? null;
+      if (!orderRow) {
+        const byId: any = await db.execute(sql`
+          SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
+        `).catch(() => ({ rows: [] }));
+        orderRow = (byId?.rows ?? [])[0] ?? null;
+      }
+      if (!orderRow) return res.status(404).json({ error: `No order matched "${key}"` });
+
+      const shipmentRow: any = await storage.getShipmentByOrderId(orderRow.id);
+      const awb = shipmentRow?.awb ?? null;
+      if (!awb) {
+        return res.status(422).json({
+          error: "This order has no AWB attached yet — nothing to resync.",
+          orderId: orderRow.id,
+          status: orderRow.status,
+        });
+      }
+
+      // Pull live status via the store's Delhivery client — this is the
+      // authoritative source the courier itself would use.
+      const { getDelhiveryClient } = await import("./services/delhivery");
+      const client = await getDelhiveryClient(orderRow.store_id);
+      const track = await client.trackShipment(awb);
+      if (!track.success) {
+        return res.status(502).json({
+          error: `Delhivery tracking failed for AWB ${awb}: ${track.error ?? "unknown"}`,
+        });
+      }
+
+      // Reconstruct the webhook-shaped payload so we can reuse the same
+      // strict normaliser + unified mapper the live webhook path runs.
+      const { normalizeDelhivery } = await import("./logic/rules/delhivery");
+      const { toUnifiedStatus } = await import("./logic/unifiedStatus");
+      const { SHIPPING_STATUS_LABELS } = await import("@shared/schema");
+      const normalized = normalizeDelhivery({
+        Shipment: {
+          Status: {
+            StatusType: track.statusType ?? "",
+            Status: track.status ?? "",
+            Instructions: track.instructions ?? "",
+            NSLCode: track.statusCode ?? "",
+          },
+          NSLCode: track.statusCode ?? "",
+        },
+      });
+      const unifiedStatus = toUnifiedStatus({ source: "delhivery", rawStatus: normalized.status });
+      const previousStatus = orderRow.status ?? null;
+      const nowIso = new Date();
+
+      // Write the same three sinks the webhook writes: shipment,
+      // order, and (for delivered/rto) the order_status_history row so
+      // the timeline reflects when we saw it.
+      if (shipmentRow) {
+        await storage.updateShipment(shipmentRow.id, {
+          currentStatus: track.status ?? undefined,
+          statusUpdatedAt: nowIso,
+          ...(unifiedStatus === "delivered" && !shipmentRow.deliveredAt
+            ? { deliveredAt: nowIso }
+            : {}),
+        });
+      }
+
+      await storage.updateOrder(orderRow.id, {
+        shipmentStatus: (SHIPPING_STATUS_LABELS as any)[unifiedStatus] || track.status,
+        status: unifiedStatus,
+        isActionable: normalized.isActionable,
+      });
+
+      if (previousStatus !== unifiedStatus) {
+        // order_status_history columns: id, order_id, status,
+        // previous_status, changed_by, note, created_at. `id` is
+        // NOT NULL and prod migrations don't reliably carry the
+        // gen_random_uuid() default, so stamp it explicitly.
+        // Audit trail goes into `note` (there's no `source` column).
+        await db.execute(sql`
+          INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
+          VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${'admin-resync from Delhivery live tracking'}, NOW())
+        `);
+      }
+
+      // Also let reshipment tracking bump — same mapping the webhook uses.
+      if (awb) {
+        const reshipStatus =
+          unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery"
+            ? "in_transit"
+            : unifiedStatus === "ndr"
+              ? "ndr"
+              : unifiedStatus === "delivered"
+                ? "delivered"
+                : unifiedStatus === "rto_initiated" ||
+                    unifiedStatus === "rto_ofd" ||
+                    unifiedStatus === "rto_delivered"
+                  ? "rto"
+                  : null;
+        if (reshipStatus) {
+          void import("./reshipments/service")
+            .then((s) => s.updateStatusByAwb({ awb, courierStatus: reshipStatus, courierName: "Delhivery" }))
+            .catch(() => {});
+        }
+      }
+
+      return res.json({
+        ok: true,
+        orderId: orderRow.id,
+        orderNumber: orderRow.shopify_order_number,
+        awb,
+        previousStatus,
+        newStatus: unifiedStatus,
+        changed: previousStatus !== unifiedStatus,
+        delhivery: {
+          status: track.status,
+          statusType: track.statusType,
+          instructions: track.instructions,
+        },
+      });
+    } catch (err: any) {
+      console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
+      return res.status(500).json({ error: err?.message ?? "Resync failed" });
+    }
+  });
+
+  // Admin-session trigger for the same reconciliation sweep. Uses the
+  // normal admin cookie instead of CRON_SECRET so an admin can heal
+  // drift on demand without touching Vercel env vars. Delegates to the
+  // same reconcileShipmentStatus function the nightly cron runs — zero
+  // behavioural drift between the two paths.
+  app.post("/api/admin/reconcile-shipment-status", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { reconcileShipmentStatus } = await import("./cron/reconcile-shipment-status");
+      const result = await reconcileShipmentStatus();
+      console.log(
+        `[admin/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[admin/reconcile-shipment-status] crashed:", err);
+      return res.status(500).json({ error: err?.message ?? "Sweep failed" });
+    }
+  });
+
+  // Systematic shipment-status reconciliation. Sweeps every in-flight
+  // order whose orders.updated_at is older than the freshness cutoff,
+  // pulls live Delhivery tracking, and heals drift through the same
+  // normalise → unify → three-sink write path the webhook uses. Runs
+  // every 3 hours in prod (see vercel.json).
+  app.all("/api/cron/reconcile-shipment-status", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)",
+      });
+    }
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" &&
+      vercelSecret !== undefined &&
+      auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" &&
+      customSecret !== undefined &&
+      customHeader === customSecret;
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const { reconcileShipmentStatus } = await import("./cron/reconcile-shipment-status");
+      const result = await reconcileShipmentStatus();
+      console.log(
+        `[cron/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient} transitions=${JSON.stringify(result.transitions)}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[cron/reconcile-shipment-status] sweep crashed:", err);
+      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+    }
+  });
+
+  app.all("/api/cron/close-stale-ndr", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.NDR_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({
+        error: "No cron secret configured (set CRON_SECRET or NDR_CRON_SECRET)",
+      });
+    }
+
+    const auth = req.headers.authorization;
+    const customHeader = req.headers["x-ndr-cron-secret"];
+    const vercelOk =
+      typeof auth === "string" &&
+      vercelSecret !== undefined &&
+      auth === `Bearer ${vercelSecret}`;
+    const customOk =
+      typeof customHeader === "string" &&
+      customSecret !== undefined &&
+      customHeader === customSecret;
+
+    if (!vercelOk && !customOk) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+      const result = await closeStaleNDREvents();
+      console.log(
+        `[cron/close-stale-ndr] scanned=${result.scanned} delivered=${result.closedDelivered} returned=${result.closedReturned} cancelled=${result.closedCancelled} stillOpen=${result.stillOpen} errors=${result.errors}`,
+      );
+      return res.json({ ok: true, ...result });
+    } catch (err: any) {
+      console.error("[cron/close-stale-ndr] sweep crashed:", err);
       return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
     }
   });
@@ -6513,6 +7146,290 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────────
+  // Payroll CYCLES — the /payroll dashboard's data model.
+  //
+  // A cycle = one monthly run for a store, with a payroll_ledger row
+  // per eligible employee. Cron auto-generates on the 2nd of every
+  // month; admin can also generate on-demand for a past month
+  // (backfill) via POST /api/payroll/cycles.
+  // ─────────────────────────────────────────────────────────────────
+
+  app.get("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      // Store resolution: query param wins; otherwise the storeScope
+      // middleware value UNLESS it points to an inactive store (OLB
+      // et al.), in which case fall through to the first active
+      // store. /payroll no longer has its own store selector, so the
+      // page has to just work against whatever store is currently
+      // sensible. Admins on a legacy/closed store scope shouldn't
+      // see an empty payroll dashboard.
+      const { stores: storesTable } = await import("@shared/schema");
+      let storeId: string | null =
+        (typeof req.query.storeId === "string" && req.query.storeId) || null;
+      if (!storeId && req.storeScope?.storeId) {
+        // Verify the scope points to an ACTIVE store.
+        const [scoped] = await db
+          .select({ id: storesTable.id, isActive: storesTable.isActive })
+          .from(storesTable)
+          .where(eq(storesTable.id, req.storeScope.storeId))
+          .limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .limit(1);
+        storeId = live?.id ?? null;
+      }
+      const cycle = await import("./services/payroll-cycle");
+      const cycles = await cycle.listCycles(storeId);
+      res.json({ cycles, activeStoreId: storeId });
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to list cycles" });
+    }
+  });
+
+  app.post("/api/payroll/cycles", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const year = parseInt(String(body.year ?? ""), 10);
+      const month = parseInt(String(body.month ?? ""), 10);
+      const storeId = String(body.storeId ?? req.storeScope?.storeId ?? "");
+      if (!storeId || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return res.status(400).json({ error: "storeId, year, month required (month 1-12)" });
+      }
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.generateCycle({
+        storeId, year, month,
+        generatedBy: (req.body?.currentUserId as string) ?? null,
+      });
+      res.status(result.alreadyExisted ? 200 : 201).json(result);
+    } catch (err: any) {
+      console.error("Error in POST /api/payroll/cycles:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to generate cycle" });
+    }
+  });
+
+  app.get("/api/payroll/cycles/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.getCycleWithLedgers(req.params.id);
+      if (!result) return res.status(404).json({ error: "Cycle not found" });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles/:id:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to fetch cycle" });
+    }
+  });
+
+  app.post("/api/payroll/cycles/:id/approve", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const approvedBy = (req.body?.currentUserId as string) ?? (req.session?.userId as string) ?? "";
+      if (!approvedBy) return res.status(400).json({ error: "currentUserId required" });
+      const cycle = await import("./services/payroll-cycle");
+      const result = await cycle.approveCycle({ cycleId: req.params.id, approvedBy });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error in POST /api/payroll/cycles/:id/approve:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to approve cycle" });
+    }
+  });
+
+  // On-demand payslip PDF. Renders from the current ledger row (or the
+  // approved version) and streams as an attachment. Works for both
+  // pending and approved cycles per PRD: "Download PDF instantly
+  // compiles the View Mode data".
+  app.get("/api/payroll/cycles/:id/ledger/:userId/pdf", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { payrollLedger: ledgerTable, payrollCycles: cyclesTable } = await import("@shared/schema");
+      const [ledger] = await db
+        .select()
+        .from(ledgerTable)
+        .where(and(eq(ledgerTable.cycleId, req.params.id), eq(ledgerTable.userId, req.params.userId)))
+        .limit(1);
+      if (!ledger) return res.status(404).json({ error: "Ledger row not found for this cycle+user" });
+
+      const user = await storage.getUser(req.params.userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const { renderPayslipPdfBuffer } = await import("./services/payslip-pdf");
+      const { runPayrollMath } = await import("./services/payroll");
+
+      // Recompute unpaidLeaveDeduction from the ledger's stored values
+      // so the PDF's deduction line matches what the admin approved.
+      const math = runPayrollMath({
+        baseSalary: Number(ledger.baseSalary),
+        expectedWorkingDays: ledger.expectedWorkingDays,
+        daysPresent: ledger.daysPresent,
+        paidHolidaysUsed: ledger.paidHolidaysUsed,
+        unpaidLeaves: ledger.unpaidLeaves,
+        compensationProfile: (ledger.compensationProfile as any) ?? null,
+        deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+        teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+        personalRecoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+        reshipsCount: ledger.reshipsCount ?? 0,
+        reimbursement: Number(ledger.reimbursement),
+        lineItems: (ledger.lineItems as any) ?? [],
+      });
+
+      const buf = await renderPayslipPdfBuffer({
+        employee: {
+          fullName: user.fullName,
+          email: user.email,
+          employeeId: user.employeeId ?? null,
+          holidayState: user.holidayState ?? null,
+          department: user.department ?? null,
+        },
+        period: { year: ledger.year, month: ledger.month },
+        base: {
+          baseSalary: Number(ledger.baseSalary),
+          expectedWorkingDays: ledger.expectedWorkingDays,
+          daysPresent: ledger.daysPresent,
+          paidHolidaysUsed: ledger.paidHolidaysUsed,
+          ratio: Number(ledger.basePayRatio),
+          amount: Number(ledger.basePayAmount),
+          capped: Number(ledger.basePayRatio) >= 1,
+        },
+        incentives: {
+          profile: ledger.compensationProfile as any,
+          deliveryRatePct: ledger.deliveryRatePct != null ? Number(ledger.deliveryRatePct) : null,
+          teamDeliveryRatePct: ledger.teamDeliveryRatePct != null ? Number(ledger.teamDeliveryRatePct) : null,
+          recoveryRatePct: ledger.recoveryRatePct != null ? Number(ledger.recoveryRatePct) : null,
+          reshipsCount: ledger.reshipsCount ?? 0,
+          confirmationBonus: Number(ledger.confirmationBonus),
+          teamDeliveryBonus: Number(ledger.teamDeliveryBonus),
+          recoveryBonus: Number(ledger.recoveryBonus),
+          reshipsBonus: Number(ledger.reshipsBonus),
+          total: Number(ledger.totalIncentives),
+        },
+        lineItems: (ledger.lineItems as any) ?? [],
+        unpaidLeaves: ledger.unpaidLeaves,
+        unpaidLeaveDeduction: math.unpaidLeaveDeduction,
+        reimbursement: Number(ledger.reimbursement),
+        finalPayout: Number(ledger.finalPayout),
+        ledgerId: ledger.id,
+        generatedAt: new Date(),
+      });
+
+      const safeName = (user.fullName ?? "employee").replace(/[^a-z0-9]/gi, "_");
+      const period = `${ledger.year}-${String(ledger.month).padStart(2, "0")}`;
+      const filename = `${safeName}__${period}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", String(buf.byteLength));
+      res.end(buf);
+    } catch (err: any) {
+      console.error("Error in GET /api/payroll/cycles/:id/ledger/:userId/pdf:", err);
+      res.status(500).json({ error: err?.message ?? "Failed to render PDF" });
+    }
+  });
+
+  app.patch("/api/payroll/cycles/:id/ledger/:userId", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const body = req.body ?? {};
+      const cycleModule = await import("./services/payroll-cycle");
+
+      // Fetch the cycle first to know its storeId for the metric
+      // re-fetch inside buildLedgerRow.
+      const [cycleRow] = await db
+        .select()
+        .from((await import("@shared/schema")).payrollCycles)
+        .where(eq((await import("@shared/schema")).payrollCycles.id, req.params.id))
+        .limit(1);
+      if (!cycleRow) return res.status(404).json({ error: "Cycle not found" });
+
+      const updated = await cycleModule.updateCycleLedger({
+        cycleId: req.params.id,
+        userId: req.params.userId,
+        storeId: cycleRow.storeId,
+        overrides: {
+          baseSalary: body.baseSalary != null ? Number(body.baseSalary) : undefined,
+          daysPresent: body.daysPresent != null ? Number(body.daysPresent) : undefined,
+          paidHolidaysUsed: body.paidHolidaysUsed != null ? Number(body.paidHolidaysUsed) : undefined,
+          unpaidLeaves: body.unpaidLeaves != null ? Number(body.unpaidLeaves) : undefined,
+          deliveryRatePct: body.deliveryRatePct === null ? null : body.deliveryRatePct != null ? Number(body.deliveryRatePct) : undefined,
+          teamDeliveryRatePct: body.teamDeliveryRatePct === null ? null : body.teamDeliveryRatePct != null ? Number(body.teamDeliveryRatePct) : undefined,
+          personalRecoveryRatePct: body.personalRecoveryRatePct === null ? null : body.personalRecoveryRatePct != null ? Number(body.personalRecoveryRatePct) : undefined,
+          reshipsCount: body.reshipsCount != null ? Number(body.reshipsCount) : undefined,
+          reimbursement: body.reimbursement != null ? Number(body.reimbursement) : undefined,
+          lineItems: Array.isArray(body.lineItems) ? body.lineItems : undefined,
+          notes: typeof body.notes === "string" ? body.notes : undefined,
+        },
+      });
+      res.json(updated);
+    } catch (err: any) {
+      console.error("Error in PATCH /api/payroll/cycles/:id/ledger/:userId:", err);
+      const msg = err?.message ?? "Failed to update ledger";
+      const status = msg.includes("locked") ? 409 : msg.includes("not found") ? 404 : 500;
+      res.status(status).json({ error: msg });
+    }
+  });
+
+  // Cron endpoint — auto-generates the previous month's cycle for
+  // every active store. Fires nightly at 18:30 UTC on the 1st = 00:00
+  // IST on the 2nd, per the PRD "Trigger Event" rule.
+  app.all("/api/cron/generate-payroll-cycle", async (req, res) => {
+    const vercelSecret = process.env.CRON_SECRET;
+    const customSecret = process.env.PAYROLL_CRON_SECRET;
+    if (!vercelSecret && !customSecret) {
+      return res.status(503).json({ error: "No cron secret configured" });
+    }
+    const authHdr = req.headers.authorization;
+    const customHdr = req.headers["x-payroll-cron-secret"];
+    const vercelOk = typeof authHdr === "string" && vercelSecret && authHdr === `Bearer ${vercelSecret}`;
+    const customOk = typeof customHdr === "string" && customSecret && customHdr === customSecret;
+    if (!vercelOk && !customOk) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      // Compute the previous calendar month in IST — "August 1st IST"
+      // maps to a specific instant; we bucket by that instant's month.
+      const now = new Date();
+      const nowInIst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const targetMonthIst = new Date(nowInIst.getFullYear(), nowInIst.getMonth() - 1, 15);
+      const year = targetMonthIst.getFullYear();
+      const month = targetMonthIst.getMonth() + 1;
+
+      // All active stores get a cycle for the previous month.
+      const { stores: storesTable } = await import("@shared/schema");
+      const activeStores = await db
+        .select({ id: storesTable.id })
+        .from(storesTable)
+        .where(eq(storesTable.isActive, true));
+
+      const cycleModule = await import("./services/payroll-cycle");
+      const results: any[] = [];
+      for (const s of activeStores) {
+        try {
+          const r = await cycleModule.generateCycle({ storeId: s.id, year, month, generatedBy: null });
+          results.push({ storeId: s.id, ok: r.ok, ledgerCount: r.ledgerCount, alreadyExisted: r.alreadyExisted, message: r.message });
+        } catch (err: any) {
+          results.push({ storeId: s.id, ok: false, error: err?.message ?? String(err) });
+        }
+      }
+      console.log(`[cron/generate-payroll-cycle] ${year}-${String(month).padStart(2, "0")} — ${results.length} store(s) processed`);
+      res.json({ ok: true, year, month, results });
+    } catch (err: any) {
+      console.error("[cron/generate-payroll-cycle] crash:", err);
+      res.status(500).json({ error: err?.message ?? "Cron failed" });
+    }
+  });
+
   app.get("/api/payroll/preview", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth.ok) return;
@@ -6535,11 +7452,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       ]);
 
       const expectedDays = expectedWorkingDays(year, month);
-      const [att, autoHolidays, deliveryRate, teamRate, ytdHolidays, existing] = await Promise.all([
+      // Brand-scoped metrics (TDR / NDR / Reshipments). Priority:
+      //   1. explicit ?storeId=<id> query param — for a future
+      //      compensation-UI dropdown, and for admins overriding the
+      //      middleware fallback (which picks the oldest store, not
+      //      necessarily the live one).
+      //   2. the storeScope middleware's resolution.
+      const explicitStoreId = req.query.storeId ? String(req.query.storeId) : null;
+      const activeStoreId = explicitStoreId || req.storeScope?.storeId || null;
+      const [att, autoHolidays, deliveryRate, teamRate, brandTdr, brandNdr, reshipsDelivered, ytdHolidays, existing] = await Promise.all([
         metrics.getAttendanceMetrics(userId, year, month),
         user.holidayState ? metrics.getAutoPaidHolidaysCount(user.holidayState, year, month) : 0,
         metrics.getConfirmationDeliveryRatePct(userId, year, month),
         metrics.getTeamDeliveryRatePct(year, month),
+        activeStoreId ? metrics.getBrandTDRPct(activeStoreId, year, month) : Promise.resolve<number | null>(null),
+        activeStoreId
+          ? metrics.getBrandNDRDeliveryRate(activeStoreId, year, month)
+          : Promise.resolve({
+              ratePct: null as number | null,
+              totalNdrs: 0,
+              deliveredNdrs: 0,
+              returnedNdrs: 0,
+              cancelledNdrs: 0,
+              openNdrs: 0,
+            }),
+        activeStoreId ? metrics.getReshipmentsDeliveredCount(activeStoreId, year, month) : Promise.resolve(0),
         metrics.getYtdPaidHolidaysUsed(userId, year, month),
         storage.getPayrollLedgerByPeriod(userId, year, month),
       ]);
@@ -6549,7 +7486,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const remainingQuota = Math.max(0, ANNUAL_PAID_HOLIDAY_CAP - ytdHolidays);
       const paidHolidaysAuto = Math.min(autoHolidays, remainingQuota);
 
+      // Prefer brand-wide TDR (per PDF: "Total Delivery Rate of the
+      // Brand") when a store scope is present; fall back to the legacy
+      // global teamRate otherwise so unscoped previews still render.
+      const effectiveTeamRate = brandTdr ?? teamRate;
+
       const baseSalary = user.baseSalary != null ? Number(user.baseSalary) : 0;
+      // Reimbursement default. If the caller passed ?reimbursement=X,
+      // honor that (lets the UI show a live-recomputed final when the
+      // admin edits the field). Otherwise use the compensation-plan
+      // default of ₹349.
+      const { DEFAULT_REIMBURSEMENT } = await import("./services/payroll");
+      const reimbursementParam = parseFloatOrNull(req.query.reimbursement);
+      const reimbursement = reimbursementParam ?? DEFAULT_REIMBURSEMENT;
+
       const result = runPayrollMath({
         baseSalary,
         expectedWorkingDays: expectedDays,
@@ -6557,9 +7507,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paidHolidaysUsed: paidHolidaysAuto,
         compensationProfile: (user.compensationProfile as any) ?? null,
         deliveryRatePct: deliveryRate,
-        teamDeliveryRatePct: teamRate,
-        personalRecoveryRatePct: null, // admin enters
-        reshipsCount: null, // admin enters
+        teamDeliveryRatePct: effectiveTeamRate,
+        // Brand-wide NDR Delivery Rate (delivered NDRs / total NDRs)
+        // now feeds the recovery tier automatically. Admin can still
+        // override on /api/payroll/run.
+        personalRecoveryRatePct: brandNdr.ratePct,
+        reshipsCount: reshipsDelivered,
+        reimbursement,
       });
 
       res.json({
@@ -6585,9 +7539,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         autoMetrics: {
           deliveryRatePct: deliveryRate,
-          teamDeliveryRatePct: teamRate,
-          personalRecoveryRatePct: null,
-          reshipsCount: null,
+          teamDeliveryRatePct: effectiveTeamRate,
+          // brandTDR / brandNDR are the per-store values used to
+          // compute the tier bonuses in Chandi's variable-pay stack.
+          // The UI can show them side-by-side with the admin-editable
+          // fields so overrides are conscious, not silent.
+          brandTdrPct: brandTdr,
+          personalRecoveryRatePct: brandNdr.ratePct,
+          ndrBreakdown: {
+            total: brandNdr.totalNdrs,
+            delivered: brandNdr.deliveredNdrs,
+            returned: brandNdr.returnedNdrs,
+            cancelled: brandNdr.cancelledNdrs,
+            stillOpen: brandNdr.openNdrs,
+          },
+          reshipsCount: reshipsDelivered,
+          reimbursement,
         },
         math: result,
         existingLedger: existing
@@ -6634,6 +7601,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const teamDeliveryRatePct = parseFloatOrNull(body.teamDeliveryRatePct);
       const personalRecoveryRatePct = parseFloatOrNull(body.personalRecoveryRatePct);
       const reshipsCount = parseIntOr(body.reshipsCount, 0);
+      // Reimbursement — admin-editable; defaults to plan value if
+      // caller omits the field. Clamped to non-negative.
+      const reimbursementInput = parseFloatOrNull(body.reimbursement);
+      const reimbursement = Math.max(0, reimbursementInput ?? payroll.DEFAULT_REIMBURSEMENT);
       const notes = typeof body.notes === "string" ? body.notes : null;
 
       const baseSalary = Number(user.baseSalary);
@@ -6654,6 +7625,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         teamDeliveryRatePct,
         personalRecoveryRatePct,
         reshipsCount,
+        reimbursement,
       });
 
       // Persist (or update existing) ledger row before email — that
@@ -6679,6 +7651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         recoveryBonus: String(math.incentives.recoveryBonus),
         reshipsBonus: String(math.incentives.reshipsBonus),
         totalIncentives: String(math.incentives.total),
+        reimbursement: String(math.reimbursement),
         finalPayout: String(math.finalPayout),
         currency: "INR",
         status: "finalized",
@@ -6720,6 +7693,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           reshipsBonus: math.incentives.reshipsBonus,
           total: math.incentives.total,
         },
+        reimbursement: math.reimbursement,
         finalPayout: math.finalPayout,
         ledgerId: created.id,
         generatedAt: new Date(),
@@ -7982,7 +8956,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+      // Resolve the actor from the authenticated session first — the
+      // body-supplied actionBy is only honoured as an admin override.
+      // Without this fallback, any client that forgot to send actionBy
+      // (or any direct caller) silently wrote NULL to ndr_events.action_by,
+      // and Chandi/Tanisha's recovery attribution for payroll went to
+      // zero. For Sept 2026 Glow & Me, 0 of 11,582 events had action_by
+      // populated as a result.
+      const sessionUserId: string | null =
+        (req as any).session?.userId ??
+        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
+        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy: string | null =
+        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
+        sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user (so recovery credit can be recorded).",
+        });
+      }
 
       // Address and phone are now OPTIONAL - one-click reattempt support
       // If not provided, courier will use existing details on file
@@ -8087,7 +9080,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
     try {
       const { awb } = req.params;
-      const { address1, address2, phone, deferredDate, actionBy, notes } = req.body;
+      const { address1, address2, phone, deferredDate, notes } = req.body;
+
+      // Resolve actor from session with body fallback — see the
+      // /api/ndr/:awb/reattempt handler for the full rationale.
+      const sessionUserId: string | null =
+        (req as any).session?.userId ??
+        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
+        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
+      const actionBy: string | null =
+        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
+        sessionUserId;
+      if (!actionBy) {
+        return res.status(401).json({
+          error: "Unauthorized: NDR action requires a signed-in user.",
+        });
+      }
 
       if (!address1 || !phone) {
         return res.status(400).json({ error: "Address and phone are required" });
@@ -8681,6 +9689,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.updateInviteStatus(invite.id, 'accepted');
 
+      // Auto-provision the new hire in RazorpayX Payroll. Fire-and-
+      // forget — a RazorpayX outage or a permissions issue must NOT
+      // block the signup response. The compensation-update hook on
+      // PATCH /api/users/:id retries salary-setting once the admin
+      // enters a base salary (the invite flow doesn't collect one).
+      void import("./razorpay-payroll/provision")
+        .then(({ provisionUser }) => provisionUser(newUser.id))
+        .then((r) => {
+          console.log(
+            `[razorpay-provision/invite] ${newUser.email}: ${r.ok ? "OK" : "FAIL"} (${r.mode}) — ${r.message}`,
+          );
+        })
+        .catch((err) => {
+          console.error(`[razorpay-provision/invite] uncaught for ${newUser.email}:`, err);
+        });
+
       // Log the new user in immediately — they just proved ownership
       // of the invite token + chose a password, so a session is
       // appropriate. Avoids forcing them through the login form they
@@ -8712,10 +9736,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/leave-requests", async (req, res) => {
     try {
-      const { userId, status } = req.query;
+      // Visibility rule (per Platform Review):
+      //   • Admins / developers see EVERY member's leave requests
+      //   • Everyone else only sees their own
+      // Server-side filter — the Leave Requests page continues to
+      // render whatever comes back, but a non-admin can no longer
+      // read someone else's request even by hitting the raw endpoint.
+      const currentUserId = (req.query.currentUserId as string | undefined) ??
+        (req.body?.currentUserId as string | undefined) ??
+        req.session?.userId;
+
+      let scopedUserId = req.query.userId as string | undefined;
+      if (currentUserId) {
+        const caller = await storage.getUser(currentUserId);
+        if (caller && !isAdmin(caller)) {
+          // Non-admins are locked to their own id regardless of
+          // whatever userId param they pass.
+          scopedUserId = caller.id;
+        }
+      }
+
       const filters = {
-        userId: userId as string | undefined,
-        status: status as string | undefined,
+        userId: scopedUserId,
+        status: req.query.status as string | undefined,
       };
       const requests = await storage.listLeaveRequests(filters);
       res.json(requests);

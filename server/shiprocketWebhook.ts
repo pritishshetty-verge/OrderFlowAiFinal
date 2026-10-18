@@ -140,16 +140,27 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
         ndrStatus = 'refused';
       }
 
-      // Create NDR event
-      await storage.createNDREvent({
-        shipmentId: shipment.id,
-        orderId: shipment.orderId,
-        awb: payload.awb,
-        ndrStatus,
-        ndrReason: payload.comment || payload.current_status,
-        ndrDate: new Date(),
-        rawNdrData: payload,
-      });
+      // Dedupe: Shiprocket occasionally re-fires the same NDR webhook.
+      // Skip the insert if we already have an ndr_events row for this
+      // AWB within a ±5 min window. Prevents duplicates from inflating
+      // the NDR Delivery Rate denominator when payroll runs.
+      const ndrDate = new Date();
+      const existingNdr = await storage.findRecentNDREvent(payload.awb, ndrDate, 5);
+      if (existingNdr) {
+        console.log(
+          `[Shiprocket Webhook] Duplicate NDR webhook for AWB ${payload.awb} (existing ndr_event ${existingNdr.id}); skipping insert.`,
+        );
+      } else {
+        await storage.createNDREvent({
+          shipmentId: shipment.id,
+          orderId: shipment.orderId,
+          awb: payload.awb,
+          ndrStatus,
+          ndrReason: payload.comment || payload.current_status,
+          ndrDate,
+          rawNdrData: payload,
+        });
+      }
 
       // Get order to find assigned agent
       const order = await storage.getOrder(shipment.orderId);
@@ -190,6 +201,33 @@ export async function handleShiprocketWebhook(req: Request, res: Response) {
         status: 'rto',
         ...(unifiedStatus === 'rto_delivered' ? { deliveredAt: new Date() } : {}),
       });
+    }
+
+    // Close open NDR events on terminal status. This is what makes NDR
+    // Delivery Rate computable for payroll. rto_delivered = customer
+    // eventually got the reshipment through the RTO path = delivered.
+    // Plain RTO = returned. See delhiveryWebhook.ts for the mirror logic.
+    const terminalResolution: "delivered" | "returned" | null = isDelivered
+      ? "delivered"
+      : unifiedStatus === "rto_delivered"
+        ? "delivered"
+        : isRTO
+          ? "returned"
+          : null;
+    if (terminalResolution) {
+      try {
+        const closed = await storage.resolveOpenNDREvents(payload.awb, terminalResolution);
+        if (closed > 0) {
+          console.log(
+            `[Shiprocket Webhook] Closed ${closed} open NDR event(s) for AWB ${payload.awb} → ${terminalResolution}`,
+          );
+        }
+      } catch (closeErr: any) {
+        console.warn(
+          `[Shiprocket Webhook] Failed to close open NDR events for AWB ${payload.awb}:`,
+          closeErr?.message ?? closeErr,
+        );
+      }
     }
 
     console.log('[Shiprocket Webhook] Webhook processed successfully:', {

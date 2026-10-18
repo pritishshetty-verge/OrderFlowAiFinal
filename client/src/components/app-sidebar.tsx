@@ -1,4 +1,4 @@
-import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp } from "lucide-react";
+import { Home, Package, Users, Settings, PackageCheck, List, AlertTriangle, GraduationCap, Phone, ChevronDown, ShoppingCart, FileJson, Activity, Plug, LayoutGrid, RefreshCcw, TrendingUp, Send, PackagePlus, Wallet } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -121,6 +121,15 @@ const adminMenuItems: MenuItem[] = [
         icon: Phone,
         comingSoon: true,
       },
+      {
+        // Reshipments — duplicate a failed order to Shopify with the
+        // right financial framing so Delhivery generates the correct
+        // waybill. Lives under Orders (natural home; NDR agents already
+        // work here). Admin + agents on the NDR team can create.
+        title: "Reshipments",
+        url: "/reshipments",
+        icon: PackagePlus,
+      },
     ],
   },
   {
@@ -155,9 +164,15 @@ const adminMenuItems: MenuItem[] = [
     url: "/team",
     icon: Users,
   },
-  // Payroll page removed — RazorpayX sync now lives as an admin tab
-  // under Team (see client/src/pages/team.tsx). Reconciliation (PG
-  // settlements) is still WIP — page exists but is unrouted/unlisted.
+  // Payroll — top-level admin-only route (per Payroll PRD §2).
+  // AdminOnlyGuard on the route itself does the auth check; the
+  // sidebar entry is filtered via ADMIN_ONLY_URLS in AppSidebar so
+  // non-admins don't see it even if they had the URL.
+  {
+    title: "Payroll",
+    url: "/payroll",
+    icon: Wallet,
+  },
   {
     title: "Integrations",
     url: "/integrations",
@@ -207,10 +222,10 @@ const recoveryAgentMenuItems: MenuItem[] = [
 ];
 
 // Operational front-line roles — Order Confirmation Executive (OCE, stored as
-// `agent`) and NDR/RTO Executive (stored as `ndr_rto`). Both work the order
-// queue and share the exact same tight nav: Overview, Orders, Learning Center,
-// Team. They point at the REAL Learning + Team pages (not the "coming soon"
-// placeholders the recovery-agent nav uses).
+// `agent`) OCE role. Order confirmation flow with flat Orders link.
+// NDR/RTO Executive (`ndr_rto`) gets its own richer menu below since
+// they need the Orders subtree (Reshipments especially) to do their
+// job — a flat Orders link hid Reshipments from Chandi entirely.
 const operationalMenuItems: MenuItem[] = [
   {
     title: "Overview",
@@ -221,6 +236,39 @@ const operationalMenuItems: MenuItem[] = [
     title: "Orders",
     url: "/orders",
     icon: Package,
+  },
+  {
+    title: "Learning Center",
+    url: "/learning",
+    icon: GraduationCap,
+  },
+  {
+    title: "Team",
+    url: "/team",
+    icon: Users,
+  },
+];
+
+// NDR/RTO Executive nav (Chandi). Orders is a dropdown so she can
+// reach Reshipments — her core surface. NDR + Call Logs are exposed
+// but marked coming-soon per the admin menu convention. Fulfil +
+// Abandoned Carts stay hidden (not her domain). Team + Learning
+// mirror the operational nav.
+const ndrRtoMenuItems: MenuItem[] = [
+  {
+    title: "Overview",
+    url: "/",
+    icon: Home,
+  },
+  {
+    title: "Orders",
+    icon: Package,
+    items: [
+      { title: "All Orders", url: "/orders", icon: List },
+      { title: "NDR", url: "/ndr", icon: AlertTriangle, comingSoon: true },
+      { title: "Call Logs", url: "/call-logs", icon: Phone, comingSoon: true },
+      { title: "Reshipments", url: "/reshipments", icon: PackagePlus },
+    ],
   },
   {
     title: "Learning Center",
@@ -273,20 +321,22 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   const isRecoveryAgent = userRole === "recovery_agent";
   const isChatSupport = userRole === "chat_support";
   const isAdmin = userRole === "admin";
-  // OCE (stored as `agent`) and NDR/RTO Executive (`ndr_rto`) are the
-  // operational front-line roles, restricted to the 4-item nav.
-  const isOperational = userRole === "agent" || userRole === "ndr_rto";
+  const isNdrRto = userRole === "ndr_rto";
+  // OCE (stored as `agent`) is the plain order-confirmation role.
+  const isOperational = userRole === "agent";
 
   // Pick the per-role menu. Each role with a heavily-restricted nav
-  // (recovery_agent, chat_support, operational) gets its own dedicated
-  // array so we never filter against the long admin-default list.
+  // gets its own dedicated array so we never filter against the long
+  // admin-default list.
   const baseMenuItems = isRecoveryAgent
     ? recoveryAgentMenuItems
     : isChatSupport
       ? chatSupportMenuItems
-      : isOperational
-        ? operationalMenuItems
-        : adminMenuItems;
+      : isNdrRto
+        ? ndrRtoMenuItems
+        : isOperational
+          ? operationalMenuItems
+          : adminMenuItems;
 
   // URLs that should be hidden from the sidebar for any non-admin
   // role. These match the AdminOnlyGuard routes in App.tsx (server
@@ -294,6 +344,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
   // visible to plain agents; locked down now per role brief.
   const ADMIN_ONLY_URLS = new Set([
     "/pare",
+    "/payroll",
     "/integrations",
     "/api-logs",
   ]);

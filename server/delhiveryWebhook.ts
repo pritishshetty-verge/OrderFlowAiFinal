@@ -367,6 +367,38 @@ async function processDelhiveryScan(body: any): Promise<void> {
 
     await storage.updateOrder(order.id, orderUpdate);
 
+    // Reshipments hook: bump any reshipment log tracked on this AWB.
+    // Maps unified courier events to the reshipment_logs enum. Anything
+    // outside the set (e.g. 'awb_assigned') leaves the row untouched.
+    // Reshipments track a coarser six-status model than the courier's
+    // own vocabulary: "out for delivery" folds into in_transit, since
+    // the NDR team only acts on the transitions that matter.
+    const reshipStatus =
+      unifiedStatus === "in_transit" || unifiedStatus === "out_for_delivery"
+        ? "in_transit"
+        : unifiedStatus === "ndr"
+          ? "ndr"
+          : unifiedStatus === "delivered"
+            ? "delivered"
+            : unifiedStatus === "rto_initiated" ||
+                unifiedStatus === "rto_ofd" ||
+                unifiedStatus === "rto_delivered"
+              ? "rto"
+              : null;
+    if (reshipStatus && awb) {
+      void import("./reshipments/service")
+        .then((s) =>
+          s.updateStatusByAwb({
+            awb,
+            courierStatus: reshipStatus,
+            courierName: "Delhivery",
+          }),
+        )
+        .catch((e) =>
+          console.warn("[reshipments] status-sync failed:", e?.message ?? e),
+        );
+    }
+
     // Store-scoped status-history log. Only record an entry when the
     // unified status actually changed, so repeated webhooks for the
     // same state don't spam the timeline.
@@ -412,19 +444,30 @@ async function processDelhiveryScan(body: any): Promise<void> {
         }
       }
 
-      // Create NDR event - shipment is guaranteed to exist (created on the fly if missing)
-      await storage.createNDREvent({
-        storeId: storeId ?? undefined,
-        shipmentId: shipment.id,
-        orderId: order.id,
-        awb,
-        ndrStatus: ndrStatusValue,
-        ndrReason: remarks || effectiveStatus,
-        ndrDate: statusDateTime ? new Date(statusDateTime) : new Date(),
-        rawNdrData: body,
-      });
-      
-      console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
+      // Dedupe: Delhivery occasionally re-fires the same NDR webhook. If
+      // an ndr_events row exists for this AWB within a ±5 min window of
+      // the incoming ndrDate, treat this as a re-fire and skip the insert.
+      // Prevents duplicate rows from inflating the NDR Delivery Rate
+      // denominator when payroll runs.
+      const ndrDate = statusDateTime ? new Date(statusDateTime) : new Date();
+      const existingNdr = await storage.findRecentNDREvent(awb, ndrDate, 5);
+      if (existingNdr) {
+        console.log(
+          `[Delhivery Webhook] Duplicate NDR webhook for AWB ${awb} (existing ndr_event ${existingNdr.id} at ${existingNdr.ndrDate.toISOString()}); skipping insert.`,
+        );
+      } else {
+        await storage.createNDREvent({
+          storeId: storeId ?? undefined,
+          shipmentId: shipment.id,
+          orderId: order.id,
+          awb,
+          ndrStatus: ndrStatusValue,
+          ndrReason: remarks || effectiveStatus,
+          ndrDate,
+          rawNdrData: body,
+        });
+        console.log(`[Delhivery Webhook] NDR event created for AWB ${awb}`);
+      }
 
       const shipmentStatusLabel = SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? 'RTO' : 'NDR');
 
@@ -476,6 +519,39 @@ async function processDelhiveryScan(body: any): Promise<void> {
         status: unifiedStatus,
         shipmentStatus: SHIPPING_STATUS_LABELS[unifiedStatus] || (isRTO ? 'RTO' : 'Delivered'),
       });
+    }
+
+    // Close open NDR events on terminal status. This is the unlock for
+    // the NDR Delivery Rate metric — every ndr_events row for this AWB
+    // gets its `resolved`/`resolvedAt`/`resolution` fields filled so
+    // payroll can count "delivered NDRs" vs "total NDRs" in a plain
+    // SQL query. rto_delivered = customer got the reshipment via RTO
+    // path = counts as delivered. Plain RTO = returned to origin.
+    const terminalResolution: "delivered" | "returned" | null = isDelivered
+      ? "delivered"
+      : unifiedStatus === "rto_delivered"
+        ? "delivered"
+        : isRTO
+          ? "returned"
+          : null;
+    if (terminalResolution) {
+      try {
+        const closed = await storage.resolveOpenNDREvents(
+          awb,
+          terminalResolution,
+          statusDateTime ? new Date(statusDateTime) : new Date(),
+        );
+        if (closed > 0) {
+          console.log(
+            `[Delhivery Webhook] Closed ${closed} open NDR event(s) for AWB ${awb} → ${terminalResolution}`,
+          );
+        }
+      } catch (closeErr: any) {
+        console.warn(
+          `[Delhivery Webhook] Failed to close open NDR events for AWB ${awb}:`,
+          closeErr?.message ?? closeErr,
+        );
+      }
     }
 
     // Handle transit/OFD status (skip if shipment was just created with correct status)
