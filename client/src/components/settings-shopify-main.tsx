@@ -5,11 +5,22 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/ui/settings-card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info, ImageIcon } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info, ImageIcon, Unplug } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -184,6 +195,7 @@ export function ShopifyConnectionCard() {
     stores: accessibleStores,
     loading: storesLoading,
     hasMultipleStores,
+    setActiveStore,
   } = useActiveStore();
 
   // Pull the lightweight order count to surface "Total Orders" on the
@@ -262,6 +274,34 @@ export function ShopifyConnectionCard() {
   // Display name for the active store. Mirrors the StoreSwitcher
   // logic (storeName takes precedence, falls back to the URL when
   // the admin hasn't set a friendly name yet).
+  // Soft-disconnect the active store. Server flips isActive=false (order
+  // history is retained; a later re-add reactivates it). On success we switch
+  // to another accessible store if one exists, else the StoreProvider
+  // reconciles to none after /api/stores/me refetches.
+  const disconnectMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeStore) throw new Error("No active store to disconnect.");
+      const res = await apiRequest("DELETE", `/api/stores/${activeStore.id}`);
+      return res.json();
+    },
+    onSuccess: async () => {
+      const removedId = activeStore?.id;
+      const next = accessibleStores?.find((s) => s.id !== removedId);
+      if (next) setActiveStore(next.id);
+      await queryClient.invalidateQueries({ queryKey: ["/api/stores/me"] });
+      queryClient.invalidateQueries();
+      toast({
+        title: "Store disconnected",
+        description:
+          "This store won't sync anymore. Its order history is kept — re-add the same store to reconnect.",
+      });
+    },
+    onError: (err: any) => {
+      const msg = (err?.message ?? "Failed to disconnect").replace(/^\d+:\s*/, "");
+      toast({ title: "Couldn't disconnect", description: msg, variant: "destructive" });
+    },
+  });
+
   const activeStoreDisplayName =
     activeStore?.storeName?.trim() || activeStore?.storeUrl || "";
 
@@ -476,26 +516,57 @@ export function ShopifyConnectionCard() {
               </Alert>
             )}
 
-            {/* Per-store disconnect is a Phase-5 follow-up. The legacy
-                DELETE /api/shopify/credentials route only operates on
-                the single-row shopify_credentials table and would do
-                nothing useful in multi-store mode — keeping it here
-                was the cause of confused "I disconnected but nothing
-                happened" reports. The future replacement
-                (DELETE /api/stores/:id) will remove the active store
-                + its user_stores rows + invalidate webhook
-                registration in a single transactional step. */}
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertDescription className="text-sm">
-                Need to disconnect this store? Per-store disconnect lands
-                in the next release. For now, drop the row from{" "}
-                <code className="text-[11px] bg-muted px-1 py-0.5 rounded">
-                  stores
-                </code>{" "}
-                in the database to fully revoke access.
-              </AlertDescription>
-            </Alert>
+            {/* Soft disconnect: deactivates the store (keeps order history,
+                reversible by re-adding the same store). */}
+            <div className="flex items-center justify-between rounded-md border border-destructive/30 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Disconnect this store</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Stops syncing and removes it from the switcher. Order history is
+                  kept; re-add the store to reconnect.
+                </p>
+              </div>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10 flex-shrink-0"
+                    disabled={!activeStore || disconnectMutation.isPending}
+                    data-testid="button-disconnect-store"
+                  >
+                    {disconnectMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Unplug className="h-4 w-4 mr-1.5" />
+                    )}
+                    Disconnect
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Disconnect {activeStoreDisplayName || "this store"}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      The store will stop syncing and disappear from the store
+                      switcher. Existing orders and reports are kept. You can
+                      reconnect anytime by adding the same store again.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={() => disconnectMutation.mutate()}
+                      data-testid="button-confirm-disconnect"
+                    >
+                      Disconnect
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
         )}
       </SettingsCard>

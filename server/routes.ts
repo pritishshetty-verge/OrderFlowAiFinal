@@ -5067,13 +5067,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         rows = await db
           .select(projection)
           .from(stores)
+          .where(eq(stores.isActive, true))
           .orderBy(asc(stores.createdAt));
       } else {
         rows = await db
           .select(projection)
           .from(stores)
           .innerJoin(userStores, eq(userStores.storeId, stores.id))
-          .where(eq(userStores.userId, userId))
+          .where(and(eq(userStores.userId, userId), eq(stores.isActive, true)))
           .orderBy(asc(stores.createdAt));
       }
 
@@ -5162,15 +5163,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Duplicate guard. Returns 409 with the existing store id so
       // the UI can offer a "switch to it" CTA.
       const [existing] = await db
-        .select({ id: stores.id, storeName: stores.storeName })
+        .select({ id: stores.id, storeName: stores.storeName, isActive: stores.isActive })
         .from(stores)
         .where(eq(stores.storeUrl, normalizedUrl))
         .limit(1);
+      // An ACTIVE row is a genuine duplicate → 409. An INACTIVE row means the
+      // store was previously disconnected; reactivate it in place below so its
+      // order history is kept and reconnect is one click.
+      let reactivateId: string | null = null;
       if (existing) {
-        return res.status(409).json({
-          error: "A store with this URL is already connected.",
-          existing,
-        });
+        if (existing.isActive) {
+          return res.status(409).json({
+            error: "A store with this URL is already connected.",
+            existing: { id: existing.id, storeName: existing.storeName },
+          });
+        }
+        reactivateId = existing.id;
       }
 
       // Test the credentials before committing them.
@@ -5200,31 +5208,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shopInfo?.name ||
         normalizedUrl;
 
-      const [inserted] = await db
-        .insert(stores)
-        .values({
-          storeName: finalStoreName,
-          storeUrl: normalizedUrl,
-          apiKey: encrypt(apiKey.trim()),
-          apiSecret: encrypt(apiSecret.trim()),
-          webhookSecret:
-            typeof webhookSecret === "string" && webhookSecret.trim()
-              ? encrypt(webhookSecret.trim())
-              : null,
-          isActive: true,
-          lastTestedAt: new Date(),
-          testStatus: "success",
-          testMessage: `Connected to ${shopInfo?.name || normalizedUrl}`,
-          connectedBy: requester.id,
-        })
-        .returning({
-          id: stores.id,
-          storeName: stores.storeName,
-          storeUrl: stores.storeUrl,
-          logoUrl: stores.logoUrl,
-          isActive: stores.isActive,
-          createdAt: stores.createdAt,
-        });
+      const storeValues = {
+        storeName: finalStoreName,
+        storeUrl: normalizedUrl,
+        apiKey: encrypt(apiKey.trim()),
+        apiSecret: encrypt(apiSecret.trim()),
+        webhookSecret:
+          typeof webhookSecret === "string" && webhookSecret.trim()
+            ? encrypt(webhookSecret.trim())
+            : null,
+        isActive: true,
+        lastTestedAt: new Date(),
+        testStatus: "success",
+        testMessage: `Connected to ${shopInfo?.name || normalizedUrl}`,
+        connectedBy: requester.id,
+      };
+      const storeReturning = {
+        id: stores.id,
+        storeName: stores.storeName,
+        storeUrl: stores.storeUrl,
+        logoUrl: stores.logoUrl,
+        isActive: stores.isActive,
+        createdAt: stores.createdAt,
+      };
+      const [inserted] = reactivateId
+        ? await db
+            .update(stores)
+            .set({ ...storeValues, updatedAt: new Date() })
+            .where(eq(stores.id, reactivateId))
+            .returning(storeReturning)
+        : await db.insert(stores).values(storeValues).returning(storeReturning);
 
       // Auto-grant the creating admin. Admins implicitly see every
       // store via the storeScope middleware (isAdmin bypass), but
@@ -5269,6 +5282,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error in POST /api/stores:", error);
       res.status(500).json({ error: "Failed to connect store." });
+    }
+  });
+
+  // ============================================================================
+  // DELETE /api/stores/:id — admin disconnects a store (soft).
+  //
+  // SOFT by design: orders (and every other storeId-scoped row) FK-reference
+  // stores.id with ON DELETE NO ACTION, so a hard delete of a store that has
+  // any order history would fail at the database anyway — and we WANT to keep
+  // that history for reporting. Disconnecting therefore flips isActive=false:
+  // the store drops out of /api/stores/me (the switcher), stops being a valid
+  // active scope, and its credentials are retained so a later re-add of the
+  // same URL reactivates it in place (see POST /api/stores). Admin only.
+  // ============================================================================
+  app.delete("/api/stores/:id", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {});
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Only admins can disconnect stores." });
+      }
+      const [store] = await db
+        .select({ id: stores.id, storeName: stores.storeName, isActive: stores.isActive })
+        .from(stores)
+        .where(eq(stores.id, req.params.id))
+        .limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (store.isActive) {
+        await db
+          .update(stores)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(stores.id, store.id));
+      }
+      return res.json({
+        ok: true,
+        disconnected: { id: store.id, storeName: store.storeName },
+      });
+    } catch (error) {
+      console.error("Error in DELETE /api/stores/:id:", error);
+      return res.status(500).json({ error: "Failed to disconnect store." });
     }
   });
 

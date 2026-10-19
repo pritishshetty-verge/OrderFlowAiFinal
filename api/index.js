@@ -16304,9 +16304,9 @@ async function registerRoutes(app2) {
       };
       let rows;
       if (isAdmin(user)) {
-        rows = await db.select(projection).from(stores).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).where(eq10(stores.isActive, true)).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq10(userStores.storeId, stores.id)).where(eq10(userStores.userId, userId)).orderBy(asc3(stores.createdAt));
+        rows = await db.select(projection).from(stores).innerJoin(userStores, eq10(userStores.storeId, stores.id)).where(and8(eq10(userStores.userId, userId), eq10(stores.isActive, true))).orderBy(asc3(stores.createdAt));
       }
       res.json({ stores: rows });
     } catch (error) {
@@ -16347,12 +16347,16 @@ async function registerRoutes(app2) {
         return res.status(400).json({ error: "apiSecret is required." });
       }
       const normalizedUrl = trimmedUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
-      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName }).from(stores).where(eq10(stores.storeUrl, normalizedUrl)).limit(1);
+      const [existing] = await db.select({ id: stores.id, storeName: stores.storeName, isActive: stores.isActive }).from(stores).where(eq10(stores.storeUrl, normalizedUrl)).limit(1);
+      let reactivateId = null;
       if (existing) {
-        return res.status(409).json({
-          error: "A store with this URL is already connected.",
-          existing
-        });
+        if (existing.isActive) {
+          return res.status(409).json({
+            error: "A store with this URL is already connected.",
+            existing: { id: existing.id, storeName: existing.storeName }
+          });
+        }
+        reactivateId = existing.id;
       }
       const { ShopifyClient: TempClient } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
       const tempClient = new TempClient({
@@ -16371,7 +16375,7 @@ async function registerRoutes(app2) {
         });
       }
       const finalStoreName = typeof storeName === "string" && storeName.trim() || shopInfo?.name || normalizedUrl;
-      const [inserted] = await db.insert(stores).values({
+      const storeValues = {
         storeName: finalStoreName,
         storeUrl: normalizedUrl,
         apiKey: encrypt(apiKey.trim()),
@@ -16382,14 +16386,16 @@ async function registerRoutes(app2) {
         testStatus: "success",
         testMessage: `Connected to ${shopInfo?.name || normalizedUrl}`,
         connectedBy: requester.id
-      }).returning({
+      };
+      const storeReturning = {
         id: stores.id,
         storeName: stores.storeName,
         storeUrl: stores.storeUrl,
         logoUrl: stores.logoUrl,
         isActive: stores.isActive,
         createdAt: stores.createdAt
-      });
+      };
+      const [inserted] = reactivateId ? await db.update(stores).set({ ...storeValues, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, reactivateId)).returning(storeReturning) : await db.insert(stores).values(storeValues).returning(storeReturning);
       await db.insert(userStores).values({ userId: requester.id, storeId: inserted.id, createdBy: requester.id }).onConflictDoNothing();
       let webhookReport = null;
       const appUrl = process.env.APP_URL;
@@ -16417,6 +16423,37 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error in POST /api/stores:", error);
       res.status(500).json({ error: "Failed to connect store." });
+    }
+  });
+  app2.delete("/api/stores/:id", async (req, res) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: "Not authenticated." });
+      }
+      const requester = await storage.getUser(userId);
+      if (!requester) {
+        req.session.destroy(() => {
+        });
+        return res.status(401).json({ error: "Session user no longer exists." });
+      }
+      if (!isAdmin(requester)) {
+        return res.status(403).json({ error: "Only admins can disconnect stores." });
+      }
+      const [store] = await db.select({ id: stores.id, storeName: stores.storeName, isActive: stores.isActive }).from(stores).where(eq10(stores.id, req.params.id)).limit(1);
+      if (!store) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+      if (store.isActive) {
+        await db.update(stores).set({ isActive: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, store.id));
+      }
+      return res.json({
+        ok: true,
+        disconnected: { id: store.id, storeName: store.storeName }
+      });
+    } catch (error) {
+      console.error("Error in DELETE /api/stores/:id:", error);
+      return res.status(500).json({ error: "Failed to disconnect store." });
     }
   });
   const MAX_LOGO_BYTES = 2 * 1024 * 1024;
