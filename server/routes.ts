@@ -9011,6 +9011,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NDR Analytics dashboard — one bundled read-only aggregation.
+  // Admin-gated. Window defaults to the trailing 30 days; callers can
+  // pass ?start=ISO&end=ISO for a custom range (end exclusive). Store
+  // resolution mirrors /api/payroll/cycles: query param → active
+  // storeScope → first active store.
+  app.get("/api/ndr/analytics", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { stores: storesTable } = await import("@shared/schema");
+      let storeId: string | null =
+        (typeof req.query.storeId === "string" && req.query.storeId) || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db
+          .select({ id: storesTable.id, isActive: storesTable.isActive })
+          .from(storesTable)
+          .where(eq(storesTable.id, req.storeScope.storeId))
+          .limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db
+          .select({ id: storesTable.id })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .limit(1);
+        storeId = live?.id ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+
+      // Parse window — default trailing 30 days, UTC, end exclusive.
+      const now = new Date();
+      const defaultStart = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+      const parseDate = (v: unknown, fallback: Date): Date => {
+        if (typeof v === "string" && v.trim()) {
+          const d = new Date(v);
+          if (!Number.isNaN(d.getTime())) return d;
+        }
+        return fallback;
+      };
+      const start = parseDate(req.query.start, defaultStart);
+      const end = parseDate(req.query.end, now);
+      if (start >= end) {
+        return res.status(400).json({ error: "start must be before end" });
+      }
+
+      const { getNdrAnalyticsBundle } = await import("./services/ndr-analytics");
+      const bundle = await getNdrAnalyticsBundle({ storeId, start, end });
+      return res.json({ ...bundle, storeId });
+    } catch (err: any) {
+      console.error("Error in GET /api/ndr/analytics:", err);
+      return res.status(500).json({ error: err?.message ?? "Failed to load NDR analytics" });
+    }
+  });
+
   // Get all NDR events (generic endpoint - supports both Shiprocket and Delhivery)
   // Enriches NDR events with order-level fields (nslCode, failureReason, lastFailedAt)
   // Get NDR events

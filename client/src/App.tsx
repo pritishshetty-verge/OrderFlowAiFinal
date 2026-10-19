@@ -29,6 +29,7 @@ const ParePage = lazy(() => import("@/pages/pare"));
 const OrdersPage = lazy(() => import("@/pages/orders"));
 const FulfilPage = lazy(() => import("@/pages/fulfil"));
 const NDRPage = lazy(() => import("@/pages/ndr"));
+const NdrAnalyticsPage = lazy(() => import("@/pages/ndr-analytics"));
 const ReshipmentsPage = lazy(() => import("@/pages/reshipments"));
 const TeamPage = lazy(() => import("@/pages/team"));
 const PayrollPage = lazy(() => import("@/pages/payroll"));
@@ -263,6 +264,9 @@ function Router() {
         </Route>
         <Route path="/pare">
           {() => <AdminOnlyGuard component={ParePage} />}
+        </Route>
+        <Route path="/ndr-analytics">
+          {() => <AdminOnlyGuard component={NdrAnalyticsPage} />}
         </Route>
         <Route path="/profile">
           {() => <ProtectedRoute component={ProfilePage} />}

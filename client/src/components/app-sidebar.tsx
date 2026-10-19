@@ -112,6 +112,15 @@ const adminMenuItems: MenuItem[] = [
         comingSoon: true,
       },
       {
+        // NDR Analytics — admin-only dashboard: NDR rate, conversion,
+        // RTO rate, revenue exposure, reasons, geography, resolution
+        // time. Separate from the operational /ndr queue (still
+        // coming-soon) so analytics and ops don't share a screen.
+        title: "NDR Analytics",
+        url: "/ndr-analytics",
+        icon: Activity,
+      },
+      {
         // Coming-soon: call logging exists per-order, but the
         // global call-logs surface needs the per-store IVR
         // credential flow (Risk #2 / Phase 6 in the multi-store
