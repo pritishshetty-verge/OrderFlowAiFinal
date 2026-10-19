@@ -94,6 +94,15 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
       await queryClient.invalidateQueries({ queryKey: ["/api/stores/me"] });
       setActiveStore(data.store.id);
 
+      // Kick off the historical order import in the background so the admin
+      // doesn't have to trigger a separate "Sync orders" step. The active
+      // store was just switched above, so the X-Active-Store-Id header now
+      // targets the new store. Fire-and-forget: a failure here (e.g. a sync
+      // already running) is non-fatal and surfaces on the Sync card.
+      apiRequest("POST", "/api/shopify/sync", {}).catch((err) => {
+        console.warn("[add-store] background order sync could not start:", err);
+      });
+
       // Friendly summary of the webhook registration, if APP_URL was
       // configured. Skipping the count when null is intentional —
       // we don't want to imply something went wrong on local dev
@@ -109,7 +118,7 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
 
       toast({
         title: "Store connected",
-        description: `${data.store.storeName ?? data.store.storeUrl} is now your active store.${webhookNote}`,
+        description: `${data.store.storeName ?? data.store.storeUrl} is now your active store — importing orders in the background.${webhookNote}`,
       });
 
       setOpen(false);
