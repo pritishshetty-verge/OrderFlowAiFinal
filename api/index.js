@@ -12535,12 +12535,15 @@ async function resolveWebhookStore(req) {
     id: stores.id,
     storeName: stores.storeName,
     storeUrl: stores.storeUrl,
-    webhookSecret: stores.webhookSecret
+    webhookSecret: stores.webhookSecret,
+    apiSecret: stores.apiSecret
   }).from(stores).where(eq3(stores.storeUrl, normalized)).limit(1);
   if (!row) return null;
+  const { apiSecret, ...storeRow } = row;
   return {
-    store: row,
-    webhookSecret: row.webhookSecret ? safeDecrypt(row.webhookSecret) : null
+    store: storeRow,
+    webhookSecret: storeRow.webhookSecret ? safeDecrypt(storeRow.webhookSecret) : null,
+    clientSecret: apiSecret ? safeDecrypt(apiSecret) : null
   };
 }
 function pickShopDomainCandidate(req) {
@@ -12602,16 +12605,6 @@ async function verifyWebhookAuth(req) {
     console.error("[webhook] missing X-Shopify-Hmac-Sha256 header");
     return { valid: false, status: 401, error: "Unauthorized: Missing signature" };
   }
-  if (!resolved.webhookSecret) {
-    console.error(
-      `[webhook] store ${resolved.store.storeUrl} has no webhook_secret configured \u2014 cannot verify HMAC`
-    );
-    return {
-      valid: false,
-      status: 401,
-      error: "Unauthorized: Webhook secret not configured for this store"
-    };
-  }
   const rawBody = req.rawBody;
   if (!rawBody || !Buffer.isBuffer(rawBody)) {
     console.error("[webhook] rawBody not captured \u2014 cannot verify HMAC");
@@ -12621,7 +12614,23 @@ async function verifyWebhookAuth(req) {
       error: "Server misconfiguration: raw body unavailable"
     };
   }
-  if (!verifyShopifyHmac(rawBody, hmac, resolved.webhookSecret)) {
+  const candidateSecrets = [resolved.webhookSecret, resolved.clientSecret].filter(
+    (x) => typeof x === "string" && x.length > 0
+  );
+  if (candidateSecrets.length === 0) {
+    console.error(
+      `[webhook] store ${resolved.store.storeUrl} has no webhook or client secret \u2014 cannot verify HMAC`
+    );
+    return {
+      valid: false,
+      status: 401,
+      error: "Unauthorized: No signing secret configured for this store"
+    };
+  }
+  const verified = candidateSecrets.some(
+    (secret) => verifyShopifyHmac(rawBody, hmac, secret)
+  );
+  if (!verified) {
     console.error(
       `[webhook] HMAC mismatch for ${resolved.store.storeUrl}`
     );

@@ -52,6 +52,13 @@ export interface ResolvedWebhookStore {
    * can fall back to the env-var secret for the legacy store only.
    */
   webhookSecret: string | null;
+  /**
+   * Decrypted client secret (api_secret). Shopify signs webhooks created
+   * via the Admin API (our auto-registered direct webhooks) with the app's
+   * client secret, so the direct-path HMAC check falls back to this when no
+   * explicit webhook secret is set. Null if the row has no client secret.
+   */
+  clientSecret: string | null;
 }
 
 export async function resolveWebhookStore(
@@ -67,15 +74,18 @@ export async function resolveWebhookStore(
       storeName: stores.storeName,
       storeUrl: stores.storeUrl,
       webhookSecret: stores.webhookSecret,
+      apiSecret: stores.apiSecret,
     })
     .from(stores)
     .where(eq(stores.storeUrl, normalized))
     .limit(1);
   if (!row) return null;
 
+  const { apiSecret, ...storeRow } = row;
   return {
-    store: row,
-    webhookSecret: row.webhookSecret ? safeDecrypt(row.webhookSecret) : null,
+    store: storeRow,
+    webhookSecret: storeRow.webhookSecret ? safeDecrypt(storeRow.webhookSecret) : null,
+    clientSecret: apiSecret ? safeDecrypt(apiSecret) : null,
   };
 }
 

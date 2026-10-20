@@ -75,16 +75,6 @@ async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
     console.error("[webhook] missing X-Shopify-Hmac-Sha256 header");
     return { valid: false, status: 401, error: "Unauthorized: Missing signature" };
   }
-  if (!resolved.webhookSecret) {
-    console.error(
-      `[webhook] store ${resolved.store.storeUrl} has no webhook_secret configured — cannot verify HMAC`,
-    );
-    return {
-      valid: false,
-      status: 401,
-      error: "Unauthorized: Webhook secret not configured for this store",
-    };
-  }
   // Use the raw request body (Buffer) captured by the verify hook
   // in server/index.ts. JSON.stringify(req.body) does NOT byte-match
   // Shopify's signature because the parser normalises whitespace.
@@ -97,7 +87,30 @@ async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
       error: "Server misconfiguration: raw body unavailable",
     };
   }
-  if (!verifyShopifyHmac(rawBody, hmac, resolved.webhookSecret)) {
+  // Candidate signing secrets, in precedence order:
+  //   1. the store's explicit webhook secret (used when webhooks were created
+  //      manually in Shopify's Notifications page with a signing secret);
+  //   2. the store's client secret — Shopify signs webhooks created via the
+  //      Admin API (our auto-registered direct webhooks) with the app's client
+  //      secret. Trying both means a store works whether its direct webhooks
+  //      were registered via the API or set up manually.
+  const candidateSecrets = [resolved.webhookSecret, resolved.clientSecret].filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
+  if (candidateSecrets.length === 0) {
+    console.error(
+      `[webhook] store ${resolved.store.storeUrl} has no webhook or client secret — cannot verify HMAC`,
+    );
+    return {
+      valid: false,
+      status: 401,
+      error: "Unauthorized: No signing secret configured for this store",
+    };
+  }
+  const verified = candidateSecrets.some((secret) =>
+    verifyShopifyHmac(rawBody, hmac, secret),
+  );
+  if (!verified) {
     console.error(
       `[webhook] HMAC mismatch for ${resolved.store.storeUrl}`,
     );
