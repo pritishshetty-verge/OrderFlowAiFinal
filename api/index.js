@@ -2132,14 +2132,14 @@ var init_storage = __esm({
        */
       async getExistingShopifyOrderIds(shopifyIds, storeId) {
         if (shopifyIds.length === 0) return /* @__PURE__ */ new Set();
-        const rows = await db.select({ shopifyOrderId: orders.shopifyOrderId }).from(orders).where(
+        const rows2 = await db.select({ shopifyOrderId: orders.shopifyOrderId }).from(orders).where(
           and2(
             eq(orders.storeId, storeId),
             inArray(orders.shopifyOrderId, shopifyIds)
           )
         );
         return new Set(
-          rows.map((r) => r.shopifyOrderId).filter((v) => v !== null && v !== void 0)
+          rows2.map((r) => r.shopifyOrderId).filter((v) => v !== null && v !== void 0)
         );
       }
       /**
@@ -2156,14 +2156,14 @@ var init_storage = __esm({
        * reported on Glow & Me. Per-store cursor closes the trap.
        */
       async getMaxShopifyOrderId(storeId) {
-        const rows = await db.execute(
+        const rows2 = await db.execute(
           sql3`
         SELECT MAX(CAST(${orders.shopifyOrderId} AS BIGINT))::text AS max_id
         FROM ${orders}
         WHERE ${orders.storeId} = ${storeId}
       `
         );
-        const first = rows.rows?.[0] ?? rows[0];
+        const first = rows2.rows?.[0] ?? rows2[0];
         return first?.max_id ?? null;
       }
       async updateOrder(id, data) {
@@ -2273,7 +2273,7 @@ var init_storage = __esm({
         const conditions = [isNotNull(orders.assignedTo)];
         if (filters?.storeId) conditions.push(eq(orders.storeId, filters.storeId));
         if (filters?.agentIds) conditions.push(inArray(orders.assignedTo, filters.agentIds));
-        const rows = await db.select({
+        const rows2 = await db.select({
           agentId: orders.assignedTo,
           assignedOrders: count(),
           activeOrders: sql3`count(*) filter (where ${activeOrderCondition()})`.mapWith(Number),
@@ -2281,7 +2281,7 @@ var init_storage = __esm({
           // way a selected assignedAt column would (UTC), so callers get a Date.
           lastAssignedAt: sql3`max(${orders.assignedAt})`.mapWith(orders.assignedAt)
         }).from(orders).where(and2(...conditions)).groupBy(orders.assignedTo);
-        for (const row of rows) {
+        for (const row of rows2) {
           if (!row.agentId) continue;
           result.set(row.agentId, {
             assignedOrders: row.assignedOrders,
@@ -3887,9 +3887,9 @@ var init_storage = __esm({
           return this.getPrimaryStoreId();
         }
         if (!host) return this.getPrimaryStoreId();
-        const rows = await db.select({ id: stores.id, primaryDomain: stores.primaryDomain, storeUrl: stores.storeUrl }).from(stores);
+        const rows2 = await db.select({ id: stores.id, primaryDomain: stores.primaryDomain, storeUrl: stores.storeUrl }).from(stores);
         const norm2 = (d) => (d ?? "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
-        const match = rows.find((s) => norm2(s.primaryDomain) === host || norm2(s.storeUrl) === host);
+        const match = rows2.find((s) => norm2(s.primaryDomain) === host || norm2(s.storeUrl) === host);
         if (!match) {
           console.warn(`[stores] no store matched checkout host "${host}" \u2014 falling back to primary store.`);
           return this.getPrimaryStoreId();
@@ -3932,13 +3932,13 @@ var init_storage = __esm({
         const pageQuery = db.select({ ...listColumns, assignedAgentName: users.fullName }).from(abandonedCheckouts).leftJoin(users, eq(abandonedCheckouts.assignedTo, users.id)).where(whereClause).orderBy(desc(abandonedCheckouts.createdAt), desc(abandonedCheckouts.id)).limit(filters?.limit ?? 50).offset(filters?.offset ?? 0);
         const totalQuery = db.select({ value: count() }).from(abandonedCheckouts).where(whereClause);
         const stagesQuery = db.select({ stage: abandonedCheckouts.checkoutStage }).from(abandonedCheckouts).where(and2(this.abandonedCheckoutVisibleCondition(), isNotNull(abandonedCheckouts.checkoutStage))).groupBy(abandonedCheckouts.checkoutStage).orderBy(desc(sql3`max(${abandonedCheckouts.createdAt})`));
-        const [rows, [{ value: total }], stageRows] = await Promise.all([
+        const [rows2, [{ value: total }], stageRows] = await Promise.all([
           pageQuery,
           totalQuery,
           stagesQuery
         ]);
         return {
-          rows,
+          rows: rows2,
           total,
           stages: stageRows.map((r) => r.stage).filter((s) => !!s)
         };
@@ -4075,12 +4075,12 @@ var init_storage = __esm({
        * touched on update — the matcher owns the state machine, not the
        * ingester.
        */
-      async bulkUpsertPgSettlements(rows) {
-        if (rows.length === 0) return { processed: 0 };
+      async bulkUpsertPgSettlements(rows2) {
+        if (rows2.length === 0) return { processed: 0 };
         const BATCH = 500;
         let processed = 0;
-        for (let i = 0; i < rows.length; i += BATCH) {
-          const chunk = rows.slice(i, i + BATCH);
+        for (let i = 0; i < rows2.length; i += BATCH) {
+          const chunk = rows2.slice(i, i + BATCH);
           const result = await db.insert(pgSettlements).values(chunk).onConflictDoUpdate({
             target: [
               pgSettlements.storeId,
@@ -4154,8 +4154,8 @@ var init_storage = __esm({
         }
         const where = conds.length > 0 ? and2(...conds) : void 0;
         const [{ count: total }] = await db.select({ count: count() }).from(pgSettlements).where(where);
-        const rows = await db.select().from(pgSettlements).where(where).orderBy(sql3`${pgSettlements.settledAt} DESC NULLS LAST`).limit(pageSize).offset((page - 1) * pageSize);
-        return { rows, total: Number(total) };
+        const rows2 = await db.select().from(pgSettlements).where(where).orderBy(sql3`${pgSettlements.settledAt} DESC NULLS LAST`).limit(pageSize).offset((page - 1) * pageSize);
+        return { rows: rows2, total: Number(total) };
       }
       async updatePgSettlementStatus(id, status) {
         const [row] = await db.update(pgSettlements).set({ status, updatedAt: /* @__PURE__ */ new Date() }).where(eq(pgSettlements.id, id)).returning();
@@ -4180,7 +4180,7 @@ var init_storage = __esm({
         if (fromDate)
           conds.push(gte(pgSettlements.settledAt, fromDate.toISOString()));
         if (toDate) conds.push(lte(pgSettlements.settledAt, toDate.toISOString()));
-        const rows = await db.select({
+        const rows2 = await db.select({
           status: pgSettlements.status,
           count: count()
         }).from(pgSettlements).where(and2(...conds)).groupBy(pgSettlements.status);
@@ -4190,7 +4190,7 @@ var init_storage = __esm({
           mismatch: 0,
           settled: 0
         };
-        for (const r of rows) {
+        for (const r of rows2) {
           if (r.status in out) {
             out[r.status] = Number(r.count);
           }
@@ -4220,14 +4220,14 @@ var init_storage = __esm({
       }
       async getExistingPgPaymentIds(storeId, pgName, pgPaymentIds) {
         if (pgPaymentIds.length === 0) return /* @__PURE__ */ new Set();
-        const rows = await db.select({ pgPaymentId: pgSettlements.pgPaymentId }).from(pgSettlements).where(
+        const rows2 = await db.select({ pgPaymentId: pgSettlements.pgPaymentId }).from(pgSettlements).where(
           and2(
             storeId === null ? isNull(pgSettlements.storeId) : eq(pgSettlements.storeId, storeId),
             eq(pgSettlements.pgName, pgName),
             inArray(pgSettlements.pgPaymentId, pgPaymentIds)
           )
         );
-        return new Set(rows.map((r) => r.pgPaymentId));
+        return new Set(rows2.map((r) => r.pgPaymentId));
       }
       // ── PG rate cards ─────────────────────────────────────────────────
       /**
@@ -4341,8 +4341,8 @@ var init_storage = __esm({
       WHERE u.role IN ('agent', 'manager', 'recovery_agent', 'chat_support', 'ndr_rto')
       ORDER BY pu.clocked_hours DESC, u.full_name ASC
     `);
-        const rows = result.rows ?? result;
-        return rows.map((r) => {
+        const rows2 = result.rows ?? result;
+        return rows2.map((r) => {
           const daysPresent = Number(r.days_present ?? 0);
           const daysAutoClosed = Number(r.days_auto_closed ?? 0);
           const clockedHours = Number(r.clocked_hours ?? 0);
@@ -5990,7 +5990,7 @@ async function updateFromFulfillment(params) {
   );
 }
 async function updateStatusByAwb(params) {
-  const rows = await db.update(reshipmentLogs).set({
+  const rows2 = await db.update(reshipmentLogs).set({
     courierStatus: params.courierStatus,
     courierName: params.courierName ?? void 0,
     updatedAt: /* @__PURE__ */ new Date()
@@ -6002,7 +6002,7 @@ async function updateStatusByAwb(params) {
       sql4`${reshipmentLogs.courierStatus} <> 'cancelled'`
     )
   ).returning({ id: reshipmentLogs.id });
-  return rows.length;
+  return rows2.length;
 }
 var ReshipmentError, LIVE_STATUSES, rowShape;
 var init_service = __esm({
@@ -8209,7 +8209,7 @@ async function fetchAccountCampaignInsights(accountId, accessToken, startDate, e
     limit: "500"
   });
   let url = `${META_API_HOST}/${META_API_VERSION}/${accountId}/insights?${params.toString()}`;
-  const rows = [];
+  const rows2 = [];
   while (url) {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` }
@@ -8219,10 +8219,10 @@ async function fetchAccountCampaignInsights(accountId, accessToken, startDate, e
       const msg = body.error?.message || `HTTP ${res.status}`;
       throw new Error(`Meta API error for ${accountId}: ${msg}`);
     }
-    rows.push(...body.data ?? []);
+    rows2.push(...body.data ?? []);
     url = body.paging?.next ?? null;
   }
-  return rows;
+  return rows2;
 }
 async function syncMetaInsights(storeId, startDate, endDate) {
   const [storeRow] = await db.select({
@@ -8252,17 +8252,17 @@ async function syncMetaInsights(storeId, startDate, endDate) {
   const perAccount = await Promise.all(
     config.map(async (entry) => {
       try {
-        const rows = await fetchAccountCampaignInsights(
+        const rows2 = await fetchAccountCampaignInsights(
           entry.adAccountId,
           accessToken,
           startDate,
           endDate
         );
-        const filtered = entry.syncAll ? rows : rows.filter(
+        const filtered = entry.syncAll ? rows2 : rows2.filter(
           (r) => r.campaign_id != null && entry.linkedCampaignIds.includes(r.campaign_id)
         );
         console.log(
-          `[meta] ${entry.adAccountId}: ${rows.length} campaign-day rows fetched, ${filtered.length} after link filter`
+          `[meta] ${entry.adAccountId}: ${rows2.length} campaign-day rows fetched, ${filtered.length} after link filter`
         );
         return {
           id: entry.adAccountId,
@@ -8647,9 +8647,9 @@ async function pickCandidates() {
     updatedAt: r.updated_at ?? null
   }));
 }
-function groupByStore(rows) {
+function groupByStore(rows2) {
   const m = /* @__PURE__ */ new Map();
-  for (const r of rows) {
+  for (const r of rows2) {
     if (!r.storeId) continue;
     const arr = m.get(r.storeId) ?? [];
     arr.push(r);
@@ -8674,18 +8674,18 @@ async function reconcileShipmentStatus() {
   result.scanned = candidates.length;
   if (!candidates.length) return result;
   const byStore = groupByStore(candidates);
-  for (const [storeId, rows] of Array.from(byStore.entries())) {
-    result.storeBreakdown[storeId] = { total: rows.length, noClient: false };
+  for (const [storeId, rows2] of Array.from(byStore.entries())) {
+    result.storeBreakdown[storeId] = { total: rows2.length, noClient: false };
     let client;
     try {
       client = await getDelhiveryClient(storeId);
     } catch (e) {
-      result.noClient += rows.length;
+      result.noClient += rows2.length;
       result.storeBreakdown[storeId].noClient = true;
       result.clientErrors[storeId] = String(e?.message ?? e).slice(0, 200);
       continue;
     }
-    for (const row of rows) {
+    for (const row of rows2) {
       if (!row.awb) {
         result.noAwb += 1;
         continue;
@@ -9993,10 +9993,10 @@ async function sendPayslipEmail(data, pdf) {
   return { id: result?.id ?? null };
 }
 function buildPayslipHtml(d, period) {
-  const rows = [];
+  const rows2 = [];
   const ratioPct = (d.base.ratio * 100).toFixed(2);
   const cappedNote = d.base.capped ? ` <span style="color:#b45309;">(capped at 100%)</span>` : "";
-  rows.push(
+  rows2.push(
     earningsRow(
       "Base pay",
       `(${d.base.daysPresent} present + ${d.base.paidHolidaysUsed} paid holidays) \xF7 ${d.base.expectedWorkingDays} working days \xD7 \u20B9${formatINR(d.base.baseSalary)} = ${ratioPct}%${cappedNote}`,
@@ -10004,7 +10004,7 @@ function buildPayslipHtml(d, period) {
     )
   );
   if (d.incentives.profile === "ORDER_CONFIRMATION") {
-    rows.push(
+    rows2.push(
       earningsRow(
         "Confirmation bonus",
         d.incentives.deliveryRatePct == null ? "No delivery rate recorded" : `Delivery rate ${d.incentives.deliveryRatePct.toFixed(2)}% \u2192 tier bonus`,
@@ -10012,14 +10012,14 @@ function buildPayslipHtml(d, period) {
       )
     );
   } else if (d.incentives.profile === "NDR_RTO") {
-    rows.push(
+    rows2.push(
       earningsRow(
         "Team delivery bonus",
         d.incentives.teamDeliveryRatePct == null ? "No team rate recorded" : `Team delivery ${d.incentives.teamDeliveryRatePct.toFixed(2)}% \u2192 tier bonus`,
         `\u20B9${formatINR(d.incentives.teamDeliveryBonus)}`
       )
     );
-    rows.push(
+    rows2.push(
       earningsRow(
         "Personal recovery bonus",
         d.incentives.recoveryRatePct == null ? "No recovery rate recorded" : `Recovery rate ${d.incentives.recoveryRatePct.toFixed(2)}% \u2192 tier bonus`,
@@ -10027,7 +10027,7 @@ function buildPayslipHtml(d, period) {
       )
     );
     const reships = d.incentives.reshipsCount ?? 0;
-    rows.push(
+    rows2.push(
       earningsRow(
         "Reships bonus",
         `${reships} reships \xD7 \u20B950 = \u20B9${formatINR(reships * 50)}`,
@@ -10057,7 +10057,7 @@ function buildPayslipHtml(d, period) {
           <tr><td style="padding:20px 32px 8px 32px;">
             <p style="margin:0 0 8px 0;color:#0f172a;font-weight:700;font-size:13px;">Earnings</p>
             <table width="100%" cellpadding="0" cellspacing="0">
-              ${rows.join("")}
+              ${rows2.join("")}
             </table>
           </td></tr>
 
@@ -10321,8 +10321,8 @@ async function refreshCycleTotals(cycleId) {
     FROM payroll_ledger
     WHERE cycle_id = ${cycleId}
   `);
-  const rows = result?.rows ?? [];
-  const summary = rows[0] ?? { n: 0, total: "0" };
+  const rows2 = result?.rows ?? [];
+  const summary = rows2[0] ?? { n: 0, total: "0" };
   const [updated] = await db.update(payrollCycles).set({
     employeeCount: summary.n ?? 0,
     totalPayout: String(summary.total ?? "0"),
@@ -10425,13 +10425,13 @@ async function updateCycleLedger(args) {
   return saved;
 }
 async function listCycles(storeId) {
-  const rows = storeId ? await db.select().from(payrollCycles).where(eq8(payrollCycles.storeId, storeId)).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month)) : await db.select().from(payrollCycles).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month));
-  return rows;
+  const rows2 = storeId ? await db.select().from(payrollCycles).where(eq8(payrollCycles.storeId, storeId)).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month)) : await db.select().from(payrollCycles).orderBy(desc4(payrollCycles.year), desc4(payrollCycles.month));
+  return rows2;
 }
 async function getCycleWithLedgers(cycleId) {
   const [cycle] = await db.select().from(payrollCycles).where(eq8(payrollCycles.id, cycleId)).limit(1);
   if (!cycle) return null;
-  const rows = await db.select({
+  const rows2 = await db.select({
     ledger: payrollLedger,
     user: {
       fullName: users.fullName,
@@ -10443,7 +10443,7 @@ async function getCycleWithLedgers(cycleId) {
   }).from(payrollLedger).innerJoin(users, eq8(payrollLedger.userId, users.id)).where(eq8(payrollLedger.cycleId, cycleId)).orderBy(users.fullName);
   return {
     cycle,
-    ledgers: rows.map((r) => ({ ...r.ledger, user: r.user }))
+    ledgers: rows2.map((r) => ({ ...r.ledger, user: r.user }))
   };
 }
 function round4(n) {
@@ -10952,6 +10952,544 @@ var init_shiprocket = __esm({
   }
 });
 
+// server/services/ndr-analytics.ts
+var ndr_analytics_exports = {};
+__export(ndr_analytics_exports, {
+  getActionableSplit: () => getActionableSplit,
+  getAvgResolutionTime: () => getAvgResolutionTime,
+  getNdrAnalyticsBundle: () => getNdrAnalyticsBundle,
+  getNdrByPaymentType: () => getNdrByPaymentType,
+  getNdrDailyTrend: () => getNdrDailyTrend,
+  getNdrGeography: () => getNdrGeography,
+  getNdrKpis: () => getNdrKpis,
+  getNdrReasons: () => getNdrReasons,
+  getOpenNdrAging: () => getOpenNdrAging,
+  getOpenNdrList: () => getOpenNdrList,
+  getReattemptEffectiveness: () => getReattemptEffectiveness,
+  getReshipmentStats: () => getReshipmentStats2,
+  getRevenueAtRisk: () => getRevenueAtRisk
+});
+import { sql as sql11 } from "drizzle-orm";
+function rows(r) {
+  return r?.rows ?? r ?? [];
+}
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function pct(numer, denom) {
+  if (!denom) return null;
+  return Math.round(numer / denom * 1e4) / 100;
+}
+function ndrOrdersCte(storeId, startIso, endIso) {
+  return sql11`
+    ndr_orders AS (
+      SELECT
+        n.order_id,
+        MIN(n.ndr_date)                                   AS first_ndr_date,
+        MAX(n.ndr_date)                                   AS last_ndr_date,
+        MAX(n.resolved_at)                                AS resolved_at,
+        COUNT(*)                                          AS attempts,
+        CASE
+          WHEN bool_or(n.resolution = 'delivered') THEN 'delivered'
+          WHEN bool_or(n.resolution = 'returned')  THEN 'returned'
+          WHEN bool_or(n.resolution = 'cancelled') THEN 'cancelled'
+          ELSE 'open'
+        END                                               AS outcome
+      FROM ndr_events n
+      WHERE n.store_id = ${storeId}
+        AND n.ndr_date >= ${startIso}::timestamptz
+        AND n.ndr_date <  ${endIso}::timestamptz
+      GROUP BY n.order_id
+    )
+  `;
+}
+async function getNdrKpis(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const shippedRes = await db.execute(sql11`
+    WITH shipped AS (
+      SELECT DISTINCT o.id
+      FROM orders o
+      JOIN shipments s ON s.order_id = o.id AND s.awb IS NOT NULL AND s.awb <> ''
+      WHERE o.store_id = ${w.storeId}
+        AND o.shopify_created_at >= ${startIso}::timestamptz
+        AND o.shopify_created_at <  ${endIso}::timestamptz
+    )
+    SELECT
+      COUNT(*)::int4 AS shipped,
+      COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM ndr_events n
+        WHERE n.order_id = shipped.id AND n.store_id = ${w.storeId}
+      ))::int4 AS shipped_ndrd
+    FROM shipped
+  `);
+  const sr = rows(shippedRes)[0] ?? {};
+  const ordersShipped = num(sr.shipped);
+  const shippedThatNdrd = num(sr.shipped_ndrd);
+  const ndrRes = await db.execute(sql11`
+    WITH ${ndrOrdersCte(w.storeId, startIso, endIso)}
+    SELECT
+      COUNT(*)::int4                                        AS ndr_orders,
+      COALESCE(SUM(attempts),0)::int4                       AS total_events,
+      COUNT(*) FILTER (WHERE outcome = 'delivered')::int4   AS delivered,
+      COUNT(*) FILTER (WHERE outcome = 'returned')::int4    AS returned,
+      COUNT(*) FILTER (WHERE outcome = 'cancelled')::int4   AS cancelled,
+      COUNT(*) FILTER (WHERE outcome = 'open')::int4        AS still_open
+    FROM ndr_orders
+  `);
+  const r = rows(ndrRes)[0] ?? {};
+  const ndrOrders = num(r.ndr_orders);
+  const totalEvents = num(r.total_events);
+  const deliveredOrders = num(r.delivered);
+  const returnedOrders = num(r.returned);
+  return {
+    ordersShipped,
+    shippedThatNdrd,
+    ndrOrders,
+    totalEvents,
+    avgAttemptsPerOrder: ndrOrders ? Math.round(totalEvents / ndrOrders * 10) / 10 : null,
+    deliveredOrders,
+    returnedOrders,
+    cancelledOrders: num(r.cancelled),
+    openOrders: num(r.still_open),
+    totalNdrRatePct: pct(shippedThatNdrd, ordersShipped),
+    ndrToDeliveryPct: pct(deliveredOrders, ndrOrders),
+    ndrToRtoPct: pct(returnedOrders, ndrOrders)
+  };
+}
+async function getRevenueAtRisk(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH ${ndrOrdersCte(w.storeId, startIso, endIso)}
+    SELECT
+      CASE WHEN LOWER(COALESCE(o.payment_method,'')) LIKE '%cod%' THEN 'cod' ELSE 'prepaid' END AS pay_bucket,
+      COALESCE(SUM(CAST(o.total_price AS numeric)) FILTER (WHERE no.outcome = 'open'), 0)       AS at_risk,
+      COALESCE(SUM(CAST(o.total_price AS numeric)) FILTER (WHERE no.outcome = 'delivered'), 0)  AS saved,
+      COALESCE(SUM(CAST(o.total_price AS numeric)) FILTER (WHERE no.outcome = 'returned'), 0)   AS lost
+    FROM ndr_orders no
+    JOIN orders o ON o.id = no.order_id
+    GROUP BY 1
+  `);
+  const empty = () => ({ atRisk: 0, saved: 0, lost: 0 });
+  const out = { cod: empty(), prepaid: empty(), total: empty() };
+  for (const row of rows(res)) {
+    const band = { atRisk: num(row.at_risk), saved: num(row.saved), lost: num(row.lost) };
+    if (row.pay_bucket === "cod") out.cod = band;
+    else out.prepaid = band;
+  }
+  out.total = {
+    atRisk: out.cod.atRisk + out.prepaid.atRisk,
+    saved: out.cod.saved + out.prepaid.saved,
+    lost: out.cod.lost + out.prepaid.lost
+  };
+  return out;
+}
+async function getReshipmentStats2(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const createdRes = await db.execute(sql11`
+    SELECT
+      COUNT(*)::int4                                              AS created,
+      COUNT(*) FILTER (WHERE courier_status = 'pending')::int4    AS pending,
+      COUNT(*) FILTER (WHERE courier_status = 'cancelled')::int4  AS cancelled
+    FROM reshipment_logs
+    WHERE store_id = ${w.storeId}
+      AND created_at >= ${startIso}::timestamptz
+      AND created_at <  ${endIso}::timestamptz
+  `);
+  const deliveredRes = await db.execute(sql11`
+    SELECT COUNT(DISTINCT rl.id)::int4 AS delivered
+    FROM reshipment_logs rl
+    JOIN shipments s ON s.awb = rl.tracking_awb
+    WHERE rl.store_id = ${w.storeId}
+      AND rl.courier_status = 'delivered'
+      AND s.delivered_at >= ${startIso}::timestamptz
+      AND s.delivered_at <  ${endIso}::timestamptz
+  `);
+  const c = rows(createdRes)[0] ?? {};
+  return {
+    created: num(c.created),
+    pending: num(c.pending),
+    cancelled: num(c.cancelled),
+    delivered: num(rows(deliveredRes)[0]?.delivered)
+  };
+}
+async function getNdrByGeo(w, column, minOrders, limit) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH shipped AS (
+      SELECT DISTINCT o.id, NULLIF(TRIM(o.${sql11.raw(column)}), '') AS geo
+      FROM orders o
+      JOIN shipments s ON s.order_id = o.id AND s.awb IS NOT NULL AND s.awb <> ''
+      WHERE o.store_id = ${w.storeId}
+        AND o.shopify_created_at >= ${startIso}::timestamptz
+        AND o.shopify_created_at <  ${endIso}::timestamptz
+    ),
+    ndr_orders AS (
+      SELECT DISTINCT n.order_id
+      FROM ndr_events n
+      WHERE n.store_id = ${w.storeId}
+        AND n.ndr_date >= ${startIso}::timestamptz
+        AND n.ndr_date <  ${endIso}::timestamptz
+    )
+    SELECT
+      shipped.geo                                           AS key,
+      COUNT(*)::int4                                        AS orders_shipped,
+      COUNT(*) FILTER (WHERE no.order_id IS NOT NULL)::int4 AS ndrs
+    FROM shipped
+    LEFT JOIN ndr_orders no ON no.order_id = shipped.id
+    WHERE shipped.geo IS NOT NULL
+    GROUP BY shipped.geo
+    HAVING COUNT(*) >= ${minOrders}
+    ORDER BY
+      (COUNT(*) FILTER (WHERE no.order_id IS NOT NULL))::numeric / NULLIF(COUNT(*),0) DESC,
+      ndrs DESC
+    LIMIT ${limit}
+  `);
+  return rows(res).map((r) => ({
+    key: String(r.key),
+    ordersShipped: num(r.orders_shipped),
+    ndrs: num(r.ndrs),
+    ndrRatePct: pct(num(r.ndrs), num(r.orders_shipped))
+  }));
+}
+async function getNdrGeography(w) {
+  const [byCity, byPincode] = await Promise.all([
+    getNdrByGeo(w, "shipping_city", 5, 15),
+    getNdrByGeo(w, "shipping_pincode", 3, 15)
+  ]);
+  return { byCity, byPincode };
+}
+async function getNdrReasons(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const catRes = await db.execute(sql11`
+    WITH latest AS (
+      SELECT DISTINCT ON (order_id)
+             order_id,
+             COALESCE(NULLIF(TRIM(ndr_status), ''), 'other') AS reason
+      FROM ndr_events
+      WHERE store_id = ${w.storeId}
+        AND ndr_date >= ${startIso}::timestamptz
+        AND ndr_date <  ${endIso}::timestamptz
+      ORDER BY order_id, ndr_date DESC
+    )
+    SELECT reason AS key, COUNT(*)::int4 AS n
+    FROM latest GROUP BY reason ORDER BY n DESC
+  `);
+  const nslRes = await db.execute(sql11`
+    WITH ndr_order_ids AS (
+      SELECT DISTINCT order_id FROM ndr_events
+      WHERE store_id = ${w.storeId}
+        AND ndr_date >= ${startIso}::timestamptz
+        AND ndr_date <  ${endIso}::timestamptz
+    )
+    SELECT COALESCE(NULLIF(TRIM(o.nsl_code), ''), 'unknown') AS key, COUNT(*)::int4 AS n
+    FROM ndr_order_ids i
+    JOIN orders o ON o.id = i.order_id
+    GROUP BY 1 ORDER BY n DESC LIMIT 20
+  `);
+  const total = (list) => list.reduce((s, x) => s + num(x.n), 0);
+  const toRows = (list) => {
+    const t = total(list);
+    return list.map((x) => ({ key: String(x.key), count: num(x.n), sharePct: pct(num(x.n), t) }));
+  };
+  return { byCategory: toRows(rows(catRes)), byNslCode: toRows(rows(nslRes)) };
+}
+async function getAvgResolutionTime(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH ${ndrOrdersCte(w.storeId, startIso, endIso)}
+    SELECT
+      COUNT(*) FILTER (WHERE outcome IN ('delivered','returned') AND resolved_at IS NOT NULL AND resolved_at >= first_ndr_date)::int4 AS resolved_count,
+      AVG(EXTRACT(EPOCH FROM (resolved_at - first_ndr_date))/3600.0)
+        FILTER (WHERE outcome IN ('delivered','returned') AND resolved_at IS NOT NULL AND resolved_at >= first_ndr_date)            AS overall_hours,
+      AVG(EXTRACT(EPOCH FROM (resolved_at - first_ndr_date))/3600.0)
+        FILTER (WHERE outcome = 'delivered' AND resolved_at IS NOT NULL AND resolved_at >= first_ndr_date)                          AS delivered_hours,
+      AVG(EXTRACT(EPOCH FROM (resolved_at - first_ndr_date))/3600.0)
+        FILTER (WHERE outcome = 'returned' AND resolved_at IS NOT NULL AND resolved_at >= first_ndr_date)                           AS returned_hours
+    FROM ndr_orders
+  `);
+  const r = rows(res)[0] ?? {};
+  const round1 = (v) => v == null ? null : Math.round(num(v) * 10) / 10;
+  return {
+    resolvedCount: num(r.resolved_count),
+    overallHours: round1(r.overall_hours),
+    deliveredHours: round1(r.delivered_hours),
+    returnedHours: round1(r.returned_hours)
+  };
+}
+async function getActionableSplit(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH ${ndrOrdersCte(w.storeId, startIso, endIso)}
+    SELECT
+      COUNT(*) FILTER (WHERE o.is_actionable = true)::int4                                   AS actionable,
+      COUNT(*) FILTER (WHERE o.is_actionable IS NOT TRUE)::int4                              AS non_actionable,
+      COUNT(*) FILTER (WHERE o.is_actionable = true AND no.outcome = 'delivered')::int4      AS actionable_rescued
+    FROM ndr_orders no
+    JOIN orders o ON o.id = no.order_id
+  `);
+  const r = rows(res)[0] ?? {};
+  const actionable = num(r.actionable);
+  const nonActionable = num(r.non_actionable);
+  const rescued = num(r.actionable_rescued);
+  return {
+    actionable,
+    nonActionable,
+    actionablePct: pct(actionable, actionable + nonActionable),
+    actionableRescued: rescued,
+    actionableRescuePct: pct(rescued, actionable)
+  };
+}
+async function getOpenNdrAging(storeId) {
+  const res = await db.execute(sql11`
+    WITH open_orders AS (
+      SELECT
+        n.order_id,
+        MAX(n.ndr_date) AS last_ndr_date
+      FROM ndr_events n
+      WHERE n.store_id = ${storeId}
+      GROUP BY n.order_id
+      -- order is open iff NONE of its events resolved
+      HAVING bool_and(n.resolved = false)
+    )
+    SELECT
+      CASE
+        WHEN NOW() - oo.last_ndr_date < INTERVAL '1 day'  THEN '0-1d'
+        WHEN NOW() - oo.last_ndr_date < INTERVAL '3 days' THEN '1-3d'
+        WHEN NOW() - oo.last_ndr_date < INTERVAL '7 days' THEN '3-7d'
+        WHEN NOW() - oo.last_ndr_date < INTERVAL '14 days' THEN '7-14d'
+        ELSE '14d+'
+      END AS bucket,
+      COUNT(*)::int4 AS n,
+      COALESCE(SUM(CAST(o.total_price AS numeric)), 0) AS value_at_risk
+    FROM open_orders oo
+    JOIN orders o ON o.id = oo.order_id
+    GROUP BY 1
+  `);
+  const order = ["0-1d", "1-3d", "3-7d", "7-14d", "14d+"];
+  const byBucket = /* @__PURE__ */ new Map();
+  for (const r of rows(res)) {
+    byBucket.set(String(r.bucket), {
+      bucket: String(r.bucket),
+      count: num(r.n),
+      valueAtRisk: num(r.value_at_risk)
+    });
+  }
+  return order.map((b) => byBucket.get(b) ?? { bucket: b, count: 0, valueAtRisk: 0 });
+}
+async function getNdrByPaymentType(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH shipped AS (
+      SELECT DISTINCT o.id,
+        CASE WHEN LOWER(COALESCE(o.payment_method,'')) LIKE '%cod%' THEN 'cod' ELSE 'prepaid' END AS pay
+      FROM orders o
+      JOIN shipments s ON s.order_id = o.id AND s.awb IS NOT NULL AND s.awb <> ''
+      WHERE o.store_id = ${w.storeId}
+        AND o.shopify_created_at >= ${startIso}::timestamptz
+        AND o.shopify_created_at <  ${endIso}::timestamptz
+    )
+    SELECT
+      pay,
+      COUNT(*)::int4 AS shipped,
+      COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM ndr_events n WHERE n.order_id = shipped.id AND n.store_id = ${w.storeId}
+      ))::int4 AS ndrd
+    FROM shipped GROUP BY pay
+  `);
+  const mk = () => ({ shipped: 0, ndrd: 0, ratePct: null });
+  const out = { cod: mk(), prepaid: mk() };
+  for (const r of rows(res)) {
+    const row = { shipped: num(r.shipped), ndrd: num(r.ndrd), ratePct: pct(num(r.ndrd), num(r.shipped)) };
+    if (r.pay === "cod") out.cod = row;
+    else out.prepaid = row;
+  }
+  return out;
+}
+async function getReattemptEffectiveness(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH ndr_orders AS (
+      SELECT
+        order_id,
+        bool_or(reattempt_scheduled) AS had_reattempt,
+        CASE
+          WHEN bool_or(resolution = 'delivered') THEN 'delivered'
+          WHEN bool_or(resolution = 'returned')  THEN 'returned'
+          WHEN bool_or(resolution = 'cancelled') THEN 'cancelled'
+          ELSE 'open'
+        END AS outcome
+      FROM ndr_events
+      WHERE store_id = ${w.storeId}
+        AND ndr_date >= ${startIso}::timestamptz
+        AND ndr_date <  ${endIso}::timestamptz
+      GROUP BY order_id
+    )
+    SELECT
+      COUNT(*)::int4                                                          AS ndr_orders,
+      COUNT(*) FILTER (WHERE had_reattempt)::int4                             AS with_reattempt,
+      COUNT(*) FILTER (WHERE had_reattempt AND outcome = 'delivered')::int4   AS reattempt_delivered
+    FROM ndr_orders
+  `);
+  const r = rows(res)[0] ?? {};
+  const withReattempt = num(r.with_reattempt);
+  const delivered = num(r.reattempt_delivered);
+  return {
+    withReattempt,
+    reattemptDelivered: delivered,
+    effectivenessPct: pct(delivered, withReattempt),
+    ndrOrders: num(r.ndr_orders)
+  };
+}
+async function getOpenNdrList(storeId, limit = 50) {
+  const res = await db.execute(sql11`
+    WITH open_orders AS (
+      SELECT order_id, MAX(ndr_date) AS last_ndr, COUNT(*) AS attempts
+      FROM ndr_events
+      WHERE store_id = ${storeId}
+      GROUP BY order_id
+      HAVING bool_and(resolved = false)
+    )
+    SELECT
+      o.shopify_order_number                                   AS order_number,
+      s.awb                                                    AS awb,
+      o.customer_name                                          AS customer_name,
+      o.customer_phone                                         AS customer_phone,
+      o.shipping_city                                          AS city,
+      COALESCE(NULLIF(o.failure_reason,''), '')                AS reason,
+      o.nsl_code                                               AS nsl_code,
+      COALESCE(o.is_actionable, false)                         AS is_actionable,
+      CASE WHEN LOWER(COALESCE(o.payment_method,'')) LIKE '%cod%' THEN 'COD' ELSE 'Prepaid' END AS payment_type,
+      CAST(o.total_price AS numeric)                           AS value,
+      oo.attempts                                              AS attempts,
+      EXTRACT(EPOCH FROM (NOW() - oo.last_ndr)) / 86400.0      AS days_open
+    FROM open_orders oo
+    JOIN orders o ON o.id = oo.order_id
+    LEFT JOIN shipments s ON s.order_id = o.id
+    ORDER BY oo.last_ndr ASC
+    LIMIT ${limit}
+  `);
+  return rows(res).map((r) => ({
+    orderNumber: r.order_number ?? null,
+    awb: r.awb ?? null,
+    customerName: r.customer_name ?? null,
+    customerPhone: r.customer_phone ?? null,
+    city: r.city ?? null,
+    reason: r.reason || null,
+    nslCode: r.nsl_code ?? null,
+    isActionable: !!r.is_actionable,
+    paymentType: String(r.payment_type),
+    value: num(r.value),
+    attempts: num(r.attempts),
+    daysOpen: Math.floor(num(r.days_open))
+  }));
+}
+async function getNdrDailyTrend(w) {
+  const startIso = w.start.toISOString();
+  const endIso = w.end.toISOString();
+  const res = await db.execute(sql11`
+    WITH ${ndrOrdersCte(w.storeId, startIso, endIso)}
+    SELECT
+      to_char(date_trunc('day', first_ndr_date), 'YYYY-MM-DD')   AS day,
+      COUNT(*)::int4                                             AS ndrs,
+      COUNT(*) FILTER (WHERE outcome = 'delivered')::int4        AS delivered,
+      COUNT(*) FILTER (WHERE outcome = 'returned')::int4         AS rto
+    FROM ndr_orders
+    GROUP BY 1
+    ORDER BY 1
+  `);
+  const byDay = /* @__PURE__ */ new Map();
+  for (const r of rows(res)) {
+    byDay.set(String(r.day), { date: String(r.day), ndrs: num(r.ndrs), delivered: num(r.delivered), rto: num(r.rto) });
+  }
+  const out = [];
+  const cur = new Date(Date.UTC(w.start.getUTCFullYear(), w.start.getUTCMonth(), w.start.getUTCDate()));
+  const endDay = new Date(w.end);
+  let guard = 0;
+  while (cur < endDay && guard < 180) {
+    const key = cur.toISOString().slice(0, 10);
+    out.push(byDay.get(key) ?? { date: key, ndrs: 0, delivered: 0, rto: 0 });
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    guard++;
+  }
+  return out;
+}
+async function getNdrAnalyticsBundle(w) {
+  const spanMs = w.end.getTime() - w.start.getTime();
+  const prevWindow = {
+    storeId: w.storeId,
+    start: new Date(w.start.getTime() - spanMs),
+    end: new Date(w.start.getTime())
+  };
+  const [
+    kpis,
+    revenue,
+    reshipments,
+    geography,
+    reasons,
+    resolutionTime,
+    actionable,
+    openAging,
+    trend,
+    paymentSplit,
+    reattempt,
+    openList,
+    prevKpis,
+    prevRevenue
+  ] = await Promise.all([
+    getNdrKpis(w),
+    getRevenueAtRisk(w),
+    getReshipmentStats2(w),
+    getNdrGeography(w),
+    getNdrReasons(w),
+    getAvgResolutionTime(w),
+    getActionableSplit(w),
+    getOpenNdrAging(w.storeId),
+    getNdrDailyTrend(w),
+    getNdrByPaymentType(w),
+    getReattemptEffectiveness(w),
+    getOpenNdrList(w.storeId, 50),
+    getNdrKpis(prevWindow),
+    getRevenueAtRisk(prevWindow)
+  ]);
+  return {
+    window: { start: w.start.toISOString(), end: w.end.toISOString() },
+    kpis,
+    revenue,
+    reshipments,
+    geography,
+    reasons,
+    resolutionTime,
+    actionable,
+    openAging,
+    trend,
+    paymentSplit,
+    reattempt,
+    openList,
+    prev: {
+      totalNdrRatePct: prevKpis.totalNdrRatePct,
+      ndrToDeliveryPct: prevKpis.ndrToDeliveryPct,
+      ndrToRtoPct: prevKpis.ndrToRtoPct,
+      atRisk: prevRevenue.total.atRisk
+    }
+  };
+}
+var init_ndr_analytics = __esm({
+  "server/services/ndr-analytics.ts"() {
+    "use strict";
+    init_db();
+  }
+});
+
 // server/pgs/payu.ts
 function splitCsvLine(line) {
   const out = [];
@@ -11040,7 +11578,7 @@ var init_payu = __esm({
       name: "payu",
       displayName: "PayU India",
       async parseSettlementCsv(csvText, opts) {
-        const rows = [];
+        const rows2 = [];
         const errors = [];
         let skipped = 0;
         const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -11114,7 +11652,7 @@ var init_payu = __esm({
           for (let h = 0; h < header.length; h++) {
             rawPayload[header[h]] = fields[h] ?? "";
           }
-          rows.push({
+          rows2.push({
             storeId: opts.storeId,
             pgName: "payu",
             pgPaymentId,
@@ -11134,7 +11672,7 @@ var init_payu = __esm({
         }
         const seenInBatch = /* @__PURE__ */ new Set();
         const deduped = [];
-        for (const r of rows) {
+        for (const r of rows2) {
           if (seenInBatch.has(r.pgPaymentId)) {
             skipped++;
             errors.push({
@@ -11215,7 +11753,7 @@ __export(matcher_exports, {
   getOverdueOrders: () => getOverdueOrders,
   matchPendingSettlements: () => matchPendingSettlements
 });
-import { and as and7, eq as eq9, sql as sql11 } from "drizzle-orm";
+import { and as and7, eq as eq9, sql as sql12 } from "drizzle-orm";
 async function matchPendingSettlements(opts) {
   const { storeId, pgName = "payu", toleranceRupees = 1 } = opts;
   const adapter = getPgAdapter(pgName);
@@ -11240,7 +11778,7 @@ async function matchPendingSettlements(opts) {
   };
   for (const s of pending) {
     try {
-      const found = await db.execute(sql11`
+      const found = await db.execute(sql12`
         SELECT o.id, o.total_price, o.shopify_order_number
         FROM orders o
         CROSS JOIN LATERAL jsonb_array_elements(
@@ -11286,7 +11824,7 @@ async function matchPendingSettlements(opts) {
 }
 async function getOverdueOrders(opts) {
   const { storeId, graceDays = 3, limit = 200 } = opts;
-  const windowQuery = await db.execute(sql11`
+  const windowQuery = await db.execute(sql12`
     SELECT
       MIN(settled_at)::timestamptz AS min_settled,
       MAX(settled_at)::timestamptz AS max_settled,
@@ -11307,7 +11845,7 @@ async function getOverdueOrders(opts) {
   const maxSettled = new Date(winRow.max_settled);
   const cutoff = new Date(maxSettled.getTime() - graceDays * 864e5);
   const windowStart = new Date(minSettled.getTime() - graceDays * 864e5);
-  const result = await db.execute(sql11`
+  const result = await db.execute(sql12`
     SELECT
       o.id,
       o.shopify_order_number,
@@ -11333,7 +11871,7 @@ async function getOverdueOrders(opts) {
     ORDER BY o.shopify_created_at ASC
     LIMIT ${limit}
   `);
-  const rows = result.rows.map((r) => {
+  const rows2 = result.rows.map((r) => {
     const row = r;
     return {
       id: row.id,
@@ -11353,7 +11891,7 @@ async function getOverdueOrders(opts) {
     )
   );
   return {
-    rows,
+    rows: rows2,
     window: {
       fromDate: windowStart.toISOString(),
       toDate: cutoff.toISOString()
@@ -11739,7 +12277,7 @@ function buildTrackingView(args) {
 init_storage();
 init_db();
 init_schema();
-import { eq as eq10, or as or3, sql as sql12, desc as desc5, gte as gte2, lte as lte2, and as and8, asc as asc3, inArray as inArray2 } from "drizzle-orm";
+import { eq as eq10, or as or3, sql as sql13, desc as desc5, gte as gte2, lte as lte2, and as and8, asc as asc3, inArray as inArray2 } from "drizzle-orm";
 
 // server/services/webhooks.ts
 init_db();
@@ -12745,9 +13283,9 @@ async function getPareMetrics(dateRange) {
     ORDER BY day ASC
   `;
   const result = await db.execute(query);
-  const rows = result.rows ?? result ?? [];
+  const rows2 = result.rows ?? result ?? [];
   const byDay = /* @__PURE__ */ new Map();
-  for (const r of rows) byDay.set(r.day, r);
+  for (const r of rows2) byDay.set(r.day, r);
   const daily = enumerateDays(startDate, endDate).map((day) => {
     const r = byDay.get(day);
     if (!r) {
@@ -12841,8 +13379,8 @@ async function getPareMetrics(dateRange) {
       unknownTierOrders: Number(r.unknown_tier_orders) || 0
     };
   });
-  const sum = (k) => rows.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
-  const sumInt = (k) => rows.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
+  const sum = (k) => rows2.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
+  const sumInt = (k) => rows2.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
   const grossGmv = sum("gross_gmv");
   const discounts = sum("discounts");
   const orderRevenue = sum("order_revenue");
@@ -13150,7 +13688,7 @@ async function resolveUserScrub(req) {
 async function registerRoutes(app2) {
   app2.get("/api/health", async (_req, res) => {
     try {
-      const r = await db.execute(sql12`SELECT 1 AS ok`);
+      const r = await db.execute(sql13`SELECT 1 AS ok`);
       const ok = (r.rows ?? r)[0]?.ok === 1;
       res.status(ok ? 200 : 503).json({
         status: ok ? "ok" : "degraded",
@@ -13423,8 +13961,8 @@ async function registerRoutes(app2) {
     try {
       const parsed = parseAbandonedCheckoutFilters(req.query);
       if ("error" in parsed) return res.status(400).json({ error: parsed.error });
-      const rows = await storage.exportAbandonedCheckouts(parsed.filters);
-      res.json({ rows });
+      const rows2 = await storage.exportAbandonedCheckouts(parsed.filters);
+      res.json({ rows: rows2 });
     } catch (error) {
       console.error("Error exporting abandoned checkouts:", error);
       res.status(500).json({ error: "Failed to export abandoned checkouts" });
@@ -13596,7 +14134,7 @@ async function registerRoutes(app2) {
         }
         return str;
       };
-      const rows = exportData.map((order) => [
+      const rows2 = exportData.map((order) => [
         escapeCSV(order.shopifyOrderNumber),
         formatDate(order.shopifyCreatedAt),
         escapeCSV(order.status),
@@ -13615,7 +14153,7 @@ async function registerRoutes(app2) {
         escapeCSV(order.tags?.join(", ")),
         escapeCSV(order.lineItems)
       ].join(","));
-      const csvContent = [headers.join(","), ...rows].join("\n");
+      const csvContent = [headers.join(","), ...rows2].join("\n");
       const now = /* @__PURE__ */ new Date();
       const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
       const filename = `orders_export_${dateStr}.csv`;
@@ -13638,8 +14176,8 @@ async function registerRoutes(app2) {
       if (authResult.unauthorized) {
         return res.status(401).json({ error: authResult.reason || "Authorization required" });
       }
-      const agentFilter = authResult.assignedTo ? sql12`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql12``;
-      const storeFilter = authResult.storeId ? sql12`AND ${orders.storeId} = ${authResult.storeId}` : sql12``;
+      const agentFilter = authResult.assignedTo ? sql13`AND ${orders.assignedTo} = ${authResult.assignedTo}` : sql13``;
+      const storeFilter = authResult.storeId ? sql13`AND ${orders.storeId} = ${authResult.storeId}` : sql13``;
       const result = await db.select({
         id: orders.id,
         shopifyOrderNumber: orders.shopifyOrderNumber,
@@ -13655,7 +14193,7 @@ async function registerRoutes(app2) {
         assignedTo: orders.assignedTo,
         createdAt: orders.createdAt
       }).from(orders).where(
-        sql12`(
+        sql13`(
           -- STRICT MODE: Only match Out for Delivery statuses
           -- Package must be physically with the rider for delivery TODAY
           LOWER(${orders.shipmentStatus}) LIKE '%out for delivery%'
@@ -13868,8 +14406,8 @@ async function registerRoutes(app2) {
       if (!/^\d{6}$/.test(zip)) {
         return res.status(400).json({ error: "Pincode must be 6 digits." });
       }
-      const rows = await db.select().from(pincodeTiers).where(eq10(pincodeTiers.pincode, zip)).limit(1);
-      const row = rows[0];
+      const rows2 = await db.select().from(pincodeTiers).where(eq10(pincodeTiers.pincode, zip)).limit(1);
+      const row = rows2[0];
       if (!row) return res.status(404).json({ error: "Pincode not found." });
       res.json({
         pincode: row.pincode,
@@ -13968,9 +14506,9 @@ async function registerRoutes(app2) {
       if (!authed) return;
       const scope = await resolveReshipmentScope(req, res, authed.user);
       if (!scope) return;
-      const { getReshipmentStats: getReshipmentStats2 } = await Promise.resolve().then(() => (init_service(), service_exports));
+      const { getReshipmentStats: getReshipmentStats3 } = await Promise.resolve().then(() => (init_service(), service_exports));
       const createdByOnly = isAdmin(authed.user) ? void 0 : authed.user.id;
-      const stats = await getReshipmentStats2(scope.storeId, { createdByOnly });
+      const stats = await getReshipmentStats3(scope.storeId, { createdByOnly });
       res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
     } catch (error) {
       console.error("[reshipments] stats failed:", error);
@@ -16162,7 +16700,7 @@ async function registerRoutes(app2) {
         });
       }
       const orders2 = await storage.getConvertedOrdersForCoupon(couponCode);
-      const num = (v) => {
+      const num2 = (v) => {
         const n = parseFloat(v ?? "0");
         return Number.isFinite(n) ? n : 0;
       };
@@ -16172,7 +16710,7 @@ async function registerRoutes(app2) {
       let codCount = 0;
       let prepaidCount = 0;
       for (const o of orders2) {
-        const price = num(o.totalPrice);
+        const price = num2(o.totalPrice);
         gmv += price;
         if (o.status === "delivered") {
           deliveredCount += 1;
@@ -16302,13 +16840,13 @@ async function registerRoutes(app2) {
         isActive: stores.isActive,
         createdAt: stores.createdAt
       };
-      let rows;
+      let rows2;
       if (isAdmin(user)) {
-        rows = await db.select(projection).from(stores).where(eq10(stores.isActive, true)).orderBy(asc3(stores.createdAt));
+        rows2 = await db.select(projection).from(stores).where(eq10(stores.isActive, true)).orderBy(asc3(stores.createdAt));
       } else {
-        rows = await db.select(projection).from(stores).innerJoin(userStores, eq10(userStores.storeId, stores.id)).where(and8(eq10(userStores.userId, userId), eq10(stores.isActive, true))).orderBy(asc3(stores.createdAt));
+        rows2 = await db.select(projection).from(stores).innerJoin(userStores, eq10(userStores.storeId, stores.id)).where(and8(eq10(userStores.userId, userId), eq10(stores.isActive, true))).orderBy(asc3(stores.createdAt));
       }
-      res.json({ stores: rows });
+      res.json({ stores: rows2 });
     } catch (error) {
       console.error("Error in /api/stores/me:", error);
       res.status(500).json({ error: "Failed to load stores." });
@@ -16550,8 +17088,8 @@ async function registerRoutes(app2) {
       if (!target) {
         return res.status(404).json({ error: "User not found." });
       }
-      const rows = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq10(userStores.userId, targetId));
-      res.json({ storeIds: rows.map((r) => r.storeId) });
+      const rows2 = await db.select({ storeId: userStores.storeId }).from(userStores).where(eq10(userStores.userId, targetId));
+      res.json({ storeIds: rows2.map((r) => r.storeId) });
     } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
       res.status(500).json({ error: "Failed to load user store access." });
@@ -17127,12 +17665,12 @@ async function registerRoutes(app2) {
     try {
       const cleaned = key.replace(/^#/, "");
       let orderRow = null;
-      const byNumber = await db.execute(sql12`
+      const byNumber = await db.execute(sql13`
         SELECT * FROM orders WHERE shopify_order_number = ${cleaned} LIMIT 1
       `);
       orderRow = (byNumber?.rows ?? [])[0] ?? null;
       if (!orderRow) {
-        const byId = await db.execute(sql12`
+        const byId = await db.execute(sql13`
           SELECT * FROM orders WHERE id = ${cleaned}::uuid LIMIT 1
         `).catch(() => ({ rows: [] }));
         orderRow = (byId?.rows ?? [])[0] ?? null;
@@ -17185,7 +17723,7 @@ async function registerRoutes(app2) {
         isActionable: normalized.isActionable
       });
       if (previousStatus !== unifiedStatus) {
-        await db.execute(sql12`
+        await db.execute(sql13`
           INSERT INTO order_status_history (id, order_id, status, previous_status, note, created_at)
           VALUES (gen_random_uuid(), ${orderRow.id}, ${unifiedStatus}, ${previousStatus}, ${"admin-resync from Delhivery live tracking"}, NOW())
         `);
@@ -17444,8 +17982,8 @@ async function registerRoutes(app2) {
       if (!Number.isFinite(year) || year < 2024 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
         return res.status(400).json({ error: "Invalid year or month" });
       }
-      const rows = await storage.getMonthlyAttendanceReport(year, month);
-      const totals = rows.reduce(
+      const rows2 = await storage.getMonthlyAttendanceReport(year, month);
+      const totals = rows2.reduce(
         (acc, r) => ({
           daysPresent: acc.daysPresent + r.daysPresent,
           daysAutoClosed: acc.daysAutoClosed + r.daysAutoClosed,
@@ -17455,7 +17993,7 @@ async function registerRoutes(app2) {
         }),
         { daysPresent: 0, daysAutoClosed: 0, clockedHours: 0, breakMinutes: 0, idleMinutesDeducted: 0 }
       );
-      return res.json({ year, month, rows, totals });
+      return res.json({ year, month, rows: rows2, totals });
     } catch (err) {
       console.error("[reports/attendance-monthly] error:", err);
       return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
@@ -17475,7 +18013,7 @@ async function registerRoutes(app2) {
       if (!Number.isFinite(year) || year < 2024 || year > 2100 || !Number.isFinite(month) || month < 1 || month > 12) {
         return res.status(400).send("Invalid year or month");
       }
-      const rows = await storage.getMonthlyAttendanceReport(year, month);
+      const rows2 = await storage.getMonthlyAttendanceReport(year, month);
       const headers = [
         "Agent",
         "Email",
@@ -17496,7 +18034,7 @@ async function registerRoutes(app2) {
       };
       const csv = [
         headers.join(","),
-        ...rows.map((r) => [
+        ...rows2.map((r) => [
           escapeCSV(r.fullName),
           escapeCSV(r.email),
           escapeCSV(r.role),
@@ -17572,11 +18110,11 @@ async function registerRoutes(app2) {
       }
       const yearParam = typeof req.query.year === "string" ? req.query.year : null;
       const year = yearParam ? parseInt(yearParam, 10) : (/* @__PURE__ */ new Date()).getFullYear();
-      const rows = await storage.listHolidaysByState(
+      const rows2 = await storage.listHolidaysByState(
         user.holidayState,
         Number.isFinite(year) ? year : void 0
       );
-      res.json(rows);
+      res.json(rows2);
     } catch (error) {
       console.error("Error fetching holidays:", error);
       res.status(500).json({ error: "Failed to fetch holidays" });
@@ -18220,8 +18758,8 @@ async function registerRoutes(app2) {
       if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
         return res.status(400).json({ error: "year, month required (month 1-12)" });
       }
-      const rows = await storage.listPayrollLedger(year, month);
-      res.json(rows);
+      const rows2 = await storage.listPayrollLedger(year, month);
+      res.json(rows2);
     } catch (error) {
       console.error("Error in /api/payroll/ledger:", error);
       res.status(500).json({ error: "Failed to list payroll ledger" });
@@ -19092,6 +19630,43 @@ async function registerRoutes(app2) {
     } catch (error) {
       console.error("Error tracking shipment:", error);
       res.status(500).json({ error: error.message || "Failed to track shipment" });
+    }
+  });
+  app2.get("/api/ndr/analytics", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth.ok) return;
+    try {
+      const { stores: storesTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      let storeId = typeof req.query.storeId === "string" && req.query.storeId || null;
+      if (!storeId && req.storeScope?.storeId) {
+        const [scoped] = await db.select({ id: storesTable.id, isActive: storesTable.isActive }).from(storesTable).where(eq10(storesTable.id, req.storeScope.storeId)).limit(1);
+        if (scoped?.isActive) storeId = scoped.id;
+      }
+      if (!storeId) {
+        const [live] = await db.select({ id: storesTable.id }).from(storesTable).where(eq10(storesTable.isActive, true)).limit(1);
+        storeId = live?.id ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+      const now = /* @__PURE__ */ new Date();
+      const defaultStart = new Date(now.getTime() - 30 * 24 * 3600 * 1e3);
+      const parseDate2 = (v, fallback) => {
+        if (typeof v === "string" && v.trim()) {
+          const d = new Date(v);
+          if (!Number.isNaN(d.getTime())) return d;
+        }
+        return fallback;
+      };
+      const start = parseDate2(req.query.start, defaultStart);
+      const end = parseDate2(req.query.end, now);
+      if (start >= end) {
+        return res.status(400).json({ error: "start must be before end" });
+      }
+      const { getNdrAnalyticsBundle: getNdrAnalyticsBundle2 } = await Promise.resolve().then(() => (init_ndr_analytics(), ndr_analytics_exports));
+      const bundle = await getNdrAnalyticsBundle2({ storeId, start, end });
+      return res.json({ ...bundle, storeId });
+    } catch (err) {
+      console.error("Error in GET /api/ndr/analytics:", err);
+      return res.status(500).json({ error: err?.message ?? "Failed to load NDR analytics" });
     }
   });
   app2.get("/api/ndr", async (req, res) => {
@@ -20210,7 +20785,7 @@ async function registerRoutes(app2) {
         }
       });
       const agentIds = Object.keys(agentCounts);
-      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql12`${users.id} = ANY(${agentIds})`) : [];
+      const agentUsers = agentIds.length > 0 ? await db.select({ id: users.id, name: users.fullName }).from(users).where(sql13`${users.id} = ANY(${agentIds})`) : [];
       const agentNameMap = new Map(agentUsers.map((u) => [u.id, u.name]));
       const topAgents = Object.entries(agentCounts).map(([agentId, count2]) => ({
         agent_id: agentId,
@@ -20446,21 +21021,21 @@ TeleCRM: ${incomingNotes.trim()}`;
             hint: "Re-submit with force=true if you genuinely want to re-process."
           });
         }
-        const { rows, skipped, errors } = await adapter.parseSettlementCsv(
+        const { rows: rows2, skipped, errors } = await adapter.parseSettlementCsv(
           csv,
           { storeId, sourceFile: fileName }
         );
-        const incomingIds = rows.map((r) => r.pgPaymentId);
+        const incomingIds = rows2.map((r) => r.pgPaymentId);
         const existing = await storage.getExistingPgPaymentIds(
           storeId,
           pgName,
           incomingIds
         );
-        const rowsUpdated = rows.filter(
+        const rowsUpdated = rows2.filter(
           (r) => existing.has(r.pgPaymentId)
         ).length;
-        const rowsInserted = rows.length - rowsUpdated;
-        const { processed } = await storage.bulkUpsertPgSettlements(rows);
+        const rowsInserted = rows2.length - rowsUpdated;
+        const { processed } = await storage.bulkUpsertPgSettlements(rows2);
         let matchResult = null;
         if (autoMatch && storeId) {
           try {
@@ -20472,7 +21047,7 @@ TeleCRM: ${incomingNotes.trim()}`;
             console.error("[recon/upload] auto-match failed:", matchErr);
           }
         }
-        const auditStatus = errors.length === 0 ? "success" : rows.length > 0 ? "partial" : "error";
+        const auditStatus = errors.length === 0 ? "success" : rows2.length > 0 ? "partial" : "error";
         await storage.createReconUpload({
           storeId,
           pgName,
@@ -20480,7 +21055,7 @@ TeleCRM: ${incomingNotes.trim()}`;
           fileHash,
           fileSize,
           uploadedBy: currentUserId,
-          parsedRows: rows.length,
+          parsedRows: rows2.length,
           rowsInserted,
           rowsUpdated,
           rowsSkipped: skipped,
@@ -20495,7 +21070,7 @@ TeleCRM: ${incomingNotes.trim()}`;
           storeId,
           fileName: fileName ?? null,
           fileHash,
-          parsedRows: rows.length,
+          parsedRows: rows2.length,
           rowsInserted,
           rowsUpdated,
           processed,
@@ -20652,7 +21227,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const [store] = await db_local.select({ storeName: stores_local.storeName }).from(stores_local).where(eq_local(stores_local.id, storeId));
       const storeName = store?.storeName ?? "Your store";
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { eq: eq11, and: and9, sql: sql13, inArray: inArray3 } = await import("drizzle-orm");
+      const { eq: eq11, and: and9, sql: sql14, inArray: inArray3 } = await import("drizzle-orm");
       const { pgSettlements: pgSettlements2, orders: orders2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
       const mismatchSettlements = await db2.select({
         id: pgSettlements2.id,
@@ -20665,7 +21240,7 @@ TeleCRM: ${incomingNotes.trim()}`;
           eq11(pgSettlements2.storeId, storeId),
           eq11(pgSettlements2.status, "mismatch")
         )
-      ).orderBy(sql13`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
+      ).orderBy(sql14`(CAST(${pgSettlements2.orderAmount} AS NUMERIC) - CAST(${pgSettlements2.settledAmount} AS NUMERIC)) DESC`).limit(10);
       const mismatchOrderIds = mismatchSettlements.map((s) => s.orderId).filter((id) => !!id);
       const mismatchOrders = mismatchOrderIds.length > 0 ? await db2.select({
         id: orders2.id,
@@ -20709,7 +21284,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       );
       const totalFlaggedAmount = fmtINR(mismatchDriftSum + overdueAmountSum);
       const settledSum = await db2.select({
-        c: sql13`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
+        c: sql14`COALESCE(SUM(CAST(${pgSettlements2.settledAmount} AS NUMERIC)), 0)::text`
       }).from(pgSettlements2).where(
         and9(
           eq11(pgSettlements2.storeId, storeId),
@@ -20768,7 +21343,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       const q = req.query.q;
       const fromDate = req.query.fromDate ? new Date(req.query.fromDate) : void 0;
       const toDate = req.query.toDate ? new Date(req.query.toDate) : void 0;
-      const { rows } = await storage.listPgSettlements({
+      const { rows: rows2 } = await storage.listPgSettlements({
         storeId,
         status,
         q,
@@ -20778,9 +21353,9 @@ TeleCRM: ${incomingNotes.trim()}`;
         pageSize: 500
         // listPgSettlements caps at 500 per page
       });
-      const allRows = [...rows];
+      const allRows = [...rows2];
       let page = 2;
-      while (allRows.length < 5e4 && rows.length === 500) {
+      while (allRows.length < 5e4 && rows2.length === 500) {
         const next = await storage.listPgSettlements({
           storeId,
           status,
@@ -21030,9 +21605,9 @@ TeleCRM: ${incomingNotes.trim()}`;
       const storeId = req.query.storeId ?? req.storeScope?.storeId;
       if (!storeId) return res.status(400).json({ error: "Missing storeId" });
       const pgName = req.query.pgName;
-      const rows = await storage.listPgRateCards(storeId, pgName);
+      const rows2 = await storage.listPgRateCards(storeId, pgName);
       const active = await storage.getActivePgRateCard(storeId, pgName ?? "payu");
-      return res.json({ rows, activeId: active?.id ?? null });
+      return res.json({ rows: rows2, activeId: active?.id ?? null });
     } catch (err) {
       console.error("[recon/rate-cards GET]", err);
       return res.status(500).json({ error: "Failed", detail: err?.message });
@@ -21172,8 +21747,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       const storeId = req.query.storeId ?? req.storeScope?.storeId;
       if (!storeId) return res.status(400).json({ error: "Missing storeId" });
       const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
-      const rows = await storage.listRecentReconUploads(storeId, limit);
-      return res.json({ rows, total: rows.length });
+      const rows2 = await storage.listRecentReconUploads(storeId, limit);
+      return res.json({ rows: rows2, total: rows2.length });
     } catch (err) {
       console.error("[recon/recent-uploads] error:", err);
       return res.status(500).json({
@@ -21198,8 +21773,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql13 } = await import("drizzle-orm");
-      const result = await db2.execute(sql13`
+      const { sql: sql14 } = await import("drizzle-orm");
+      const result = await db2.execute(sql14`
         SELECT
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
           COALESCE(SUM(CAST(settled_amount AS NUMERIC)), 0) AS settled,
@@ -21211,12 +21786,12 @@ TeleCRM: ${incomingNotes.trim()}`;
         GROUP BY day
         ORDER BY day ASC
       `);
-      const rows = result.rows.map((r) => ({
+      const rows2 = result.rows.map((r) => ({
         date: r.day,
         settled: Number(r.settled),
         count: Number(r.count)
       }));
-      return res.json({ rows, days });
+      return res.json({ rows: rows2, days });
     } catch (err) {
       console.error("[recon/trend] error:", err);
       return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
@@ -21238,8 +21813,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(180, Math.max(1, Number(req.query.days ?? 30)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql13 } = await import("drizzle-orm");
-      const result = await db2.execute(sql13`
+      const { sql: sql14 } = await import("drizzle-orm");
+      const result = await db2.execute(sql14`
         SELECT
           utr_number AS utr,
           (settled_at AT TIME ZONE 'Asia/Kolkata')::date AS settlement_date,
@@ -21257,7 +21832,7 @@ TeleCRM: ${incomingNotes.trim()}`;
         ORDER BY settlement_date DESC, utr DESC
         LIMIT 200
       `);
-      const rows = result.rows.map((r) => ({
+      const rows2 = result.rows.map((r) => ({
         utr: r.utr,
         settlementDate: r.settlement_date,
         orderCount: Number(r.order_count),
@@ -21267,7 +21842,7 @@ TeleCRM: ${incomingNotes.trim()}`;
         net: Number(r.net),
         mismatchCount: Number(r.mismatch_count)
       }));
-      return res.json({ rows, days });
+      return res.json({ rows: rows2, days });
     } catch (err) {
       console.error("[recon/by-utr] error:", err);
       return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
@@ -21289,8 +21864,8 @@ TeleCRM: ${incomingNotes.trim()}`;
       }
       const days = Math.min(90, Math.max(1, Number(req.query.days ?? 60)));
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const { sql: sql13 } = await import("drizzle-orm");
-      const result = await db2.execute(sql13`
+      const { sql: sql14 } = await import("drizzle-orm");
+      const result = await db2.execute(sql14`
         SELECT
           (COALESCE(settled_at, created_at) AT TIME ZONE 'Asia/Kolkata')::date AS day,
           status,
