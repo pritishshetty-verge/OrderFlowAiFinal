@@ -457,14 +457,6 @@ function ShopifySetupGuide({ onBack }: { onBack: () => void }) {
               {scopesText}
             </code>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Includes{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
-              read_all_orders
-            </code>{" "}
-            (full order history) plus all the scopes OrderFlow may need, so you
-            won't have to edit the app's permissions again later.
-          </p>
         </GuideStep>
 
         <GuideStep n={3} title="Install the app">
