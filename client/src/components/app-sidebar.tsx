@@ -224,8 +224,8 @@ const recoveryAgentMenuItems: MenuItem[] = [
     icon: GraduationCap,
   },
   {
-    title: "Teams",
-    url: "/teams",
+    title: "Team",
+    url: "/team",
     icon: Users,
   },
 ];

@@ -90,6 +90,7 @@ const RECOVERY_AGENT_ALLOWED_PATHS = [
   "/abandoned-carts",
   "/my-converted-orders",
   "/learning-center",
+  "/team",
   "/teams",
   "/profile",
   "/login",
