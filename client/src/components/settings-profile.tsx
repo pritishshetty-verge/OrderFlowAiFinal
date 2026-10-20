@@ -27,7 +27,7 @@ import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Check, Save, Loader2, Camera, FileText, Upload, CheckCircle2, Eye } from "lucide-react";
+import { Check, Save, Loader2, Camera, FileText, Upload, CheckCircle2, Eye, Pencil, Lock, Mail, Phone, AtSign, User as UserIcon, Clock } from "lucide-react";
 import type { User } from "@shared/schema";
 
 // 20 avatars live in client/public/avatars (avatar_1.png … avatar_20.png).
@@ -51,6 +51,7 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
   const userEmail = localStorage.getItem("userEmail");
   const [avatarDialogOpen, setAvatarDialogOpen] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const { data: user, isLoading } = useQuery<User>({
     queryKey: [`/api/users/by-email/${userEmail}`],
@@ -88,6 +89,7 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
         title: "Profile Updated",
         description: "Your profile has been updated successfully.",
       });
+      setEditing(false);
       queryClient.invalidateQueries({ queryKey: [`/api/users/by-email/${userEmail}`] });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
     },
@@ -265,6 +267,26 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
     }
   };
 
+  // View mode hides sensitive contact details until the user clicks Edit.
+  const maskEmail = (email?: string | null) => {
+    if (!email) return "—";
+    const [local, domain] = email.split("@");
+    if (!domain) return email;
+    const head = local.slice(0, 2);
+    return `${head}${"•".repeat(Math.max(3, local.length - 2))}@${domain}`;
+  };
+  const maskPhone = (phone?: string | null) => {
+    if (!phone) return "—";
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 4) return phone;
+    return `+${digits.slice(0, 2)} •••••• ${digits.slice(-4)}`;
+  };
+
+  const openAvatarPicker = () => {
+    setSelectedAvatar(user?.avatarImage || null);
+    setAvatarDialogOpen(true);
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -308,232 +330,286 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="space-y-6 pt-6">
-          <div className="flex items-center gap-5">
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedAvatar(user?.avatarImage || null);
-                setAvatarDialogOpen(true);
-              }}
-              className="relative group cursor-pointer"
-              data-testid="button-edit-avatar"
-            >
-              <Avatar className="h-24 w-24">
-                {user?.avatarImage && (
-                  <AvatarImage 
-                    src={`/avatars/${user.avatarImage}`} 
-                    alt={form.watch("fullName")} 
-                    className="object-cover"
-                  />
-                )}
-                <AvatarFallback className="text-2xl">
-                  {getInitials(form.watch("fullName"))}
-                </AvatarFallback>
-              </Avatar>
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                <Camera className="h-6 w-6 text-white" />
-              </div>
-            </button>
-            <div className="min-w-0 space-y-1.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-xl font-semibold leading-none" data-testid="text-profile-name">
-                  {form.watch("fullName") || "Your Name"}
-                </h2>
-                <Badge variant={getRoleBadgeVariant(user?.role || userRole)} data-testid="badge-role">
-                  {formatRole(user?.role || userRole)}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground truncate" data-testid="text-profile-email">
-                {form.watch("email")}
-              </p>
-              {user?.employeeId && (
-                <p className="text-xs text-muted-foreground" data-testid="text-employee-id">
-                  Employee ID: {user.employeeId}
-                </p>
-              )}
+      {/* ── Profile card: warm cover, identity header, view ⇄ edit ──── */}
+      <Card className="overflow-hidden">
+        <div className="h-20 bg-gradient-to-r from-indigo-500/15 via-purple-500/10 to-pink-500/15" />
+        <CardContent className="pt-0">
+          <div className="-mt-10 flex flex-wrap items-end justify-between gap-3">
+            <div className="flex min-w-0 items-end gap-4">
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedAvatar(user?.avatarImage || null);
-                  setAvatarDialogOpen(true);
-                }}
-                className="text-xs font-medium text-primary hover:underline"
-                data-testid="button-change-avatar-link"
+                onClick={openAvatarPicker}
+                className="relative group cursor-pointer rounded-full"
+                data-testid="button-edit-avatar"
               >
-                Change avatar
+                <Avatar className="h-20 w-20 ring-4 ring-[hsl(var(--card))]">
+                  {user?.avatarImage && (
+                    <AvatarImage
+                      src={`/avatars/${user.avatarImage}`}
+                      alt={form.watch("fullName")}
+                      className="object-cover"
+                    />
+                  )}
+                  <AvatarFallback className="text-2xl">
+                    {getInitials(form.watch("fullName"))}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full border bg-card">
+                  <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+                </span>
+                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                  <Camera className="h-5 w-5 text-white" />
+                </div>
               </button>
+              <div className="min-w-0 space-y-1 pb-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-xl font-semibold leading-none" data-testid="text-profile-name">
+                    {form.watch("fullName") || "Your Name"}
+                  </h2>
+                  <Badge variant={getRoleBadgeVariant(user?.role || userRole)} data-testid="badge-role">
+                    {formatRole(user?.role || userRole)}
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {user?.department || "Operations"}
+                  {user?.employeeId ? ` · ${user.employeeId}` : ""}
+                </p>
+              </div>
             </div>
+            {!editing && (
+              <Button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="gap-2"
+                data-testid="button-edit-profile"
+              >
+                <Pencil className="h-4 w-4" />
+                Edit profile
+              </Button>
+            )}
           </div>
 
-          <div className="h-px bg-border" />
-
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <div className="space-y-4">
-                <h3 className="text-sm font-medium">Personal details</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                <FormField
-                  control={form.control}
-                  name="username"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Username</FormLabel>
-                      <FormControl>
-                        <Input {...field} data-testid="input-username" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="fullName"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Full Name</FormLabel>
-                      <FormControl>
-                        <Input {...field} data-testid="input-name" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input type="email" {...field} data-testid="input-email" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phone"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Phone Number</FormLabel>
-                      <FormControl>
-                        <Input {...field} data-testid="input-phone" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          {!editing ? (
+            <div className="mt-6 border-t pt-5">
+              <div className="grid gap-x-8 sm:grid-cols-2">
+                <div className="flex items-center gap-3 py-2.5">
+                  <AtSign className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Username</p>
+                    <p className="truncate text-sm">{user?.username || "—"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 py-2.5">
+                  <UserIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Full name</p>
+                    <p className="truncate text-sm">{user?.fullName || "—"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 py-2.5">
+                  <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Email</p>
+                    <p className="truncate font-mono text-sm" data-testid="text-profile-email">
+                      {maskEmail(user?.email)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 py-2.5">
+                  <Phone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Phone</p>
+                    <p className="truncate font-mono text-sm">{maskPhone(user?.phone)}</p>
+                  </div>
                 </div>
               </div>
-
-              <div className="space-y-4">
-                <div className="space-y-0.5">
-                  <h3 className="text-sm font-medium">Organization</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Managed by your admin — read-only.
-                  </p>
+              <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Lock className="h-3.5 w-3.5" />
+                Email and phone are hidden. Click Edit profile to view or change them.
+              </p>
+            </div>
+          ) : (
+            <Form {...form}>
+              <form
+                onSubmit={form.handleSubmit(onSubmit)}
+                className="mt-6 space-y-6 border-t pt-5"
+              >
+                <div className="space-y-4">
+                  <h3 className="text-sm font-medium">Personal details</h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormField
+                      control={form.control}
+                      name="username"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Username</FormLabel>
+                          <FormControl>
+                            <Input {...field} data-testid="input-username" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="fullName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Full name</FormLabel>
+                          <FormControl>
+                            <Input {...field} data-testid="input-name" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <Input type="email" {...field} data-testid="input-email" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone number</FormLabel>
+                          <FormControl>
+                            <Input {...field} data-testid="input-phone" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                <FormItem>
-                  <FormLabel>Role</FormLabel>
-                  <FormControl>
-                    <Input
-                      value={formatRole(user?.role || userRole)}
-                      disabled
-                      className="bg-muted"
-                      data-testid="input-role"
-                    />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel>Department</FormLabel>
-                  <FormControl>
-                    <Input 
-                      value={user?.department || "Operations"} 
-                      disabled 
-                      className="bg-muted" 
-                      data-testid="input-department" 
-                    />
-                  </FormControl>
-                </FormItem>
-              </div>
 
-              </div>
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Lock className="h-4 w-4" />
+                    Role and department are managed by your admin.
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <FormLabel className="text-muted-foreground">Role</FormLabel>
+                      <Input
+                        value={formatRole(user?.role || userRole)}
+                        disabled
+                        data-testid="input-role"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FormLabel className="text-muted-foreground">Department</FormLabel>
+                      <Input
+                        value={user?.department || "Operations"}
+                        disabled
+                        data-testid="input-department"
+                      />
+                    </div>
+                  </div>
+                </div>
 
-              <div className="flex justify-end border-t pt-4">
-                <Button 
-                  type="submit" 
-                  disabled={updateProfileMutation.isPending}
-                  data-testid="button-save-profile"
-                >
-                  {updateProfileMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Save Changes
-                </Button>
-              </div>
-            </form>
-          </Form>
+                <div className="flex justify-end gap-2 border-t pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      form.reset({
+                        username: user?.username || "",
+                        fullName: user?.fullName || "",
+                        email: user?.email || "",
+                        phone: user?.phone || "",
+                      });
+                      setEditing(false);
+                    }}
+                    disabled={updateProfileMutation.isPending}
+                    data-testid="button-cancel-profile"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={updateProfileMutation.isPending}
+                    className="gap-2"
+                    data-testid="button-save-profile"
+                  >
+                    {updateProfileMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    Save changes
+                  </Button>
+                </div>
+              </form>
+            </Form>
+          )}
         </CardContent>
       </Card>
 
-      {/* ────────────────────────────────────────────────────────────
-          KYC Documentation
-          ──────────────────────────────────────────────────────────── */}
+      {/* ── KYC documentation ─────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            KYC Documentation
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              KYC documentation
+            </CardTitle>
+            {user?.kycDocumentUrl ? (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                On file
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="gap-1.5 border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Not uploaded
+              </Badge>
+            )}
+          </div>
           <CardDescription>
-            Upload a government-issued ID (.jpg, .png, or .pdf — max 5 MB).
+            Upload a government-issued ID — JPG, PNG or PDF, up to 5 MB.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {user?.kycDocumentUrl ? (
+          {user?.kycDocumentUrl && (
             <div
               className="flex items-center gap-3 rounded-lg border bg-green-500/5 p-3"
               data-testid="kyc-status-uploaded"
             >
               <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-500" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">
-                  KYC document on file
-                </p>
-                <p className="text-xs text-muted-foreground font-mono">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">KYC document on file</p>
+                <p className="truncate font-mono text-xs text-muted-foreground">
                   {user.kycDocumentUrl}
                 </p>
               </div>
               {kycViewUrl && (
                 <a href={kycViewUrl} target="_blank" rel="noopener noreferrer">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    data-testid="button-view-kyc"
-                  >
+                  <Button variant="outline" size="sm" className="gap-2" data-testid="button-view-kyc">
                     <Eye className="h-4 w-4" />
-                    View Uploaded KYC
+                    View
                   </Button>
                 </a>
               )}
             </div>
-          ) : (
-            <div
-              className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
-              data-testid="kyc-status-empty"
-            >
-              No KYC document uploaded yet.
-            </div>
           )}
 
-          <div className="space-y-2">
+          <div className="space-y-3 rounded-lg border border-dashed p-4">
             <Input
               ref={kycFileInputRef}
               type="file"
@@ -563,7 +639,7 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                 ) : (
                   <>
                     <Upload className="h-4 w-4" />
-                    {user?.kycDocumentUrl ? "Replace Document" : "Upload Document"}
+                    {user?.kycDocumentUrl ? "Replace document" : "Upload document"}
                   </>
                 )}
               </Button>
