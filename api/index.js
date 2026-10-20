@@ -8122,24 +8122,24 @@ Reason: ${reason}`;
               syncedAt: /* @__PURE__ */ new Date()
             });
           } else {
-            const errorMessage = `Partial sync failure (${errors.length} errors):
+            const errorMessage2 = `Partial sync failure (${errors.length} errors):
 ${errors.join("\n")}`;
-            console.error(`[Shopify Sync] \u2717\u2717\u2717 ${errorMessage}`);
+            console.error(`[Shopify Sync] \u2717\u2717\u2717 ${errorMessage2}`);
             await storage.updateSyncLog(syncLog.id, {
               syncStatus: "failed",
-              errorMessage,
+              errorMessage: errorMessage2,
               retryCount
             });
-            throw new Error(errorMessage);
+            throw new Error(errorMessage2);
           }
           console.log(`[Shopify Sync] ======================================== END`);
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          console.error(`[Shopify Sync] \u2717\u2717\u2717 FATAL ERROR during cancellation sync for order #${orderNumber}:`, errorMessage);
+          const errorMessage2 = error instanceof Error ? error.message : String(error);
+          console.error(`[Shopify Sync] \u2717\u2717\u2717 FATAL ERROR during cancellation sync for order #${orderNumber}:`, errorMessage2);
           console.error(`[Shopify Sync] Full error object:`, error);
           await storage.updateSyncLog(syncLog.id, {
             syncStatus: "failed",
-            errorMessage,
+            errorMessage: errorMessage2,
             retryCount
           });
           throw error;
@@ -13602,6 +13602,26 @@ init_permissions();
 init_presence_config();
 import fs4 from "fs";
 import path3 from "path";
+
+// server/utils/errors.ts
+function errorMessage(e) {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = e.message;
+    if (typeof m === "string") return m;
+  }
+  return String(e);
+}
+function errorCode(e) {
+  if (e && typeof e === "object" && "code" in e) {
+    const c = e.code;
+    if (typeof c === "string") return c;
+  }
+  return void 0;
+}
+
+// server/routes.ts
 function timingSafeEqualStr(a, b) {
   const ah = crypto7.createHash("sha256").update(a).digest();
   const bh = crypto7.createHash("sha256").update(b).digest();
@@ -13725,7 +13745,7 @@ async function registerRoutes(app2) {
       res.status(503).json({
         status: "degraded",
         db: "unreachable",
-        error: err?.message ?? String(err),
+        error: errorMessage(err),
         ts: (/* @__PURE__ */ new Date()).toISOString()
       });
     }
@@ -13891,7 +13911,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("[register-all webhooks] failed:", err);
-      res.status(500).json({ error: err?.message ?? "Unknown error" });
+      res.status(500).json({ error: errorMessage(err) ?? "Unknown error" });
     }
   });
   app2.get("/api/shopify/webhooks", async (req, res) => {
@@ -13904,7 +13924,7 @@ async function registerRoutes(app2) {
       res.json({ storeId: scope.storeId, webhooks: result.webhooks ?? [] });
     } catch (err) {
       console.error("[list webhooks] failed:", err);
-      res.status(500).json({ error: err?.message ?? "Unknown error" });
+      res.status(500).json({ error: errorMessage(err) ?? "Unknown error" });
     }
   });
   const { handleShiprocketWebhook: handleShiprocketWebhook2 } = await Promise.resolve().then(() => (init_shiprocketWebhook(), shiprocketWebhook_exports));
@@ -14245,7 +14265,7 @@ async function registerRoutes(app2) {
       res.json({ orders: result, total: result.length });
     } catch (error) {
       console.error("Error fetching OFD orders:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch OFD orders" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch OFD orders" });
     }
   });
   app2.get("/api/dashboard/metrics", async (req, res) => {
@@ -14371,7 +14391,7 @@ async function registerRoutes(app2) {
       return scope;
     } catch (e) {
       if (e instanceof StoreScopeError2) {
-        res.status(e.status).json({ error: e.message });
+        res.status(e.status).json({ error: errorMessage(e) });
         return null;
       }
       throw e;
@@ -14420,13 +14440,13 @@ async function registerRoutes(app2) {
         res.status(201).json(row);
       } catch (err) {
         if (err instanceof ReshipmentError2) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
     } catch (error) {
       console.error("[reshipments] create failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to create reshipment." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to create reshipment." });
     }
   });
   app2.get("/api/pincode/:zip", async (req, res) => {
@@ -14461,7 +14481,7 @@ async function registerRoutes(app2) {
       res.json(await listReshipments2(scope.storeId, filter, { createdByOnly }));
     } catch (error) {
       console.error("[reshipments] list failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to list reshipments." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to list reshipments." });
     }
   });
   app2.patch("/api/reshipments/:id", async (req, res) => {
@@ -14493,13 +14513,13 @@ async function registerRoutes(app2) {
         res.json(row);
       } catch (err) {
         if (err instanceof ReshipmentError2) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
     } catch (error) {
       console.error("[reshipments] update failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to update reshipment." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to update reshipment." });
     }
   });
   app2.post("/api/reshipments/:id/cancel", async (req, res) => {
@@ -14520,13 +14540,13 @@ async function registerRoutes(app2) {
         res.json(row);
       } catch (err) {
         if (err instanceof ReshipmentError2) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
     } catch (error) {
       console.error("[reshipments] cancel failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to cancel reshipment." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to cancel reshipment." });
     }
   });
   app2.get("/api/reshipments/stats", async (req, res) => {
@@ -14541,7 +14561,7 @@ async function registerRoutes(app2) {
       res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
     } catch (error) {
       console.error("[reshipments] stats failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to fetch stats." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to fetch stats." });
     }
   });
   app2.get("/api/orders/:id", async (req, res) => {
@@ -14725,7 +14745,7 @@ async function registerRoutes(app2) {
         console.error("Shopify address update failed:", shopifyError);
         return res.status(400).json({
           error: "Failed to update address in Shopify",
-          details: shopifyError.message
+          details: errorMessage(shopifyError)
         });
       }
       const addressParts = [
@@ -14919,7 +14939,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, order });
     } catch (error) {
       console.error("Error manually assigning order:", error);
-      res.status(500).json({ error: error.message || "Failed to manually assign order" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to manually assign order" });
     }
   });
   app2.post("/api/orders/bulk-assign", async (req, res) => {
@@ -14945,7 +14965,7 @@ async function registerRoutes(app2) {
           await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note, req.storeScope?.storeId);
           results.push({ orderId, success: true });
         } catch (error) {
-          results.push({ orderId, success: false, error: error.message });
+          results.push({ orderId, success: false, error: errorMessage(error) });
         }
       }
       res.json({ results });
@@ -15022,21 +15042,21 @@ async function registerRoutes(app2) {
           // restock
         );
       } catch (shopifyError) {
-        const errorMessage = shopifyError.message || String(shopifyError);
-        if (errorMessage.includes("already cancelled")) {
+        const shopifyMessage = errorMessage(shopifyError) || String(shopifyError);
+        if (shopifyMessage.includes("already cancelled")) {
           return res.status(400).json({ error: "Order already cancelled" });
         }
-        if (errorMessage.includes("fulfilled") || errorMessage.includes("FULFILLED")) {
+        if (shopifyMessage.includes("fulfilled") || shopifyMessage.includes("FULFILLED")) {
           return res.status(400).json({ error: "Cannot cancel fulfilled or partially fulfilled orders" });
         }
-        if (errorMessage.includes("closed") || errorMessage.includes("archived")) {
+        if (shopifyMessage.includes("closed") || shopifyMessage.includes("archived")) {
           return res.status(400).json({ error: "Cannot cancel closed orders" });
         }
-        if (errorMessage.includes("VOIDED") || errorMessage.includes("REFUNDED")) {
+        if (shopifyMessage.includes("VOIDED") || shopifyMessage.includes("REFUNDED")) {
           return res.status(400).json({ error: "Cannot cancel already refunded orders" });
         }
         console.error("Shopify cancellation error:", shopifyError);
-        return res.status(400).json({ error: `Shopify error: ${errorMessage}` });
+        return res.status(400).json({ error: `Shopify error: ${shopifyMessage}` });
       }
       const order = await storage.cancelOrder(req.params.id, userId, reason, notes);
       if (!order) {
@@ -15113,7 +15133,7 @@ async function registerRoutes(app2) {
       res.json(result);
     } catch (err) {
       console.error("Error syncing Meta insights:", err);
-      res.status(500).json({ error: err?.message || "Failed to sync Meta insights" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to sync Meta insights" });
     }
   });
   app2.get("/api/meta/config", async (req, res) => {
@@ -15135,7 +15155,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in GET /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to load Meta config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to load Meta config" });
     }
   });
   app2.put("/api/meta/config", async (req, res) => {
@@ -15181,7 +15201,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in PUT /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Meta config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Meta config" });
     }
   });
   app2.get("/api/delhivery/config", async (req, res) => {
@@ -15203,7 +15223,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in GET /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to read Delhivery config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to read Delhivery config" });
     }
   });
   app2.put("/api/delhivery/config", async (req, res) => {
@@ -15241,7 +15261,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in PUT /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Delhivery config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Delhivery config" });
     }
   });
   app2.get("/api/delhivery/shipments/:awb/label", async (req, res) => {
@@ -15259,7 +15279,7 @@ async function registerRoutes(app2) {
       try {
         client = await getDelhiveryClient2(shipment.storeId);
       } catch (e) {
-        return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+        return res.status(400).json({ error: errorMessage(e) || "Delhivery not configured for this store" });
       }
       const result = await client.getShippingLabel(awb);
       if (!result.success || !result.labelUrl) {
@@ -15269,7 +15289,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, labelUrl: result.labelUrl });
     } catch (err) {
       console.error("Error fetching Delhivery label:", err);
-      res.status(500).json({ error: err?.message || "Failed to fetch shipping label" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to fetch shipping label" });
     }
   });
   app2.get("/api/resend/config", async (req, res) => {
@@ -15291,7 +15311,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in GET /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to read Resend config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to read Resend config" });
     }
   });
   app2.put("/api/resend/config", async (req, res) => {
@@ -15327,7 +15347,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in PUT /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Resend config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Resend config" });
     }
   });
   async function requireAdminForDisconnect(req, res) {
@@ -15362,7 +15382,7 @@ async function registerRoutes(app2) {
       res.json({ hasToken: false, adAccountsConfig: [] });
     } catch (err) {
       console.error("Error in DELETE /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Meta" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Meta" });
     }
   });
   app2.delete("/api/delhivery/config", async (req, res) => {
@@ -15373,7 +15393,7 @@ async function registerRoutes(app2) {
       res.json({ hasToken: false, clientName: null });
     } catch (err) {
       console.error("Error in DELETE /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Delhivery" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Delhivery" });
     }
   });
   app2.delete("/api/resend/config", async (req, res) => {
@@ -15384,7 +15404,7 @@ async function registerRoutes(app2) {
       res.json({ hasToken: false, fromEmail: null });
     } catch (err) {
       console.error("Error in DELETE /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Resend" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Resend" });
     }
   });
   app2.get("/api/meta/ad-accounts", async (req, res) => {
@@ -15413,7 +15433,7 @@ async function registerRoutes(app2) {
       res.json({ adAccounts: response.data?.data ?? [] });
     } catch (err) {
       console.error("Error in GET /api/meta/ad-accounts:", err);
-      res.status(502).json({ error: err?.message || "Failed to fetch ad accounts" });
+      res.status(502).json({ error: errorMessage(err) || "Failed to fetch ad accounts" });
     }
   });
   app2.get("/api/meta/campaigns", async (req, res) => {
@@ -15456,7 +15476,7 @@ async function registerRoutes(app2) {
       res.json({ campaigns });
     } catch (err) {
       console.error("Error in GET /api/meta/campaigns:", err);
-      res.status(502).json({ error: err?.message || "Failed to fetch campaigns" });
+      res.status(502).json({ error: errorMessage(err) || "Failed to fetch campaigns" });
     }
   });
   app2.post("/api/shopify/sync", async (req, res) => {
@@ -15890,7 +15910,7 @@ async function registerRoutes(app2) {
         testPassed = true;
         console.log("\u2713 Connection test passed. Shop:", shopInfo?.name);
       } catch (testErr) {
-        testErrorMessage = testErr.message || "Connection test failed";
+        testErrorMessage = errorMessage(testErr) || "Connection test failed";
         console.log("\u26A0 Connection test failed:", testErrorMessage);
       }
       console.log("\nStep 4: Starting encryption...");
@@ -15934,9 +15954,9 @@ async function registerRoutes(app2) {
       }
     } catch (error) {
       console.error("\n=== CREDENTIAL SAVE ERROR ===");
-      console.error("Error type:", error.constructor.name);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
+      console.error("Error type:", error instanceof Error ? error.constructor.name : typeof error);
+      console.error("Error message:", errorMessage(error));
+      console.error("Error stack:", error instanceof Error ? error.stack : void 0);
       if (error instanceof ZodError) {
         console.error("Validation errors:", JSON.stringify(error.errors, null, 2));
         console.log("\n=== Sending 400 validation error response ===\n");
@@ -15946,7 +15966,7 @@ async function registerRoutes(app2) {
       console.log("\n=== Sending 500 error response ===\n");
       res.status(500).json({
         error: "Failed to save credentials",
-        details: error.message
+        details: errorMessage(error)
       });
     }
   });
@@ -15985,12 +16005,12 @@ async function registerRoutes(app2) {
         await storage.updateCredentialTestStatus(
           credentials.id,
           "failed",
-          error.message || "Connection test failed"
+          errorMessage(error) || "Connection test failed"
         );
       }
       res.status(400).json({
         success: false,
-        error: error.message || "Connection test failed"
+        error: errorMessage(error) || "Connection test failed"
       });
     }
   });
@@ -16013,7 +16033,7 @@ async function registerRoutes(app2) {
       res.json({ tags });
     } catch (error) {
       console.error("Error fetching tags:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch tags" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch tags" });
     }
   });
   app2.get("/api/orders/payment-methods", async (req, res) => {
@@ -16024,7 +16044,7 @@ async function registerRoutes(app2) {
       res.json({ methods });
     } catch (error) {
       console.error("Error fetching payment methods:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch payment methods" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch payment methods" });
     }
   });
   app2.get("/api/settings/payments", async (req, res) => {
@@ -16035,7 +16055,7 @@ async function registerRoutes(app2) {
       res.json({ prepaidMethods: methods });
     } catch (error) {
       console.error("Error fetching payment settings:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch payment settings" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch payment settings" });
     }
   });
   app2.post("/api/settings/payments", async (req, res) => {
@@ -16058,7 +16078,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Error updating payment settings:", error);
-      res.status(500).json({ error: error.message || "Failed to update payment settings" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to update payment settings" });
     }
   });
   app2.post("/api/admin/sync-products", async (req, res) => {
@@ -16141,7 +16161,7 @@ async function registerRoutes(app2) {
         variantsCount: variantCount
       });
     } catch (error) {
-      const message = error?.message ?? String(error);
+      const message = errorMessage(error);
       console.error(
         `[product-sync] storeId=${syncStoreId} FAILED: ${message}`
       );
@@ -16290,7 +16310,7 @@ async function registerRoutes(app2) {
         provider = await resolveReversePickupProvider2(storeId);
       } catch (e) {
         return res.status(400).json({
-          error: e?.message || "No reverse-pickup courier is configured for this store"
+          error: errorMessage(e) || "No reverse-pickup courier is configured for this store"
         });
       }
       const result = await provider.scheduleReversePickup({
@@ -16321,7 +16341,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, awb: result.awb, provider: provider.name, return: updated });
     } catch (error) {
       console.error("Error scheduling reverse pickup:", error);
-      res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule pickup" });
     }
   });
   const allowedOrigins = (process.env.STOREFRONT_DOMAIN ?? "").split(",").map((o) => o.trim().replace(/\/+$/, "")).filter(Boolean);
@@ -16562,7 +16582,7 @@ async function registerRoutes(app2) {
         };
       } catch (e) {
         console.warn(
-          `[payu] could not build hash for ${created.rmaNumber}: ${e?.message}`
+          `[payu] could not build hash for ${created.rmaNumber}: ${errorMessage(e)}`
         );
       }
       res.status(201).json({
@@ -16668,7 +16688,7 @@ async function registerRoutes(app2) {
       console.error("Error backfilling order-item images:", error);
       res.status(500).json({
         error: "Failed to backfill images",
-        details: error?.message
+        details: errorMessage(error)
       });
     }
   });
@@ -16997,7 +17017,7 @@ async function registerRoutes(app2) {
       try {
         shopInfo = await tempClient.getShopInfo();
       } catch (testErr) {
-        const message = testErr?.message || "Connection test failed";
+        const message = errorMessage(testErr) || "Connection test failed";
         return res.status(400).json({
           error: `Could not connect to ${normalizedUrl}: ${message}`
         });
@@ -17035,7 +17055,7 @@ async function registerRoutes(app2) {
         } catch (err) {
           console.warn(
             `[stores] webhook registration for ${inserted.id} failed:`,
-            err?.message ?? err
+            errorMessage(err) ?? err
           );
         }
       } else {
@@ -17636,7 +17656,7 @@ async function registerRoutes(app2) {
       await storage.heartbeatUser(currentUserId);
       return res.json({ ok: true });
     } catch (err) {
-      console.error("[presence/heartbeat] error:", err?.message ?? err);
+      console.error("[presence/heartbeat] error:", errorMessage(err) ?? err);
       return res.status(500).json({ error: "Failed" });
     }
   });
@@ -17678,7 +17698,7 @@ async function registerRoutes(app2) {
             closed.push({ userId: c.userId, attendanceId: c.attendanceId, hours: totalHours });
           }
         } catch (err) {
-          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, errorMessage(err) ?? err);
         }
       }
       console.log(`[cron/auto-logout] sweep done \u2014 ${closed.length} closed out of ${candidates.length} candidates`);
@@ -17690,7 +17710,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("[cron/auto-logout] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/tools/track-awbs", async (req, res) => {
@@ -17737,14 +17757,14 @@ async function registerRoutes(app2) {
               scannedAt: latest?.datetime ?? ""
             };
           } catch (e) {
-            return { awb, simplified: "Error", status: e?.message ?? String(e), location: "", scannedAt: "" };
+            return { awb, simplified: "Error", status: errorMessage(e), location: "", scannedAt: "" };
           }
         })
       );
       res.json({ storeId, results });
     } catch (err) {
       console.error("Error in POST /api/tools/track-awbs:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to track AWBs" });
     }
   });
   app2.post("/api/admin/orders/:key/resync-tracking", async (req, res) => {
@@ -17841,7 +17861,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
-      return res.status(500).json({ error: err?.message ?? "Resync failed" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Resync failed" });
     }
   });
   app2.post("/api/admin/reconcile-shipment-status", async (req, res) => {
@@ -17856,7 +17876,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, ...result });
     } catch (err) {
       console.error("[admin/reconcile-shipment-status] crashed:", err);
-      return res.status(500).json({ error: err?.message ?? "Sweep failed" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Sweep failed" });
     }
   });
   app2.all("/api/cron/reconcile-shipment-status", async (req, res) => {
@@ -17883,7 +17903,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, ...result });
     } catch (err) {
       console.error("[cron/reconcile-shipment-status] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
   app2.all("/api/cron/close-stale-ndr", async (req, res) => {
@@ -17909,7 +17929,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, ...result });
     } catch (err) {
       console.error("[cron/close-stale-ndr] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
   app2.all("/api/cron/prune-webhook-logs", async (req, res) => {
@@ -17928,7 +17948,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, deleted, retentionDays });
     } catch (err) {
       console.error("[cron/prune-webhook-logs] failed:", err);
-      return res.status(500).json({ error: "Prune failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Prune failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/presence/me", async (req, res) => {
@@ -17990,7 +18010,7 @@ async function registerRoutes(app2) {
       });
     } catch (err) {
       console.error("[presence/me] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/users/:userId/monitoring-exempt", async (req, res) => {
@@ -18013,7 +18033,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, userId, monitoringExempt: exempt });
     } catch (err) {
       console.error("[monitoring-exempt] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/users/:userId/payroll-email", async (req, res) => {
@@ -18035,7 +18055,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, userId, payrollEmail: raw || null });
     } catch (err) {
       console.error("[payroll-email] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/attendance/:attendanceId/reactivate", async (req, res) => {
@@ -18055,7 +18075,7 @@ async function registerRoutes(app2) {
       return res.json({ ok: true, attendance: updated });
     } catch (err) {
       console.error("[reactivate] error:", err);
-      return res.status(500).json({ error: "Reactivation failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Reactivation failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/reports/attendance-monthly", async (req, res) => {
@@ -18086,7 +18106,7 @@ async function registerRoutes(app2) {
       return res.json({ year, month, rows: rows2, totals });
     } catch (err) {
       console.error("[reports/attendance-monthly] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/reports/attendance-monthly/csv", async (req, res) => {
@@ -18252,7 +18272,7 @@ async function registerRoutes(app2) {
       return res.json(await previewSync2(year, month));
     } catch (err) {
       console.error("[payroll-sync/preview] error:", err);
-      return res.status(500).json({ error: "Preview failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Preview failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/payroll-sync/run", async (req, res) => {
@@ -18274,7 +18294,7 @@ async function registerRoutes(app2) {
       return res.json(report);
     } catch (err) {
       console.error("[payroll-sync/run] error:", err);
-      return res.status(500).json({ error: "Sync failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sync failed", detail: errorMessage(err) });
     }
   });
   app2.all("/api/cron/payroll-sync", async (req, res) => {
@@ -18310,14 +18330,14 @@ async function registerRoutes(app2) {
       }
       return res.json({ ok: true, year, month, mode: report.mode, totals: report.totals });
     } catch (err) {
-      console.error("[cron/payroll-sync] error:", err?.message ?? err);
+      console.error("[cron/payroll-sync] error:", errorMessage(err) ?? err);
       try {
         const { sendPayrollAlertEmail: sendPayrollAlertEmail2 } = await Promise.resolve().then(() => (init_resend(), resend_exports));
-        await sendPayrollAlertEmail2({ year, month, error: err?.message ?? String(err) });
+        await sendPayrollAlertEmail2({ year, month, error: errorMessage(err) });
       } catch (e) {
-        console.error("[cron/payroll-sync] alert email error:", e?.message ?? e);
+        console.error("[cron/payroll-sync] alert email error:", errorMessage(e) ?? e);
       }
-      return res.status(500).json({ ok: false, error: "Payroll sync failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ ok: false, error: "Payroll sync failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/payroll-sync/verify", async (req, res) => {
@@ -18334,7 +18354,7 @@ async function registerRoutes(app2) {
       return res.json(await reconcileMonth2(year, month));
     } catch (err) {
       console.error("[payroll-sync/verify] error:", err);
-      return res.status(500).json({ error: "Verify failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Verify failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/payroll-sync/history", async (req, res) => {
@@ -18345,7 +18365,7 @@ async function registerRoutes(app2) {
       return res.json(await listSyncRuns2(20));
     } catch (err) {
       console.error("[payroll-sync/history] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/payroll-sync/provision", async (req, res) => {
@@ -18360,7 +18380,7 @@ async function registerRoutes(app2) {
       return res.json(result);
     } catch (err) {
       console.error("[payroll-sync/provision] error:", err);
-      return res.status(500).json({ error: "Provision failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Provision failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/payroll/cycles", async (req, res) => {
@@ -18382,7 +18402,7 @@ async function registerRoutes(app2) {
       res.json({ cycles, activeStoreId: storeId });
     } catch (err) {
       console.error("Error in GET /api/payroll/cycles:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to list cycles" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to list cycles" });
     }
   });
   app2.post("/api/payroll/cycles", async (req, res) => {
@@ -18406,7 +18426,7 @@ async function registerRoutes(app2) {
       res.status(result.alreadyExisted ? 200 : 201).json(result);
     } catch (err) {
       console.error("Error in POST /api/payroll/cycles:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to generate cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to generate cycle" });
     }
   });
   app2.get("/api/payroll/cycles/:id", async (req, res) => {
@@ -18419,7 +18439,7 @@ async function registerRoutes(app2) {
       res.json(result);
     } catch (err) {
       console.error("Error in GET /api/payroll/cycles/:id:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to fetch cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to fetch cycle" });
     }
   });
   app2.post("/api/payroll/cycles/:id/approve", async (req, res) => {
@@ -18433,7 +18453,7 @@ async function registerRoutes(app2) {
       res.json(result);
     } catch (err) {
       console.error("Error in POST /api/payroll/cycles/:id/approve:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to approve cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to approve cycle" });
     }
   });
   app2.get("/api/payroll/cycles/:id/ledger/:userId/pdf", async (req, res) => {
@@ -18508,7 +18528,7 @@ async function registerRoutes(app2) {
       res.end(buf);
     } catch (err) {
       console.error("Error in GET /api/payroll/cycles/:id/ledger/:userId/pdf:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to render PDF" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to render PDF" });
     }
   });
   app2.patch("/api/payroll/cycles/:id/ledger/:userId", async (req, res) => {
@@ -18540,7 +18560,7 @@ async function registerRoutes(app2) {
       res.json(updated);
     } catch (err) {
       console.error("Error in PATCH /api/payroll/cycles/:id/ledger/:userId:", err);
-      const msg = err?.message ?? "Failed to update ledger";
+      const msg = errorMessage(err) ?? "Failed to update ledger";
       const status = msg.includes("locked") ? 409 : msg.includes("not found") ? 404 : 500;
       res.status(status).json({ error: msg });
     }
@@ -18571,14 +18591,14 @@ async function registerRoutes(app2) {
           const r = await cycleModule.generateCycle({ storeId: s.id, year, month, generatedBy: null });
           results.push({ storeId: s.id, ok: r.ok, ledgerCount: r.ledgerCount, alreadyExisted: r.alreadyExisted, message: r.message });
         } catch (err) {
-          results.push({ storeId: s.id, ok: false, error: err?.message ?? String(err) });
+          results.push({ storeId: s.id, ok: false, error: errorMessage(err) });
         }
       }
       console.log(`[cron/generate-payroll-cycle] ${year}-${String(month).padStart(2, "0")} \u2014 ${results.length} store(s) processed`);
       res.json({ ok: true, year, month, results });
     } catch (err) {
       console.error("[cron/generate-payroll-cycle] crash:", err);
-      res.status(500).json({ error: err?.message ?? "Cron failed" });
+      res.status(500).json({ error: errorMessage(err) ?? "Cron failed" });
     }
   });
   app2.get("/api/payroll/preview", async (req, res) => {
@@ -18808,7 +18828,7 @@ async function registerRoutes(app2) {
       } catch (pdfErr) {
         await storage.updatePayrollLedgerDispatch(created.id, {
           status: "failed",
-          emailError: `PDF render failed: ${pdfErr?.message ?? String(pdfErr)}`
+          emailError: `PDF render failed: ${errorMessage(pdfErr)}`
         });
         return res.status(500).json({ error: "Payroll persisted but PDF render failed", ledgerId: created.id });
       }
@@ -18818,7 +18838,7 @@ async function registerRoutes(app2) {
         await sendPayslipEmail2(data, pdfFile);
       } catch (emailErr) {
         dispatchOk = false;
-        dispatchErr = emailErr?.message ?? String(emailErr);
+        dispatchErr = errorMessage(emailErr);
       }
       await storage.updatePayrollLedgerDispatch(created.id, {
         status: dispatchOk ? "sent" : "failed",
@@ -18836,7 +18856,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Error in /api/payroll/run:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to run payroll" });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to run payroll" });
     }
   });
   app2.get("/api/payroll/ledger", async (req, res) => {
@@ -18909,7 +18929,7 @@ async function registerRoutes(app2) {
       res.end(buf);
     } catch (error) {
       console.error("Error rendering payslip PDF:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to render payslip PDF" });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to render payslip PDF" });
     }
   });
   function parseIntOr(v, fallback) {
@@ -19319,12 +19339,12 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Error generating AI analysis:", error);
-      if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
+      if (errorCode(error) === "ECONNABORTED" || errorMessage(error).includes("timeout")) {
         return res.status(504).json({ error: "AI analysis request timed out. Please try again." });
       }
       res.status(500).json({
         error: "Failed to generate AI analysis",
-        details: error.message
+        details: errorMessage(error)
       });
     }
   });
@@ -19477,7 +19497,7 @@ async function registerRoutes(app2) {
       return res.status(200).json({
         success: false,
         error: "Internal error processing webhook",
-        message: error.message
+        message: errorMessage(error)
       });
     }
   });
@@ -19625,7 +19645,7 @@ async function registerRoutes(app2) {
       return res.status(500).json({
         success: false,
         error: "Failed to test IVR credentials",
-        details: error.message
+        details: errorMessage(error)
       });
     }
   });
@@ -19700,7 +19720,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, shipment });
     } catch (error) {
       console.error("Error creating shipment:", error);
-      res.status(500).json({ error: error.message || "Failed to create shipment" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to create shipment" });
     }
   });
   app2.get("/api/shiprocket/shipments/:awb/track", async (req, res) => {
@@ -19719,7 +19739,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, trackingData });
     } catch (error) {
       console.error("Error tracking shipment:", error);
-      res.status(500).json({ error: error.message || "Failed to track shipment" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to track shipment" });
     }
   });
   app2.get("/api/ndr/analytics", async (req, res) => {
@@ -19756,7 +19776,7 @@ async function registerRoutes(app2) {
       return res.json({ ...bundle, storeId });
     } catch (err) {
       console.error("Error in GET /api/ndr/analytics:", err);
-      return res.status(500).json({ error: err?.message ?? "Failed to load NDR analytics" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Failed to load NDR analytics" });
     }
   });
   app2.get("/api/ndr", async (req, res) => {
@@ -19809,7 +19829,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Error fetching NDR events:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch NDR events" });
     }
   });
   app2.get("/api/shiprocket/ndr", async (req, res) => {
@@ -19822,7 +19842,7 @@ async function registerRoutes(app2) {
       res.json(result);
     } catch (error) {
       console.error("Error fetching NDR events:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch NDR events" });
     }
   });
   app2.post("/api/ndr/:awb/reattempt", async (req, res) => {
@@ -19850,7 +19870,7 @@ async function registerRoutes(app2) {
         try {
           delhiveryClient = await getDelhiveryClient2(shipment.storeId);
         } catch (e) {
-          return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+          return res.status(400).json({ error: errorMessage(e) || "Delhivery not configured for this store" });
         }
         const hasAddress = Boolean(address1 || address2);
         const hasPhone = Boolean(phone);
@@ -19899,7 +19919,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, message: "Reattempt scheduled successfully" });
     } catch (error) {
       console.error("Error scheduling reattempt:", error);
-      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule reattempt" });
     }
   });
   app2.post("/api/shiprocket/ndr/:awb/reattempt", async (req, res) => {
@@ -19944,7 +19964,7 @@ async function registerRoutes(app2) {
       res.json({ success: true, message: "Reattempt scheduled successfully" });
     } catch (error) {
       console.error("Error scheduling reattempt:", error);
-      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule reattempt" });
     }
   });
   app2.get("/api/shiprocket/test-connection", async (req, res) => {
@@ -19955,7 +19975,7 @@ async function registerRoutes(app2) {
       console.error("Error testing Shiprocket connection:", error);
       res.status(500).json({
         success: false,
-        message: error.message || "Failed to test connection"
+        message: errorMessage(error) || "Failed to test connection"
       });
     }
   });
@@ -20011,7 +20031,7 @@ async function registerRoutes(app2) {
       res.json({ couriers, shipmentId: shiprocketShipmentId });
     } catch (error) {
       console.error("Error fetching available couriers:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch available couriers" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch available couriers" });
     }
   });
   app2.post("/api/orders/:id/ship", async (req, res) => {
@@ -20087,15 +20107,15 @@ async function registerRoutes(app2) {
         throw new Error(assignmentResult.message);
       }
       if (!assignmentResult.response?.data) {
-        const errorMessage = assignmentResult.errors || assignmentResult.error || "Invalid response from Shiprocket";
-        throw new Error(typeof errorMessage === "string" ? errorMessage : JSON.stringify(errorMessage));
+        const errorMessage2 = assignmentResult.errors || assignmentResult.error || "Invalid response from Shiprocket";
+        throw new Error(typeof errorMessage2 === "string" ? errorMessage2 : JSON.stringify(errorMessage2));
       }
       const awbCode = assignmentResult.response.data.awb_code;
       const courierName = assignmentResult.response.data.courier_name;
       const pickupDate = assignmentResult.response.data.pickup_scheduled_date;
       if (!awbCode) {
-        const errorMessage = assignmentResult.message || assignmentResult.error || "AWB code not received from Shiprocket";
-        throw new Error(typeof errorMessage === "string" ? errorMessage : JSON.stringify(errorMessage));
+        const errorMessage2 = assignmentResult.message || assignmentResult.error || "AWB code not received from Shiprocket";
+        throw new Error(typeof errorMessage2 === "string" ? errorMessage2 : JSON.stringify(errorMessage2));
       }
       await storage.updateShipment(shipment.id, {
         awb: awbCode,
@@ -20112,7 +20132,7 @@ async function registerRoutes(app2) {
       });
     } catch (error) {
       console.error("Error assigning courier:", error);
-      res.status(500).json({ error: error.message || "Failed to assign courier" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to assign courier" });
     }
   });
   app2.post("/api/invites", async (req, res) => {
@@ -21173,7 +21193,7 @@ TeleCRM: ${incomingNotes.trim()}`;
         console.error("[recon/upload] error:", err);
         return res.status(500).json({
           error: "Upload failed",
-          detail: err?.message ?? String(err)
+          detail: errorMessage(err)
         });
       }
     }
@@ -21213,7 +21233,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       console.error("[recon/settlements] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err)
+        detail: errorMessage(err)
       });
     }
   });
@@ -21240,7 +21260,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json(result);
     } catch (err) {
       console.error("[recon/match] error:", err);
-      return res.status(500).json({ error: "Match failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Match failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/recon/overdue", async (req, res) => {
@@ -21272,7 +21292,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       console.error("[recon/overdue] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err)
+        detail: errorMessage(err)
       });
     }
   });
@@ -21413,7 +21433,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       console.error("[recon/send-digest] error:", err);
       return res.status(500).json({
         error: "Send failed",
-        detail: err?.message ?? String(err)
+        detail: errorMessage(err)
       });
     }
   });
@@ -21514,7 +21534,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       res.send(lines.join("\n"));
     } catch (err) {
       console.error("[recon/export] error:", err);
-      return res.status(500).json({ error: "Export failed", detail: err?.message });
+      return res.status(500).json({ error: "Export failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/recon/fetch-from-shopify", async (req, res) => {
@@ -21655,7 +21675,7 @@ TeleCRM: ${incomingNotes.trim()}`;
             w.orphanIds.delete(payuAttr.value);
           }
         } catch (winErr) {
-          console.error("[recon/fetch-from-shopify] window failed:", winErr?.message);
+          console.error("[recon/fetch-from-shopify] window failed:", errorMessage(winErr));
         }
         w.pgPaymentIds.forEach((id) => {
           stillMissing++;
@@ -21683,7 +21703,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       });
     } catch (err) {
       console.error("[recon/fetch-from-shopify] error:", err);
-      return res.status(500).json({ error: "Fetch failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Fetch failed", detail: errorMessage(err) });
     }
   });
   app2.get("/api/recon/rate-cards", async (req, res) => {
@@ -21700,7 +21720,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ rows: rows2, activeId: active?.id ?? null });
     } catch (err) {
       console.error("[recon/rate-cards GET]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post("/api/recon/rate-cards", async (req, res) => {
@@ -21736,7 +21756,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ ok: true, card });
     } catch (err) {
       console.error("[recon/rate-cards POST]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.delete("/api/recon/rate-cards/:id", async (req, res) => {
@@ -21749,7 +21769,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ ok: true });
     } catch (err) {
       console.error("[recon/rate-cards DELETE]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
   app2.post(
@@ -21824,7 +21844,7 @@ TeleCRM: ${incomingNotes.trim()}`;
         return res.json({ ok: true, card });
       } catch (err) {
         console.error("[recon/rate-cards/upload]", err);
-        return res.status(500).json({ error: "Upload failed", detail: err?.message });
+        return res.status(500).json({ error: "Upload failed", detail: errorMessage(err) });
       }
     }
   );
@@ -21843,7 +21863,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       console.error("[recon/recent-uploads] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err)
+        detail: errorMessage(err)
       });
     }
   });
@@ -21884,7 +21904,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ rows: rows2, days });
     } catch (err) {
       console.error("[recon/trend] error:", err);
-      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
   app2.get("/api/recon/by-utr", async (req, res) => {
@@ -21935,7 +21955,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ rows: rows2, days });
     } catch (err) {
       console.error("[recon/by-utr] error:", err);
-      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
   app2.get("/api/recon/sparklines", async (req, res) => {
@@ -21981,7 +22001,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       return res.json({ days, byStatus });
     } catch (err) {
       console.error("[recon/sparklines] error:", err);
-      return res.status(500).json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
   app2.get("/api/recon/status-counts", async (req, res) => {
@@ -22010,7 +22030,7 @@ TeleCRM: ${incomingNotes.trim()}`;
       console.error("[recon/status-counts] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err)
+        detail: errorMessage(err)
       });
     }
   });

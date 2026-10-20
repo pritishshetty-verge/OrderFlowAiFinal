@@ -58,6 +58,7 @@ import {
   computeAutoClose,
 } from "./presence-config";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
+import { errorMessage, errorCode } from "./utils/errors";
 
 interface NormalizedFastrrPayload {
   externalId: string | null;
@@ -313,11 +314,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         db: ok ? "reachable" : "unexpected-response",
         ts: new Date().toISOString(),
       });
-    } catch (err: any) {
+    } catch (err) {
       res.status(503).json({
         status: "degraded",
         db: "unreachable",
-        error: err?.message ?? String(err),
+        error: errorMessage(err),
         ts: new Date().toISOString(),
       });
     }
@@ -695,9 +696,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           failed: failed.length,
         },
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[register-all webhooks] failed:", err);
-      res.status(500).json({ error: err?.message ?? "Unknown error" });
+      res.status(500).json({ error: errorMessage(err) ?? "Unknown error" });
     }
   });
 
@@ -714,9 +715,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const client = await getShopifyClient(scope.storeId);
       const result = await client.listWebhooks();
       res.json({ storeId: scope.storeId, webhooks: result.webhooks ?? [] });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[list webhooks] failed:", err);
-      res.status(500).json({ error: err?.message ?? "Unknown error" });
+      res.status(500).json({ error: errorMessage(err) ?? "Unknown error" });
     }
   });
   
@@ -1171,9 +1172,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .limit(100);
 
       res.json({ orders: result, total: result.length });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching OFD orders:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch OFD orders" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch OFD orders" });
     }
   });
 
@@ -1382,9 +1383,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return null;
       }
       return scope;
-    } catch (e: any) {
+    } catch (e) {
       if (e instanceof StoreScopeError) {
-        res.status(e.status).json({ error: e.message });
+        res.status(e.status).json({ error: errorMessage(e) });
         return null;
       }
       throw e;
@@ -1443,17 +1444,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           createdByName: authed.user.fullName ?? null,
         });
         res.status(201).json(row);
-      } catch (err: any) {
+      } catch (err) {
         if (err instanceof ReshipmentError) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[reshipments] create failed:", error);
       res
         .status(500)
-        .json({ error: error?.message ?? "Failed to create reshipment." });
+        .json({ error: errorMessage(error) ?? "Failed to create reshipment." });
     }
   });
 
@@ -1479,7 +1480,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         state: row.state,
         tier: row.tier,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("[pincode] lookup failed:", error);
       res.status(500).json({ error: "Failed to resolve pincode." });
     }
@@ -1501,11 +1502,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { listReshipments } = await import("./reshipments/service");
       const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
       res.json(await listReshipments(scope.storeId, filter, { createdByOnly }));
-    } catch (error: any) {
+    } catch (error) {
       console.error("[reshipments] list failed:", error);
       res
         .status(500)
-        .json({ error: error?.message ?? "Failed to list reshipments." });
+        .json({ error: errorMessage(error) ?? "Failed to list reshipments." });
     }
   });
 
@@ -1541,15 +1542,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { createdByOnly },
         );
         res.json(row);
-      } catch (err: any) {
+      } catch (err) {
         if (err instanceof ReshipmentError) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[reshipments] update failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to update reshipment." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to update reshipment." });
     }
   });
 
@@ -1572,15 +1573,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { createdByOnly },
         );
         res.json(row);
-      } catch (err: any) {
+      } catch (err) {
         if (err instanceof ReshipmentError) {
-          return res.status(err.status).json({ error: err.message });
+          return res.status(err.status).json({ error: errorMessage(err) });
         }
         throw err;
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[reshipments] cancel failed:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to cancel reshipment." });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to cancel reshipment." });
     }
   });
 
@@ -1596,11 +1597,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const createdByOnly = isAdmin(authed.user) ? undefined : authed.user.id;
       const stats = await getReshipmentStats(scope.storeId, { createdByOnly });
       res.json({ scope: createdByOnly ? "mine" : "store", ...stats });
-    } catch (error: any) {
+    } catch (error) {
       console.error("[reshipments] stats failed:", error);
       res
         .status(500)
-        .json({ error: error?.message ?? "Failed to fetch stats." });
+        .json({ error: errorMessage(error) ?? "Failed to fetch stats." });
     }
   });
 
@@ -1855,11 +1856,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             phone,
           });
         }
-      } catch (shopifyError: any) {
+      } catch (shopifyError) {
         console.error("Shopify address update failed:", shopifyError);
         return res.status(400).json({ 
           error: "Failed to update address in Shopify",
-          details: shopifyError.message 
+          details: errorMessage(shopifyError) 
         });
       }
 
@@ -1902,7 +1903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.json(updatedOrder);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error updating shipping address:", error);
       res.status(500).json({ error: "Failed to update shipping address" });
     }
@@ -2136,9 +2137,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const order = await storage.getOrder(req.params.id);
       res.json({ success: true, order });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error manually assigning order:", error);
-      res.status(500).json({ error: error.message || "Failed to manually assign order" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to manually assign order" });
     }
   });
 
@@ -2172,8 +2173,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note, req.storeScope?.storeId);
           results.push({ orderId, success: true });
-        } catch (error: any) {
-          results.push({ orderId, success: false, error: error.message });
+        } catch (error) {
+          results.push({ orderId, success: false, error: errorMessage(error) });
         }
       }
 
@@ -2301,26 +2302,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           true,  // notifyCustomer
           true   // restock
         );
-      } catch (shopifyError: any) {
+      } catch (shopifyError) {
         // Return user-friendly error messages for validation failures
-        const errorMessage = shopifyError.message || String(shopifyError);
+        const shopifyMessage = errorMessage(shopifyError) || String(shopifyError);
         
-        if (errorMessage.includes("already cancelled")) {
+        if (shopifyMessage.includes("already cancelled")) {
           return res.status(400).json({ error: "Order already cancelled" });
         }
-        if (errorMessage.includes("fulfilled") || errorMessage.includes("FULFILLED")) {
+        if (shopifyMessage.includes("fulfilled") || shopifyMessage.includes("FULFILLED")) {
           return res.status(400).json({ error: "Cannot cancel fulfilled or partially fulfilled orders" });
         }
-        if (errorMessage.includes("closed") || errorMessage.includes("archived")) {
+        if (shopifyMessage.includes("closed") || shopifyMessage.includes("archived")) {
           return res.status(400).json({ error: "Cannot cancel closed orders" });
         }
-        if (errorMessage.includes("VOIDED") || errorMessage.includes("REFUNDED")) {
+        if (shopifyMessage.includes("VOIDED") || shopifyMessage.includes("REFUNDED")) {
           return res.status(400).json({ error: "Cannot cancel already refunded orders" });
         }
         
         // Generic Shopify error
         console.error("Shopify cancellation error:", shopifyError);
-        return res.status(400).json({ error: `Shopify error: ${errorMessage}` });
+        return res.status(400).json({ error: `Shopify error: ${shopifyMessage}` });
       }
 
       // STEP 3: Update local DB only after Shopify validation passes
@@ -2441,11 +2442,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const result = await syncMetaInsights(storeId, startDate, endDate);
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error syncing Meta insights:", err);
       res
         .status(500)
-        .json({ error: err?.message || "Failed to sync Meta insights" });
+        .json({ error: errorMessage(err) || "Failed to sync Meta insights" });
     }
   });
 
@@ -2473,9 +2474,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!store.metaAccessToken,
         adAccountsConfig: store.metaAdAccountsConfig ?? [],
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to load Meta config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to load Meta config" });
     }
   });
 
@@ -2562,9 +2563,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!updated?.metaAccessToken,
         adAccountsConfig: updated?.metaAdAccountsConfig ?? [],
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in PUT /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Meta config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Meta config" });
     }
   });
 
@@ -2596,9 +2597,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!row.delhiveryApiToken,
         clientName: row.delhiveryClientName ?? null,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to read Delhivery config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to read Delhivery config" });
     }
   });
 
@@ -2670,9 +2671,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!updated?.delhiveryApiToken,
         clientName: updated?.delhiveryClientName ?? null,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in PUT /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Delhivery config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Delhivery config" });
     }
   });
 
@@ -2694,8 +2695,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let client;
       try {
         client = await getDelhiveryClient(shipment.storeId);
-      } catch (e: any) {
-        return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+      } catch (e) {
+        return res.status(400).json({ error: errorMessage(e) || "Delhivery not configured for this store" });
       }
 
       const result = await client.getShippingLabel(awb);
@@ -2705,9 +2706,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.updateShipment(shipment.id, { shippingLabelUrl: result.labelUrl });
       res.json({ success: true, labelUrl: result.labelUrl });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error fetching Delhivery label:", err);
-      res.status(500).json({ error: err?.message || "Failed to fetch shipping label" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to fetch shipping label" });
     }
   });
 
@@ -2738,9 +2739,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!row.resendApiKey,
         fromEmail: row.resendFromEmail ?? null,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to read Resend config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to read Resend config" });
     }
   });
 
@@ -2807,9 +2808,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasToken: !!updated?.resendApiKey,
         fromEmail: updated?.resendFromEmail ?? null,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in PUT /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to update Resend config" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to update Resend config" });
     }
   });
 
@@ -2860,9 +2861,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({ metaAccessToken: null, metaAdAccountsConfig: null, updatedAt: new Date() })
         .where(eq(stores.id, guard.storeId));
       res.json({ hasToken: false, adAccountsConfig: [] });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in DELETE /api/meta/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Meta" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Meta" });
     }
   });
 
@@ -2875,9 +2876,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({ delhiveryApiToken: null, delhiveryClientName: null, updatedAt: new Date() })
         .where(eq(stores.id, guard.storeId));
       res.json({ hasToken: false, clientName: null });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in DELETE /api/delhivery/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Delhivery" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Delhivery" });
     }
   });
 
@@ -2890,9 +2891,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({ resendApiKey: null, resendFromEmail: null, updatedAt: new Date() })
         .where(eq(stores.id, guard.storeId));
       res.json({ hasToken: false, fromEmail: null });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in DELETE /api/resend/config:", err);
-      res.status(500).json({ error: err?.message || "Failed to disconnect Resend" });
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Resend" });
     }
   });
 
@@ -2930,9 +2931,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(502).json({ error: upstream });
       }
       res.json({ adAccounts: response.data?.data ?? [] });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/meta/ad-accounts:", err);
-      res.status(502).json({ error: err?.message || "Failed to fetch ad accounts" });
+      res.status(502).json({ error: errorMessage(err) || "Failed to fetch ad accounts" });
     }
   });
 
@@ -2986,9 +2987,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ campaigns });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/meta/campaigns:", err);
-      res.status(502).json({ error: err?.message || "Failed to fetch campaigns" });
+      res.status(502).json({ error: errorMessage(err) || "Failed to fetch campaigns" });
     }
   });
 
@@ -3605,8 +3606,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shopInfo = await tempClient.getShopInfo();
         testPassed = true;
         console.log("✓ Connection test passed. Shop:", shopInfo?.name);
-      } catch (testErr: any) {
-        testErrorMessage = testErr.message || "Connection test failed";
+      } catch (testErr) {
+        testErrorMessage = errorMessage(testErr) || "Connection test failed";
         console.log("⚠ Connection test failed:", testErrorMessage);
       }
 
@@ -3660,11 +3661,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           testError: testErrorMessage,
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("\n=== CREDENTIAL SAVE ERROR ===");
-      console.error("Error type:", error.constructor.name);
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
+      console.error("Error type:", (error instanceof Error ? error.constructor.name : typeof error));
+      console.error("Error message:", errorMessage(error));
+      console.error("Error stack:", (error instanceof Error ? error.stack : undefined));
       
       if (error instanceof ZodError) {
         console.error("Validation errors:", JSON.stringify(error.errors, null, 2));
@@ -3676,7 +3677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("\n=== Sending 500 error response ===\n");
       res.status(500).json({ 
         error: "Failed to save credentials",
-        details: error.message 
+        details: errorMessage(error) 
       });
     }
   });
@@ -3716,7 +3717,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shopDomain: shopInfo.domain,
         storeUrl: credentials.storeUrl,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Connection test failed:", error);
       
       const credentials = await storage.getShopifyCredentials();
@@ -3724,13 +3725,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await storage.updateCredentialTestStatus(
           credentials.id,
           'failed',
-          error.message || "Connection test failed",
+          errorMessage(error) || "Connection test failed",
         );
       }
 
       res.status(400).json({
         success: false,
-        error: error.message || "Connection test failed",
+        error: errorMessage(error) || "Connection test failed",
       });
     }
   });
@@ -3763,9 +3764,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const tags = await storage.getDistinctTags();
       res.json({ tags });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching tags:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch tags" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch tags" });
     }
   });
 
@@ -3784,9 +3785,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!scope) return;
       const methods = await storage.getDistinctPaymentMethods(scope.storeId);
       res.json({ methods });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching payment methods:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch payment methods" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch payment methods" });
     }
   });
 
@@ -3799,9 +3800,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!scope) return;
       const methods = await storage.getPrepaidPaymentMethods(scope.storeId);
       res.json({ prepaidMethods: methods });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching payment settings:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch payment settings" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch payment settings" });
     }
   });
 
@@ -3826,9 +3827,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         prepaidMethods: setting.value,
         message: "Payment settings updated successfully",
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error updating payment settings:", error);
-      res.status(500).json({ error: error.message || "Failed to update payment settings" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to update payment settings" });
     }
   });
 
@@ -3950,8 +3951,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         productsCount: syncedCount,
         variantsCount: variantCount,
       });
-    } catch (error: any) {
-      const message: string = error?.message ?? String(error);
+    } catch (error) {
+      const message: string = errorMessage(error);
       console.error(
         `[product-sync] storeId=${syncStoreId} FAILED: ${message}`,
       );
@@ -4140,9 +4141,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const { resolveReversePickupProvider } = await import("./services/courier");
         provider = await resolveReversePickupProvider(storeId);
-      } catch (e: any) {
+      } catch (e) {
         return res.status(400).json({
-          error: e?.message || "No reverse-pickup courier is configured for this store",
+          error: errorMessage(e) || "No reverse-pickup courier is configured for this store",
         });
       }
 
@@ -4179,9 +4180,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       res.json({ success: true, awb: result.awb, provider: provider.name, return: updated });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error scheduling reverse pickup:", error);
-      res.status(500).json({ error: error?.message || "Failed to schedule pickup" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule pickup" });
     }
   });
 
@@ -4550,9 +4551,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           email,
           hash,
         };
-      } catch (e: any) {
+      } catch (e) {
         console.warn(
-          `[payu] could not build hash for ${created.rmaNumber}: ${e?.message}`,
+          `[payu] could not build hash for ${created.rmaNumber}: ${errorMessage(e)}`,
         );
       }
 
@@ -4562,7 +4563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: created.status,
         payu,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in public returns create:", error);
       res.status(500).json({ error: "Failed to create return" });
     }
@@ -4715,11 +4716,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[image-backfill] storeId=${scope.storeId} updated=${result.updated} missingInCatalog=${result.missingVariantsInCatalog}`,
       );
       res.json({ success: true, ...result });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error backfilling order-item images:", error);
       res.status(500).json({
         error: "Failed to backfill images",
-        details: error?.message,
+        details: errorMessage(error),
       });
     }
   });
@@ -5084,7 +5085,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // working without changes elsewhere.
       const { password: _pw, ...safe } = user as any;
       res.json(safe);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in /api/auth/login:", error);
       res.status(500).json({ error: "Login failed. Please try again." });
     }
@@ -5172,7 +5173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ stores: rows });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in /api/stores/me:", error);
       res.status(500).json({ error: "Failed to load stores." });
     }
@@ -5286,8 +5287,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let shopInfo: any = null;
       try {
         shopInfo = await tempClient.getShopInfo();
-      } catch (testErr: any) {
-        const message = testErr?.message || "Connection test failed";
+      } catch (testErr) {
+        const message = errorMessage(testErr) || "Connection test failed";
         return res.status(400).json({
           error: `Could not connect to ${normalizedUrl}: ${message}`,
         });
@@ -5355,10 +5356,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const { getShopifyClient } = await import("./shopify");
           const client = await getShopifyClient(inserted.id);
           webhookReport = await client.registerAllWebhooks(appUrl);
-        } catch (err: any) {
+        } catch (err) {
           console.warn(
             `[stores] webhook registration for ${inserted.id} failed:`,
-            err?.message ?? err,
+            errorMessage(err) ?? err,
           );
         }
       } else {
@@ -5372,7 +5373,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shopName: shopInfo?.name ?? null,
         webhooks: webhookReport,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in POST /api/stores:", error);
       res.status(500).json({ error: "Failed to connect store." });
     }
@@ -5564,7 +5565,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       invalidateShopifyClient(storeId);
 
       res.json({ store: updated });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in PATCH /api/stores/:id:", error);
       res.status(500).json({ error: "Failed to update store." });
     }
@@ -5608,7 +5609,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(userStores)
         .where(eq(userStores.userId, targetId));
       res.json({ storeIds: rows.map((r) => r.storeId) });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in GET /api/users/:userId/stores:", error);
       res.status(500).json({ error: "Failed to load user store access." });
     }
@@ -5704,7 +5705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         added: toInsert,
         removed: toDelete,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in PUT /api/users/:userId/stores:", error);
       res.status(500).json({ error: "Failed to update user store access." });
     }
@@ -5729,7 +5730,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { password: _pw, ...safe } = user as any;
       res.json(safe);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in /api/auth/me:", error);
       res.status(500).json({ error: "Failed to load session." });
     }
@@ -5927,7 +5928,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // PATCH is admin-only at the auth layer above; safe to leave
       // payroll fields. Always strip password.
       res.json(stripPassword(user));
-    } catch (error: any) {
+    } catch (error) {
       if (error instanceof ZodError) {
         return res.status(400).json({ error: "Invalid request data", details: error.errors });
       }
@@ -6021,7 +6022,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           originalName: file.originalname,
           size: file.size,
         });
-      } catch (err: any) {
+      } catch (err) {
         // If anything failed after the file landed on disk, remove it so
         // we don't accumulate orphaned uploads.
         if (file?.path) {
@@ -6301,8 +6302,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
       await storage.heartbeatUser(currentUserId);
       return res.json({ ok: true });
-    } catch (err: any) {
-      console.error("[presence/heartbeat] error:", err?.message ?? err);
+    } catch (err) {
+      console.error("[presence/heartbeat] error:", errorMessage(err) ?? err);
       // Never fail loudly — banner can survive a missed heartbeat.
       return res.status(500).json({ error: "Failed" });
     }
@@ -6390,8 +6391,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (didClose) {
             closed.push({ userId: c.userId, attendanceId: c.attendanceId, hours: totalHours });
           }
-        } catch (err: any) {
-          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, err?.message ?? err);
+        } catch (err) {
+          console.error(`[cron/auto-logout] failed for user ${c.userId}:`, errorMessage(err) ?? err);
         }
       }
 
@@ -6402,9 +6403,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         closed: closed.length,
         details: closed,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[cron/auto-logout] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
 
@@ -6484,16 +6485,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
               location: track.location ?? latest?.location ?? "",
               scannedAt: latest?.datetime ?? "",
             };
-          } catch (e: any) {
-            return { awb, simplified: "Error", status: e?.message ?? String(e), location: "", scannedAt: "" };
+          } catch (e) {
+            return { awb, simplified: "Error", status: errorMessage(e), location: "", scannedAt: "" };
           }
         }),
       );
 
       res.json({ storeId, results });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in POST /api/tools/track-awbs:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to track AWBs" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to track AWBs" });
     }
   });
 
@@ -6639,9 +6640,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           instructions: track.instructions,
         },
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in POST /api/admin/orders/:key/resync-tracking:", err);
-      return res.status(500).json({ error: err?.message ?? "Resync failed" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Resync failed" });
     }
   });
 
@@ -6660,9 +6661,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[admin/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient}`,
       );
       return res.json({ ok: true, ...result });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[admin/reconcile-shipment-status] crashed:", err);
-      return res.status(500).json({ error: err?.message ?? "Sweep failed" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Sweep failed" });
     }
   });
 
@@ -6699,9 +6700,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[cron/reconcile-shipment-status] scanned=${result.scanned} updated=${result.updated} unchanged=${result.unchanged} errors=${result.errors} noAwb=${result.noAwb} noClient=${result.noClient} transitions=${JSON.stringify(result.transitions)}`,
       );
       return res.json({ ok: true, ...result });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[cron/reconcile-shipment-status] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
 
@@ -6735,9 +6736,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[cron/close-stale-ndr] scanned=${result.scanned} delivered=${result.closedDelivered} returned=${result.closedReturned} cancelled=${result.closedCancelled} stillOpen=${result.stillOpen} errors=${result.errors}`,
       );
       return res.json({ ok: true, ...result });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[cron/close-stale-ndr] sweep crashed:", err);
-      return res.status(500).json({ error: "Sweep failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sweep failed", detail: errorMessage(err) });
     }
   });
 
@@ -6759,9 +6760,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deleted = await storage.pruneInboundWebhookLogs(retentionDays);
       console.log(`[cron/prune-webhook-logs] deleted=${deleted} older than ${retentionDays}d`);
       return res.json({ ok: true, deleted, retentionDays });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[cron/prune-webhook-logs] failed:", err);
-      return res.status(500).json({ error: "Prune failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Prune failed", detail: errorMessage(err) });
     }
   });
 
@@ -6850,9 +6851,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         onBreak: !!activeBreak,
         autoClosedAt,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[presence/me] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -6877,9 +6878,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[monitoring-exempt] admin ${admin.email} set ${updated.email} exempt=${exempt}`,
       );
       return res.json({ ok: true, userId, monitoringExempt: exempt });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[monitoring-exempt] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -6903,9 +6904,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updated) return res.status(404).json({ error: "User not found" });
       console.log(`[payroll-email] admin ${admin.email} set ${updated.email} → ${raw || "(cleared)"}`);
       return res.json({ ok: true, userId, payrollEmail: raw || null });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-email] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -6926,9 +6927,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       console.log(`[reactivate] admin ${admin.email} reactivated attendance ${attendanceId}`);
       return res.json({ ok: true, attendance: updated });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[reactivate] error:", err);
-      return res.status(500).json({ error: "Reactivation failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Reactivation failed", detail: errorMessage(err) });
     }
   });
 
@@ -6985,9 +6986,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       return res.json({ year, month, rows, totals });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[reports/attendance-monthly] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -7055,7 +7056,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `attachment; filename="attendance_${year}_${monthStr}.csv"`,
       );
       return res.send(csv);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[reports/attendance-monthly/csv] error:", err);
       return res.status(500).send("Failed");
     }
@@ -7224,9 +7225,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { previewSync } = await import("./razorpay-payroll/sync");
       return res.json(await previewSync(year, month));
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-sync/preview] error:", err);
-      return res.status(500).json({ error: "Preview failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Preview failed", detail: errorMessage(err) });
     }
   });
 
@@ -7253,9 +7254,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[payroll-sync/run] ${report.mode} ${year}-${month} — ok=${report.totals.ok} failed=${report.totals.failed} skipped=${report.totals.skipped}`,
       );
       return res.json(report);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-sync/run] error:", err);
-      return res.status(500).json({ error: "Sync failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Sync failed", detail: errorMessage(err) });
     }
   });
 
@@ -7307,17 +7308,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       return res.json({ ok: true, year, month, mode: report.mode, totals: report.totals });
-    } catch (err: any) {
-      console.error("[cron/payroll-sync] error:", err?.message ?? err);
+    } catch (err) {
+      console.error("[cron/payroll-sync] error:", errorMessage(err) ?? err);
       try {
         const { sendPayrollAlertEmail } = await import("./resend");
-        await sendPayrollAlertEmail({ year, month, error: err?.message ?? String(err) });
-      } catch (e: any) {
-        console.error("[cron/payroll-sync] alert email error:", e?.message ?? e);
+        await sendPayrollAlertEmail({ year, month, error: errorMessage(err) });
+      } catch (e) {
+        console.error("[cron/payroll-sync] alert email error:", errorMessage(e) ?? e);
       }
       return res
         .status(500)
-        .json({ ok: false, error: "Payroll sync failed", detail: err?.message ?? String(err) });
+        .json({ ok: false, error: "Payroll sync failed", detail: errorMessage(err) });
     }
   });
 
@@ -7334,9 +7335,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { reconcileMonth } = await import("./razorpay-payroll/sync");
       return res.json(await reconcileMonth(year, month));
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-sync/verify] error:", err);
-      return res.status(500).json({ error: "Verify failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Verify failed", detail: errorMessage(err) });
     }
   });
 
@@ -7347,9 +7348,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { listSyncRuns } = await import("./razorpay-payroll/sync");
       return res.json(await listSyncRuns(20));
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-sync/history] error:", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -7365,9 +7366,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await provisionUser(userId);
       console.log(`[payroll-sync/provision] ${result.mode} ${result.email} — ok=${result.ok} (${result.message})`);
       return res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[payroll-sync/provision] error:", err);
-      return res.status(500).json({ error: "Provision failed", detail: err?.message ?? String(err) });
+      return res.status(500).json({ error: "Provision failed", detail: errorMessage(err) });
     }
   });
 
@@ -7414,9 +7415,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cycle = await import("./services/payroll-cycle");
       const cycles = await cycle.listCycles(storeId);
       res.json({ cycles, activeStoreId: storeId });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/payroll/cycles:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to list cycles" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to list cycles" });
     }
   });
 
@@ -7437,9 +7438,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         generatedBy: (req.body?.currentUserId as string) ?? null,
       });
       res.status(result.alreadyExisted ? 200 : 201).json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in POST /api/payroll/cycles:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to generate cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to generate cycle" });
     }
   });
 
@@ -7451,9 +7452,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await cycle.getCycleWithLedgers(req.params.id);
       if (!result) return res.status(404).json({ error: "Cycle not found" });
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/payroll/cycles/:id:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to fetch cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to fetch cycle" });
     }
   });
 
@@ -7466,9 +7467,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const cycle = await import("./services/payroll-cycle");
       const result = await cycle.approveCycle({ cycleId: req.params.id, approvedBy });
       res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in POST /api/payroll/cycles/:id/approve:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to approve cycle" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to approve cycle" });
     }
   });
 
@@ -7557,9 +7558,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Content-Length", String(buf.byteLength));
       res.end(buf);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/payroll/cycles/:id/ledger/:userId/pdf:", err);
-      res.status(500).json({ error: err?.message ?? "Failed to render PDF" });
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to render PDF" });
     }
   });
 
@@ -7598,9 +7599,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       });
       res.json(updated);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in PATCH /api/payroll/cycles/:id/ledger/:userId:", err);
-      const msg = err?.message ?? "Failed to update ledger";
+      const msg = errorMessage(err) ?? "Failed to update ledger";
       const status = msg.includes("locked") ? 409 : msg.includes("not found") ? 404 : 500;
       res.status(status).json({ error: msg });
     }
@@ -7643,15 +7644,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const r = await cycleModule.generateCycle({ storeId: s.id, year, month, generatedBy: null });
           results.push({ storeId: s.id, ok: r.ok, ledgerCount: r.ledgerCount, alreadyExisted: r.alreadyExisted, message: r.message });
-        } catch (err: any) {
-          results.push({ storeId: s.id, ok: false, error: err?.message ?? String(err) });
+        } catch (err) {
+          results.push({ storeId: s.id, ok: false, error: errorMessage(err) });
         }
       }
       console.log(`[cron/generate-payroll-cycle] ${year}-${String(month).padStart(2, "0")} — ${results.length} store(s) processed`);
       res.json({ ok: true, year, month, results });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[cron/generate-payroll-cycle] crash:", err);
-      res.status(500).json({ error: err?.message ?? "Cron failed" });
+      res.status(500).json({ error: errorMessage(err) ?? "Cron failed" });
     }
   });
 
@@ -7927,10 +7928,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let pdfFile: Awaited<ReturnType<typeof renderPayslipPdf>>;
       try {
         pdfFile = await renderPayslipPdf(data);
-      } catch (pdfErr: any) {
+      } catch (pdfErr) {
         await storage.updatePayrollLedgerDispatch(created.id, {
           status: "failed",
-          emailError: `PDF render failed: ${pdfErr?.message ?? String(pdfErr)}`,
+          emailError: `PDF render failed: ${errorMessage(pdfErr)}`,
         });
         return res.status(500).json({ error: "Payroll persisted but PDF render failed", ledgerId: created.id });
       }
@@ -7939,9 +7940,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let dispatchErr: string | null = null;
       try {
         await sendPayslipEmail(data, pdfFile);
-      } catch (emailErr: any) {
+      } catch (emailErr) {
         dispatchOk = false;
-        dispatchErr = emailErr?.message ?? String(emailErr);
+        dispatchErr = errorMessage(emailErr);
       }
 
       await storage.updatePayrollLedgerDispatch(created.id, {
@@ -7959,9 +7960,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         emailSent: dispatchOk,
         emailError: dispatchErr,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error in /api/payroll/run:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to run payroll" });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to run payroll" });
     }
   });
 
@@ -8054,9 +8055,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader("Content-Length", String(buf.byteLength));
       res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
       res.end(buf);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error rendering payslip PDF:", error);
-      res.status(500).json({ error: error?.message ?? "Failed to render payslip PDF" });
+      res.status(500).json({ error: errorMessage(error) ?? "Failed to render payslip PDF" });
     }
   });
 
@@ -8426,7 +8427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: ivrData.message || "Failed to initiate call. Please try again." 
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error initiating call:", error);
       return res.status(500).json({ 
         success: false, 
@@ -8507,7 +8508,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Stream the file to the client
       recordingResponse.data.pipe(res);
       
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error downloading recording:", error);
       res.status(500).json({ error: "Failed to download recording" });
     }
@@ -8612,16 +8613,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         aiAnalysis
       });
       
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error generating AI analysis:", error);
       
-      if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      if (errorCode(error) === 'ECONNABORTED' || errorMessage(error).includes('timeout')) {
         return res.status(504).json({ error: "AI analysis request timed out. Please try again." });
       }
       
       res.status(500).json({ 
         error: "Failed to generate AI analysis",
-        details: error.message 
+        details: errorMessage(error) 
       });
     }
   });
@@ -8799,7 +8800,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error processing IVR webhook:", error);
       
       // Still return 200 to prevent IVR provider from retrying
@@ -8807,7 +8808,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(200).json({ 
         success: false, 
         error: "Internal error processing webhook",
-        message: error.message 
+        message: errorMessage(error) 
       });
     }
   });
@@ -8969,12 +8970,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         });
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error testing IVR credentials:", error);
       return res.status(500).json({
         success: false,
         error: "Failed to test IVR credentials",
-        details: error.message
+        details: errorMessage(error)
       });
     }
   });
@@ -9072,9 +9073,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.json({ success: true, shipment });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error creating shipment:", error);
-      res.status(500).json({ error: error.message || "Failed to create shipment" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to create shipment" });
     }
   });
 
@@ -9098,9 +9099,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ success: true, trackingData });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error tracking shipment:", error);
-      res.status(500).json({ error: error.message || "Failed to track shipment" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to track shipment" });
     }
   });
 
@@ -9153,9 +9154,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { getNdrAnalyticsBundle } = await import("./services/ndr-analytics");
       const bundle = await getNdrAnalyticsBundle({ storeId, start, end });
       return res.json({ ...bundle, storeId });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error in GET /api/ndr/analytics:", err);
-      return res.status(500).json({ error: err?.message ?? "Failed to load NDR analytics" });
+      return res.status(500).json({ error: errorMessage(err) ?? "Failed to load NDR analytics" });
     }
   });
 
@@ -9228,9 +9229,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         events: enrichedEvents, 
         total: result.total 
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching NDR events:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch NDR events" });
     }
   });
 
@@ -9243,9 +9244,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset: offset ? parseInt(offset as string) : 0,
       });
       res.json(result);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching NDR events:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch NDR events" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch NDR events" });
     }
   });
 
@@ -9299,8 +9300,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let delhiveryClient;
         try {
           delhiveryClient = await getDelhiveryClient(shipment.storeId);
-        } catch (e: any) {
-          return res.status(400).json({ error: e?.message || "Delhivery not configured for this store" });
+        } catch (e) {
+          return res.status(400).json({ error: errorMessage(e) || "Delhivery not configured for this store" });
         }
 
         const hasAddress = Boolean(address1 || address2);
@@ -9367,9 +9368,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ success: true, message: "Reattempt scheduled successfully" });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error scheduling reattempt:", error);
-      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule reattempt" });
     }
   });
 
@@ -9429,9 +9430,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({ success: true, message: "Reattempt scheduled successfully" });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error scheduling reattempt:", error);
-      res.status(500).json({ error: error.message || "Failed to schedule reattempt" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to schedule reattempt" });
     }
   });
 
@@ -9440,11 +9441,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const result = await shiprocketService.testConnection();
       res.json(result);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error testing Shiprocket connection:", error);
       res.status(500).json({ 
         success: false, 
-        message: error.message || "Failed to test connection" 
+        message: errorMessage(error) || "Failed to test connection" 
       });
     }
   });
@@ -9520,9 +9521,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const couriers = await shiprocketService.getCouriersForShipment(shiprocketShipmentId, shiprocketOrderId || undefined);
 
       res.json({ couriers, shipmentId: shiprocketShipmentId });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching available couriers:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch available couriers" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to fetch available couriers" });
     }
   });
 
@@ -9662,9 +9663,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         courierName: courierName,
         pickupScheduledDate: pickupDate,
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error assigning courier:", error);
-      res.status(500).json({ error: error.message || "Failed to assign courier" });
+      res.status(500).json({ error: errorMessage(error) || "Failed to assign courier" });
     }
   });
 
@@ -10070,7 +10071,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = insertLeaveRequestSchema.parse(req.body);
       const request = await storage.createLeaveRequest(validatedData);
       res.status(201).json(request);
-    } catch (error: any) {
+    } catch (error) {
       if (error instanceof ZodError) {
         return res.status(400).json({ error: "Invalid request data", details: error.errors });
       }
@@ -10091,7 +10092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Leave request not found" });
       }
       res.json(request);
-    } catch (error: any) {
+    } catch (error) {
       if (error instanceof ZodError) {
         return res.status(400).json({ error: "Invalid request data", details: error.errors });
       }
@@ -11084,7 +11085,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               storeId,
               pgName: pgName as any,
             });
-          } catch (matchErr: any) {
+          } catch (matchErr) {
             console.error("[recon/upload] auto-match failed:", matchErr);
             // Don't block the upload response — ingestion succeeded
             // even if classification didn't.
@@ -11131,11 +11132,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errors: errors.slice(0, 5),
           autoMatched: matchResult,
         });
-      } catch (err: any) {
+      } catch (err) {
         console.error("[recon/upload] error:", err);
         return res.status(500).json({
           error: "Upload failed",
-          detail: err?.message ?? String(err),
+          detail: errorMessage(err),
         });
       }
     },
@@ -11192,11 +11193,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         toDate,
       });
       return res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/settlements] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err),
+        detail: errorMessage(err),
       });
     }
   });
@@ -11235,11 +11236,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         toleranceRupees: req.body?.toleranceRupees,
       });
       return res.json(result);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/match] error:", err);
       return res
         .status(500)
-        .json({ error: "Match failed", detail: err?.message ?? String(err) });
+        .json({ error: "Match failed", detail: errorMessage(err) });
     }
   });
 
@@ -11283,11 +11284,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         window: result.window,
         windowNote: result.windowNote,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/overdue] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err),
+        detail: errorMessage(err),
       });
     }
   });
@@ -11495,11 +11496,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resendId: (result as any)?.id ?? null,
         isTest,
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/send-digest] error:", err);
       return res.status(500).json({
         error: "Send failed",
-        detail: err?.message ?? String(err),
+        detail: errorMessage(err),
       });
     }
   });
@@ -11635,9 +11636,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
       res.send(lines.join("\n"));
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/export] error:", err);
-      return res.status(500).json({ error: "Export failed", detail: err?.message });
+      return res.status(500).json({ error: "Export failed", detail: errorMessage(err) });
     }
   });
 
@@ -11845,8 +11846,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             w.pgPaymentIds.delete(payuAttr.value);
             w.orphanIds.delete(payuAttr.value);
           }
-        } catch (winErr: any) {
-          console.error("[recon/fetch-from-shopify] window failed:", winErr?.message);
+        } catch (winErr) {
+          console.error("[recon/fetch-from-shopify] window failed:", errorMessage(winErr));
           // Continue to next window — one bad window shouldn't kill the
           // whole batch.
         }
@@ -11880,11 +11881,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         rematched: matchResult,
         samples: samples.slice(0, 10),
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/fetch-from-shopify] error:", err);
       return res
         .status(500)
-        .json({ error: "Fetch failed", detail: err?.message ?? String(err) });
+        .json({ error: "Fetch failed", detail: errorMessage(err) });
     }
   });
 
@@ -11906,9 +11907,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rows = await storage.listPgRateCards(storeId, pgName as any);
       const active = await storage.getActivePgRateCard(storeId, (pgName as any) ?? "payu");
       return res.json({ rows, activeId: active?.id ?? null });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/rate-cards GET]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -11948,9 +11949,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBy: currentUserId,
       });
       return res.json({ ok: true, card });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/rate-cards POST]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -11962,9 +11963,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user || user.role !== "admin") return res.status(403).json({ error: "Admin only" });
       await storage.deletePgRateCard(req.params.id);
       return res.json({ ok: true });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/rate-cards DELETE]", err);
-      return res.status(500).json({ error: "Failed", detail: err?.message });
+      return res.status(500).json({ error: "Failed", detail: errorMessage(err) });
     }
   });
 
@@ -12065,9 +12066,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sourceFile: req.file.originalname,
         });
         return res.json({ ok: true, card });
-      } catch (err: any) {
+      } catch (err) {
         console.error("[recon/rate-cards/upload]", err);
-        return res.status(500).json({ error: "Upload failed", detail: err?.message });
+        return res.status(500).json({ error: "Upload failed", detail: errorMessage(err) });
       }
     },
   );
@@ -12091,11 +12092,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
       const rows = await storage.listRecentReconUploads(storeId, limit);
       return res.json({ rows, total: rows.length });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/recent-uploads] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err),
+        detail: errorMessage(err),
       });
     }
   });
@@ -12146,11 +12147,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: Number(r.count),
       }));
       return res.json({ rows, days });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/trend] error:", err);
       return res
         .status(500)
-        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+        .json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
 
@@ -12209,11 +12210,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         mismatchCount: Number(r.mismatch_count),
       }));
       return res.json({ rows, days });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/by-utr] error:", err);
       return res
         .status(500)
-        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+        .json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
 
@@ -12268,11 +12269,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       return res.json({ days, byStatus });
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/sparklines] error:", err);
       return res
         .status(500)
-        .json({ error: "Failed to fetch", detail: err?.message ?? String(err) });
+        .json({ error: "Failed to fetch", detail: errorMessage(err) });
     }
   });
 
@@ -12313,11 +12314,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         toDate,
       );
       return res.json(counts);
-    } catch (err: any) {
+    } catch (err) {
       console.error("[recon/status-counts] error:", err);
       return res.status(500).json({
         error: "Failed to fetch",
-        detail: err?.message ?? String(err),
+        detail: errorMessage(err),
       });
     }
   });
