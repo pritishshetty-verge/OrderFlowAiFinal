@@ -2,15 +2,11 @@ import { useEffect, useState } from "react";
 import { PageLayout } from "@/components/page-layout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PreferencesSettings } from "@/components/settings-preferences";
-import { NotificationsSettings } from "@/components/settings-notifications";
-import { SecuritySettings } from "@/components/settings-security";
 import { WorkspaceSettings } from "@/components/settings-workspace";
 import {
   IVRConnectionStatus,
-  ShopifyWebhookStatusCard,
   ProductCatalogSync,
   PaymentMappingSettings,
-  ShopifyHelpCard,
 } from "@/components/settings-shopify-main";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
@@ -28,15 +24,11 @@ import type { User } from "@shared/schema";
 //     Shopify nor an integration we expose in the hub today.
 type SettingsTab =
   | "preferences"
-  | "notifications"
-  | "security"
   | "workspace"
   | "operations"
   | "ivr";
 const VALID_TABS: SettingsTab[] = [
   "preferences",
-  "notifications",
-  "security",
   "workspace",
   "operations",
   "ivr",
@@ -157,12 +149,6 @@ export default function SettingsPage() {
             <TabsTrigger value="preferences" data-testid="tab-preferences">
               Preferences
             </TabsTrigger>
-            <TabsTrigger value="notifications" data-testid="tab-notifications">
-              Notifications
-            </TabsTrigger>
-            <TabsTrigger value="security" data-testid="tab-security">
-              Security
-            </TabsTrigger>
             {userRole === "admin" && (
               <TabsTrigger value="workspace" data-testid="tab-workspace">
                 Workspace
@@ -184,14 +170,6 @@ export default function SettingsPage() {
             <PreferencesSettings />
           </TabsContent>
 
-          <TabsContent value="notifications">
-            <NotificationsSettings />
-          </TabsContent>
-
-          <TabsContent value="security">
-            <SecuritySettings />
-          </TabsContent>
-
           {userRole === "admin" && (
             <TabsContent value="workspace" className="space-y-6">
               <WorkspaceSettings />
@@ -200,10 +178,8 @@ export default function SettingsPage() {
 
           {userRole === "admin" && (
             <TabsContent value="operations" className="space-y-6">
-              <ShopifyWebhookStatusCard />
               <ProductCatalogSync />
               <PaymentMappingSettings />
-              <ShopifyHelpCard />
             </TabsContent>
           )}
 

@@ -201,8 +201,7 @@ export function ShopifyConnectionCard() {
   // Pull the lightweight order count to surface "Total Orders" on the
   // connection card. The Phase-3 fetch interceptor attaches the
   // active store id, so this number is always scoped to whichever
-  // store the user is currently looking at. Webhook health is shown
-  // by ShopifyWebhookStatusCard (Settings → Store Operations).
+  // store the user is currently looking at.
   //
   // Keying the query on activeStore.id forces a refetch when the
   // user switches stores — without this, React Query would serve
@@ -705,113 +704,6 @@ export function ShopifyConnectionCard() {
         )}
       </SettingsCard>
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// ShopifyWebhookStatusCard
-//
-// Read-only card showing whether webhooks are flowing (latest order
-// timestamp). Lives on Settings → Store Operations now that the
-// Integrations hub is a clean catalog view.
-// ─────────────────────────────────────────────────────────────────────
-export function ShopifyWebhookStatusCard() {
-  const { data: recentOrderData, isLoading: isLoadingOrders } = useQuery<{
-    orders: BackendOrder[];
-    total: number;
-  }>({
-    queryKey: ["/api/orders?limit=1"],
-    refetchInterval: 30000,
-  });
-  const lastOrder = recentOrderData?.orders?.[0];
-
-  return (
-    <SettingsCard
-      icon={Activity}
-      title="Real-Time Sync"
-      description="Automatic order synchronization via webhooks"
-      testId="card-webhook-status"
-      action={
-        lastOrder ? (
-          <StatusBadge status="active" label="Webhooks Active" />
-        ) : (
-          <StatusBadge status="inactive" label="Not Configured" />
-        )
-      }
-    >
-      {isLoadingOrders ? (
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-4 w-1/2" />
-        </div>
-      ) : lastOrder ? (
-        <div className="space-y-4">
-          <div className="rounded-lg border bg-green-500/5 p-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500 mt-0.5" />
-              <div className="flex-1 space-y-1">
-                <p className="text-sm font-medium">Webhooks are working correctly</p>
-                <p className="text-sm text-muted-foreground">
-                  Last order received: <strong>#{lastOrder.orderNumber}</strong> ({lastOrder.customerName})
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatDistanceToNow(new Date(lastOrder.createdAt), { addSuffix: true })}
-                </p>
-              </div>
-            </div>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            New orders are automatically syncing every 30 seconds.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              No webhooks have been received yet. Set up real-time sync to automatically import new orders.
-            </AlertDescription>
-          </Alert>
-          <Link href="/integrations">
-            <Button variant="outline" className="gap-2" data-testid="button-setup-webhooks">
-              Manage Webhooks
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </Link>
-        </div>
-      )}
-    </SettingsCard>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// ShopifyHelpCard
-//
-// Quick links to the standalone setup/webhook guide pages. Belongs in
-// Settings now, not in the Integrations hub.
-// ─────────────────────────────────────────────────────────────────────
-export function ShopifyHelpCard() {
-  return (
-    <SettingsCard
-      title="Need Help?"
-      description="Access setup guides and documentation"
-      testId="card-help"
-    >
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Link href="/integrations">
-          <Button variant="outline" className="w-full justify-start gap-2">
-            <Settings className="h-4 w-4" />
-            Connect a Store
-          </Button>
-        </Link>
-        <Link href="/integrations">
-          <Button variant="outline" className="w-full justify-start gap-2">
-            <Activity className="h-4 w-4" />
-            Manage Webhooks
-          </Button>
-        </Link>
-      </div>
-    </SettingsCard>
   );
 }
 
