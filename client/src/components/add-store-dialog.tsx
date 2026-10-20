@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, AlertCircle, Plus, CheckCircle, HelpCircle, ArrowLeft, ExternalLink } from "lucide-react";
+import { Loader2, AlertCircle, Plus, CheckCircle, HelpCircle, ArrowLeft, ExternalLink, Copy, Check } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveStore } from "@/hooks/use-store";
@@ -324,14 +324,47 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
 // lost when switching back.
 // ─────────────────────────────────────────────────────────────────────
 
+// Full scope set an OMS may need, enabled up front so the app's
+// configuration never has to be edited again later. Grouped by area;
+// copied to the clipboard as a single comma-separated list that can be
+// pasted into Shopify's scope field / app config.
 const SHOPIFY_SCOPES = [
+  // Orders (read_all_orders unlocks full history older than 60 days)
+  "read_all_orders",
   "read_orders",
   "write_orders",
+  "read_draft_orders",
+  "write_draft_orders",
+  // Customers
   "read_customers",
   "write_customers",
+  // Products & inventory
+  "read_products",
+  "write_products",
+  "read_inventory",
+  "write_inventory",
+  // Fulfillment & shipping
   "read_fulfillments",
   "write_fulfillments",
-  "read_products",
+  "read_merchant_managed_fulfillment_orders",
+  "write_merchant_managed_fulfillment_orders",
+  "read_assigned_fulfillment_orders",
+  "write_assigned_fulfillment_orders",
+  "read_third_party_fulfillment_orders",
+  "write_third_party_fulfillment_orders",
+  "read_shipping",
+  // Returns / RTO
+  "read_returns",
+  "write_returns",
+  // Discounts & coupons (attribution)
+  "read_discounts",
+  "write_discounts",
+  "read_price_rules",
+  "write_price_rules",
+  // Locations & payments (reconciliation)
+  "read_locations",
+  "read_shopify_payments_payouts",
+  "read_shopify_payments_disputes",
 ];
 
 function GuideStep({
@@ -357,6 +390,17 @@ function GuideStep({
 }
 
 function ShopifySetupGuide({ onBack }: { onBack: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const scopesText = SHOPIFY_SCOPES.join(", ");
+  const handleCopyScopes = async () => {
+    try {
+      await navigator.clipboard.writeText(scopesText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context) — no-op.
+    }
+  };
   return (
     <div className="space-y-4">
       <div className="max-h-[55vh] overflow-y-auto pr-1 space-y-5 text-sm">
@@ -384,26 +428,42 @@ function ShopifySetupGuide({ onBack }: { onBack: () => void }) {
 
         <GuideStep n={2} title="Enable Admin API scopes">
           <p className="text-muted-foreground">
-            Open <strong>Configuration &rarr; Admin API integration</strong> and
-            enable these scopes:
+            Open <strong>Configuration &rarr; Admin API integration</strong>,
+            then copy the full scope list below and enable each one. Click{" "}
+            <strong>Save</strong> when done.
           </p>
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {SHOPIFY_SCOPES.map((sc) => (
-              <code
-                key={sc}
-                className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono"
+          <div className="mt-2 overflow-hidden rounded-md border bg-muted/40">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/60 px-3 py-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Admin API scopes
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={handleCopyScopes}
+                data-testid="button-copy-scopes"
               >
-                {sc}
-              </code>
-            ))}
+                {copied ? (
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                {copied ? "Copied" : "Copy all"}
+              </Button>
+            </div>
+            <code className="block px-3 py-2 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words text-foreground">
+              {scopesText}
+            </code>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Optional:{" "}
+            Includes{" "}
             <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
               read_all_orders
             </code>{" "}
-            — only needed to import orders older than 60 days. Click{" "}
-            <strong>Save</strong> when done.
+            (full order history) plus all the scopes OrderFlow may need, so you
+            won't have to edit the app's permissions again later.
           </p>
         </GuideStep>
 
