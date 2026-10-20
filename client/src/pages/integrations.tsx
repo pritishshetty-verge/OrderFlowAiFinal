@@ -9,6 +9,7 @@ import {
   Loader2,
   ChevronLeft,
   Check,
+  Unplug,
   type LucideIcon,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
@@ -32,6 +33,17 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { ShopifyConnectionCard } from "@/components/settings-shopify-main";
 import { AddStoreDialog } from "@/components/add-store-dialog";
 import { Plus } from "lucide-react";
@@ -405,6 +417,91 @@ function IntegrationCard({ integration, onConfigure }: IntegrationCardProps) {
         )}
       </CardFooter>
     </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// IntegrationDisconnectButton — a destructive "Disconnect" action with a
+// confirm dialog, reused by every connected integration's Manage view.
+// Hits the integration's DELETE /config endpoint (which nulls the stored
+// per-store credentials), then invalidates its config query so the card
+// flips back to the not-connected state. Historical data is never touched.
+// ─────────────────────────────────────────────────────────────────────
+function IntegrationDisconnectButton({
+  name,
+  endpoint,
+  queryKey,
+  onDisconnected,
+}: {
+  name: string;
+  endpoint: string;
+  queryKey: (string | null)[];
+  onDisconnected?: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", endpoint);
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: `${name} disconnected`,
+        description: `${name} has been disconnected from this store. Your data is kept — reconnect any time.`,
+      });
+      queryClient.invalidateQueries({ queryKey });
+      onDisconnected?.();
+    },
+    onError: (err: Error) => {
+      toast({
+        title: `Could not disconnect ${name}`,
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="outline"
+          className="text-destructive hover:text-destructive gap-2"
+          disabled={mutation.isPending}
+          data-testid={`button-disconnect-${name.toLowerCase().replace(/\s+/g, "-")}`}
+        >
+          {mutation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Unplug className="h-4 w-4" />
+          )}
+          Disconnect
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Disconnect {name}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes {name}'s saved credentials for this store. Historical
+            data is kept, and you can reconnect any time by re-entering your
+            credentials.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              mutation.mutate();
+            }}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            Disconnect
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -1177,28 +1274,36 @@ function MetaConnectionCard({ onClose }: MetaConnectionCardProps) {
             </div>
           </div>
           {isManageView ? (
-            <div className="flex items-center justify-between">
-              <Button
-                variant="outline"
-                onClick={() => syncHistoricalMutation.mutate()}
-                disabled={saving}
-                className="gap-2"
-                data-testid="button-meta-sync-now"
-              >
-                {syncHistoricalMutation.isPending && (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                )}
-                {syncHistoricalMutation.isPending
-                  ? "Syncing…"
-                  : "Sync data now (30 days)"}
-              </Button>
-              <Button
-                onClick={() => setStep("accounts")}
-                disabled={saving}
-                data-testid="button-meta-edit-setup"
-              >
-                Edit setup
-              </Button>
+            <div className="flex items-center justify-between gap-2">
+              <IntegrationDisconnectButton
+                name="Meta Ads"
+                endpoint="/api/meta/config"
+                queryKey={["/api/meta/config", activeStoreId]}
+                onDisconnected={onClose}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => syncHistoricalMutation.mutate()}
+                  disabled={saving}
+                  className="gap-2"
+                  data-testid="button-meta-sync-now"
+                >
+                  {syncHistoricalMutation.isPending && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
+                  {syncHistoricalMutation.isPending
+                    ? "Syncing…"
+                    : "Sync data now (30 days)"}
+                </Button>
+                <Button
+                  onClick={() => setStep("accounts")}
+                  disabled={saving}
+                  data-testid="button-meta-edit-setup"
+                >
+                  Edit setup
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between">
@@ -1409,7 +1514,12 @@ function DelhiveryConnectionCard({ onClose }: DelhiveryConnectionCardProps) {
             </div>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-2">
+            <IntegrationDisconnectButton
+              name="Delhivery"
+              endpoint="/api/delhivery/config"
+              queryKey={["/api/delhivery/config", activeStoreId]}
+            />
             <Button
               variant="outline"
               onClick={() => setIsEditing(true)}
@@ -1654,7 +1764,12 @@ function ResendConnectionCard({ onClose }: ResendConnectionCardProps) {
             </div>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-2">
+            <IntegrationDisconnectButton
+              name="Resend"
+              endpoint="/api/resend/config"
+              queryKey={["/api/resend/config", activeStoreId]}
+            />
             <Button
               variant="outline"
               onClick={() => setIsEditing(true)}

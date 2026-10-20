@@ -15303,6 +15303,63 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: err?.message || "Failed to update Resend config" });
     }
   });
+  async function requireAdminForDisconnect(req, res) {
+    const sessionUserId = req.session?.userId;
+    if (!sessionUserId) {
+      res.status(401).json({ error: "Not authenticated." });
+      return null;
+    }
+    const requester = await storage.getUser(sessionUserId);
+    if (!requester) {
+      req.session.destroy(() => {
+      });
+      res.status(401).json({ error: "Session user no longer exists." });
+      return null;
+    }
+    if (!isAdmin(requester)) {
+      res.status(403).json({ error: "Admin role required to disconnect integrations." });
+      return null;
+    }
+    const storeId = req.storeScope?.storeId;
+    if (!storeId) {
+      res.status(400).json({ error: "Store scope required" });
+      return null;
+    }
+    return { storeId };
+  }
+  app2.delete("/api/meta/config", async (req, res) => {
+    try {
+      const guard = await requireAdminForDisconnect(req, res);
+      if (!guard) return;
+      await db.update(stores).set({ metaAccessToken: null, metaAdAccountsConfig: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, guard.storeId));
+      res.json({ hasToken: false, adAccountsConfig: [] });
+    } catch (err) {
+      console.error("Error in DELETE /api/meta/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to disconnect Meta" });
+    }
+  });
+  app2.delete("/api/delhivery/config", async (req, res) => {
+    try {
+      const guard = await requireAdminForDisconnect(req, res);
+      if (!guard) return;
+      await db.update(stores).set({ delhiveryApiToken: null, delhiveryClientName: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, guard.storeId));
+      res.json({ hasToken: false, clientName: null });
+    } catch (err) {
+      console.error("Error in DELETE /api/delhivery/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to disconnect Delhivery" });
+    }
+  });
+  app2.delete("/api/resend/config", async (req, res) => {
+    try {
+      const guard = await requireAdminForDisconnect(req, res);
+      if (!guard) return;
+      await db.update(stores).set({ resendApiKey: null, resendFromEmail: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq10(stores.id, guard.storeId));
+      res.json({ hasToken: false, fromEmail: null });
+    } catch (err) {
+      console.error("Error in DELETE /api/resend/config:", err);
+      res.status(500).json({ error: err?.message || "Failed to disconnect Resend" });
+    }
+  });
   app2.get("/api/meta/ad-accounts", async (req, res) => {
     try {
       const storeId = req.storeScope?.storeId;
