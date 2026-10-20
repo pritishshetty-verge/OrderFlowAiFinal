@@ -168,7 +168,7 @@ export function StoreSwitcher() {
   if (bootLoading) {
     return (
       <div
-        className="flex items-center gap-2.5 px-1.5 py-1"
+        className="flex items-center gap-2.5 px-1.5 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0"
         data-testid="store-switcher-loading"
         aria-busy="true"
       >
@@ -189,7 +189,7 @@ export function StoreSwitcher() {
   if (stores.length === 0) {
     return (
       <div
-        className="flex items-center gap-2.5 px-1.5 py-1"
+        className="flex items-center gap-2.5 px-1.5 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0"
         data-testid="store-switcher-empty"
       >
         <div className="h-8 w-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground text-sm font-medium">
@@ -207,7 +207,7 @@ export function StoreSwitcher() {
     // yet (one render tick). Render the same boot skeleton so the
     // sidebar header height is stable.
     return (
-      <div className="flex items-center gap-2.5 px-1.5 py-1">
+      <div className="flex items-center gap-2.5 px-1.5 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0">
         <div className="h-8 w-8 rounded-md bg-muted animate-pulse" />
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">
           <div className="h-3.5 w-32 rounded bg-muted animate-pulse" />
@@ -226,7 +226,7 @@ export function StoreSwitcher() {
   if (!showDropdown) {
     return (
       <div
-        className="flex items-center gap-2.5 px-1.5 py-1"
+        className="flex items-center gap-2.5 px-1.5 py-1 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0"
         data-testid="store-switcher-single"
       >
         <StoreAvatar store={activeStore} />

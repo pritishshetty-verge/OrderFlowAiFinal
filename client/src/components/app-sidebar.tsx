@@ -408,7 +408,7 @@ export function AppSidebar({ userRole = "admin" }: AppSidebarProps) {
 
   return (
     <Sidebar collapsible="icon" data-testid="sidebar-main">
-      <SidebarHeader className="border-b border-sidebar-border p-3">
+      <SidebarHeader className="border-b border-sidebar-border p-3 group-data-[collapsible=icon]:p-2">
         {/* Phase 3: the static logo + wordmark is replaced by the
             multi-store switcher. Renders as static text for users
             with exactly one store (the steady state during rollout)
