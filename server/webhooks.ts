@@ -3,9 +3,7 @@ import { verifyShopifyHmac } from "./shopify";
 import { storage } from "./storage";
 import { OrderAssignmentEngine } from "./assignment";
 import type { InsertOrder, InsertCustomer, InsertOrderItem } from "@shared/schema";
-import { SHIPPING_STATUS_LABELS } from "@shared/schema";
 import { mapShopifyStatus, extractFulfillmentTracking } from "./utils/orderStatus";
-import { toUnifiedStatus, type ShippingStatus } from "./logic/unifiedStatus";
 import { triggerWebhooks } from "./services/webhooks";
 import {
   resolveWebhookStore,
@@ -39,6 +37,32 @@ type VerifyResult =
   | { valid: true; resolved: ResolvedWebhookStore }
   | { valid: false; status: number; error: string };
 
+// Record every inbound Shopify webhook into inbound_webhook_logs so the
+// API Logs page shows a live feed of arrivals, tagged by delivery path
+// (shopify_direct vs shopify_n8n). Best-effort — a logging failure must
+// never block webhook processing. Pruned by the 7-day retention cron.
+async function logInboundShopify(req: Request, source: string): Promise<void> {
+  try {
+    const path = req.path || "";
+    const topic = path.includes("/fulfillments/")
+      ? "fulfillments/update"
+      : path.endsWith("/orders/create")
+      ? "orders/create"
+      : path.endsWith("/orders/update")
+      ? "orders/updated"
+      : path.endsWith("/orders/cancelled")
+      ? "orders/cancelled"
+      : path;
+    await storage.createInboundWebhookLog({
+      source,
+      eventType: topic,
+      payload: (req.body as any) ?? null,
+    });
+  } catch (e: any) {
+    console.warn("[webhook] inbound log failed:", e?.message ?? e);
+  }
+}
+
 async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
   // ── Resolve which store sent this webhook. Needed even on the
   // n8n path because we need the storeId to stamp on inserts.
@@ -65,6 +89,7 @@ async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
     console.log(
       `✓ Webhook received from n8n relay for ${resolved.store.storeUrl} (HMAC verification skipped)`,
     );
+    await logInboundShopify(req, "shopify_n8n");
     return { valid: true, resolved };
   }
 
@@ -119,6 +144,7 @@ async function verifyWebhookAuth(req: Request): Promise<VerifyResult> {
   console.log(
     `✓ Direct Shopify webhook verified for ${resolved.store.storeUrl}`,
   );
+  await logInboundShopify(req, "shopify_direct");
   return { valid: true, resolved };
 }
 
@@ -686,28 +712,19 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
 
     console.log(`[Fulfillment Update] Order ${existingOrder.shopifyOrderNumber}: shipment_status = "${shopifyShipmentStatus}"`);
 
-    // Translate Shopify's carrier shipment_status into our canonical status via
-    // the single centralized mapper. Only update the main order status when the
-    // fulfillment actually carries a tracking status.
-    const newOrderStatus: ShippingStatus | undefined = shopifyShipmentStatus
-      ? toUnifiedStatus({ source: "shopify_fulfillment", rawStatus: shopifyShipmentStatus })
-      : undefined;
-    const mappedShipmentStatus = newOrderStatus
-      ? SHIPPING_STATUS_LABELS[newOrderStatus]
-      : null;
-
-    // Build update object
+    // ── Delivery status is owned by Delhivery, NOT Shopify. ──────────────
+    // Delhivery's webhook (server/delhiveryWebhook.ts) is the single source
+    // of truth for order.status / order.shipmentStatus and the delivery
+    // status-history timeline. If this Shopify fulfillment webhook also wrote
+    // those fields we'd get a last-writer-wins clash — and a fulfillment event
+    // with no shipment_status would even null out a live Delhivery scan. So
+    // here we ONLY capture the AWB/tracking details (needed so Delhivery scans
+    // and reshipment logs can be matched by AWB) — never the status itself.
     const updateData: any = {
-      shipmentStatus: mappedShipmentStatus,
       trackingNumber: trackingNumber,
       trackingUrl: trackingUrl,
       courierName: trackingCompany,
     };
-
-    // Only update main status if we have a mapped value
-    if (newOrderStatus) {
-      updateData.status = newOrderStatus;
-    }
 
     await storage.updateOrder(existingOrder.id, updateData);
 
@@ -733,19 +750,7 @@ export async function handleFulfillmentUpdate(req: Request, res: Response) {
         );
     }
 
-    // Create status history if main status changed
-    if (newOrderStatus && newOrderStatus !== existingOrder.status) {
-      await storage.createOrderStatus({
-        storeId: store.id,
-        orderId: existingOrder.id,
-        status: newOrderStatus,
-        previousStatus: existingOrder.status,
-        changedBy: null,
-        note: `Shipment status updated: ${mappedShipmentStatus}`,
-      });
-    }
-
-    console.log(`[Fulfillment Update] Successfully updated order ${existingOrder.shopifyOrderNumber} - shipmentStatus: ${mappedShipmentStatus}, status: ${newOrderStatus || '(unchanged)'}`);
+    console.log(`[Fulfillment Update] Captured tracking for order ${existingOrder.shopifyOrderNumber} - awb: ${trackingNumber ?? '(none)'} (delivery status owned by Delhivery)`);
     res.status(200).json({ message: "Fulfillment update processed successfully" });
   } catch (error) {
     console.error("[Fulfillment Update] Error processing webhook:", error);

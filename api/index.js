@@ -12488,9 +12488,6 @@ var OrderAssignmentEngine = class {
   }
 };
 
-// server/webhooks.ts
-init_schema();
-
 // server/utils/orderStatus.ts
 init_unifiedStatus();
 function mapShopifyStatus(financialStatus, fulfillmentStatus, shipmentStatus, cancelledAt) {
@@ -12518,9 +12515,6 @@ function extractFulfillmentTracking(fulfillments) {
     shipmentStatus: firstFulfillment.shipment_status || null
   };
 }
-
-// server/webhooks.ts
-init_unifiedStatus();
 
 // server/webhookStoreResolver.ts
 init_db();
@@ -12577,6 +12571,19 @@ function safeDecrypt(blob) {
 }
 
 // server/webhooks.ts
+async function logInboundShopify(req, source) {
+  try {
+    const path5 = req.path || "";
+    const topic = path5.includes("/fulfillments/") ? "fulfillments/update" : path5.endsWith("/orders/create") ? "orders/create" : path5.endsWith("/orders/update") ? "orders/updated" : path5.endsWith("/orders/cancelled") ? "orders/cancelled" : path5;
+    await storage.createInboundWebhookLog({
+      source,
+      eventType: topic,
+      payload: req.body ?? null
+    });
+  } catch (e) {
+    console.warn("[webhook] inbound log failed:", e?.message ?? e);
+  }
+}
 async function verifyWebhookAuth(req) {
   const resolved = await resolveWebhookStore(req);
   if (!resolved) {
@@ -12598,6 +12605,7 @@ async function verifyWebhookAuth(req) {
     console.log(
       `\u2713 Webhook received from n8n relay for ${resolved.store.storeUrl} (HMAC verification skipped)`
     );
+    await logInboundShopify(req, "shopify_n8n");
     return { valid: true, resolved };
   }
   const hmac = req.get("X-Shopify-Hmac-Sha256");
@@ -12639,6 +12647,7 @@ async function verifyWebhookAuth(req) {
   console.log(
     `\u2713 Direct Shopify webhook verified for ${resolved.store.storeUrl}`
   );
+  await logInboundShopify(req, "shopify_direct");
   return { valid: true, resolved };
 }
 async function handleOrderCreated(req, res) {
@@ -13035,17 +13044,11 @@ async function handleFulfillmentUpdate(req, res) {
     const trackingUrl = fulfillment.tracking_url || existingOrder.trackingUrl;
     const trackingCompany = fulfillment.tracking_company || existingOrder.courierName;
     console.log(`[Fulfillment Update] Order ${existingOrder.shopifyOrderNumber}: shipment_status = "${shopifyShipmentStatus}"`);
-    const newOrderStatus = shopifyShipmentStatus ? toUnifiedStatus({ source: "shopify_fulfillment", rawStatus: shopifyShipmentStatus }) : void 0;
-    const mappedShipmentStatus = newOrderStatus ? SHIPPING_STATUS_LABELS[newOrderStatus] : null;
     const updateData = {
-      shipmentStatus: mappedShipmentStatus,
       trackingNumber,
       trackingUrl,
       courierName: trackingCompany
     };
-    if (newOrderStatus) {
-      updateData.status = newOrderStatus;
-    }
     await storage.updateOrder(existingOrder.id, updateData);
     if (trackingNumber) {
       void Promise.resolve().then(() => (init_service(), service_exports)).then(
@@ -13063,17 +13066,7 @@ async function handleFulfillmentUpdate(req, res) {
         )
       );
     }
-    if (newOrderStatus && newOrderStatus !== existingOrder.status) {
-      await storage.createOrderStatus({
-        storeId: store.id,
-        orderId: existingOrder.id,
-        status: newOrderStatus,
-        previousStatus: existingOrder.status,
-        changedBy: null,
-        note: `Shipment status updated: ${mappedShipmentStatus}`
-      });
-    }
-    console.log(`[Fulfillment Update] Successfully updated order ${existingOrder.shopifyOrderNumber} - shipmentStatus: ${mappedShipmentStatus}, status: ${newOrderStatus || "(unchanged)"}`);
+    console.log(`[Fulfillment Update] Captured tracking for order ${existingOrder.shopifyOrderNumber} - awb: ${trackingNumber ?? "(none)"} (delivery status owned by Delhivery)`);
     res.status(200).json({ message: "Fulfillment update processed successfully" });
   } catch (error) {
     console.error("[Fulfillment Update] Error processing webhook:", error);
