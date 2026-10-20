@@ -30,7 +30,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Check, Save, Loader2, Camera, FileText, Upload, CheckCircle2, Eye } from "lucide-react";
 import type { User } from "@shared/schema";
 
-const AVATAR_OPTIONS = ["avatar_1.png", "avatar_2.png", "avatar_3.png", "avatar_4.png", "avatar_5.png", "avatar_6.png"];
+// 20 avatars live in client/public/avatars (avatar_1.png … avatar_20.png).
+const AVATAR_OPTIONS = Array.from({ length: 20 }, (_, i) => `avatar_${i + 1}.png`);
 
 const profileSchema = z.object({
   username: z.string().min(2, "Username must be at least 2 characters"),
@@ -550,14 +551,14 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
       </Card>
 
       <Dialog open={avatarDialogOpen} onOpenChange={setAvatarDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Choose Avatar</DialogTitle>
             <DialogDescription>
               Select an avatar to personalize your profile
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-3 gap-4 py-4">
+          <div className="grid grid-cols-4 gap-3 py-4 max-h-[52vh] overflow-y-auto pr-1 sm:grid-cols-5">
             {AVATAR_OPTIONS.map((avatar) => {
               const isSelected = selectedAvatar === avatar;
               return (
@@ -566,22 +567,20 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                   type="button"
                   onClick={() => setSelectedAvatar(avatar)}
                   className={`relative rounded-full overflow-hidden aspect-square transition-all ${
-                    isSelected 
-                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background" 
-                      : "hover:ring-2 hover:ring-muted-foreground/50 hover:ring-offset-2 hover:ring-offset-background"
+                    isSelected
+                      ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+                      : "hover:ring-2 hover:ring-muted-foreground/40 hover:ring-offset-2 hover:ring-offset-background"
                   }`}
                   data-testid={`button-avatar-${avatar.replace('.png', '')}`}
                 >
-                  <img 
-                    src={`/avatars/${avatar}`} 
+                  <img
+                    src={`/avatars/${avatar}`}
                     alt={`Avatar option ${avatar}`}
                     className="w-full h-full object-cover"
                   />
                   {isSelected && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-primary/20">
-                      <div className="bg-primary rounded-full p-1">
-                        <Check className="h-4 w-4 text-primary-foreground" />
-                      </div>
+                    <div className="absolute bottom-0.5 right-0.5 rounded-full bg-primary p-0.5 ring-2 ring-background">
+                      <Check className="h-3 w-3 text-primary-foreground" />
                     </div>
                   )}
                 </button>

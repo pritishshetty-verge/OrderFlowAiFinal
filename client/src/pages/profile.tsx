@@ -10,7 +10,9 @@ export default function ProfilePage() {
       description="View and update your personal information"
     >
       <div className="p-6">
-        <ProfileSettings userRole={userRole} />
+        <div className="max-w-3xl">
+          <ProfileSettings userRole={userRole} />
+        </div>
       </div>
     </PageLayout>
   );
