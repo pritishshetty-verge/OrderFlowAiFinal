@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, AlertCircle, Plus, CheckCircle } from "lucide-react";
+import { Loader2, AlertCircle, Plus, CheckCircle, HelpCircle, ArrowLeft, ExternalLink } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useActiveStore } from "@/hooks/use-store";
@@ -71,6 +71,7 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormState>(INITIAL);
   const [error, setError] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { setActiveStore } = useActiveStore();
@@ -166,6 +167,7 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
         setOpen(next);
         if (!next) {
           setError(null);
+          setShowGuide(false);
           if (!mutation.isPending) setForm(INITIAL);
         }
       }}
@@ -182,6 +184,9 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
             before saving — invalid keys won't be committed to the database.
           </DialogDescription>
         </DialogHeader>
+        {showGuide ? (
+          <ShopifySetupGuide onBack={() => setShowGuide(false)} />
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="add-store-name">Store name (optional)</Label>
@@ -269,6 +274,17 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
           <DialogFooter className="gap-2">
             <Button
               type="button"
+              variant="ghost"
+              onClick={() => setShowGuide(true)}
+              disabled={mutation.isPending}
+              className="sm:mr-auto gap-1.5"
+              data-testid="button-add-store-help"
+            >
+              <HelpCircle className="h-4 w-4" />
+              Need help?
+            </Button>
+            <Button
+              type="button"
               variant="outline"
               onClick={() => setOpen(false)}
               disabled={mutation.isPending}
@@ -295,7 +311,162 @@ export function AddStoreDialog({ trigger }: AddStoreDialogProps) {
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ShopifySetupGuide — in-dialog walkthrough for creating a Shopify custom
+// app and finding the credentials this form asks for. Shown when the user
+// clicks "Need help?"; the form stays mounted in state so nothing typed is
+// lost when switching back.
+// ─────────────────────────────────────────────────────────────────────
+
+const SHOPIFY_SCOPES = [
+  "read_orders",
+  "write_orders",
+  "read_customers",
+  "write_customers",
+  "read_fulfillments",
+  "write_fulfillments",
+  "read_products",
+];
+
+function GuideStep({
+  n,
+  title,
+  children,
+}: {
+  n: number;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold flex-shrink-0">
+          {n}
+        </span>
+        <h4 className="font-medium">{title}</h4>
+      </div>
+      <div className="pl-7">{children}</div>
+    </div>
+  );
+}
+
+function ShopifySetupGuide({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="max-h-[55vh] overflow-y-auto pr-1 space-y-5 text-sm">
+        <p className="text-muted-foreground">
+          OrderFlow connects with a Shopify <strong>custom app</strong> using
+          the Client Credentials grant — there's no access token to copy, just a
+          Client ID and Client Secret. Takes about 3 minutes.
+        </p>
+
+        <GuideStep n={1} title="Create a custom app">
+          <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+            <li>
+              In your Shopify admin, open{" "}
+              <strong>Settings &rarr; Apps and sales channels &rarr; Develop apps</strong>.
+            </li>
+            <li>
+              First time only: click <strong>Allow custom app development</strong>.
+            </li>
+            <li>
+              Click <strong>Create an app</strong>, name it <em>OrderFlow</em>,
+              and create it.
+            </li>
+          </ul>
+        </GuideStep>
+
+        <GuideStep n={2} title="Enable Admin API scopes">
+          <p className="text-muted-foreground">
+            Open <strong>Configuration &rarr; Admin API integration</strong> and
+            enable these scopes:
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {SHOPIFY_SCOPES.map((sc) => (
+              <code
+                key={sc}
+                className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono"
+              >
+                {sc}
+              </code>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Optional:{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
+              read_all_orders
+            </code>{" "}
+            — only needed to import orders older than 60 days. Click{" "}
+            <strong>Save</strong> when done.
+          </p>
+        </GuideStep>
+
+        <GuideStep n={3} title="Install the app">
+          <p className="text-muted-foreground">
+            Click <strong>Install app</strong> (top-right). This activates your
+            API credentials.
+          </p>
+        </GuideStep>
+
+        <GuideStep n={4} title="Copy the credentials into this form">
+          <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
+            <li>
+              Open the <strong>API credentials</strong> tab.
+            </li>
+            <li>
+              <strong>Client ID</strong> &rarr; paste into{" "}
+              <strong>API Key (Client ID)</strong>.
+            </li>
+            <li>
+              <strong>Client secret</strong> &rarr; paste into{" "}
+              <strong>API Secret (Client Secret)</strong>.
+            </li>
+            <li>
+              <strong>Store URL</strong> is your myshopify domain, e.g.{" "}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">
+                acme-demo.myshopify.com
+              </code>
+              .
+            </li>
+          </ul>
+        </GuideStep>
+
+        <GuideStep n={5} title="Webhook secret? Skip it">
+          <p className="text-muted-foreground">
+            Leave <strong>Webhook Secret</strong> blank — OrderFlow registers the
+            order webhooks for you automatically right after you connect.
+          </p>
+        </GuideStep>
+
+        <a
+          href="https://help.shopify.com/en/manual/apps/app-types/custom-apps"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-primary hover:underline text-xs"
+        >
+          Open Shopify's official custom-app guide
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+
+      <DialogFooter>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onBack}
+          className="gap-1.5"
+          data-testid="button-guide-back"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to form
+        </Button>
+      </DialogFooter>
+    </div>
   );
 }
