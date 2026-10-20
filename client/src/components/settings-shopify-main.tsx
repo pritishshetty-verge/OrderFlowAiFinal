@@ -20,7 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, Info, ImageIcon, Unplug } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, ImageIcon, Unplug } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -415,24 +415,7 @@ export function ShopifyConnectionCard() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Multi-store hint: shown only when the user has more
-                than one accessible store, so single-store
-                deployments stay uncluttered. Reminds them this
-                panel always operates on whichever store the
-                sidebar switcher is pointing at — flipping stores
-                there re-scopes everything below. */}
-            {hasMultipleStores && (
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription className="text-sm">
-                  Showing details for{" "}
-                  <span className="font-medium">{activeStoreDisplayName}</span>.
-                  To manage a different store, switch your active workspace
-                  in the top-left sidebar.
-                </AlertDescription>
-              </Alert>
-            )}
+          <div className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-sm text-muted-foreground">Active store</p>
@@ -459,11 +442,11 @@ export function ShopifyConnectionCard() {
                   className="text-sm font-medium"
                   data-testid="active-store-order-total"
                 >
-                  {recentOrderData?.total ?? 0}
+                  {(recentOrderData?.total ?? 0).toLocaleString()}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3 flex-wrap">
+            <div className="space-y-1.5">
               <Button
                 onClick={handleSync}
                 disabled={syncMutation.isPending || syncProgress?.isRunning === true}
@@ -478,18 +461,19 @@ export function ShopifyConnectionCard() {
                 ) : (
                   <>
                     <RefreshCw className="h-4 w-4" />
-                    {/* The backend's Phase 2 storeScope middleware
-                        reads the X-Active-Store-Id header attached
-                        by lib/queryClient.ts, so this button always
-                        syncs the store named in its label — the UI
-                        contract matches the request the server
-                        actually sees. */}
-                    Sync orders for {activeStoreDisplayName || "this store"}
+                    {/* The backend's Phase 2 storeScope middleware reads the
+                        X-Active-Store-Id header attached by lib/queryClient.ts,
+                        so this button always syncs the store named in its
+                        label — the UI contract matches the server request. */}
+                    Sync orders
                   </>
                 )}
               </Button>
-              <p className="text-sm text-muted-foreground">
-                Paginates through this store's entire Shopify order history
+              <p className="text-xs text-muted-foreground">
+                Imports this store's full Shopify order history.
+                {hasMultipleStores
+                  ? " Switch stores from the top-left sidebar."
+                  : ""}
               </p>
             </div>
 
