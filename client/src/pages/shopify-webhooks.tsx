@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Webhook, GitBranch, CheckCircle, AlertCircle, ExternalLink, Zap, Loader2, XCircle } from "lucide-react";
+import { getActiveStoreId } from "@/lib/queryClient";
 
 // Shape mirrors POST /api/shopify/webhooks/register-all response.
 type RegisterTopic = {
@@ -37,10 +38,19 @@ export default function ShopifyWebhooksPage() {
     setRegisterError(null);
     setRegisterResult(null);
     try {
+      // Attach the active-store header the same way apiRequest does.
+      // Without it the backend falls back to the OLDEST store (storeScope.ts),
+      // which silently targeted the legacy OLB shop regardless of the
+      // store selected in the switcher — OLB is frozen, hence the 402.
+      const activeStoreId = getActiveStoreId();
       const res = await fetch("/api/shopify/webhooks/register-all", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeStoreId ? { "X-Active-Store-Id": activeStoreId } : {}),
+        },
         body: JSON.stringify({}),
+        credentials: "include",
       });
       const body = await res.json().catch(() => null);
       if (!res.ok && res.status !== 207) {
