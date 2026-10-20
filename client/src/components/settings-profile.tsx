@@ -309,14 +309,8 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>Profile Information</CardTitle>
-          <CardDescription>
-            Update your personal information and profile details
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center gap-6">
+        <CardContent className="space-y-6 pt-6">
+          <div className="flex items-center gap-5">
             <button
               type="button"
               onClick={() => {
@@ -342,16 +336,16 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                 <Camera className="h-6 w-6 text-white" />
               </div>
             </button>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold" data-testid="text-profile-name">
+            <div className="min-w-0 space-y-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-xl font-semibold leading-none" data-testid="text-profile-name">
                   {form.watch("fullName") || "Your Name"}
-                </h3>
+                </h2>
                 <Badge variant={getRoleBadgeVariant(user?.role || userRole)} data-testid="badge-role">
                   {formatRole(user?.role || userRole)}
                 </Badge>
               </div>
-              <p className="text-sm text-muted-foreground" data-testid="text-profile-email">
+              <p className="text-sm text-muted-foreground truncate" data-testid="text-profile-email">
                 {form.watch("email")}
               </p>
               {user?.employeeId && (
@@ -359,12 +353,27 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                   Employee ID: {user.employeeId}
                 </p>
               )}
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedAvatar(user?.avatarImage || null);
+                  setAvatarDialogOpen(true);
+                }}
+                className="text-xs font-medium text-primary hover:underline"
+                data-testid="button-change-avatar-link"
+              >
+                Change avatar
+              </button>
             </div>
           </div>
 
+          <div className="h-px bg-border" />
+
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium">Personal details</h3>
+                <div className="grid gap-4 sm:grid-cols-2">
                 <FormField
                   control={form.control}
                   name="username"
@@ -417,6 +426,17 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                     </FormItem>
                   )}
                 />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-0.5">
+                  <h3 className="text-sm font-medium">Organization</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Managed by your admin — read-only.
+                  </p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
                 <FormItem>
                   <FormLabel>Role</FormLabel>
                   <FormControl>
@@ -441,7 +461,9 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
                 </FormItem>
               </div>
 
-              <div className="flex justify-end pt-4">
+              </div>
+
+              <div className="flex justify-end border-t pt-4">
                 <Button 
                   type="submit" 
                   disabled={updateProfileMutation.isPending}
