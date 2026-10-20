@@ -334,9 +334,9 @@ export function ShopifyConnectionCard() {
                 Your Shopify store is not configured yet. Follow our setup guide to get started.
               </AlertDescription>
             </Alert>
-            <Link href="/settings/shopify/setup">
+            <Link href="/integrations">
               <Button className="gap-2" data-testid="button-setup-guide">
-                Start Setup Guide
+                Connect a Store
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </Link>
@@ -664,10 +664,10 @@ export function ShopifyHelpCard() {
       testId="card-help"
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link href="/settings/shopify/setup">
+        <Link href="/integrations">
           <Button variant="outline" className="w-full justify-start gap-2">
             <Settings className="h-4 w-4" />
-            Initial Setup Guide
+            Connect a Store
           </Button>
         </Link>
         <Link href="/settings/shopify/webhooks">

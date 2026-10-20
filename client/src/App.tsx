@@ -34,7 +34,6 @@ const TeamPage = lazy(() => import("@/pages/team"));
 const PayrollPage = lazy(() => import("@/pages/payroll"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const ProfilePage = lazy(() => import("@/pages/profile"));
-const ShopifySetupPage = lazy(() => import("@/pages/shopify-setup"));
 const ShopifyWebhooksPage = lazy(() => import("@/pages/shopify-webhooks"));
 const LearningCenterPage = lazy(() => import("@/pages/learning-center"));
 const CourseDetailPage = lazy(() => import("@/pages/course-detail"));
@@ -269,9 +268,6 @@ function Router() {
         </Route>
         <Route path="/settings">
           {() => <RecoveryAgentGuard component={SettingsPage} />}
-        </Route>
-        <Route path="/settings/shopify/setup">
-          {() => <ChatSupportGuard component={ShopifySetupPage} />}
         </Route>
         <Route path="/settings/shopify/webhooks">
           {() => <ChatSupportGuard component={ShopifyWebhooksPage} />}
