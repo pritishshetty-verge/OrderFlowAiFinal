@@ -1084,8 +1084,8 @@ export function ProductCatalogSync() {
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                No products synced yet. Click "Sync Products" to import product images from your Shopify store.
-                This enables product thumbnails in the order preview panel.
+                No products synced yet — click Sync Products to import images
+                for order previews.
               </AlertDescription>
             </Alert>
           )}

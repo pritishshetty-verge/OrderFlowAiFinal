@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { PageLayout } from "@/components/page-layout";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import {
+  Palette,
+  Building2,
+  Store,
+  Phone,
+  type LucideIcon,
+} from "lucide-react";
 import { PreferencesSettings } from "@/components/settings-preferences";
 import { WorkspaceSettings } from "@/components/settings-workspace";
 import {
@@ -32,6 +39,18 @@ const VALID_TABS: SettingsTab[] = [
   "workspace",
   "operations",
   "ivr",
+];
+
+const SECTIONS: {
+  id: SettingsTab;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+}[] = [
+  { id: "preferences", label: "Preferences", icon: Palette },
+  { id: "workspace", label: "Workspace", icon: Building2, adminOnly: true },
+  { id: "operations", label: "Store Operations", icon: Store, adminOnly: true },
+  { id: "ivr", label: "IVR", icon: Phone, adminOnly: true },
 ];
 
 function readTabFromUrl(): SettingsTab {
@@ -139,56 +158,61 @@ export default function SettingsPage() {
       title="Settings"
       description="Manage your account settings and preferences"
     >
-      <div className="p-6 space-y-6">
-        <Tabs
-          value={activeTab}
-          onValueChange={handleTabChange}
-          className="space-y-6"
-        >
-          <TabsList data-testid="tabs-settings">
-            <TabsTrigger value="preferences" data-testid="tab-preferences">
-              Preferences
-            </TabsTrigger>
-            {userRole === "admin" && (
-              <TabsTrigger value="workspace" data-testid="tab-workspace">
-                Workspace
-              </TabsTrigger>
-            )}
-            {userRole === "admin" && (
-              <TabsTrigger value="operations" data-testid="tab-operations">
-                Store Operations
-              </TabsTrigger>
-            )}
-            {userRole === "admin" && (
-              <TabsTrigger value="ivr" data-testid="tab-ivr">
-                IVR
-              </TabsTrigger>
-            )}
-          </TabsList>
+      <div className="p-6">
+        <div className="flex flex-col gap-6 md:flex-row md:gap-8">
+          {/* Left section nav — vertical on desktop, a scrollable row on
+              mobile. Replaces the old boxy horizontal tab bar. */}
+          <nav
+            className="md:w-56 md:flex-shrink-0"
+            data-testid="tabs-settings"
+            aria-label="Settings sections"
+          >
+            <div className="flex gap-1 overflow-x-auto pb-1 md:flex-col md:overflow-visible md:pb-0">
+              {SECTIONS.filter(
+                (section) => !section.adminOnly || userRole === "admin",
+              ).map((section) => {
+                const Icon = section.icon;
+                const isActive = activeTab === section.id;
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => handleTabChange(section.id)}
+                    data-testid={`tab-${section.id}`}
+                    aria-current={isActive ? "page" : undefined}
+                    className={cn(
+                      "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors",
+                      isActive
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 flex-shrink-0" />
+                    {section.label}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
 
-          <TabsContent value="preferences">
-            <PreferencesSettings />
-          </TabsContent>
-
-          {userRole === "admin" && (
-            <TabsContent value="workspace" className="space-y-6">
+          {/* Content for the active section. Constrained width keeps form
+              rows readable instead of stretching full-bleed. */}
+          <div className="min-w-0 flex-1 max-w-3xl">
+            {activeTab === "preferences" && <PreferencesSettings />}
+            {userRole === "admin" && activeTab === "workspace" && (
               <WorkspaceSettings />
-            </TabsContent>
-          )}
-
-          {userRole === "admin" && (
-            <TabsContent value="operations" className="space-y-6">
-              <ProductCatalogSync />
-              <PaymentMappingSettings />
-            </TabsContent>
-          )}
-
-          {userRole === "admin" && (
-            <TabsContent value="ivr">
+            )}
+            {userRole === "admin" && activeTab === "operations" && (
+              <div className="space-y-6">
+                <ProductCatalogSync />
+                <PaymentMappingSettings />
+              </div>
+            )}
+            {userRole === "admin" && activeTab === "ivr" && (
               <IVRConnectionStatus />
-            </TabsContent>
-          )}
-        </Tabs>
+            )}
+          </div>
+        </div>
       </div>
     </PageLayout>
   );

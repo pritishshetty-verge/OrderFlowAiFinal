@@ -248,8 +248,7 @@ export function WorkspaceSettings() {
           <div className="space-y-2">
             <Label htmlFor="workspace-logo-file">Upload from device</Label>
             <p className="text-xs text-muted-foreground">
-              PNG, JPEG, WEBP, SVG, or GIF — up to 1.5 MB. Stored inline on
-              the store record; no external host needed.
+              PNG, JPEG, WEBP, SVG or GIF — up to 1.5&nbsp;MB.
             </p>
             <div className="flex items-center gap-3">
               <input
@@ -284,8 +283,9 @@ export function WorkspaceSettings() {
           <div className="space-y-2">
             <Label htmlFor="workspace-logo-url">Or use a hosted URL</Label>
             <p className="text-xs text-muted-foreground">
-              Useful if your logo is already on a CDN. Must start with{" "}
-              <code className="text-[11px] bg-muted px-1 py-0.5 rounded">https://</code>.
+              Already hosted? Paste an{" "}
+              <code className="text-[11px] bg-muted px-1 py-0.5 rounded">https://</code>{" "}
+              URL.
             </p>
             <div className="flex items-center gap-2">
               <Input
