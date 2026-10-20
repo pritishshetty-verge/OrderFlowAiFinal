@@ -613,31 +613,6 @@ export function ProfileSettings({ userRole }: ProfileSettingsProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Account Statistics</CardTitle>
-          <CardDescription>Your activity overview</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Orders Handled</p>
-              <p className="text-2xl font-bold" data-testid="text-orders-handled">--</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Success Rate</p>
-              <p className="text-2xl font-bold" data-testid="text-success-rate">--</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Account Age</p>
-              <p className="text-2xl font-bold" data-testid="text-account-age">
-                {user?.createdAt ? `${Math.floor((Date.now() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24))} days` : "--"}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
