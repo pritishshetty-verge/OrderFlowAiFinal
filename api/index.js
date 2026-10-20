@@ -13870,11 +13870,14 @@ async function registerRoutes(app2) {
       res.status(500).json({ error: err?.message ?? "Unknown error" });
     }
   });
-  app2.get("/api/shopify/webhooks", async (_req, res) => {
+  app2.get("/api/shopify/webhooks", async (req, res) => {
     try {
-      const { shopifyClient: shopifyClient3 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
-      const result = await shopifyClient3.listWebhooks();
-      res.json(result);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { getShopifyClient: getShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
+      const client = await getShopifyClient2(scope.storeId);
+      const result = await client.listWebhooks();
+      res.json({ storeId: scope.storeId, webhooks: result.webhooks ?? [] });
     } catch (err) {
       console.error("[list webhooks] failed:", err);
       res.status(500).json({ error: err?.message ?? "Unknown error" });

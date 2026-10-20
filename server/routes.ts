@@ -702,12 +702,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET companion so the UI can display the current state without
-  // triggering a re-registration.
-  app.get("/api/shopify/webhooks", async (_req, res) => {
+  // triggering a re-registration. Scoped to the ACTIVE store (via the
+  // storeScope middleware) — previously it used the env-var singleton,
+  // which always reported the legacy OLB shop's webhooks regardless of
+  // which store the admin was viewing.
+  app.get("/api/shopify/webhooks", async (req, res) => {
     try {
-      const { shopifyClient } = await import("./shopify");
-      const result = await shopifyClient.listWebhooks();
-      res.json(result);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { getShopifyClient } = await import("./shopify");
+      const client = await getShopifyClient(scope.storeId);
+      const result = await client.listWebhooks();
+      res.json({ storeId: scope.storeId, webhooks: result.webhooks ?? [] });
     } catch (err: any) {
       console.error("[list webhooks] failed:", err);
       res.status(500).json({ error: err?.message ?? "Unknown error" });

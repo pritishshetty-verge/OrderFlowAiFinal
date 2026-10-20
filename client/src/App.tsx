@@ -35,7 +35,6 @@ const TeamPage = lazy(() => import("@/pages/team"));
 const PayrollPage = lazy(() => import("@/pages/payroll"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const ProfilePage = lazy(() => import("@/pages/profile"));
-const ShopifyWebhooksPage = lazy(() => import("@/pages/shopify-webhooks"));
 const LearningCenterPage = lazy(() => import("@/pages/learning-center"));
 const CourseDetailPage = lazy(() => import("@/pages/course-detail"));
 const LessonPage = lazy(() => import("@/pages/lesson"));
@@ -274,7 +273,9 @@ function Router() {
           {() => <RecoveryAgentGuard component={SettingsPage} />}
         </Route>
         <Route path="/settings/shopify/webhooks">
-          {() => <ChatSupportGuard component={ShopifyWebhooksPage} />}
+          {/* Retired: webhook status + re-registration now live on the
+              Shopify card under Integrations. Redirect old bookmarks. */}
+          {() => <Redirect to="/integrations" />}
         </Route>
         <Route path="/learning">
           {() => <ChatSupportGuard component={LearningCenterPage} />}

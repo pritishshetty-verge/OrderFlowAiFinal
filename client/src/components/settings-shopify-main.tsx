@@ -313,6 +313,79 @@ export function ShopifyConnectionCard() {
       ? `Connected to: ${activeStoreDisplayName}`
       : "Manage your Shopify store integration";
 
+  // ── Real-time sync (webhook) health for the active store ────────────
+  // Scoped to the active store via the X-Active-Store-Id header that
+  // apiRequest attaches. Surfaces whether Shopify is wired to push live
+  // order events here, with one-click re-registration — so admins never
+  // need to hunt for the old buried setup page.
+  const EXPECTED_WEBHOOK_TOPICS = [
+    "orders/create",
+    "orders/updated",
+    "orders/cancelled",
+    "fulfillments/update",
+  ];
+  const webhookStatusQuery = useQuery<{
+    storeId: string;
+    webhooks: Array<{ topic: string; address: string }>;
+  }>({
+    queryKey: ["/api/shopify/webhooks", activeStore?.id ?? "none"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/shopify/webhooks");
+      return await res.json();
+    },
+    enabled: isConnected && !!activeStore?.id,
+    retry: false,
+  });
+  const registeredTopics = new Set(
+    (webhookStatusQuery.data?.webhooks ?? []).map((w) => w.topic),
+  );
+  const registeredCount = EXPECTED_WEBHOOK_TOPICS.filter((t) =>
+    registeredTopics.has(t),
+  ).length;
+  const registerWebhooksMutation = useMutation({
+    mutationFn: async () => {
+      // Raw fetch (not apiRequest) so a 207 Multi-Status partial result
+      // isn't thrown as an error. Attach the active-store header manually.
+      const res = await fetch("/api/shopify/webhooks/register-all", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeStore?.id ? { "X-Active-Store-Id": activeStore.id } : {}),
+        },
+        body: "{}",
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok && res.status !== 207) {
+        throw new Error(
+          body?.error ?? `Registration failed (HTTP ${res.status})`,
+        );
+      }
+      return body;
+    },
+    onSuccess: (data: any) => {
+      const failed = data?.summary?.failed ?? 0;
+      toast({
+        title: failed > 0 ? "Some webhooks failed" : "Webhooks registered",
+        description:
+          failed > 0
+            ? `${failed} topic(s) could not be registered — check the store's Shopify billing/permissions and retry.`
+            : "Real-time order sync is wired up for this store.",
+        variant: failed > 0 ? "destructive" : undefined,
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/shopify/webhooks", activeStore?.id ?? "none"],
+      });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not register webhooks",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   return (
     <div className="space-y-6">
       <SettingsCard
@@ -418,6 +491,83 @@ export function ShopifyConnectionCard() {
               <p className="text-sm text-muted-foreground">
                 Paginates through this store's entire Shopify order history
               </p>
+            </div>
+
+            {/* Real-time sync (webhooks) — status + one-click repair, so
+                admins never need the old buried setup page. */}
+            <div
+              className="rounded-lg border bg-muted/30 p-4 space-y-3"
+              data-testid="webhook-status"
+            >
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-sm font-medium">
+                    Real-time order sync (webhooks)
+                  </p>
+                </div>
+                {webhookStatusQuery.isLoading ? (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Checking…
+                  </span>
+                ) : webhookStatusQuery.isError ? (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">
+                    Status unavailable
+                  </span>
+                ) : (
+                  <span
+                    className={`text-xs font-medium ${
+                      registeredCount >= EXPECTED_WEBHOOK_TOPICS.length
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-amber-600 dark:text-amber-400"
+                    }`}
+                  >
+                    {registeredCount}/{EXPECTED_WEBHOOK_TOPICS.length} registered
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                New stores wire this up automatically on connect. Use
+                Re-register if a topic ever drops.
+              </p>
+              {!webhookStatusQuery.isLoading && !webhookStatusQuery.isError && (
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {EXPECTED_WEBHOOK_TOPICS.map((t) => {
+                    const ok = registeredTopics.has(t);
+                    return (
+                      <div key={t} className="flex items-center gap-2 text-xs">
+                        {ok ? (
+                          <CheckCircle className="h-3.5 w-3.5 text-green-600 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
+                        )}
+                        <span className="font-mono text-muted-foreground truncate">
+                          {t}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => registerWebhooksMutation.mutate()}
+                  disabled={registerWebhooksMutation.isPending}
+                  className="gap-2"
+                  data-testid="button-reregister-webhooks"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${
+                      registerWebhooksMutation.isPending ? "animate-spin" : ""
+                    }`}
+                  />
+                  {registerWebhooksMutation.isPending
+                    ? "Registering…"
+                    : "Re-register webhooks"}
+                </Button>
+              </div>
             </div>
 
             {/* Live progress — visible while syncing and after it finishes
@@ -638,9 +788,9 @@ export function ShopifyWebhookStatusCard() {
               No webhooks have been received yet. Set up real-time sync to automatically import new orders.
             </AlertDescription>
           </Alert>
-          <Link href="/settings/shopify/webhooks">
+          <Link href="/integrations">
             <Button variant="outline" className="gap-2" data-testid="button-setup-webhooks">
-              Setup Webhooks
+              Manage Webhooks
               <ArrowRight className="h-4 w-4" />
             </Button>
           </Link>
@@ -670,10 +820,10 @@ export function ShopifyHelpCard() {
             Connect a Store
           </Button>
         </Link>
-        <Link href="/settings/shopify/webhooks">
+        <Link href="/integrations">
           <Button variant="outline" className="w-full justify-start gap-2">
             <Activity className="h-4 w-4" />
-            Webhook Setup Guide
+            Manage Webhooks
           </Button>
         </Link>
       </div>
