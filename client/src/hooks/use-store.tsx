@@ -10,7 +10,6 @@ import {
 } from "react";
 import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
-import { useToast } from "@/hooks/use-toast";
 
 // ─────────────────────────────────────────────────────────────────────
 // useActiveStore — multi-store frontend state.
@@ -141,7 +140,6 @@ function writePersistedStoreId(id: string | null): void {
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
-  const { toast } = useToast();
   const [isSwitching, setIsSwitching] = useState(false);
   const switchStartRef = useRef(0);
   const fetchingCount = useIsFetching();
@@ -321,13 +319,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // top progress bar, and confirm the target with a toast.
       switchStartRef.current = Date.now();
       setIsSwitching(true);
-      const target = stores.find((s) => s.id === storeId);
-      toast({
-        title: "Switching store",
-        description: target
-          ? `Now viewing ${target.storeName?.trim() || target.storeUrl}`
-          : undefined,
-      });
       // Safety net so the bar can never stick if no refetch ever registers.
       window.setTimeout(() => setIsSwitching(false), 5000);
       // Invalidate all /api queries so every page refetches with the
@@ -343,7 +334,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
       });
     },
-    [activeStoreId, queryClient, stores, toast],
+    [activeStoreId, queryClient],
   );
 
   const refresh = useCallback(async () => {
