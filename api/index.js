@@ -2333,7 +2333,7 @@ var init_storage = __esm({
           conditions.push(sql3`${orders.tags} @> ARRAY[${filters.tag.trim()}]::text[]`);
         }
         const whereClause = conditions.length > 0 ? and2(...conditions) : void 0;
-        let query = db.select({
+        const query = db.select({
           id: orders.id,
           shopifyOrderNumber: orders.shopifyOrderNumber,
           shopifyCreatedAt: orders.shopifyCreatedAt,
@@ -2352,10 +2352,7 @@ var init_storage = __esm({
           followUpAttempts: orders.followUpAttempts,
           tags: orders.tags,
           agentName: users.fullName
-        }).from(orders).leftJoin(users, eq(orders.assignedTo, users.id)).orderBy(desc(orders.shopifyCreatedAt));
-        if (whereClause) {
-          query = query.where(whereClause);
-        }
+        }).from(orders).leftJoin(users, eq(orders.assignedTo, users.id)).where(whereClause).orderBy(desc(orders.shopifyCreatedAt));
         const ordersData = await query;
         const orderIds = ordersData.map((o) => o.id);
         let itemsMap = {};
@@ -3014,7 +3011,7 @@ var init_storage = __esm({
         return updated;
       }
       async listShipments(filters) {
-        let query = db.select().from(shipments).orderBy(desc(shipments.createdAt));
+        let query = db.select().from(shipments).orderBy(desc(shipments.createdAt)).$dynamic();
         if (filters?.status) {
           query = query.where(eq(shipments.status, filters.status));
         }
@@ -3095,7 +3092,7 @@ var init_storage = __esm({
             ...baseConds,
             eq(orders.assignedTo, filters.assignedTo)
           ];
-          let query2 = db.select(ndrListColumns).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and2(...conds)).orderBy(desc(ndrEvents.createdAt));
+          let query2 = db.select(ndrListColumns).from(ndrEvents).innerJoin(orders, eq(ndrEvents.orderId, orders.id)).where(and2(...conds)).orderBy(desc(ndrEvents.createdAt)).$dynamic();
           if (filters?.limit) {
             query2 = query2.limit(filters.limit);
           }
@@ -3112,7 +3109,7 @@ var init_storage = __esm({
           };
         }
         const baseQuery = db.select(ndrListColumns).from(ndrEvents).where(and2(...baseConds));
-        let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
+        let query = baseQuery.orderBy(desc(ndrEvents.createdAt)).$dynamic();
         if (filters?.limit) {
           query = query.limit(filters.limit);
         }
@@ -3151,7 +3148,7 @@ var init_storage = __esm({
         await db.delete(courses).where(eq(courses.id, id));
       }
       async listCourses(filters) {
-        let query = db.select().from(courses).orderBy(asc(courses.order), asc(courses.createdAt));
+        let query = db.select().from(courses).orderBy(asc(courses.order), asc(courses.createdAt)).$dynamic();
         const conditions = [];
         if (filters?.category) {
           conditions.push(eq(courses.category, filters.category));

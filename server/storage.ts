@@ -1348,7 +1348,7 @@ export class DbStorage implements IStorage {
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Fetch orders with agent names (LEFT JOIN to users table)
-    let query = db.select({
+    const query = db.select({
       id: orders.id,
       shopifyOrderNumber: orders.shopifyOrderNumber,
       shopifyCreatedAt: orders.shopifyCreatedAt,
@@ -1370,11 +1370,8 @@ export class DbStorage implements IStorage {
     })
     .from(orders)
     .leftJoin(users, eq(orders.assignedTo, users.id))
+    .where(whereClause)
     .orderBy(desc(orders.shopifyCreatedAt));
-
-    if (whereClause) {
-      query = query.where(whereClause) as any;
-    }
 
     const ordersData = await query;
 
@@ -2497,14 +2494,16 @@ export class DbStorage implements IStorage {
   }
 
   async listShipments(filters?: { status?: string; limit?: number }): Promise<Shipment[]> {
-    let query = db.select().from(shipments).orderBy(desc(shipments.createdAt));
+    // $dynamic() lets the clauses be added conditionally with full typing;
+    // drizzle still emits them in canonical SQL order.
+    let query = db.select().from(shipments).orderBy(desc(shipments.createdAt)).$dynamic();
 
     if (filters?.status) {
-      query = query.where(eq(shipments.status, filters.status)) as any;
+      query = query.where(eq(shipments.status, filters.status));
     }
 
     if (filters?.limit) {
-      query = query.limit(filters.limit) as any;
+      query = query.limit(filters.limit);
     }
 
     return await query;
@@ -2640,13 +2639,14 @@ export class DbStorage implements IStorage {
         .from(ndrEvents)
         .innerJoin(orders, eq(ndrEvents.orderId, orders.id))
         .where(and(...conds))
-        .orderBy(desc(ndrEvents.createdAt));
+        .orderBy(desc(ndrEvents.createdAt))
+        .$dynamic();
 
       if (filters?.limit) {
-        query = query.limit(filters.limit) as any;
+        query = query.limit(filters.limit);
       }
       if (filters?.offset) {
-        query = query.offset(filters.offset) as any;
+        query = query.offset(filters.offset);
       }
 
       // The page and the pagination count are independent, so run
@@ -2670,14 +2670,14 @@ export class DbStorage implements IStorage {
     // (still scoped to the active store when storeId is set).
     const baseQuery = db.select(ndrListColumns).from(ndrEvents).where(and(...baseConds));
 
-    let query = baseQuery.orderBy(desc(ndrEvents.createdAt));
+    let query = baseQuery.orderBy(desc(ndrEvents.createdAt)).$dynamic();
 
     if (filters?.limit) {
-      query = query.limit(filters.limit) as any;
+      query = query.limit(filters.limit);
     }
 
     if (filters?.offset) {
-      query = query.offset(filters.offset) as any;
+      query = query.offset(filters.offset);
     }
 
     const [events, countResult] = await Promise.all([
@@ -2727,7 +2727,7 @@ export class DbStorage implements IStorage {
   }
 
   async listCourses(filters?: { category?: string; isPublished?: boolean }): Promise<Course[]> {
-    let query = db.select().from(courses).orderBy(asc(courses.order), asc(courses.createdAt));
+    let query = db.select().from(courses).orderBy(asc(courses.order), asc(courses.createdAt)).$dynamic();
 
     const conditions = [];
     if (filters?.category) {
@@ -2738,7 +2738,7 @@ export class DbStorage implements IStorage {
     }
 
     if (conditions.length > 0) {
-      query = query.where(and(...conditions)) as any;
+      query = query.where(and(...conditions));
     }
 
     return await query;
