@@ -4846,7 +4846,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!couponCode) {
         return res.json({ couponCode: null, orders: [] });
       }
-      const orders = await storage.getConvertedOrdersForCoupon(couponCode);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const orders = await storage.getConvertedOrdersForCoupon(couponCode, scope.storeId);
       res.json({ couponCode, orders });
     } catch (error) {
       console.error("Error fetching converted orders:", error);
@@ -4874,7 +4876,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           prepaidCount: 0,
         });
       }
-      const orders = await storage.getConvertedOrdersForCoupon(couponCode);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const orders = await storage.getConvertedOrdersForCoupon(couponCode, scope.storeId);
       const num = (v: any) => {
         const n = parseFloat(v ?? "0");
         return Number.isFinite(n) ? n : 0;

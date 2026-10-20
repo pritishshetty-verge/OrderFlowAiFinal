@@ -526,7 +526,7 @@ export interface IStorage {
   updateAbandonedCheckoutStatus(id: number, status: string): Promise<AbandonedCheckout | undefined>;
   getAbandonedCheckoutByContact(phone?: string | null, email?: string | null): Promise<AbandonedCheckout | undefined>;
   markAbandonedCheckoutConverted(id: number, orderId: string): Promise<void>;
-  getConvertedOrdersForCoupon(couponCode: string): Promise<(Order & { deliveredAt: string | null })[]>;
+  getConvertedOrdersForCoupon(couponCode: string, storeId: string): Promise<(Order & { deliveredAt: string | null })[]>;
   getPrimaryStoreId(): Promise<string | null>;
   getStoreIdForCheckoutUrl(checkoutUrl?: string | null): Promise<string | null>;
 
@@ -4117,6 +4117,7 @@ export class DbStorage implements IStorage {
    */
   async getConvertedOrdersForCoupon(
     couponCode: string,
+    storeId: string,
   ): Promise<(Order & { deliveredAt: string | null })[]> {
     const code = couponCode.trim().toLowerCase();
     if (!code) return [];
@@ -4144,6 +4145,9 @@ export class DbStorage implements IStorage {
       .from(orders)
       .where(
         and(
+          // Scope to the active store. An agent's coupon is store-specific,
+          // so this both speeds up the scan and keeps attribution correct.
+          eq(orders.storeId, storeId),
           // Trigram-indexable pre-filter. The pg_trgm GIN indexes let
           // Postgres jump straight to candidate rows instead of scanning
           // every order. A token match implies a substring match, so this

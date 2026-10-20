@@ -414,3 +414,10 @@
     transform: rotate(360deg);
   }
 }
+
+/* Store-switch progress bar — a thin sliding indicator shown while a store
+   switch's refetches are in flight (see store-switch-progress.tsx). */
+@keyframes store-switch-bar {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(420%); }
+}

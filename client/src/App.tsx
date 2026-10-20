@@ -10,6 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
 import { StoreProvider } from "@/hooks/use-store";
+import { StoreSwitchProgress } from "@/components/store-switch-progress";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
 import NotFound from "@/pages/not-found";
@@ -369,6 +370,7 @@ export default function App() {
                 (read/write toggles, agent filters) doesn't need to
                 know about stores. */}
             <StoreProvider>
+              <StoreSwitchProgress />
               <ScopeProvider>
                 <SidebarWithHover style={style as React.CSSProperties}>
                   <div className="flex h-screen w-full">

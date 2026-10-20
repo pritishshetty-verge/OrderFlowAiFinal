@@ -4021,7 +4021,7 @@ var init_storage = __esm({
        * A single-coupon "TARA10" still tokenises to ["tara10"] and matches, and
        * "TARA1" tokenises to ["tara1"] so there are no partial-string false hits.
        */
-      async getConvertedOrdersForCoupon(couponCode) {
+      async getConvertedOrdersForCoupon(couponCode, storeId) {
         const code = couponCode.trim().toLowerCase();
         if (!code) return [];
         const deliveredAt = sql3`COALESCE(
@@ -4031,6 +4031,9 @@ var init_storage = __esm({
     )`.as("delivered_at");
         return await db.select({ ...getTableColumns(orders), deliveredAt }).from(orders).where(
           and2(
+            // Scope to the active store. An agent's coupon is store-specific,
+            // so this both speeds up the scan and keeps attribution correct.
+            eq(orders.storeId, storeId),
             // Trigram-indexable pre-filter. The pg_trgm GIN indexes let
             // Postgres jump straight to candidate rows instead of scanning
             // every order. A token match implies a substring match, so this
@@ -16755,7 +16758,9 @@ async function registerRoutes(app2) {
       if (!couponCode) {
         return res.json({ couponCode: null, orders: [] });
       }
-      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode, scope.storeId);
       res.json({ couponCode, orders: orders2 });
     } catch (error) {
       console.error("Error fetching converted orders:", error);
@@ -16782,7 +16787,9 @@ async function registerRoutes(app2) {
           prepaidCount: 0
         });
       }
-      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode);
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const orders2 = await storage.getConvertedOrdersForCoupon(couponCode, scope.storeId);
       const num2 = (v) => {
         const n = parseFloat(v ?? "0");
         return Number.isFinite(n) ? n : 0;

@@ -8,8 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 
 // ─────────────────────────────────────────────────────────────────────
 // useActiveStore — multi-store frontend state.
@@ -97,6 +98,12 @@ interface StoreContextValue {
   /** True iff the user has more than one accessible store. */
   hasMultipleStores: boolean;
   /**
+   * True from the moment a store switch is triggered until the resulting
+   * refetches settle. Drives the top progress bar so the switch — which is
+   * otherwise instant — has a visible cue.
+   */
+  isSwitching: boolean;
+  /**
    * Switch the active store. Persists to localStorage and invalidates
    * /api queries so consumers refetch with the new header.
    */
@@ -134,6 +141,10 @@ function writePersistedStoreId(id: string | null): void {
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [isSwitching, setIsSwitching] = useState(false);
+  const switchStartRef = useRef(0);
+  const fetchingCount = useIsFetching();
 
   // Initial state seeded from localStorage so a refresh on the same
   // tenant keeps the right id during the brief auth-loading window —
@@ -285,11 +296,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, data]);
 
+  useEffect(() => {
+    if (!isSwitching) return;
+    if (fetchingCount > 0) return; // still refetching — keep the bar up
+    const elapsed = Date.now() - switchStartRef.current;
+    const MIN_SHOW_MS = 450;
+    if (elapsed >= MIN_SHOW_MS) {
+      setIsSwitching(false);
+      return;
+    }
+    const t = window.setTimeout(
+      () => setIsSwitching(false),
+      MIN_SHOW_MS - elapsed,
+    );
+    return () => window.clearTimeout(t);
+  }, [isSwitching, fetchingCount]);
+
   const setActiveStore = useCallback(
     (storeId: string) => {
       if (storeId === activeStoreId) return; // no-op
       writePersistedStoreId(storeId);
       setActiveStoreIdState(storeId);
+      // Visible cue: the switch is instant, so flag "switching" to drive the
+      // top progress bar, and confirm the target with a toast.
+      switchStartRef.current = Date.now();
+      setIsSwitching(true);
+      const target = stores.find((s) => s.id === storeId);
+      toast({
+        title: "Switching store",
+        description: target
+          ? `Now viewing ${target.storeName?.trim() || target.storeUrl}`
+          : undefined,
+      });
+      // Safety net so the bar can never stick if no refetch ever registers.
+      window.setTimeout(() => setIsSwitching(false), 5000);
       // Invalidate all /api queries so every page refetches with the
       // new header. predicate is the lowest-common-denominator way to
       // hit every key shape — array keys, string keys, nested arrays.
@@ -303,7 +343,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
       });
     },
-    [activeStoreId, queryClient],
+    [activeStoreId, queryClient, stores, toast],
   );
 
   const refresh = useCallback(async () => {
@@ -333,6 +373,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       loading: isLoading,
       bootLoading,
       hasMultipleStores: stores.length > 1,
+      isSwitching,
       setActiveStore,
       refresh,
     }),
@@ -342,6 +383,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       activeStore,
       isLoading,
       bootLoading,
+      isSwitching,
       setActiveStore,
       refresh,
     ],
