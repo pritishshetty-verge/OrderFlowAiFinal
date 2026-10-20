@@ -3819,6 +3819,26 @@ export class DbStorage implements IStorage {
     await db.execute(sql`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS converted_at TIMESTAMP`);
+    // Speed up agent coupon attribution (My Converted Orders). The exact
+    // token match in getConvertedOrdersForCoupon can't use a btree index,
+    // so add pg_trgm GIN indexes; the query pairs them with an ILIKE
+    // pre-filter that narrows candidate rows before the exact EXISTS runs.
+    // Guarded: if the extension isn't permitted the query still works
+    // (just un-accelerated), so a failure here must not break boot.
+    try {
+      await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS orders_discount_code_trgm
+          ON orders USING gin (discount_code gin_trgm_ops)`);
+      await db.execute(sql`
+        CREATE INDEX IF NOT EXISTS orders_discount_codes_trgm
+          ON orders USING gin ((discount_codes::text) gin_trgm_ops)`);
+    } catch (e: any) {
+      console.warn(
+        "[schema] pg_trgm trigram index setup skipped:",
+        e?.message ?? e,
+      );
+    }
   }
 
   async seedDefaultSettings(): Promise<void> {
@@ -4123,7 +4143,16 @@ export class DbStorage implements IStorage {
       .select({ ...getTableColumns(orders), deliveredAt })
       .from(orders)
       .where(
-        or(
+        and(
+          // Trigram-indexable pre-filter. The pg_trgm GIN indexes let
+          // Postgres jump straight to candidate rows instead of scanning
+          // every order. A token match implies a substring match, so this
+          // never drops a valid row — the exact EXISTS below still decides.
+          sql`(
+            ${orders.discountCode} ILIKE ${"%" + code + "%"}
+            OR COALESCE(${orders.discountCodes}::text, '') ILIKE ${"%" + code + "%"}
+          )`,
+          or(
           // Legacy single-code column, tokenised.
           sql`EXISTS (
             SELECT 1
@@ -4137,6 +4166,7 @@ export class DbStorage implements IStorage {
                  regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
             WHERE tok.token = ${code}
           )`,
+          ),
         ),
       )
       .orderBy(desc(orders.createdAt));

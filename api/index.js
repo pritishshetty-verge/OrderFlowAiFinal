@@ -3820,6 +3820,20 @@ var init_storage = __esm({
         await db.execute(sql3`
       ALTER TABLE abandoned_checkouts
         ADD COLUMN IF NOT EXISTS converted_at TIMESTAMP`);
+        try {
+          await db.execute(sql3`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+          await db.execute(sql3`
+        CREATE INDEX IF NOT EXISTS orders_discount_code_trgm
+          ON orders USING gin (discount_code gin_trgm_ops)`);
+          await db.execute(sql3`
+        CREATE INDEX IF NOT EXISTS orders_discount_codes_trgm
+          ON orders USING gin ((discount_codes::text) gin_trgm_ops)`);
+        } catch (e) {
+          console.warn(
+            "[schema] pg_trgm trigram index setup skipped:",
+            e?.message ?? e
+          );
+        }
       }
       async seedDefaultSettings() {
         const allStores = await db.select({ id: stores.id }).from(stores);
@@ -4016,20 +4030,30 @@ var init_storage = __esm({
          WHERE h.order_id = "orders"."id" AND h.status = 'delivered')
     )`.as("delivered_at");
         return await db.select({ ...getTableColumns(orders), deliveredAt }).from(orders).where(
-          or(
-            // Legacy single-code column, tokenised.
-            sql3`EXISTS (
+          and2(
+            // Trigram-indexable pre-filter. The pg_trgm GIN indexes let
+            // Postgres jump straight to candidate rows instead of scanning
+            // every order. A token match implies a substring match, so this
+            // never drops a valid row — the exact EXISTS below still decides.
+            sql3`(
+            ${orders.discountCode} ILIKE ${"%" + code + "%"}
+            OR COALESCE(${orders.discountCodes}::text, '') ILIKE ${"%" + code + "%"}
+          )`,
+            or(
+              // Legacy single-code column, tokenised.
+              sql3`EXISTS (
             SELECT 1
             FROM regexp_split_to_table(LOWER(COALESCE(${orders.discountCode}, '')), '[^a-z0-9]+') AS tok(token)
             WHERE tok.token = ${code}
           )`,
-            // discount_codes JSONB array — tokenise each element.
-            sql3`EXISTS (
+              // discount_codes JSONB array — tokenise each element.
+              sql3`EXISTS (
             SELECT 1
             FROM jsonb_array_elements_text(COALESCE(${orders.discountCodes}, '[]'::jsonb)) AS dc(code_str),
                  regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
             WHERE tok.token = ${code}
           )`
+            )
           )
         ).orderBy(desc(orders.createdAt));
       }
