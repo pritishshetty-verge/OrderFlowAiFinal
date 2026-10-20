@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +38,7 @@ import logoUrl from "@assets/Orderflow_Icon[1]_1761724429427.png";
 
 export default function LoginPage() {
   const [, setLocation] = useLocation();
+  const { applyUser } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -86,6 +88,10 @@ export default function LoginPage() {
       localStorage.setItem("moduleAccess", JSON.stringify(Array.isArray(data.moduleAccess) ? data.moduleAccess : []));
       localStorage.setItem("userEmail", data.email);
       if (data.fullName) localStorage.setItem("userFullName", data.fullName);
+      // Seed the auth context from the login response so isAuthenticated
+      // flips immediately — the store switcher then fetches /api/stores/me
+      // right away instead of waiting for a full page reload.
+      applyUser(data);
       setLocation("/");
     } catch (err: any) {
       setErrorMessage(err?.message ?? "Network error. Please try again.");

@@ -147,12 +147,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // `enabled` keys the query off auth state so a logged-out tab
   // doesn't 401-spam the endpoint. Including user?.id in the key
   // means switching accounts (rare but possible during dev) re-fetches.
+  // Fire in parallel with /api/auth/me for returning users (a persisted
+  // activeStoreId means they were logged in before), so boot isn't two
+  // sequential round-trips. The key is session-scoped on the server, so it
+  // omits user.id; AuthProvider.applyUser / logout invalidate it on identity
+  // change. A stale-session optimistic fetch just 401s harmlessly.
+  const canPrefetchStores =
+    isAuthenticated || (authLoading && readPersistedStoreId() !== null);
   const {
     data,
     isLoading,
     refetch,
   } = useQuery<StoresMeResponse>({
-    queryKey: ["/api/stores/me", user?.id ?? "anon"],
+    queryKey: ["/api/stores/me"],
     queryFn: async () => {
       const res = await fetch("/api/stores/me", {
         credentials: "include",
@@ -181,7 +188,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return (await res.json()) as StoresMeResponse;
     },
-    enabled: isAuthenticated,
+    enabled: canPrefetchStores,
     staleTime: 5 * 60 * 1000, // 5 min — store membership rarely changes mid-session
     // One transient retry covers the session-row race on cold
     // start without paying multiple round-trips when the session

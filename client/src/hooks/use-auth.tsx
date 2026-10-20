@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 // ─────────────────────────────────────────────────────────────────────
 // useAuth — session-backed identity hook (Phase 0).
@@ -48,6 +49,14 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   /** Re-fetch /api/auth/me (e.g. after a profile edit). */
   refresh: () => Promise<void>;
+  /**
+   * Seed the signed-in user directly from a known payload (e.g. the
+   * POST /api/auth/login response) so the context flips to authenticated
+   * immediately — no extra /api/auth/me round-trip. This is what lets
+   * the store switcher fetch right after login instead of waiting for a
+   * full page reload.
+   */
+  applyUser: (u: AuthUser) => void;
   /** Calls POST /api/auth/logout, clears localStorage, sets user=null. */
   logout: () => Promise<void>;
 }
@@ -87,6 +96,19 @@ function writeShim(u: AuthUser | null) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const applyUser = useCallback(
+    (u: AuthUser) => {
+      setUser(u);
+      writeShim(u);
+      setLoading(false);
+      // A fresh identity may have a different set of stores — drop any
+      // cached list so the switcher refetches for this user.
+      queryClient.invalidateQueries({ queryKey: ["/api/stores/me"] });
+    },
+    [queryClient],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -126,7 +148,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     writeShim(null);
-  }, []);
+    // Drop the cached store list so the next user doesn't briefly see
+    // the previous user's stores.
+    queryClient.removeQueries({ queryKey: ["/api/stores/me"] });
+  }, [queryClient]);
 
   useEffect(() => {
     void refresh();
@@ -139,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         isAuthenticated: !!user,
         refresh,
+        applyUser,
         logout,
       }}
     >
