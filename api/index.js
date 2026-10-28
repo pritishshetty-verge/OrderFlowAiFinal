@@ -6318,7 +6318,7 @@ async function sendInvitationEmail(params) {
   const { client, fromEmail } = await getUncachableResendClient();
   const envBase = typeof process.env.APP_BASE_URL === "string" ? process.env.APP_BASE_URL.trim() : "";
   const isUsableEnvBase = envBase.length > 0 && !/placeholder/i.test(envBase);
-  const baseUrl = isUsableEnvBase ? envBase : process.env.NODE_ENV === "production" ? "https://www.orderflow.sbs" : "http://localhost:5001";
+  const baseUrl = isUsableEnvBase ? envBase : process.env.NODE_ENV === "production" ? "https://orderflowapp.in" : "http://localhost:5001";
   const cleanBase = baseUrl.replace(/\/+$/, "");
   const inviteUrl = `${cleanBase}/signup?token=${params.inviteToken}`;
   const expiryDate = new Date(params.expiresAt).toLocaleDateString("en-US", {
@@ -6445,7 +6445,7 @@ async function sendReconDigestEmail(params) {
   const { client, fromEmail } = await getUncachableResendClient();
   const envBase = typeof process.env.APP_BASE_URL === "string" ? process.env.APP_BASE_URL.trim() : "";
   const isUsableEnvBase = envBase.length > 0 && !/placeholder/i.test(envBase);
-  const baseUrl = isUsableEnvBase ? envBase : process.env.NODE_ENV === "production" ? "https://www.orderflow.sbs" : "http://localhost:5001";
+  const baseUrl = isUsableEnvBase ? envBase : process.env.NODE_ENV === "production" ? "https://orderflowapp.in" : "http://localhost:5001";
   const cleanBase = baseUrl.replace(/\/+$/, "");
   const dashboardUrl = `${cleanBase}/reconciliation`;
   const isTrouble = params.totalFlagged > 0;

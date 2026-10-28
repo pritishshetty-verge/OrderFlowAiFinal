@@ -4632,7 +4632,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // (application/x-www-form-urlencoded) carrying the signed transaction
   // result. Shopify storefront pages only answer GET, so PayU must not POST
   // straight at glowandme.in (that 404s). Instead the storefront sets
-  // surl=furl=https://www.orderflow.sbs/api/public/returns/payu-callback; this
+  // surl=furl=https://orderflowapp.in/api/public/returns/payu-callback; this
   // endpoint verifies the reverse hash, advances the RMA (idempotently — the
   // S2S webhook above is the authoritative backstop), then 303-redirects the
   // browser (forcing a GET) to the Shopify returns page with a status flag.

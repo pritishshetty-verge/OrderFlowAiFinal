@@ -91,7 +91,7 @@ export async function sendInvitationEmail(params: {
 
   // Resolve the base URL the invite link points at. Priority:
   //   1. process.env.APP_BASE_URL  — set on Vercel for prod / preview.
-  //   2. https://www.orderflow.sbs — official production domain. This
+  //   2. https://orderflowapp.in — official production domain. This
   //      is a hard-coded safety net against the env var being wrong
   //      (which is exactly what got us here: Vercel had APP_BASE_URL=
   //      'https://placeholder.vercel.app' from initial setup, so every
@@ -110,7 +110,7 @@ export async function sendInvitationEmail(params: {
   const baseUrl = isUsableEnvBase
     ? envBase
     : process.env.NODE_ENV === "production"
-      ? "https://www.orderflow.sbs"
+      ? "https://orderflowapp.in"
       : "http://localhost:5001";
   // Strip a trailing slash so the join below never produces a double-slash.
   const cleanBase = baseUrl.replace(/\/+$/, "");
@@ -303,7 +303,7 @@ export async function sendReconDigestEmail(params: {
   const baseUrl = isUsableEnvBase
     ? envBase
     : process.env.NODE_ENV === "production"
-      ? "https://www.orderflow.sbs"
+      ? "https://orderflowapp.in"
       : "http://localhost:5001";
   const cleanBase = baseUrl.replace(/\/+$/, "");
   const dashboardUrl = `${cleanBase}/reconciliation`;
