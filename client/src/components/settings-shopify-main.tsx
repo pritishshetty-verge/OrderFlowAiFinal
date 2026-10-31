@@ -27,6 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -375,14 +376,6 @@ export function ShopifyConnectionCard() {
   const activeStoreDisplayName =
     activeStore?.storeName?.trim() || activeStore?.storeUrl || "";
 
-  // Description copy: while loading we hold the neutral text so the
-  // card doesn't flash "not configured" during initial hydration.
-  const cardDescription = storesLoading
-    ? "Loading store…"
-    : isConnected
-      ? `Connected to: ${activeStoreDisplayName}`
-      : "Manage your Shopify store integration";
-
   // ── Real-time sync (webhook) health for the active store ────────────
   // Scoped to the active store via the X-Active-Store-Id header that
   // apiRequest attaches. Surfaces whether Shopify is wired to push live
@@ -458,65 +451,83 @@ export function ShopifyConnectionCard() {
 
   return (
     <div className="space-y-6">
-      <SettingsCard
-        iconImg="https://cdn.shopify.com/s/files/1/0741/0594/6252/files/Shopify-logo.png?v=1765021115"
-        title="Shopify Connection"
-        description={cardDescription}
-        testId="card-connection-status"
-        action={
-          <StatusBadge 
-            status={isConnected ? "connected" : "disconnected"} 
-          />
-        }
-      >
-        {!isConnected ? (
-          <div className="space-y-4">
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                Your Shopify store is not configured yet. Follow our setup guide to get started.
-              </AlertDescription>
-            </Alert>
-            <Link href="/integrations">
-              <Button className="gap-2" data-testid="button-setup-guide">
-                Connect a Store
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <p className="text-sm text-muted-foreground">Active store</p>
-                <p
-                  className="text-sm font-medium truncate"
-                  title={activeStoreDisplayName}
-                  data-testid="active-store-name"
-                >
-                  {activeStoreDisplayName || "—"}
-                </p>
-                {activeStore?.storeUrl && (
-                  <p
-                    className="text-xs text-muted-foreground truncate"
-                    title={activeStore.storeUrl}
-                    data-testid="active-store-url"
-                  >
-                    {activeStore.storeUrl}
-                  </p>
-                )}
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Orders</p>
-                <p
-                  className="text-sm font-medium"
-                  data-testid="active-store-order-total"
-                >
-                  {(recentOrderData?.total ?? 0).toLocaleString()}
-                </p>
-              </div>
+      {/* Header — matches the other integration manage views: a plain
+          title + status badge. No duplicate icon/title; the slide-over
+          already shows the Shopify header above this. */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">
+            {isConnected ? "Active configuration" : "Connect Shopify"}
+          </h3>
+          {isConnected && (
+            <Badge
+              variant="outline"
+              className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 gap-1.5"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Connected
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {isConnected
+            ? "Orders sync in real time via webhooks. Run a manual sync to fill any gaps."
+            : "Your Shopify store isn't connected yet. Add it from the catalog to start syncing."}
+        </p>
+      </div>
+
+      {!isConnected ? (
+        <div className="space-y-4">
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Your Shopify store is not configured yet. Follow our setup guide to get started.
+            </AlertDescription>
+          </Alert>
+          <Link href="/integrations">
+            <Button className="gap-2" data-testid="button-setup-guide">
+              Connect a Store
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Link>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Store facts — divide-y list, consistent with the other cards. */}
+          <div className="rounded-lg border divide-y">
+            <div className="flex items-center justify-between gap-3 p-3">
+              <span className="text-xs text-muted-foreground">Active store</span>
+              <span
+                className="text-sm font-medium truncate text-right"
+                title={activeStoreDisplayName}
+                data-testid="active-store-name"
+              >
+                {activeStoreDisplayName || "—"}
+              </span>
             </div>
-            <div className="space-y-1.5">
+            {activeStore?.storeUrl && (
+              <div className="flex items-center justify-between gap-3 p-3">
+                <span className="text-xs text-muted-foreground">Store URL</span>
+                <span
+                  className="text-sm font-medium truncate text-right"
+                  title={activeStore.storeUrl}
+                  data-testid="active-store-url"
+                >
+                  {activeStore.storeUrl}
+                </span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 p-3">
+              <span className="text-xs text-muted-foreground">Total orders</span>
+              <span
+                className="text-sm font-medium"
+                data-testid="active-store-order-total"
+              >
+                {(recentOrderData?.total ?? 0).toLocaleString()}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-1.5">
               {/* Split button: the main action syncs the selected range;
                   the chevron picks a different window. The backend's
                   storeScope middleware reads the X-Active-Store-Id header
@@ -577,7 +588,7 @@ export function ShopifyConnectionCard() {
             {/* Real-time sync (webhooks) — status + one-click repair, so
                 admins never need the old buried setup page. */}
             <div
-              className="rounded-lg border bg-muted/30 p-4 space-y-3"
+              className="rounded-lg border p-3 space-y-3"
               data-testid="webhook-status"
             >
               <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -655,7 +666,7 @@ export function ShopifyConnectionCard() {
                 until the user clicks Sync Now again. */}
             {syncProgress && (
               <div
-                className="rounded-lg border bg-muted/30 p-4 space-y-3"
+                className="rounded-lg border p-3 space-y-3"
                 data-testid="sync-progress"
               >
                 <div className="flex items-center gap-2">
@@ -747,29 +758,22 @@ export function ShopifyConnectionCard() {
               </Alert>
             )}
 
-            {/* Soft disconnect: deactivates the store (keeps order history,
-                reversible by re-adding the same store). */}
-            <div className="flex items-center justify-between rounded-md border border-destructive/30 px-3 py-2.5">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Disconnect this store</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Stops syncing and removes it from the switcher. Order history is
-                  kept; re-add the store to reconnect.
-                </p>
-              </div>
+            {/* Disconnect — simple actions row, matching the other cards.
+                Soft-disconnect keeps order history; re-adding the store
+                reconnects it. */}
+            <div className="flex items-center justify-end pt-1">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button
                     variant="outline"
-                    size="sm"
-                    className="border-destructive/40 text-destructive hover:bg-destructive/10 flex-shrink-0"
+                    className="text-destructive hover:text-destructive gap-2"
                     disabled={!activeStore || disconnectMutation.isPending}
                     data-testid="button-disconnect-store"
                   >
                     {disconnectMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Unplug className="h-4 w-4 mr-1.5" />
+                      <Unplug className="h-4 w-4" />
                     )}
                     Disconnect
                   </Button>
@@ -800,7 +804,6 @@ export function ShopifyConnectionCard() {
             </div>
           </div>
         )}
-      </SettingsCard>
     </div>
   );
 }
