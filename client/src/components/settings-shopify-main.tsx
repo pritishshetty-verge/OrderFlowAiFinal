@@ -20,7 +20,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
-import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, ImageIcon, Unplug } from "lucide-react";
+import { RefreshCw, CheckCircle, Activity, ArrowRight, AlertCircle, Phone, Loader2, Package, Settings, CreditCard, ArrowLeftRight, Save, Download, ImageIcon, Unplug, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { formatDistanceToNow } from "date-fns";
 
 interface SyncResult {
@@ -231,7 +237,10 @@ export function ShopifyConnectionCard() {
 
   // Manual sync mutation
   const syncMutation = useMutation({
-    mutationFn: async () => {
+    // opts picks the look-back window: { daysBack } for "last N days", or
+    // { allHistory: true } for a full re-scan. Threaded into the first
+    // chunk; later chunks reuse the server-pinned window.
+    mutationFn: async (opts: { daysBack?: number; allHistory?: boolean }) => {
       // Kick off polling immediately so the UI shows activity even during
       // the first page fetch (which can take a few seconds).
       startPolling();
@@ -251,7 +260,16 @@ export function ShopifyConnectionCard() {
       for (let i = 0; i < 200; i++) {
         const body: Record<string, unknown> = { limit: 250 };
         if (sinceId) body.sinceId = sinceId;
-        if (updatedAtMin) body.updatedAtMin = updatedAtMin;
+        if (opts.allHistory) {
+          body.allHistory = true;
+        } else if (updatedAtMin) {
+          // Later chunks reuse the exact window opened by the first call.
+          body.updatedAtMin = updatedAtMin;
+        } else if (opts.daysBack) {
+          // First call opens the window; server returns the resolved
+          // updatedAtMin which we pin for the rest of the loop.
+          body.daysBack = opts.daysBack;
+        }
 
         const response = await apiRequest("POST", "/api/shopify/sync", body);
         const data = await response.json();
@@ -262,7 +280,7 @@ export function ShopifyConnectionCard() {
         pagesFetched += data.pagesFetched ?? 0;
         // Pin the window after the first call so later chunks scan the
         // exact same range rather than a window that drifts with time.
-        updatedAtMin = data.updatedAtMin ?? updatedAtMin;
+        if (!opts.allHistory) updatedAtMin = data.updatedAtMin ?? updatedAtMin;
 
         if (!data.hasMore || !data.nextSinceId) break;
         // Guard against a stuck cursor (shouldn't happen) so we never loop
@@ -305,9 +323,23 @@ export function ShopifyConnectionCard() {
     },
   });
 
-  const handleSync = () => {
-    syncMutation.mutate();
+  // Look-back windows for the sync. The dropdown lets the admin scan only
+  // as far back as needed (e.g. a known 7-day outage) instead of the whole
+  // window — less work, same result.
+  const SYNC_RANGES: { label: string; days?: number; all?: boolean }[] = [
+    { label: "Last 7 days", days: 7 },
+    { label: "Last 10 days", days: 10 },
+    { label: "Last 30 days", days: 30 },
+    { label: "Last 90 days", days: 90 },
+    { label: "All time", all: true },
+  ];
+  const [syncRange, setSyncRange] = useState(SYNC_RANGES[0]);
+
+  const runSync = (range: (typeof SYNC_RANGES)[number]) => {
+    setSyncRange(range);
+    syncMutation.mutate(range.all ? { allHistory: true } : { daysBack: range.days });
   };
+  const handleSync = () => runSync(syncRange);
 
   // Display name for the active store. Mirrors the StoreSwitcher
   // logic (storeName takes precedence, falls back to the URL when
@@ -485,31 +517,57 @@ export function ShopifyConnectionCard() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Button
-                onClick={handleSync}
-                disabled={syncMutation.isPending || syncProgress?.isRunning === true}
-                data-testid="button-sync-orders"
-                className="gap-2"
-              >
-                {syncMutation.isPending || syncProgress?.isRunning ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    Syncing…
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    {/* The backend's Phase 2 storeScope middleware reads the
-                        X-Active-Store-Id header attached by lib/queryClient.ts,
-                        so this button always syncs the store named in its
-                        label — the UI contract matches the server request. */}
-                    Sync orders
-                  </>
-                )}
-              </Button>
+              {/* Split button: the main action syncs the selected range;
+                  the chevron picks a different window. The backend's
+                  storeScope middleware reads the X-Active-Store-Id header
+                  attached by lib/queryClient.ts, so this always syncs the
+                  store named above. */}
+              <div className="inline-flex">
+                <Button
+                  onClick={handleSync}
+                  disabled={syncMutation.isPending || syncProgress?.isRunning === true}
+                  data-testid="button-sync-orders"
+                  className="gap-2 rounded-r-none"
+                >
+                  {syncMutation.isPending || syncProgress?.isRunning ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Syncing…
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4" />
+                      Sync · {syncRange.label.toLowerCase()}
+                    </>
+                  )}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      disabled={syncMutation.isPending || syncProgress?.isRunning === true}
+                      className="rounded-l-none border-l border-primary-foreground/20 px-2"
+                      aria-label="Choose sync range"
+                      data-testid="button-sync-range"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {SYNC_RANGES.map((r) => (
+                      <DropdownMenuItem
+                        key={r.label}
+                        onClick={() => runSync(r)}
+                        data-testid={`sync-range-${r.days ?? "all"}`}
+                      >
+                        {r.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               <p className="text-xs text-muted-foreground">
-                Catches up this store's orders from the last 90 days and
-                fills any gaps missed by webhooks.
+                Fills any order gaps missed by webhooks. Use the dropdown to
+                choose how far back to scan.
                 {hasMultipleStores
                   ? " Switch stores from the top-left sidebar."
                   : ""}
