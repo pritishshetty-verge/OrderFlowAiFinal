@@ -235,10 +235,49 @@ export function ShopifyConnectionCard() {
       // Kick off polling immediately so the UI shows activity even during
       // the first page fetch (which can take a few seconds).
       startPolling();
-      const response = await apiRequest("POST", "/api/shopify/sync", {
-        limit: 250,
-      });
-      return response.json();
+
+      // Chunked resume loop. The server processes a bounded batch per call
+      // (so each request finishes inside the serverless time limit) and
+      // returns { hasMore, nextSinceId, updatedAtMin }. We keep calling,
+      // carrying the cursor + window forward, until the window is fully
+      // scanned — accumulating the totals for the final toast.
+      let sinceId: string | undefined;
+      let updatedAtMin: string | undefined;
+      let syncedCount = 0;
+      let skippedCount = 0;
+      let failedCount = 0;
+      let pagesFetched = 0;
+
+      for (let i = 0; i < 200; i++) {
+        const body: Record<string, unknown> = { limit: 250 };
+        if (sinceId) body.sinceId = sinceId;
+        if (updatedAtMin) body.updatedAtMin = updatedAtMin;
+
+        const response = await apiRequest("POST", "/api/shopify/sync", body);
+        const data = await response.json();
+
+        syncedCount += data.syncedCount ?? 0;
+        skippedCount += data.skippedCount ?? 0;
+        failedCount += data.failedCount ?? 0;
+        pagesFetched += data.pagesFetched ?? 0;
+        // Pin the window after the first call so later chunks scan the
+        // exact same range rather than a window that drifts with time.
+        updatedAtMin = data.updatedAtMin ?? updatedAtMin;
+
+        if (!data.hasMore || !data.nextSinceId) break;
+        // Guard against a stuck cursor (shouldn't happen) so we never loop
+        // forever.
+        if (data.nextSinceId === sinceId) break;
+        sinceId = data.nextSinceId as string;
+      }
+
+      return {
+        syncedCount,
+        skippedCount,
+        failedCount,
+        pagesFetched,
+        totalOrders: syncedCount + skippedCount,
+      };
     },
     onSuccess: (data) => {
       setSyncResult(data);
