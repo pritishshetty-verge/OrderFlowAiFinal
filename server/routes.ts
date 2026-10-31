@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "node:crypto";
-import { generatePayuHash, verifyPayuHash, getPayuKey, RETURN_FEE_AMOUNT } from "./services/payu";
+import { generatePayuHash, verifyPayuHash, getPayuKey, invalidatePayuCreds, RETURN_FEE_AMOUNT } from "./services/payu";
 import { canManuallySetStatus, canSchedulePickup, shouldWebhookAdvance } from "./logic/returnGuards";
 import { normalizeOrderNumber, normalizeAwb, findVerifiedOrder } from "./logic/publicOrderLookup";
 import { perIpLimiter, wrongContactLimiter, wrongContactKey, clientIp } from "./logic/publicRateLimit";
@@ -2815,6 +2815,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================================================
+  // PAYU CONFIG (per-store hosted-checkout credentials)
+  // ============================================================================
+
+  // GET /api/payu/config — report whether PayU is configured for the
+  // active store (own saved creds, or the env fallback), plus the
+  // endpoint URLs the merchant must wire into their PayU dashboard /
+  // storefront. Never returns the key or salt.
+  app.get("/api/payu/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+      const [row] = await db
+        .select({
+          payuMerchantKey: stores.payuMerchantKey,
+          payuMerchantSalt: stores.payuMerchantSalt,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!row) {
+        return res.status(404).json({ error: "Store not found" });
+      }
+      const hasStoreCreds = !!(row.payuMerchantKey && row.payuMerchantSalt);
+      const hasEnvFallback = !!(
+        process.env.PAYU_MERCHANT_KEY && process.env.PAYU_MERCHANT_SALT
+      );
+      const appUrl = (process.env.APP_URL || "").replace(/\/+$/, "");
+      res.json({
+        // "Connected" means THIS store has its own saved credentials.
+        hasCredentials: hasStoreCreds,
+        // Whether the global env fallback would cover this store anyway.
+        usingEnvFallback: !hasStoreCreds && hasEnvFallback,
+        // Non-secret URLs to paste into PayU + the storefront.
+        callbackUrl: appUrl ? `${appUrl}/api/public/returns/payu-callback` : null,
+        webhookUrl: appUrl ? `${appUrl}/api/public/webhooks/payu` : null,
+        returnFeeAmount: RETURN_FEE_AMOUNT,
+      });
+    } catch (err) {
+      console.error("Error in GET /api/payu/config:", err);
+      res.status(500).json({ error: errorMessage(err) || "Failed to read PayU config" });
+    }
+  });
+
+  // PUT /api/payu/config — securely save/update per-store PayU
+  // credentials. Both key and salt are encrypted at rest. Each field is
+  // only replaced when a non-empty value is sent, so the UI can rotate
+  // one without re-sending the other.
+  app.put("/api/payu/config", async (req, res) => {
+    try {
+      const storeId = req.storeScope?.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store scope required" });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      if (!existing) {
+        return res.status(404).json({ error: "Store not found." });
+      }
+
+      const patch: {
+        payuMerchantKey?: string;
+        payuMerchantSalt?: string;
+        updatedAt?: Date;
+      } = {};
+
+      const { merchantKey, merchantSalt } = req.body ?? {};
+
+      if (typeof merchantKey === "string" && merchantKey.trim().length > 0) {
+        patch.payuMerchantKey = encrypt(merchantKey.trim());
+      }
+      if (typeof merchantSalt === "string" && merchantSalt.trim().length > 0) {
+        patch.payuMerchantSalt = encrypt(merchantSalt.trim());
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({
+          error: "Nothing to update. Provide merchantKey and/or merchantSalt.",
+        });
+      }
+      patch.updatedAt = new Date();
+
+      await db.update(stores).set(patch).where(eq(stores.id, storeId));
+
+      // Bust the cached creds so the next hash uses the new values.
+      invalidatePayuCreds(storeId);
+
+      const [updated] = await db
+        .select({
+          payuMerchantKey: stores.payuMerchantKey,
+          payuMerchantSalt: stores.payuMerchantSalt,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+
+      res.json({
+        hasCredentials: !!(updated?.payuMerchantKey && updated?.payuMerchantSalt),
+      });
+    } catch (err) {
+      console.error("Error in PUT /api/payu/config:", err);
+      res.status(500).json({ error: errorMessage(err) || "Failed to update PayU config" });
+    }
+  });
+
+  // ============================================================================
   // DELETE endpoints — "Disconnect" an integration for the active store.
   //
   // Each nulls out that integration's per-store credentials on the `stores`
@@ -2894,6 +3005,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("Error in DELETE /api/resend/config:", err);
       res.status(500).json({ error: errorMessage(err) || "Failed to disconnect Resend" });
+    }
+  });
+
+  app.delete("/api/payu/config", async (req, res) => {
+    try {
+      const guard = await requireAdminForDisconnect(req, res);
+      if (!guard) return;
+      await db
+        .update(stores)
+        .set({ payuMerchantKey: null, payuMerchantSalt: null, updatedAt: new Date() })
+        .where(eq(stores.id, guard.storeId));
+      invalidatePayuCreds(guard.storeId);
+      res.json({ hasCredentials: false });
+    } catch (err) {
+      console.error("Error in DELETE /api/payu/config:", err);
+      res.status(500).json({ error: errorMessage(err) || "Failed to disconnect PayU" });
     }
   });
 
@@ -4541,9 +4668,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const productinfo = `Return fee ${created.rmaNumber}`;
         const firstname = (order.customerName || "Customer").split(" ")[0];
         const email = order.customerEmail || "";
-        const hash = generatePayuHash(txnid, amount, productinfo, firstname, email);
+        const hash = await generatePayuHash(storeId, txnid, amount, productinfo, firstname, email);
         payu = {
-          key: getPayuKey(),
+          key: await getPayuKey(storeId),
           txnid,
           amount,
           productinfo,
@@ -4581,8 +4708,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const payload = (req.body ?? {}) as Record<string, any>;
         const { txnid, status, mihpayid } = payload;
 
+        // Resolve the store from the txnid (= rmaNumber, not secret) so we
+        // verify against THAT store's PayU salt. Falls back to the env
+        // salt inside verifyPayuHash when the RMA can't be found.
+        const ret = txnid
+          ? await storage.getReturnByRmaNumber(String(txnid))
+          : undefined;
+
         // Authenticate the callback via PayU's reverse hash.
-        if (!verifyPayuHash(payload)) {
+        if (!(await verifyPayuHash(ret?.storeId ?? undefined, payload))) {
           console.warn(
             `[payu-webhook] invalid hash for txnid=${txnid ?? "?"}`,
           );
@@ -4597,8 +4731,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(200).json({ received: true, verified: true });
         }
 
-        // txnid is the rmaNumber we generated at create time.
-        const ret = await storage.getReturnByRmaNumber(String(txnid));
         if (!ret) {
           console.warn(`[payu-webhook] no return for txnid=${txnid}`);
           return res.status(200).json({ received: true, found: false });
@@ -4647,9 +4779,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const payload = (req.body ?? {}) as Record<string, any>;
       const { txnid, status, mihpayid } = payload;
       try {
+        // Resolve the store from the txnid (= rmaNumber) so the reverse
+        // hash is checked against that store's PayU salt; env-salt fallback
+        // applies inside verifyPayuHash when the RMA can't be found.
+        const ret = txnid
+          ? await storage.getReturnByRmaNumber(String(txnid))
+          : undefined;
+
         // 1. Authenticate via PayU's reverse hash. A forged/tampered response
         //    (e.g. a customer trying to fake success) fails here.
-        if (!verifyPayuHash(payload)) {
+        if (!(await verifyPayuHash(ret?.storeId ?? undefined, payload))) {
           console.warn(`[payu-callback] invalid hash for txnid=${txnid ?? "?"} — redirecting to failed`);
           return res.redirect(303, payuFailedRedirect);
         }
@@ -4663,7 +4802,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // 3. Idempotent advance — same sanctioned path out of PENDING_FEE as the
         //    S2S webhook (server/logic/returnGuards.ts). Safe if the webhook
         //    already fired (shouldWebhookAdvance is then false).
-        const ret = await storage.getReturnByRmaNumber(String(txnid));
         if (!ret) {
           // Payment is real (hash verified) but we can't find the RMA. The money
           // was taken, so still land the customer on success; log loudly.

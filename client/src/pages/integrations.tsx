@@ -9,6 +9,8 @@ import {
   Loader2,
   ChevronLeft,
   Check,
+  Copy,
+  CreditCard,
   Unplug,
   type LucideIcon,
 } from "lucide-react";
@@ -70,6 +72,7 @@ type IntegrationStatus = "connected" | "available" | "coming_soon";
 type IntegrationCategory =
   | "E-commerce"
   | "Logistics"
+  | "Payments"
   | "Marketing"
   | "Communication";
 
@@ -144,6 +147,19 @@ const INTEGRATIONS: Integration[] = [
     icon: Package,
     iconBg: "bg-purple-500/10",
     iconFg: "text-purple-600 dark:text-purple-400",
+  },
+  // Payments
+  {
+    id: "payu",
+    name: "PayU",
+    domain: "payu.in",
+    category: "Payments",
+    description: "Collect return fees and reconcile payment-gateway settlements",
+    status: "connected",
+    iconImg: "/integrations/payu.png",
+    icon: CreditCard,
+    iconBg: "bg-lime-500/10",
+    iconFg: "text-lime-600 dark:text-lime-400",
   },
   // Marketing
   {
@@ -237,6 +253,7 @@ const INTEGRATIONS: Integration[] = [
 const CATEGORY_ORDER: IntegrationCategory[] = [
   "E-commerce",
   "Logistics",
+  "Payments",
   "Marketing",
   "Communication",
 ];
@@ -544,6 +561,13 @@ export default function IntegrationsPage() {
     if (activeIntegration.id === "resend") {
       return (
         <ResendConnectionCard
+          onClose={() => setActiveIntegration(null)}
+        />
+      );
+    }
+    if (activeIntegration.id === "payu") {
+      return (
+        <PayUConnectionCard
           onClose={() => setActiveIntegration(null)}
         />
       );
@@ -1832,6 +1856,346 @@ function ResendConnectionCard({ onClose }: ResendConnectionCardProps) {
               disabled={!canSave}
               className="gap-2"
               data-testid="button-resend-save-config"
+            >
+              {saveMutation.isPending && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              {saveMutation.isPending ? "Saving…" : "Save Configuration"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PayU connection card.
+//
+// PayU is the payment gateway behind two flows: the ₹150 return-fee
+// hosted checkout (which signs request/response hashes with the merchant
+// key + salt) and payment-gateway fee reconciliation (CSV-based, no API
+// creds needed). This card manages the per-store key + salt (encrypted
+// at rest) and surfaces the two endpoint URLs the merchant must paste
+// into their PayU dashboard + storefront. Mirrors ResendConnectionCard.
+// ─────────────────────────────────────────────────────────────────────
+type PayUConfigResponse = {
+  hasCredentials: boolean;
+  usingEnvFallback: boolean;
+  callbackUrl: string | null;
+  webhookUrl: string | null;
+  returnFeeAmount: string;
+};
+
+interface PayUConnectionCardProps {
+  onClose: () => void;
+}
+
+// Read-only URL row with a one-click copy button. Used for the PayU
+// endpoints the merchant wires into their dashboard / storefront.
+function CopyableUrl({ label, value }: { label: string; value: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast({
+        title: "Couldn't copy",
+        description: "Select the URL and copy it manually.",
+        variant: "destructive",
+      });
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 truncate rounded-md border bg-muted px-2 py-1.5 text-xs">
+          {value}
+        </code>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          onClick={copy}
+          aria-label={`Copy ${label}`}
+        >
+          {copied ? (
+            <Check className="h-4 w-4 text-green-600" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
+  const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [keyInput, setKeyInput] = useState("");
+  const [saltInput, setSaltInput] = useState("");
+  const [didBootstrap, setDidBootstrap] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  const configQuery = useQuery<PayUConfigResponse>({
+    queryKey: ["/api/payu/config", activeStoreId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/payu/config");
+      return (await res.json()) as PayUConfigResponse;
+    },
+    enabled: !!activeStoreId,
+  });
+
+  const hasCredentials = !!configQuery.data?.hasCredentials;
+  const usingEnvFallback = !!configQuery.data?.usingEnvFallback;
+  // PayU "works" if this store has its own creds OR the global env
+  // fallback is active. Only drop straight to the setup form when
+  // neither is true.
+  const configured = hasCredentials || usingEnvFallback;
+
+  // Secrets are never returned, so both fields start blank. Default to
+  // the Manage view once anything is configured.
+  useEffect(() => {
+    if (didBootstrap) return;
+    if (configQuery.data) {
+      setIsEditing(!configured);
+      setDidBootstrap(true);
+    }
+  }, [configQuery.data, didBootstrap, configured]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      // Only send a field when the user typed a new value — blank leaves
+      // the stored secret untouched (PUT route honours this).
+      const body: { merchantKey?: string; merchantSalt?: string } = {};
+      if (keyInput.trim().length > 0) body.merchantKey = keyInput.trim();
+      if (saltInput.trim().length > 0) body.merchantSalt = saltInput.trim();
+      const res = await apiRequest("PUT", "/api/payu/config", body);
+      return (await res.json()) as PayUConfigResponse;
+    },
+    onSuccess: () => {
+      toast({
+        title: "PayU configuration saved",
+        description: "Your merchant credentials are securely stored for this store.",
+      });
+      setKeyInput("");
+      setSaltInput("");
+      queryClient.invalidateQueries({
+        queryKey: ["/api/payu/config", activeStoreId],
+      });
+      setIsEditing(false);
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not save configuration",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  if (!activeStoreId) {
+    return (
+      <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground text-center">
+        Select an active store to configure PayU.
+      </div>
+    );
+  }
+
+  if (configQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  const callbackUrl = configQuery.data?.callbackUrl ?? null;
+  const webhookUrl = configQuery.data?.webhookUrl ?? null;
+
+  // First-time setup needs both fields; an edit can rotate just one.
+  const canSave =
+    !saveMutation.isPending &&
+    (hasCredentials
+      ? keyInput.trim().length > 0 || saltInput.trim().length > 0
+      : keyInput.trim().length > 0 && saltInput.trim().length > 0);
+
+  const isManageView = !isEditing && configured;
+
+  const handleCancelEdit = () => {
+    setKeyInput("");
+    setSaltInput("");
+    setIsEditing(false);
+  };
+
+  // The endpoint URLs the merchant must configure in PayU. Shown in both
+  // views so they're always a copy away.
+  const endpointsBlock =
+    callbackUrl && webhookUrl ? (
+      <div className="space-y-3 rounded-lg border p-3">
+        <div className="space-y-0.5">
+          <p className="text-xs font-medium">Endpoints to configure in PayU</p>
+          <p className="text-xs text-muted-foreground">
+            Set both the success and failure URLs (surl / furl) in your
+            storefront to the callback URL, and the server-to-server webhook
+            in your PayU dashboard to the webhook URL.
+          </p>
+        </div>
+        <CopyableUrl label="Success / Failure URL (surl / furl)" value={callbackUrl} />
+        <CopyableUrl label="Server-to-server webhook URL" value={webhookUrl} />
+      </div>
+    ) : (
+      <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+        Endpoint URLs will appear here once <code>APP_URL</code> is set on the
+        server.
+      </div>
+    );
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">
+            {isManageView ? "Active configuration" : "PayU Configuration"}
+          </h3>
+          {hasCredentials ? (
+            <Badge
+              variant="outline"
+              className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 gap-1.5"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+              Connected
+            </Badge>
+          ) : usingEnvFallback ? (
+            <Badge
+              variant="outline"
+              className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
+            >
+              Shared credentials
+            </Badge>
+          ) : null}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {isManageView
+            ? "PayU powers the return-fee checkout and payment-gateway fee reconciliation for this store."
+            : "Connect PayU to collect return fees and reconcile gateway settlements. Credentials are stored encrypted and scoped to this store."}
+        </p>
+      </div>
+
+      {isManageView ? (
+        // ── Manage view ─────────────────────────────────────────────
+        <div className="space-y-4">
+          <div className="rounded-lg border divide-y">
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">Merchant key</span>
+              <span className="text-sm font-medium tracking-widest">
+                {hasCredentials ? "••••••••••••" : "Shared (env)"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">Merchant salt</span>
+              <span className="text-sm font-medium tracking-widest">
+                {hasCredentials ? "••••••••••••" : "Shared (env)"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between p-3">
+              <span className="text-xs text-muted-foreground">Return fee</span>
+              <span className="text-sm font-medium">
+                ₹{configQuery.data?.returnFeeAmount ?? "150.00"}
+              </span>
+            </div>
+          </div>
+
+          {usingEnvFallback && !hasCredentials && (
+            <p className="text-xs text-muted-foreground">
+              This store is using the shared PayU credentials configured on the
+              server. Add store-specific credentials below to run this brand on
+              its own PayU merchant account (recommended for fee reconciliation).
+            </p>
+          )}
+
+          {endpointsBlock}
+
+          <div className="flex items-center justify-between gap-2">
+            {hasCredentials ? (
+              <IntegrationDisconnectButton
+                name="PayU"
+                endpoint="/api/payu/config"
+                queryKey={["/api/payu/config", activeStoreId]}
+              />
+            ) : (
+              <span />
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setIsEditing(true)}
+              data-testid="button-payu-edit-credentials"
+            >
+              {hasCredentials ? "Edit credentials" : "Add store credentials"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        // ── Setup / edit view ───────────────────────────────────────
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="payu-merchant-key">Merchant Key</Label>
+            <Input
+              id="payu-merchant-key"
+              type="text"
+              autoComplete="off"
+              placeholder={hasCredentials ? "••••••••••••" : "e.g. gtKFFx"}
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              data-testid="input-payu-merchant-key"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="payu-merchant-salt">Merchant Salt</Label>
+            <Input
+              id="payu-merchant-salt"
+              type="password"
+              autoComplete="off"
+              placeholder={hasCredentials ? "••••••••••••" : "Your PayU salt"}
+              value={saltInput}
+              onChange={(e) => setSaltInput(e.target.value)}
+              data-testid="input-payu-merchant-salt"
+            />
+            <p className="text-xs text-muted-foreground">
+              {hasCredentials
+                ? "Credentials are already saved. Leave a field blank to keep it, or enter a new value to replace it."
+                : "Find both under Dashboard → Settings → My Account → API keys in your PayU merchant dashboard. We store them encrypted and never show them again."}
+            </p>
+          </div>
+
+          {endpointsBlock}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t">
+            {configured && (
+              <Button
+                variant="outline"
+                onClick={handleCancelEdit}
+                disabled={saveMutation.isPending}
+                data-testid="button-payu-cancel-edit"
+              >
+                Cancel
+              </Button>
+            )}
+            <Button
+              onClick={() => saveMutation.mutate()}
+              disabled={!canSave}
+              className="gap-2"
+              data-testid="button-payu-save-config"
             >
               {saveMutation.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />
