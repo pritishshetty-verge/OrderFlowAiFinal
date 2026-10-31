@@ -4754,6 +4754,8 @@ var init_shopify = __esm({
         if (params?.status) queryParams.set("status", params.status);
         if (params?.limit) queryParams.set("limit", params.limit.toString());
         if (params?.sinceId) queryParams.set("since_id", params.sinceId);
+        if (params?.createdAtMin) queryParams.set("created_at_min", params.createdAtMin);
+        if (params?.updatedAtMin) queryParams.set("updated_at_min", params.updatedAtMin);
         const url = `${this.baseUrl}/orders.json?${queryParams.toString()}`;
         const response = await fetch(url, {
           method: "GET",
@@ -15628,15 +15630,11 @@ async function registerRoutes(app2) {
           error: "Active store scope is required to run a historical sync."
         });
       }
-      let sinceId;
-      if (req.body.sinceId) {
-        sinceId = String(req.body.sinceId);
-      } else {
-        const maxLocal = await storage.getMaxShopifyOrderId(syncStoreId);
-        sinceId = maxLocal ?? "0";
-      }
+      let sinceId = req.body.sinceId ? String(req.body.sinceId) : "0";
+      const daysBack = typeof req.body.daysBack === "number" && req.body.daysBack > 0 ? req.body.daysBack : 90;
+      const updatedAtMin = req.body.allHistory ? void 0 : req.body.updatedAtMin ? String(req.body.updatedAtMin) : new Date(Date.now() - daysBack * 24 * 60 * 60 * 1e3).toISOString();
       console.log(
-        `[shopify-sync] storeId=${syncStoreId} starting with sinceId=${sinceId}`
+        `[shopify-sync] storeId=${syncStoreId} starting sinceId=${sinceId} updatedAtMin=${updatedAtMin ?? "(all history)"}`
       );
       const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
       const { getShopifyClient: getShopifyClient2, updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
@@ -15741,7 +15739,8 @@ async function registerRoutes(app2) {
         const response = await client.fetchOrders({
           status: "any",
           limit: pageLimit,
-          sinceId
+          sinceId,
+          updatedAtMin
         });
         const orders2 = response.orders || [];
         pagesFetched++;
