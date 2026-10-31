@@ -469,7 +469,8 @@ export function ShopifyConnectionCard() {
                 )}
               </Button>
               <p className="text-xs text-muted-foreground">
-                Imports this store's full Shopify order history.
+                Catches up this store's orders from the last 90 days and
+                fills any gaps missed by webhooks.
                 {hasMultipleStores
                   ? " Switch stores from the top-left sidebar."
                   : ""}

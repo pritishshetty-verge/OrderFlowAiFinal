@@ -105,11 +105,19 @@ export class ShopifyClient {
     status?: string;
     limit?: number;
     sinceId?: string;
+    // ISO-8601 timestamps. Shopify REST allows these alongside
+    // `since_id` (unlike `page_info` cursor pagination), so we can page
+    // forward by id WITHIN a date window — used by the gap-recovery
+    // backfill to catch orders created while webhooks were down.
+    createdAtMin?: string;
+    updatedAtMin?: string;
   }): Promise<any> {
     const queryParams = new URLSearchParams();
     if (params?.status) queryParams.set("status", params.status);
     if (params?.limit) queryParams.set("limit", params.limit.toString());
     if (params?.sinceId) queryParams.set("since_id", params.sinceId);
+    if (params?.createdAtMin) queryParams.set("created_at_min", params.createdAtMin);
+    if (params?.updatedAtMin) queryParams.set("updated_at_min", params.updatedAtMin);
 
     const url = `${this.baseUrl}/orders.json?${queryParams.toString()}`;
     const response = await fetch(url, {

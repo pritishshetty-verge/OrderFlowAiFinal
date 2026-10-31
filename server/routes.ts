@@ -3160,22 +3160,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Smart resume: if the caller didn't pass an explicit cursor,
-      // pick up from the highest shopify_order_id already in our DB
-      // FOR THIS STORE. After Phase 5 (Risk #4) shopify_order_id is
-      // no longer globally unique — order ids are globally-monotone
-      // integers, so the legacy unscoped max was always OLB's, which
-      // made every new store's sync start past Shopify's latest id
-      // and return 0 orders. Per-store cursor closes the trap.
-      let sinceId: string;
-      if (req.body.sinceId) {
-        sinceId = String(req.body.sinceId);
-      } else {
-        const maxLocal = await storage.getMaxShopifyOrderId(syncStoreId);
-        sinceId = maxLocal ?? "0";
-      }
+      // ────────────────────────────────────────────────────────────────
+      // Cursor + recovery window.
+      //
+      // The previous default resumed from max(shopify_order_id) and paged
+      // FORWARD — which silently skips any order OLDER than our newest
+      // local one. That's exactly what broke after the domain outage:
+      // once post-fix orders arrived via webhook, max(id) jumped PAST the
+      // gap, so "Sync orders" fetched nothing (0 fetched → 0 synced, 0
+      // skipped) and the ~300–500 orders created while webhooks were down
+      // could never be recovered.
+      //
+      // Fix: page forward from id 0 (or an explicit cursor) WITHIN a date
+      // window (updated_at_min), so every order touched in the window is
+      // re-examined and any missing one is inserted — the batched dedup
+      // below skips everything already imported. The window keeps the
+      // scan bounded so it completes inside the serverless time limit.
+      //   • { daysBack }      — override the look-back (default 90 days)
+      //   • { updatedAtMin }  — explicit ISO window start
+      //   • { allHistory:true}— drop the window for a full re-scan
+      //   • { sinceId }       — resume a long backfill across calls
+      // ────────────────────────────────────────────────────────────────
+      let sinceId: string = req.body.sinceId ? String(req.body.sinceId) : "0";
+
+      const daysBack =
+        typeof req.body.daysBack === "number" && req.body.daysBack > 0
+          ? req.body.daysBack
+          : 90;
+      const updatedAtMin: string | undefined = req.body.allHistory
+        ? undefined
+        : req.body.updatedAtMin
+          ? String(req.body.updatedAtMin)
+          : new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
+
       console.log(
-        `[shopify-sync] storeId=${syncStoreId} starting with sinceId=${sinceId}`,
+        `[shopify-sync] storeId=${syncStoreId} starting sinceId=${sinceId} updatedAtMin=${updatedAtMin ?? "(all history)"}`,
       );
 
       // Safety cap: 500 pages × 250 = 125,000 orders. Prevents a runaway
@@ -3331,6 +3350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: "any",
           limit: pageLimit,
           sinceId,
+          updatedAtMin,
         });
 
         const orders = response.orders || [];
