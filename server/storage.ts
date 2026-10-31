@@ -3839,6 +3839,14 @@ export class DbStorage implements IStorage {
         e?.message ?? e,
       );
     }
+    // Per-store PayU credentials (Integrations → PayU). Both encrypted at
+    // rest; getPayuCreds(storeId) falls back to env vars when unset.
+    await db.execute(sql`
+      ALTER TABLE stores
+        ADD COLUMN IF NOT EXISTS payu_merchant_key TEXT`);
+    await db.execute(sql`
+      ALTER TABLE stores
+        ADD COLUMN IF NOT EXISTS payu_merchant_salt TEXT`);
   }
 
   async seedDefaultSettings(): Promise<void> {

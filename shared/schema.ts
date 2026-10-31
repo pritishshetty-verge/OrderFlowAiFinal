@@ -336,6 +336,14 @@ export const stores = pgTable("stores", {
   // encrypted via server/encryption.ts; from-email is stored plain.
   resendApiKey: text("resend_api_key"),
   resendFromEmail: text("resend_from_email"),
+  // Per-store PayU (hosted-checkout) credentials. Both the merchant key
+  // and salt are encrypted via server/encryption.ts — the salt signs the
+  // request/response hashes, so it's as sensitive as the key. Powers the
+  // ₹150 return-fee checkout; fee reconciliation is CSV-based and needs
+  // no API creds. getPayuCreds(storeId) reads these, falling back to the
+  // PAYU_MERCHANT_KEY / PAYU_MERCHANT_SALT env vars when unset.
+  payuMerchantKey: text("payu_merchant_key"),
+  payuMerchantSalt: text("payu_merchant_salt"),
   isActive: boolean("is_active").notNull().default(true),
   lastTestedAt: timestamp("last_tested_at"),
   testStatus: text("test_status"), // success | failed
