@@ -1108,24 +1108,17 @@ export function ProductCatalogSync() {
           <Skeleton className="h-4 w-1/2" />
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="text-sm text-muted-foreground">Products in Database</p>
-              <p className="text-sm font-medium">{syncStatus?.productCount || 0}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Last Synced</p>
-              <p className="text-sm font-medium">
-                {syncStatus?.lastSyncedAt 
-                  ? formatDistanceToNow(new Date(syncStatus.lastSyncedAt), { addSuffix: true })
-                  : "Never"
-                }
-              </p>
-            </div>
-          </div>
+        <div className="space-y-3">
+          {/* Count lives in the header badge, so here we only surface the
+              freshness as one compact line. */}
+          <p className="text-xs text-muted-foreground">
+            Last synced{" "}
+            {syncStatus?.lastSyncedAt
+              ? formatDistanceToNow(new Date(syncStatus.lastSyncedAt), { addSuffix: true })
+              : "never"}
+          </p>
 
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               onClick={() => syncMutation.mutate()}
               disabled={syncMutation.isPending}
@@ -1176,10 +1169,10 @@ export function ProductCatalogSync() {
                 </>
               )}
             </Button>
-            <p className="text-sm text-muted-foreground">
-              Sync imports product images; backfill patches old orders.
-            </p>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Sync imports product images; backfill patches old orders.
+          </p>
 
           {!syncStatus?.productCount && (
             <Alert>
@@ -1329,25 +1322,20 @@ export function PaymentMappingSettings() {
           <Skeleton className="h-4 w-1/2" />
         </div>
       ) : (
-        <div className="space-y-4">
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              Orders with payment methods marked as "Prepaid" will be auto-confirmed when their payment status is "paid". 
-              This prevents COD orders from polluting agent metrics when they are marked paid after delivery.
-            </AlertDescription>
-          </Alert>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Methods marked prepaid auto-confirm once payment status is "paid",
+            so COD orders marked paid after delivery don't skew agent metrics.
+          </p>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
-                <p className="text-sm font-medium">Detected on Store</p>
+                <p className="text-sm font-medium">Detected on store</p>
+                <span className="text-[11px] text-muted-foreground">· tap to mark prepaid</span>
               </div>
-              <p className="text-xs text-muted-foreground mb-2">
-                Click to move to Prepaid column
-              </p>
-              <div className="min-h-[100px] rounded-lg border border-dashed p-3 space-y-2">
+              <div className="min-h-[72px] rounded-lg border border-dashed p-2.5 space-y-2">
                 {unmappedMethods.length > 0 ? (
                   unmappedMethods.map((method) => (
                     <button
@@ -1369,15 +1357,13 @@ export function PaymentMappingSettings() {
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-green-600" />
-                <p className="text-sm font-medium">Treat as Prepaid</p>
+                <p className="text-sm font-medium">Treat as prepaid</p>
+                <span className="text-[11px] text-muted-foreground">· tap to remove</span>
               </div>
-              <p className="text-xs text-muted-foreground mb-2">
-                Click to remove from Prepaid
-              </p>
-              <div className="min-h-[100px] rounded-lg border border-green-500/30 bg-green-500/5 p-3 space-y-2">
+              <div className="min-h-[72px] rounded-lg border border-green-500/30 bg-green-500/5 p-2.5 space-y-2">
                 {prepaidMethods.length > 0 ? (
                   prepaidMethods.map((method) => (
                     <button
