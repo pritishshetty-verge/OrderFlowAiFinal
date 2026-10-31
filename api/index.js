@@ -15636,7 +15636,7 @@ async function registerRoutes(app2) {
       console.log(
         `[shopify-sync] storeId=${syncStoreId} starting sinceId=${sinceId} updatedAtMin=${updatedAtMin ?? "(all history)"}`
       );
-      const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
+      const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 12;
       const { getShopifyClient: getShopifyClient2, updateShopifyClient: updateShopifyClient2 } = await Promise.resolve().then(() => (init_shopify(), shopify_exports));
       const client = await getShopifyClient2(syncStoreId);
       void updateShopifyClient2().catch(() => {
@@ -15666,6 +15666,7 @@ async function registerRoutes(app2) {
       let totalFetched = 0;
       let pagesFetched = 0;
       let lastSinceId = sinceId;
+      let reachedEnd = false;
       const resolveImage = (variantId, productId) => {
         if (variantId != null) {
           const p = productByVariant.get(variantId.toString());
@@ -15750,7 +15751,10 @@ async function registerRoutes(app2) {
         console.log(
           `[shopify-sync] page ${pagesFetched}: fetched ${orders2.length} orders (sinceId=${sinceId})`
         );
-        if (orders2.length === 0) break;
+        if (orders2.length === 0) {
+          reachedEnd = true;
+          break;
+        }
         const pageShopifyIds = orders2.map((o) => o.id.toString());
         const alreadyImported = await storage.getExistingShopifyOrderIds(pageShopifyIds, syncStoreId);
         const newOrders = orders2.filter(
@@ -15953,9 +15957,13 @@ async function registerRoutes(app2) {
         sinceId = lastOrder.id.toString();
         lastSinceId = sinceId;
         shopifySyncState.lastSinceId = lastSinceId;
-        if (orders2.length < pageLimit) break;
+        if (orders2.length < pageLimit) {
+          reachedEnd = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
+      const hasMore = !reachedEnd;
       shopifySyncState.reachedMaxPages = pagesFetched >= maxPages;
       res.json({
         message: "Sync completed",
@@ -15965,7 +15973,11 @@ async function registerRoutes(app2) {
         totalFetched,
         pagesFetched,
         lastSinceId,
-        reachedMaxPages: pagesFetched >= maxPages
+        reachedMaxPages: pagesFetched >= maxPages,
+        // Resume info for the chunked client loop.
+        hasMore,
+        nextSinceId: hasMore ? lastSinceId : null,
+        updatedAtMin: updatedAtMin ?? null
       });
     } catch (error) {
       console.error("Error syncing orders:", error);

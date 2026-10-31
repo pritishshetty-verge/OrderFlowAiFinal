@@ -3197,9 +3197,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `[shopify-sync] storeId=${syncStoreId} starting sinceId=${sinceId} updatedAtMin=${updatedAtMin ?? "(all history)"}`,
       );
 
-      // Safety cap: 500 pages × 250 = 125,000 orders. Prevents a runaway
-      // loop if Shopify ever returns a full page indefinitely.
-      const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 500;
+      // Per-invocation page budget. Kept small so a single request always
+      // finishes inside the serverless time limit (a full 90-day window
+      // for a busy store is far more than 60s of work). The client drives
+      // the rest: when we stop on the budget with full pages still coming,
+      // we return hasMore + nextSinceId and the UI calls again to resume.
+      const maxPages = typeof req.body.maxPages === "number" ? req.body.maxPages : 12;
 
       // Phase 2: route the bulk historical sync through the per-
       // store factory. The admin who triggered the sync has an
@@ -3249,6 +3252,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let totalFetched = 0;
       let pagesFetched = 0;
       let lastSinceId = sinceId;
+      // True once we hit the end of the window (a short/empty page). While
+      // false after the loop, we stopped on the page budget and there's
+      // more to fetch — the client resumes from lastSinceId.
+      let reachedEnd = false;
 
       // Image-resolver closure used by both batch and sequential paths.
       const resolveImage = (
@@ -3362,7 +3369,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `[shopify-sync] page ${pagesFetched}: fetched ${orders.length} orders (sinceId=${sinceId})`,
         );
 
-        if (orders.length === 0) break;
+        if (orders.length === 0) {
+          reachedEnd = true;
+          break;
+        }
 
         // ──────────────────────────────────────────────────────────────
         // Batch dedupe: one SELECT against our orders table instead of
@@ -3635,12 +3645,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         shopifySyncState.lastSinceId = lastSinceId;
 
         // If we got a short page, there are no more orders to fetch.
-        if (orders.length < pageLimit) break;
+        if (orders.length < pageLimit) {
+          reachedEnd = true;
+          break;
+        }
 
         // Pause briefly to stay under Shopify's 2 req/s REST limit.
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
+      // We stopped on the page budget (not the end of the window) only if
+      // we never saw a short/empty page. In that case more orders remain
+      // and the client should call again from nextSinceId, same window.
+      const hasMore = !reachedEnd;
       shopifySyncState.reachedMaxPages = pagesFetched >= maxPages;
       res.json({
         message: "Sync completed",
@@ -3651,6 +3668,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pagesFetched,
         lastSinceId,
         reachedMaxPages: pagesFetched >= maxPages,
+        // Resume info for the chunked client loop.
+        hasMore,
+        nextSinceId: hasMore ? lastSinceId : null,
+        updatedAtMin: updatedAtMin ?? null,
       });
     } catch (error) {
       console.error("Error syncing orders:", error);
