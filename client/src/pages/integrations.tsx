@@ -1954,22 +1954,23 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
     enabled: !!activeStoreId,
   });
 
+  // "Connected" means THIS store has its own saved credentials. The
+  // global PAYU_MERCHANT_KEY / SALT env vars are a silent backend safety
+  // net — surfaced only as a one-line note in the setup form, never as a
+  // separate manage state. This keeps the card behaving like the other
+  // integrations (Resend/Delhivery): connected ⇒ manage, else ⇒ connect.
   const hasCredentials = !!configQuery.data?.hasCredentials;
   const usingEnvFallback = !!configQuery.data?.usingEnvFallback;
-  // PayU "works" if this store has its own creds OR the global env
-  // fallback is active. Only drop straight to the setup form when
-  // neither is true.
-  const configured = hasCredentials || usingEnvFallback;
 
   // Secrets are never returned, so both fields start blank. Default to
-  // the Manage view once anything is configured.
+  // the Manage view only when this store has its own credentials.
   useEffect(() => {
     if (didBootstrap) return;
     if (configQuery.data) {
-      setIsEditing(!configured);
+      setIsEditing(!hasCredentials);
       setDidBootstrap(true);
     }
-  }, [configQuery.data, didBootstrap, configured]);
+  }, [configQuery.data, didBootstrap, hasCredentials]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -2029,7 +2030,7 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
       ? keyInput.trim().length > 0 || saltInput.trim().length > 0
       : keyInput.trim().length > 0 && saltInput.trim().length > 0);
 
-  const isManageView = !isEditing && configured;
+  const isManageView = !isEditing && hasCredentials;
 
   const handleCancelEdit = () => {
     setKeyInput("");
@@ -2065,9 +2066,9 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold">
-            {isManageView ? "Active configuration" : "PayU Configuration"}
+            {isManageView ? "Active configuration" : "Connect PayU"}
           </h3>
-          {hasCredentials ? (
+          {hasCredentials && (
             <Badge
               variant="outline"
               className="bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 gap-1.5"
@@ -2075,19 +2076,12 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
               <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
               Connected
             </Badge>
-          ) : usingEnvFallback ? (
-            <Badge
-              variant="outline"
-              className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
-            >
-              Shared credentials
-            </Badge>
-          ) : null}
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           {isManageView
-            ? "PayU powers the return-fee checkout and payment-gateway fee reconciliation for this store."
-            : "Connect PayU to collect return fees and reconcile gateway settlements. Credentials are stored encrypted and scoped to this store."}
+            ? "This store is connected to its own PayU merchant account."
+            : "Add your PayU merchant key and salt to connect this store. Credentials are stored encrypted and scoped to this store."}
         </p>
       </div>
 
@@ -2098,55 +2092,55 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
             <div className="flex items-center justify-between p-3">
               <span className="text-xs text-muted-foreground">Merchant key</span>
               <span className="text-sm font-medium tracking-widest">
-                {hasCredentials ? "••••••••••••" : "Shared (env)"}
+                ••••••••••••
               </span>
             </div>
             <div className="flex items-center justify-between p-3">
               <span className="text-xs text-muted-foreground">Merchant salt</span>
               <span className="text-sm font-medium tracking-widest">
-                {hasCredentials ? "••••••••••••" : "Shared (env)"}
+                ••••••••••••
               </span>
             </div>
             <div className="flex items-center justify-between p-3">
-              <span className="text-xs text-muted-foreground">Return fee</span>
-              <span className="text-sm font-medium">
-                ₹{configQuery.data?.returnFeeAmount ?? "150.00"}
+              <span className="text-xs text-muted-foreground">Status</span>
+              <span className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                </span>
+                Connected to PayU
               </span>
             </div>
           </div>
 
-          {usingEnvFallback && !hasCredentials && (
-            <p className="text-xs text-muted-foreground">
-              This store is using the shared PayU credentials configured on the
-              server. Add store-specific credentials below to run this brand on
-              its own PayU merchant account (recommended for fee reconciliation).
-            </p>
-          )}
-
           {endpointsBlock}
 
           <div className="flex items-center justify-between gap-2">
-            {hasCredentials ? (
-              <IntegrationDisconnectButton
-                name="PayU"
-                endpoint="/api/payu/config"
-                queryKey={["/api/payu/config", activeStoreId]}
-              />
-            ) : (
-              <span />
-            )}
+            <IntegrationDisconnectButton
+              name="PayU"
+              endpoint="/api/payu/config"
+              queryKey={["/api/payu/config", activeStoreId]}
+            />
             <Button
               variant="outline"
               onClick={() => setIsEditing(true)}
               data-testid="button-payu-edit-credentials"
             >
-              {hasCredentials ? "Edit credentials" : "Add store credentials"}
+              Edit credentials
             </Button>
           </div>
         </div>
       ) : (
         // ── Setup / edit view ───────────────────────────────────────
         <div className="space-y-6">
+          {usingEnvFallback && !hasCredentials && (
+            <p className="text-xs text-muted-foreground">
+              Return-fee payments are currently handled by shared server
+              credentials, so nothing is broken. Add this store's own PayU key
+              and salt to run it on its own merchant account.
+            </p>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="payu-merchant-key">Merchant Key</Label>
             <Input
@@ -2181,7 +2175,7 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
           {endpointsBlock}
 
           <div className="flex items-center justify-end gap-2 pt-2 border-t">
-            {configured && (
+            {hasCredentials && (
               <Button
                 variant="outline"
                 onClick={handleCancelEdit}
@@ -2200,7 +2194,11 @@ function PayUConnectionCard({ onClose }: PayUConnectionCardProps) {
               {saveMutation.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              {saveMutation.isPending ? "Saving…" : "Save Configuration"}
+              {saveMutation.isPending
+                ? "Saving…"
+                : hasCredentials
+                  ? "Save changes"
+                  : "Connect PayU"}
             </Button>
           </div>
         </div>
