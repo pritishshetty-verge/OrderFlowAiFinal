@@ -99,7 +99,7 @@ export interface PayslipData {
     capped: boolean;
   };
   incentives: {
-    profile: "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT" | null;
+    profile: "ORDER_CONFIRMATION" | "NDR_RTO" | "CHAT_SUPPORT" | "DEVELOPER" | null;
     deliveryRatePct?: number | null;
     teamDeliveryRatePct?: number | null;
     recoveryRatePct?: number | null;
@@ -108,6 +108,7 @@ export interface PayslipData {
     teamDeliveryBonus: number;
     recoveryBonus: number;
     reshipsBonus: number;
+    managerBonus: number;
     total: number;
   };
   // Custom Fixed-Pay components from the "+ Add component" UI.
@@ -476,10 +477,11 @@ function drawEarningsTable(doc: PDFKit.PDFDocument, data: PayslipData) {
     );
   }
 
-  // ── Incentive rows (only for ORDER_CONFIRMATION / NDR_RTO) ──
+  // ── Incentive rows (ORDER_CONFIRMATION / NDR_RTO / DEVELOPER) ──
   const showIncentives =
     data.incentives.profile === "ORDER_CONFIRMATION" ||
-    data.incentives.profile === "NDR_RTO";
+    data.incentives.profile === "NDR_RTO" ||
+    data.incentives.profile === "DEVELOPER";
 
   if (showIncentives) {
     if (data.incentives.profile === "ORDER_CONFIRMATION") {
@@ -520,6 +522,15 @@ function drawEarningsTable(doc: PDFKit.PDFDocument, data: PayslipData) {
         "Reships bonus",
         `${reships} reships × Rs. 50 = Rs. ${formatINR(reships * 50)}`,
         formatINR(data.incentives.reshipsBonus),
+      );
+    } else if (data.incentives.profile === "DEVELOPER") {
+      drawTableRow(
+        doc,
+        "Manager bonus",
+        data.incentives.teamDeliveryRatePct == null
+          ? "No store delivery rate recorded"
+          : `Store TDR ${data.incentives.teamDeliveryRatePct.toFixed(2)}% -> tier bonus (Rs. 3,000 at >=60%, Rs. 5,000 at >=80%)`,
+        formatINR(data.incentives.managerBonus),
       );
     }
   }

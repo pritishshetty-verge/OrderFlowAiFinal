@@ -1112,6 +1112,9 @@ export const payrollLedger = pgTable("payroll_ledger", {
   teamDeliveryBonus: decimal("team_delivery_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
   recoveryBonus: decimal("recovery_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
   reshipsBonus: decimal("reships_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
+  // DEVELOPER profile: performance-linked manager bonus (store-TDR
+  // tiered). A variable/incentive component, NOT a fixed-pay line item.
+  managerBonus: decimal("manager_bonus", { precision: 12, scale: 2 }).notNull().default("0"),
   totalIncentives: decimal("total_incentives", { precision: 12, scale: 2 }).notNull().default("0"),
 
   // ── Reimbursement (fixed monthly, editable per payslip) ─────────

@@ -269,6 +269,10 @@ export interface PayrollMathInputs {
   teamDeliveryRatePct?: number | null;
   personalRecoveryRatePct?: number | null;
   reshipsCount?: number | null;
+  // DEVELOPER profile only: store-TDR manager bonus, precomputed by the
+  // caller via calculateStoreTdrManagerBonus. A variable/incentive
+  // component — surfaced in incentives.total, NOT as a fixed line item.
+  managerBonus?: number | null;
 
   // Reimbursement — legacy single-value field. New payslips express
   // reimbursement as one of the lineItems below.
@@ -288,6 +292,7 @@ export interface PayrollMathResult {
     teamDeliveryBonus: number;
     recoveryBonus: number;
     reshipsBonus: number;
+    managerBonus: number;
     total: number;
   };
   reimbursement: number;
@@ -322,6 +327,7 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
   let teamDeliveryBonus = 0;
   let recoveryBonus = 0;
   let reshipsBonus = 0;
+  let managerBonus = 0;
 
   if (input.compensationProfile === "ORDER_CONFIRMATION") {
     // Earned Commission = 10% × Delivered GMV. Falls back to 0 if
@@ -336,6 +342,11 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     teamDeliveryBonus = ndr.teamDeliveryBonus;
     recoveryBonus = ndr.recoveryBonus;
     reshipsBonus = ndr.reshipsBonus;
+  } else if (input.compensationProfile === "DEVELOPER") {
+    // Store-TDR manager bonus — a variable/incentive component.
+    // Precomputed by the caller (calculateStoreTdrManagerBonus) and
+    // passed in, mirroring how deliveredGmv is supplied.
+    managerBonus = Math.max(0, Number(input.managerBonus ?? 0));
   }
 
   // Unpaid-leave pro-rata deduction (per PRD): each unpaid day costs
@@ -347,7 +358,7 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
     : 0;
   const unpaidLeaveDeduction = round2(Math.min(base.amount, unpaidDays * perDayRate));
 
-  const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus;
+  const total = confirmationBonus + teamDeliveryBonus + recoveryBonus + reshipsBonus + managerBonus;
   const reimbursement = Math.max(0, Number(input.reimbursement ?? 0));
 
   // Custom Fixed-Pay line items — cleaned + summed. Non-numeric or
@@ -370,6 +381,7 @@ export function runPayrollMath(input: PayrollMathInputs): PayrollMathResult {
       teamDeliveryBonus,
       recoveryBonus,
       reshipsBonus,
+      managerBonus,
       total,
     },
     reimbursement,
