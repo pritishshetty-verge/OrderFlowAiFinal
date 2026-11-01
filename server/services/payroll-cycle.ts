@@ -21,7 +21,7 @@ import {
 import { storage } from "../storage";
 import {
   runPayrollMath, expectedWorkingDays, DEFAULT_REIMBURSEMENT,
-  ANNUAL_PAID_HOLIDAY_CAP, calculateDeveloperManagerBonus,
+  ANNUAL_PAID_HOLIDAY_CAP, calculateStoreTdrManagerBonus,
   type CompensationProfile, type LineItem,
 } from "./payroll";
 import {
@@ -132,25 +132,23 @@ export async function buildLedgerRow(args: {
   if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
     defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
   } else if (profile === "DEVELOPER") {
-    // Manager→reportee map. Hardcoded MVP — should move to a
-    // `reports_to` column on users when the org grows beyond one pair.
-    // Only DEVELOPER users with a reportee entry get the auto
-    // Manager bonus line item; other DEVELOPER users (Sathish etc.)
-    // ship with zero line items so their payslip isn't cluttered
-    // with a ₹0 field that doesn't apply to them.
-    const REPORTEE_MAP: Record<string, string> = {
-      "54862e00-6bee-4921-ab9e-339cfdc13d56": "f4f76079-f4d3-44fa-9cff-13a1ff40b873",
-    };
-    const reporteeId = REPORTEE_MAP[user.id];
-    if (reporteeId) {
-      const reporteeAtt = await getAttendanceMetrics(reporteeId, year, month);
-      const reporteeAttendancePct = expectedDays > 0
-        ? (reporteeAtt.daysPresent / expectedDays) * 100
-        : 0;
-      const managerBonus = calculateDeveloperManagerBonus({
-        brandTdrPct: brandTdrForBonus,
-        reporteeAttendancePct,
-      });
+    // Store-TDR manager bonus (comp decision 2026-11). Managers listed
+    // here own the store's delivery performance and earn the manager
+    // bonus from brand TDR alone — ₹3,000 at ≥60%, ₹5,000 at ≥80% —
+    // with NO direct-report attendance gate.
+    //
+    // This replaces the old hardcoded manager→reportee map, which
+    // gated the bonus on one specific report's attendance and so
+    // silently zeroed it the moment that report (Satish) left the
+    // company. DEVELOPER users not listed here ship with zero line
+    // items so their payslip isn't cluttered with an inapplicable
+    // field. Should move to a `reports_to` / `is_store_manager`
+    // column on users when the org grows beyond one manager.
+    const STORE_TDR_MANAGER_IDS = new Set<string>([
+      "54862e00-6bee-4921-ab9e-339cfdc13d56", // G Nandakishore Reddy
+    ]);
+    if (STORE_TDR_MANAGER_IDS.has(user.id)) {
+      const managerBonus = calculateStoreTdrManagerBonus(brandTdrForBonus);
       defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
     }
   }
