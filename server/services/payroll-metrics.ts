@@ -154,17 +154,25 @@ export async function getTeamDeliveryRatePct(
   month: number,
 ): Promise<number | null> {
   const { start, end } = monthRangeUtc(year, month);
+  // TDR = delivered / (delivered + RTO). The denominator is orders
+  // that CONCLUDED their delivery attempt — delivered or returned to
+  // origin — NOT every order placed in the month. Orders still in
+  // flight (awb_assigned / in_transit / out_for_delivery / ndr),
+  // never-shipped (unfulfilled) and cancelled orders are excluded:
+  // none is a delivery success or failure yet, so counting them in the
+  // denominator made a current/recent month read artificially low
+  // until its cohort matured weeks later (comp decision 2026-11).
   const r: any = await db.execute(sql`
     SELECT
-      COUNT(*)::int4                                       AS total,
-      COUNT(*) FILTER (WHERE status = 'delivered')::int4   AS delivered
+      COUNT(*) FILTER (WHERE status = 'delivered' OR status LIKE 'rto%')::int4 AS concluded,
+      COUNT(*) FILTER (WHERE status = 'delivered')::int4                       AS delivered
     FROM orders
     WHERE shopify_created_at >= ${start.toISOString()}::timestamptz
       AND shopify_created_at <  ${end.toISOString()}::timestamptz
   `);
-  const row = ((r as any).rows ?? r)[0] ?? { total: 0, delivered: 0 };
-  if (!row.total || row.total === 0) return null;
-  return round2((row.delivered / row.total) * 100);
+  const row = ((r as any).rows ?? r)[0] ?? { concluded: 0, delivered: 0 };
+  if (!row.concluded || row.concluded === 0) return null;
+  return round2((row.delivered / row.concluded) * 100);
 }
 
 function round2(n: number): number {
@@ -176,8 +184,14 @@ function round2(n: number): number {
 // Total Delivery Rate for a store in a month. Same math as
 // getTeamDeliveryRatePct above but store-scoped, because Chandi's
 // bonus is per-store (the Compensation Breakdown PDF says "Total
-// Delivery Rate of the Brand"). Returns null when the store had zero
-// orders in the month so the tier logic sees "no data" instead of "0%".
+// Delivery Rate of the Brand").
+//
+// TDR = delivered / (delivered + RTO): the denominator is orders that
+// CONCLUDED their delivery attempt, so in-flight, never-shipped and
+// cancelled orders don't drag a recent month down (comp decision
+// 2026-11 — see getTeamDeliveryRatePct). Returns null when the store
+// had zero concluded orders in the month so the tier logic sees "no
+// data" instead of "0%".
 export async function getBrandTDRPct(
   storeId: string,
   year: number,
@@ -186,16 +200,16 @@ export async function getBrandTDRPct(
   const { start, end } = monthRangeUtc(year, month);
   const r: any = await db.execute(sql`
     SELECT
-      COUNT(*)::int4                                     AS total,
-      COUNT(*) FILTER (WHERE status = 'delivered')::int4 AS delivered
+      COUNT(*) FILTER (WHERE status = 'delivered' OR status LIKE 'rto%')::int4 AS concluded,
+      COUNT(*) FILTER (WHERE status = 'delivered')::int4                       AS delivered
     FROM orders
     WHERE store_id = ${storeId}
       AND shopify_created_at >= ${start.toISOString()}::timestamptz
       AND shopify_created_at <  ${end.toISOString()}::timestamptz
   `);
-  const row = ((r as any).rows ?? r)[0] ?? { total: 0, delivered: 0 };
-  if (!row.total) return null;
-  return round2((row.delivered / row.total) * 100);
+  const row = ((r as any).rows ?? r)[0] ?? { concluded: 0, delivered: 0 };
+  if (!row.concluded) return null;
+  return round2((row.delivered / row.concluded) * 100);
 }
 
 // ── Brand-wide NDR Delivery Rate — the headline payroll metric ──────
