@@ -210,6 +210,25 @@ export function calculateDeveloperManagerBonus(args: {
   return 0;
 }
 
+/**
+ * Store-TDR manager bonus: same TDR ladder as calculateDeveloperManagerBonus
+ * (₹3,000 at ≥60%, ₹5,000 at ≥80%) but WITHOUT the direct-report attendance
+ * gate. For managers who own the store's delivery performance but have no
+ * mapped direct report. Comp decision 2026-11: Nandakishore is paid on store
+ * TDR alone after his only report (Satish) left — the old reportee gate
+ * silently zeroed his bonus every month once that report was gone.
+ */
+export function calculateStoreTdrManagerBonus(
+  brandTdrPct: number | null | undefined,
+): number {
+  const tdr = brandTdrPct;
+  if (tdr == null || !Number.isFinite(tdr)) return 0;
+  for (const tier of DEVELOPER_MANAGER_TIERS) {
+    if (tdr >= tier.minPct) return tier.bonus;
+  }
+  return 0;
+}
+
 // Default reimbursement (₹) suggested for a fresh payslip. The admin
 // can edit this to 0 for employees without a reimbursement line
 // (per the Compensation Breakdown PDF, Tanisha + Chandi get 349;
