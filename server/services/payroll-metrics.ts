@@ -307,35 +307,51 @@ export async function getDeliveredGMVForAgent(
   // (courier's real delivery timestamp), falling back to the
   // order_status_history row for the → delivered transition. Same
   // COALESCE pattern getConvertedOrdersForCoupon uses.
+  //
+  // PERF: the delivered_at COALESCE lives inside a MATERIALIZED CTE
+  // that has ALREADY applied the store + status + coupon filters, so
+  // its two correlated subqueries run only for this agent's delivered,
+  // coupon-matched orders (a few hundred) — never for the whole table.
+  // The previous shape computed delivered_at in a
+  // `LEFT JOIN LATERAL ... ON TRUE`, which the planner evaluated for
+  // every orders row before the WHERE could filter it out; on a store
+  // with ~20k orders that blew past Vercel's 60s function limit and
+  // left payroll cycles half-generated (cycle row inserted, 0 ledgers).
+  // This mirrors the SELECT-list placement that makes
+  // getConvertedOrdersForCoupon fast. MATERIALIZED pins the plan so a
+  // future planner can't inline the CTE back into the slow shape.
   const r: any = await db.execute(sql`
-    SELECT COALESCE(SUM(CAST(o.total_price AS numeric)), 0)::numeric AS gmv
-    FROM orders o
-    LEFT JOIN LATERAL (
-      SELECT COALESCE(
-        (SELECT MAX(s.delivered_at) FROM shipments s WHERE s.order_id = o.id),
-        (SELECT MAX(h.created_at) FROM order_status_history h
-           WHERE h.order_id = o.id AND h.status = 'delivered')
-      ) AS delivered_at
-    ) dt ON TRUE
-    WHERE o.store_id = ${storeId}
-      AND o.status = 'delivered'
-      AND (
-        EXISTS (
-          SELECT 1 FROM regexp_split_to_table(
-            LOWER(COALESCE(o.discount_code, '')), '[^a-z0-9]+'
-          ) AS tok(token)
-          WHERE tok.token = ${code}
+    WITH matched AS MATERIALIZED (
+      SELECT
+        CAST(o.total_price AS numeric) AS total_price,
+        COALESCE(
+          (SELECT MAX(s.delivered_at) FROM shipments s WHERE s.order_id = o.id),
+          (SELECT MAX(h.created_at) FROM order_status_history h
+             WHERE h.order_id = o.id AND h.status = 'delivered')
+        ) AS delivered_at
+      FROM orders o
+      WHERE o.store_id = ${storeId}
+        AND o.status = 'delivered'
+        AND (
+          EXISTS (
+            SELECT 1 FROM regexp_split_to_table(
+              LOWER(COALESCE(o.discount_code, '')), '[^a-z0-9]+'
+            ) AS tok(token)
+            WHERE tok.token = ${code}
+          )
+          OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(
+              COALESCE(o.discount_codes, '[]'::jsonb)
+            ) AS dc(code_str),
+            regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
+            WHERE tok.token = ${code}
+          )
         )
-        OR EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(
-            COALESCE(o.discount_codes, '[]'::jsonb)
-          ) AS dc(code_str),
-          regexp_split_to_table(LOWER(dc.code_str), '[^a-z0-9]+') AS tok(token)
-          WHERE tok.token = ${code}
-        )
-      )
-      AND dt.delivered_at >= ${start.toISOString()}::timestamptz
-      AND dt.delivered_at <  ${end.toISOString()}::timestamptz
+    )
+    SELECT COALESCE(SUM(total_price), 0)::numeric AS gmv
+    FROM matched
+    WHERE delivered_at >= ${start.toISOString()}::timestamptz
+      AND delivered_at <  ${end.toISOString()}::timestamptz
   `);
   const row = ((r?.rows ?? []) as any[])[0] ?? { gmv: 0 };
   return Number(row.gmv ?? 0);
