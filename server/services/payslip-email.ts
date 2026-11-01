@@ -113,6 +113,16 @@ function buildPayslipHtml(d: PayslipData, period: string): string {
         `₹${formatINR(d.incentives.reshipsBonus)}`,
       ),
     );
+  } else if (d.incentives.profile === "DEVELOPER") {
+    rows.push(
+      earningsRow(
+        "Manager bonus",
+        d.incentives.teamDeliveryRatePct == null
+          ? "No store delivery rate recorded"
+          : `Store TDR ${d.incentives.teamDeliveryRatePct.toFixed(2)}% → tier bonus`,
+        `₹${formatINR(d.incentives.managerBonus)}`,
+      ),
+    );
   }
 
   return `<!DOCTYPE html>

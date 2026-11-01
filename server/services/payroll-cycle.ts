@@ -121,37 +121,32 @@ export async function buildLedgerRow(args: {
   // Default line items per compensation profile:
   //   ORDER_CONFIRMATION / NDR_RTO — ₹349 monthly reimbursement
   //     (Tanisha + Chandi per the Compensation Breakdown PDF).
-  //   DEVELOPER — auto "Manager bonus" tied to BOTH the store's TDR
-  //     AND the direct-report's attendance (currently Nandakishore
-  //     manages Sathish). ₹5,000 when both signals cross 80%, else 0.
-  //     Editable in the payslip modal for manual override.
+  //   DEVELOPER — no line items; the manager bonus is a VARIABLE
+  //     incentive (computed below), not a fixed-pay line item.
   //   CHAT_SUPPORT — zero line items; admin adds any bonuses ad-hoc
   //     via "+ Add component".
   const brandTdrForBonus = overrides.teamDeliveryRatePct ?? (brandTdr ?? teamRate);
   let defaultLineItems: LineItem[] = [];
   if (profile === "ORDER_CONFIRMATION" || profile === "NDR_RTO") {
     defaultLineItems = [{ label: "Reimbursement", amount: DEFAULT_REIMBURSEMENT }];
-  } else if (profile === "DEVELOPER") {
-    // Store-TDR manager bonus (comp decision 2026-11). Managers listed
-    // here own the store's delivery performance and earn the manager
-    // bonus from brand TDR alone — ₹3,000 at ≥60%, ₹5,000 at ≥80% —
-    // with NO direct-report attendance gate.
-    //
-    // This replaces the old hardcoded manager→reportee map, which
-    // gated the bonus on one specific report's attendance and so
-    // silently zeroed it the moment that report (Satish) left the
-    // company. DEVELOPER users not listed here ship with zero line
-    // items so their payslip isn't cluttered with an inapplicable
-    // field. Should move to a `reports_to` / `is_store_manager`
-    // column on users when the org grows beyond one manager.
-    const STORE_TDR_MANAGER_IDS = new Set<string>([
-      "54862e00-6bee-4921-ab9e-339cfdc13d56", // G Nandakishore Reddy
-    ]);
-    if (STORE_TDR_MANAGER_IDS.has(user.id)) {
-      const managerBonus = calculateStoreTdrManagerBonus(brandTdrForBonus);
-      defaultLineItems = [{ label: "Manager bonus", amount: managerBonus }];
-    }
   }
+
+  // DEVELOPER store-TDR manager bonus — a VARIABLE/incentive component
+  // (comp decision 2026-11), fed into runPayrollMath's incentives and
+  // stored in its own ledger column, NOT as a fixed-pay line item.
+  // Managers listed here own the store's delivery performance and earn
+  // it from brand TDR alone — ₹3,000 at ≥60%, ₹5,000 at ≥80% — with no
+  // direct-report attendance gate (the old reportee map silently zeroed
+  // it the moment that report left). Move to an `is_store_manager`
+  // column on users when the org grows beyond one manager.
+  const STORE_TDR_MANAGER_IDS = new Set<string>([
+    "54862e00-6bee-4921-ab9e-339cfdc13d56", // G Nandakishore Reddy
+  ]);
+  const managerBonusAmount =
+    profile === "DEVELOPER" && STORE_TDR_MANAGER_IDS.has(user.id)
+      ? calculateStoreTdrManagerBonus(brandTdrForBonus)
+      : 0;
+
   const lineItems: LineItem[] = overrides.lineItems ?? defaultLineItems;
 
   const math = runPayrollMath({
@@ -166,6 +161,7 @@ export async function buildLedgerRow(args: {
     teamDeliveryRatePct,
     personalRecoveryRatePct,
     reshipsCount,
+    managerBonus: managerBonusAmount,
     reimbursement: overrides.reimbursement ?? 0,
     lineItems,
   });
@@ -191,6 +187,7 @@ export async function buildLedgerRow(args: {
     teamDeliveryBonus: String(math.incentives.teamDeliveryBonus),
     recoveryBonus: String(math.incentives.recoveryBonus),
     reshipsBonus: String(math.incentives.reshipsBonus),
+    managerBonus: String(math.incentives.managerBonus),
     totalIncentives: String(math.incentives.total),
     reimbursement: String(math.reimbursement),
     lineItems: math.lineItems as any,
@@ -587,6 +584,7 @@ function payslipDataFromLedger(row: PayrollLedger, user: User): any {
       teamDeliveryBonus: Number(row.teamDeliveryBonus),
       recoveryBonus: Number(row.recoveryBonus),
       reshipsBonus: Number(row.reshipsBonus),
+      managerBonus: Number(row.managerBonus),
       total: Number(row.totalIncentives),
     },
     reimbursement: Number(row.reimbursement),
