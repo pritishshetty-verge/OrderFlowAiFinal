@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 
 // ─────────────────────────────────────────────────────────────────────
 // NDR Analytics — read-only aggregations for the NDR dashboard.
@@ -303,32 +303,107 @@ export async function getNdrGeography(w: NdrAnalyticsWindow): Promise<{ byCity: 
   return { byCity, byPincode };
 }
 
-// ── 5. Reasons breakdown (per order, latest reason) ─────────────────
+// ── 5. Reasons breakdown (per order, root-cause reason) ─────────────
 //
-// One reason PER ORDER — the most recent failure reason on that order —
-// so the category/NSL totals equal the distinct-order count instead of
-// summing every attempt. (A parcel that failed "customer unavailable"
+// One reason PER ORDER, so totals equal the distinct-order count instead
+// of summing every attempt. (A parcel that failed "customer unavailable"
 // 20 times is one order with that reason, not 20.)
+//
+// Why not just the latest event: the courier writes transit scans into
+// the same stream ("Shipment Received at Facility", "Bag Added To Trip",
+// "Dispatched for RTO" …). An order's LATEST event is usually one of
+// those, which is why the old chart collapsed into "RTO"/"Other". So we
+// classify every event's courier remark (ndr_reason) into a granular
+// failure bucket, ignore the scans, and pick per order:
+//   tier 1  customer-side root cause (unavailable / address / refused /
+//           rescheduled) — latest one wins
+//   tier 2  courier-side (not attempted, delays, disruption)
+//   tier 3  process outcome (no reattempt instruction, max attempts)
+// Orders with only scans land in `notCaptured`.
 export interface ReasonRow { key: string; count: number; sharePct: number | null; }
+export interface NdrReasons {
+  byCategory: ReasonRow[]; // granular buckets, captured orders only; share = % of captured
+  byNslCode: ReasonRow[];
+  totalOrders: number; // NDR cohort size
+  notCaptured: number; // cohort orders with no classifiable courier remark
+  noReattemptInstruction: number; // cohort orders Delhivery flagged "No client instructions to Reattempt"
+}
 
-export async function getNdrReasons(w: NdrAnalyticsWindow): Promise<{ byCategory: ReasonRow[]; byNslCode: ReasonRow[] }> {
+// Courier remark → granular bucket (NULL = transit scan / noise).
+const REASON_BUCKET_SQL = sql.raw(`
+  CASE
+    WHEN r LIKE '%unavailable%' OR r LIKE '%not available%' OR r LIKE '%institute closed%'
+      OR r LIKE '%not reachable%' OR r LIKE '%door locked%'                       THEN 'consignee_unavailable'
+    WHEN r LIKE '%address%' OR r LIKE '%incomplete%' OR r LIKE '%wrong pincode%'
+      OR r LIKE '%out of delivery area%'                                          THEN 'address_issue'
+    WHEN r LIKE '%refus%' OR r LIKE '%reject%' OR r LIKE '%cancel%'
+      OR r LIKE '%open delivery%' OR r LIKE '%amt dispute%'                       THEN 'customer_refused'
+    WHEN r LIKE '%reschedul%' OR r LIKE 'reattempt as per%' OR r LIKE 'reattempt - as per%'
+      OR r LIKE '%collect from branch%'                                           THEN 'rescheduled'
+    WHEN r LIKE '%no client instructions%'                                        THEN 'no_reattempt_instruction'
+    WHEN r LIKE '%maximum attempts%'                                              THEN 'max_attempts'
+    WHEN r LIKE 'not attempted%' OR r LIKE '%vehicle delayed%' OR r LIKE '%weather%'
+      OR r LIKE '%service disruption%' OR r LIKE '%retrieval delay%' OR r LIKE '%vehicle accident%'
+      OR r LIKE '%no entry%' OR r LIKE '%regional holiday%' OR r LIKE '%natural disaster%'
+      OR r LIKE '%misrouted%' OR r LIKE '%security instructions%'                 THEN 'courier_issue'
+  END
+`);
+const REASON_TIER_SQL = sql.raw(`
+  CASE
+    WHEN bucket IN ('consignee_unavailable','address_issue','customer_refused','rescheduled') THEN 1
+    WHEN bucket = 'courier_issue' THEN 2
+    ELSE 3
+  END
+`);
+
+// Per-order picked reason for a set of order ids (all of each order's
+// events are considered, not just in-window ones — the root cause may
+// pre-date the window).
+function pickedReasonCte(orderIdsSql: SQL) {
+  return sql`
+    classified AS (
+      SELECT e.order_id, e.ndr_date, ${REASON_BUCKET_SQL} AS bucket
+      FROM (
+        SELECT order_id, ndr_date, LOWER(COALESCE(ndr_reason, '')) AS r
+        FROM ndr_events
+        WHERE order_id IN (${orderIdsSql})
+      ) e
+    ),
+    picked AS (
+      SELECT DISTINCT ON (order_id) order_id, bucket
+      FROM classified
+      WHERE bucket IS NOT NULL
+      ORDER BY order_id, ${REASON_TIER_SQL}, ndr_date DESC
+    )
+  `;
+}
+
+export async function getNdrReasons(w: NdrAnalyticsWindow): Promise<NdrReasons> {
   const startIso = w.start.toISOString();
   const endIso = w.end.toISOString();
 
-  // Latest ndr_status per order via DISTINCT ON.
+  const cohortSql = sql`
+    SELECT DISTINCT order_id FROM ndr_events
+    WHERE store_id = ${w.storeId}
+      AND ndr_date >= ${startIso}::timestamptz
+      AND ndr_date <  ${endIso}::timestamptz
+  `;
   const catRes: any = await db.execute(sql`
-    WITH latest AS (
-      SELECT DISTINCT ON (order_id)
-             order_id,
-             COALESCE(NULLIF(TRIM(ndr_status), ''), 'other') AS reason
-      FROM ndr_events
-      WHERE store_id = ${w.storeId}
-        AND ndr_date >= ${startIso}::timestamptz
-        AND ndr_date <  ${endIso}::timestamptz
-      ORDER BY order_id, ndr_date DESC
-    )
-    SELECT reason AS key, COUNT(*)::int4 AS n
-    FROM latest GROUP BY reason ORDER BY n DESC
+    WITH cohort AS (${cohortSql}),
+    ${pickedReasonCte(sql`SELECT order_id FROM cohort`)}
+    SELECT COALESCE(p.bucket, 'not_captured') AS key, COUNT(*)::int4 AS n
+    FROM cohort c
+    LEFT JOIN picked p ON p.order_id = c.order_id
+    GROUP BY 1 ORDER BY n DESC
+  `);
+  // Process gap worth its own callout: any cohort order Delhivery
+  // returned because we never sent a reattempt instruction.
+  const noInstrRes: any = await db.execute(sql`
+    WITH cohort AS (${cohortSql})
+    SELECT COUNT(DISTINCT n.order_id)::int4 AS n
+    FROM ndr_events n
+    JOIN cohort c ON c.order_id = n.order_id
+    WHERE LOWER(COALESCE(n.ndr_reason, '')) LIKE '%no client instructions%'
   `);
 
   // NSL code: one per order (orders.nsl_code holds the latest), scoped
@@ -351,7 +426,15 @@ export async function getNdrReasons(w: NdrAnalyticsWindow): Promise<{ byCategory
     const t = total(list);
     return list.map((x) => ({ key: String(x.key), count: num(x.n), sharePct: pct(num(x.n), t) }));
   };
-  return { byCategory: toRows(rows(catRes)), byNslCode: toRows(rows(nslRes)) };
+  const catRows = rows(catRes);
+  const notCaptured = num(catRows.find((x) => x.key === "not_captured")?.n);
+  return {
+    byCategory: toRows(catRows.filter((x) => x.key !== "not_captured")),
+    byNslCode: toRows(rows(nslRes)),
+    totalOrders: total(catRows),
+    notCaptured,
+    noReattemptInstruction: num(rows(noInstrRes)[0]?.n),
+  };
 }
 
 // ── 6. Avg resolution time (per order) ──────────────────────────────
@@ -566,7 +649,8 @@ export async function getReattemptEffectiveness(w: NdrAnalyticsWindow): Promise<
 //
 // The orders behind the aggregates — oldest-open first — so the team
 // can actually chase them. Live (not window-scoped): these are the
-// parcels on fire right now.
+// parcels on fire right now. The client paginates, so the cap is just a
+// payload guard (open queue is typically low hundreds).
 export interface OpenNdrRow {
   orderNumber: string | null;
   awb: string | null;
@@ -574,6 +658,7 @@ export interface OpenNdrRow {
   customerPhone: string | null;
   city: string | null;
   reason: string | null;
+  reasonKey: string | null; // granular bucket (same classifier as the reasons chart)
   nslCode: string | null;
   isActionable: boolean;
   paymentType: string;
@@ -582,7 +667,7 @@ export interface OpenNdrRow {
   daysOpen: number;
 }
 
-export async function getOpenNdrList(storeId: string, limit = 50): Promise<OpenNdrRow[]> {
+export async function getOpenNdrList(storeId: string, limit = 500): Promise<OpenNdrRow[]> {
   const res: any = await db.execute(sql`
     WITH open_orders AS (
       SELECT order_id, MAX(ndr_date) AS last_ndr, COUNT(*) AS attempts
@@ -590,10 +675,12 @@ export async function getOpenNdrList(storeId: string, limit = 50): Promise<OpenN
       WHERE store_id = ${storeId}
       GROUP BY order_id
       HAVING bool_and(resolved = false)
-    )
+    ),
+    ${pickedReasonCte(sql`SELECT order_id FROM open_orders`)}
     SELECT
       o.shopify_order_number                                   AS order_number,
       s.awb                                                    AS awb,
+      p.bucket                                                 AS reason_key,
       o.customer_name                                          AS customer_name,
       o.customer_phone                                         AS customer_phone,
       o.shipping_city                                          AS city,
@@ -606,6 +693,7 @@ export async function getOpenNdrList(storeId: string, limit = 50): Promise<OpenN
       EXTRACT(EPOCH FROM (NOW() - oo.last_ndr)) / 86400.0      AS days_open
     FROM open_orders oo
     JOIN orders o ON o.id = oo.order_id
+    LEFT JOIN picked p ON p.order_id = oo.order_id
     LEFT JOIN shipments s ON s.order_id = o.id
     ORDER BY oo.last_ndr ASC
     LIMIT ${limit}
@@ -617,6 +705,7 @@ export async function getOpenNdrList(storeId: string, limit = 50): Promise<OpenN
     customerPhone: r.customer_phone ?? null,
     city: r.city ?? null,
     reason: r.reason || null,
+    reasonKey: r.reason_key ?? null,
     nslCode: r.nsl_code ?? null,
     isActionable: !!r.is_actionable,
     paymentType: String(r.payment_type),
@@ -682,7 +771,7 @@ export interface NdrAnalyticsBundle {
   revenue: RevenueAtRisk;
   reshipments: ReshipmentStats;
   geography: { byCity: GeoRow[]; byPincode: GeoRow[] };
-  reasons: { byCategory: ReasonRow[]; byNslCode: ReasonRow[] };
+  reasons: NdrReasons;
   resolutionTime: ResolutionTime;
   actionable: ActionableSplit;
   openAging: AgingBucket[];
@@ -718,7 +807,7 @@ export async function getNdrAnalyticsBundle(w: NdrAnalyticsWindow): Promise<NdrA
     getNdrDailyTrend(w),
     getNdrByPaymentType(w),
     getReattemptEffectiveness(w),
-    getOpenNdrList(w.storeId, 50),
+    getOpenNdrList(w.storeId),
     getNdrKpis(prevWindow),
     getRevenueAtRisk(prevWindow),
   ]);

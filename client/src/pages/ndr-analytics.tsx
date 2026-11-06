@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
@@ -6,6 +6,7 @@ import { PageLayout } from "@/components/page-layout";
 import { DateRangeSelector, type DateRangeOutput } from "@/components/date-range-selector";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ChartTooltip } from "@/components/chart-tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -16,6 +17,7 @@ import { subDays, startOfDay, endOfDay, format, parseISO } from "date-fns";
 import {
   AlertTriangle, PackageCheck, PackageX, IndianRupee, Clock,
   MapPin, Repeat, ShieldCheck, ArrowUpRight, ArrowDownRight, Inbox, TrendingUp,
+  ChevronLeft, ChevronRight, ExternalLink,
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -35,7 +37,7 @@ interface NdrAnalytics {
   revenue: { cod: RevenueBand; prepaid: RevenueBand; total: RevenueBand };
   reshipments: { created: number; delivered: number; pending: number; cancelled: number };
   geography: { byCity: GeoRow[]; byPincode: GeoRow[] };
-  reasons: { byCategory: ReasonRow[]; byNslCode: ReasonRow[] };
+  reasons: { byCategory: ReasonRow[]; byNslCode: ReasonRow[]; totalOrders: number; notCaptured: number; noReattemptInstruction: number };
   resolutionTime: { overallHours: number | null; deliveredHours: number | null; returnedHours: number | null; resolvedCount: number };
   actionable: { actionable: number; nonActionable: number; actionablePct: number | null; actionableRescued: number; actionableRescuePct: number | null };
   openAging: AgingBucket[];
@@ -48,7 +50,7 @@ interface NdrAnalytics {
 interface PaymentSplitRow { shipped: number; ndrd: number; ratePct: number | null; }
 interface OpenNdrRow {
   orderNumber: string | null; awb: string | null; customerName: string | null; customerPhone: string | null;
-  city: string | null; reason: string | null; nslCode: string | null; isActionable: boolean;
+  city: string | null; reason: string | null; reasonKey: string | null; nslCode: string | null; isActionable: boolean;
   paymentType: string; value: number; attempts: number; daysOpen: number;
 }
 
@@ -66,13 +68,22 @@ const hrStr = (v: number | null | undefined) =>
 const num = (n: number) => n.toLocaleString("en-IN");
 
 const REASON_LABELS: Record<string, string> = {
-  customer_unavailable: "Customer unavailable", address_issue: "Address issue",
+  // Granular buckets from the server-side remark classifier.
+  consignee_unavailable: "Consignee unavailable", customer_refused: "Customer refused / cancelled",
+  rescheduled: "Delivery rescheduled", courier_issue: "Courier delay / not attempted",
+  no_reattempt_instruction: "No reattempt instruction", max_attempts: "Max attempts reached",
+  customer_unavailable: "Customer unavailable", address_issue: "Address incomplete / wrong",
   refused: "Customer refused", rto: "RTO", other: "Other", unknown: "Unknown",
   "EOD-74": "Customer unavailable", "EOD-15": "Address issue", "EOD-11": "Refused",
   "EOD-104": "Reschedule requested", "EOD-43": "Not reachable", "EOD-86": "Incomplete address",
   "EOD-69": "COD not ready", "EOD-6": "Out of area",
 };
 const reasonLabel = (k: string) => REASON_LABELS[k] ?? k;
+
+// Shipment page on the logistics partner. Single place to swap in a
+// Delhivery One deep link once we have its URL pattern.
+const trackingUrl = (awb: string) => `https://www.delhivery.com/track-v2/package/${encodeURIComponent(awb)}`;
+const OPEN_PAGE_SIZE = 10;
 
 // Monochrome — everything is the app's single primary colour, with
 // opacity steps to tell stacked segments / series apart. No red/green/
@@ -160,31 +171,6 @@ function RateKpi({
   );
 }
 
-function SegBar({ segments }: { segments: { label: string; value: number; color: string }[] }) {
-  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
-  return (
-    <>
-      <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted">
-        {segments.map((s) => (
-          <div key={s.label} style={{ width: `${(s.value / total) * 100}%`, background: s.color }} className="h-full" />
-        ))}
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
-        {segments.map((s) => (
-          <div key={s.label} className="flex items-center gap-2 text-xs">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-            <span className="text-muted-foreground">{s.label}</span>
-            <span className="ml-auto font-semibold tabular-nums">{num(s.value)}</span>
-            <span className="w-9 text-right text-xs text-muted-foreground tabular-nums">
-              {Math.round((s.value / total) * 100)}%
-            </span>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function StatTile({ icon: Icon, label, value, sub, color }: { icon: any; label: string; value: string; sub?: string; color?: string }) {
   return (
     <Card>
@@ -199,15 +185,65 @@ function StatTile({ icon: Icon, label, value, sub, color }: { icon: any; label: 
   );
 }
 
+// flex column so panels in a stretched grid row share one height and
+// the body fills whatever space is left under the header.
 function Panel({ title, right, children, className }: { title: string; right?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <Card className={className}>
+    <Card className={`flex flex-col ${className ?? ""}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {right}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="flex flex-1 flex-col">{children}</CardContent>
     </Card>
+  );
+}
+
+// Vertical outcome breakdown: one row per outcome with count, share and
+// a thin bar, spread to fill the card height.
+function OutcomeList({ segments }: { segments: { label: string; value: number; color: string }[] }) {
+  const total = segments.reduce((s, x) => s + x.value, 0) || 1;
+  return (
+    <div className="flex flex-1 flex-col justify-between gap-3">
+      {segments.map((s) => {
+        const share = (s.value / total) * 100;
+        return (
+          <div key={s.label}>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
+              <span className="text-muted-foreground">{s.label}</span>
+              <span className="ml-auto font-semibold tabular-nums">{num(s.value)}</span>
+              <span className="w-10 text-right text-xs text-muted-foreground tabular-nums">{Math.round(share)}%</span>
+            </div>
+            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full" style={{ width: `${share}%`, background: s.color }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Top-N failure reasons as labelled bars with % share of captured orders.
+function ReasonBars({ rows }: { rows: ReasonRow[] }) {
+  const max = Math.max(...rows.map((r) => r.count), 1);
+  return (
+    <div className="space-y-3">
+      {rows.map((r, i) => (
+        <div key={r.key}>
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <span className="truncate font-medium" title={reasonLabel(r.key)}>{reasonLabel(r.key)}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {num(r.count)} · <span className="font-semibold text-foreground">{pctStr(r.sharePct)}</span>
+            </span>
+          </div>
+          <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full" style={{ width: `${Math.max((r.count / max) * 100, 3)}%`, background: REASON_COLORS[i] ?? C_M4 }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -251,9 +287,27 @@ export default function NdrAnalyticsPage() {
   const rev = data?.revenue;
   const trend = (data?.trend ?? []).map((t) => ({ ...t, label: (() => { try { return format(parseISO(t.date), "d MMM"); } catch { return t.date; } })() }));
 
-  const reasonBars = (data?.reasons.byCategory ?? []).map((r, i) => ({
-    name: reasonLabel(r.key), count: r.count, fill: REASON_COLORS[i % REASON_COLORS.length],
-  }));
+  const topReasons = (data?.reasons.byCategory ?? []).slice(0, 5);
+
+  // Cards whose pipelines aren't writing data yet render nothing rather
+  // than a wall of "—" / 0%. Listed in the footer so it's not silent.
+  const showReattempt = (data?.reattempt.withReattempt ?? 0) > 0;
+  const showActionable = (data?.actionable.actionable ?? 0) > 0;
+  const showReshipments = (data?.reshipments.created ?? 0) > 0;
+  const hiddenMetrics = [
+    !showReattempt && "Reattempt effectiveness (no reattempts recorded)",
+    !showActionable && "Actionable NDRs & rescue rate (actionable flag not populated)",
+    !showReshipments && "Reshipments (none created in this window)",
+  ].filter(Boolean) as string[];
+
+  // Open-NDR table pagination (client-side; server sends the full queue).
+  const [page, setPage] = useState(0);
+  const openList = data?.openList ?? [];
+  const openTotal = (data?.openAging ?? []).reduce((s, a) => s + a.count, 0);
+  const pageCount = Math.max(1, Math.ceil(openList.length / OPEN_PAGE_SIZE));
+  const curPage = Math.min(page, pageCount - 1);
+  const pageRows = openList.slice(curPage * OPEN_PAGE_SIZE, (curPage + 1) * OPEN_PAGE_SIZE);
+  useEffect(() => setPage(0), [activeStoreId]);
   // Darker = older (the problem end).
   const agingBars = (data?.openAging ?? []).map((a) => ({
     ...a, fill: a.bucket === "14d+" ? C_MAIN : a.bucket === "7-14d" ? C_M2 : a.bucket === "3-7d" ? C_M3 : C_M4,
@@ -266,13 +320,13 @@ export default function NdrAnalyticsPage() {
       actions={<DateRangeSelector dateRange={dateRange} onDateChange={setDateRange} />}
     >
       {isLoading || !data ? (
-        <div className="mx-auto max-w-[1400px] space-y-4">
+        <div className="mx-auto max-w-[1400px] space-y-4 px-4 py-6 sm:px-6 lg:px-8">
           <div className="grid gap-3 md:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}</div>
           <Skeleton className="h-72 rounded-2xl" />
           <div className="grid gap-3 md:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-2xl" />)}</div>
         </div>
       ) : (
-        <div className="mx-auto max-w-[1400px] space-y-4">
+        <div className="mx-auto max-w-[1400px] space-y-4 px-4 py-6 sm:px-6 lg:px-8">
           {/* ── Row 1: rate KPIs with trend chips + gauge bars ── */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <RateKpi label="Total NDR Rate" value={k!.totalNdrRatePct} prev={data.prev.totalNdrRatePct} color={C_RED} icon={AlertTriangle} goodWhenDown
@@ -295,7 +349,7 @@ export default function NdrAnalyticsPage() {
           </div>
 
           {/* ── Row 2: hero trend chart + outcomes seg bar ── */}
-          <div className="grid items-start gap-3 lg:grid-cols-3">
+          <div className="grid items-stretch gap-3 lg:grid-cols-3">
             <Panel title="NDR Volume & Recovery Trend" className="lg:col-span-2"
               right={<div className="flex gap-3 text-xs text-muted-foreground">
                 <span><span className="inline-block h-2 w-2 rounded-sm mr-1 align-middle" style={{ background: C_MAIN }} />New NDRs</span>
@@ -305,7 +359,7 @@ export default function NdrAnalyticsPage() {
               {trend.every((t) => t.ndrs === 0) ? (
                 <EmptyState text="No NDR activity in this window." />
               ) : (
-                <ResponsiveContainer width="100%" height={210}>
+                <ResponsiveContainer width="100%" height={250}>
                   <AreaChart data={trend} margin={{ top: 6, right: 6, left: -16, bottom: 0 }}>
                     <defs>
                       <linearGradient id="ndrArea" x1="0" y1="0" x2="0" y2="1">
@@ -334,7 +388,7 @@ export default function NdrAnalyticsPage() {
                     <span className="text-3xl font-bold">{num(k!.ndrOrders)}</span>
                     <span className="text-xs text-muted-foreground">NDR orders</span>
                   </div>
-                  <SegBar segments={[
+                  <OutcomeList segments={[
                     { label: "Delivered", value: k!.deliveredOrders, color: C_MAIN },
                     { label: "RTO", value: k!.returnedOrders, color: C_M2 },
                     { label: "Open", value: k!.openOrders, color: C_M3 },
@@ -377,21 +431,25 @@ export default function NdrAnalyticsPage() {
             })}
           </div>
 
-          {/* ── Row 3.5: COD vs Prepaid NDR rate + reattempt effectiveness ── */}
-          <div className="grid items-start gap-3 lg:grid-cols-3">
+          {/* ── Row 3.5: COD vs Prepaid NDR rate + reattempt effectiveness
+               (or resolution time while reattempt tracking has no data) ── */}
+          <div className="grid items-stretch gap-3 lg:grid-cols-3">
             <Panel title="NDR Rate: COD vs Prepaid" className="lg:col-span-2">
               <PaymentCompare cod={data.paymentSplit.cod} prepaid={data.paymentSplit.prepaid} />
             </Panel>
-            <Panel title="Reattempt Effectiveness">
-              {data.reattempt.withReattempt === 0 ? (
-                <div className="py-4">
-                  <div className="text-3xl font-bold text-muted-foreground">—</div>
-                  <p className="mt-2 text-[11px] text-muted-foreground">
-                    No reattempts recorded in this window. Either none were scheduled, or the
-                    reattempt flow isn't writing <span className="font-mono">reattempt_scheduled</span> yet.
-                  </p>
+            {!showReattempt ? (
+              <Panel title="Avg Resolution Time" right={<Clock className="h-4 w-4 text-muted-foreground" />}>
+                <div className="flex flex-1 flex-col justify-center py-1">
+                  <div className="text-3xl font-bold">{hrStr(data.resolutionTime.overallHours)}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">first NDR → final outcome</div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                    <div><div className="text-muted-foreground">To delivery</div><div className="text-base font-semibold">{hrStr(data.resolutionTime.deliveredHours)}</div></div>
+                    <div><div className="text-muted-foreground">To RTO</div><div className="text-base font-semibold">{hrStr(data.resolutionTime.returnedHours)}</div></div>
+                  </div>
                 </div>
-              ) : (
+              </Panel>
+            ) : (
+            <Panel title="Reattempt Effectiveness">
                 <div className="py-1">
                   <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-bold" style={{ color: C_GOOD }}>{pctStr(data.reattempt.effectivenessPct)}</span>
@@ -405,25 +463,31 @@ export default function NdrAnalyticsPage() {
                     coverage {pctStr(data.reattempt.ndrOrders ? Math.round((data.reattempt.withReattempt / data.reattempt.ndrOrders) * 10000) / 100 : null)} of NDRs
                   </div>
                 </div>
-              )}
             </Panel>
+            )}
           </div>
 
           {/* ── Row 4: reasons + aging ── */}
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Panel title="Why Deliveries Fail">
-              {reasonBars.length === 0 ? <EmptyState text="No reason data in this window." /> : (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={reasonBars} layout="vertical" margin={{ left: 50, right: 12 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" opacity={0.4} />
-                    <XAxis type="number" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11, fill: "hsl(var(--foreground))" }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "hsl(var(--muted))", opacity: 0.3 }} />
-                    <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={20}>
-                      {reasonBars.map((b, i) => <Cell key={i} fill={b.fill} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+          <div className="grid items-stretch gap-3 lg:grid-cols-2">
+            <Panel title="Why Deliveries Fail"
+              right={<span className="text-[11px] text-muted-foreground">top {topReasons.length} · share of orders with a reason</span>}>
+              {topReasons.length === 0 ? <EmptyState text="No courier failure reasons in this window." /> : (
+                <>
+                  <ReasonBars rows={topReasons} />
+                  <div className="mt-auto space-y-1 pt-4 text-[11px] text-muted-foreground">
+                    {data.reasons.noReattemptInstruction > 0 && (
+                      <p>
+                        <span className="font-semibold text-foreground">{num(data.reasons.noReattemptInstruction)}</span> NDR orders
+                        hit Delhivery's “no client instructions to reattempt” — reattempts we never requested.
+                      </p>
+                    )}
+                    {data.reasons.notCaptured > 0 && (
+                      <p>
+                        {num(data.reasons.notCaptured)} of {num(data.reasons.totalOrders)} orders had only transit/RTO scans — no failure reason from the courier.
+                      </p>
+                    )}
+                  </div>
+                </>
               )}
             </Panel>
             <Panel title="Open-NDR Aging" right={<span className="text-[11px] text-muted-foreground">live snapshot</span>}>
@@ -442,21 +506,32 @@ export default function NdrAnalyticsPage() {
             </Panel>
           </div>
 
-          {/* ── Row 5: secondary stat strip ── */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile icon={ShieldCheck} label="Actionable NDRs" value={pctStr(data.actionable.actionablePct)}
-              sub={`${num(data.actionable.actionable)} actionable · ${num(data.actionable.nonActionable)} not`} />
-            <StatTile icon={TrendingUp} label="Actionable Rescue Rate" color={C_GOOD} value={pctStr(data.actionable.actionableRescuePct)}
-              sub={`${num(data.actionable.actionableRescued)} of ${num(data.actionable.actionable)} saved`} />
-            <StatTile icon={Clock} label="Avg Resolution Time" value={hrStr(data.resolutionTime.overallHours)}
-              sub={`Deliver ${hrStr(data.resolutionTime.deliveredHours)} · RTO ${hrStr(data.resolutionTime.returnedHours)}`} />
-            <StatTile icon={Repeat} label="Reshipments" value={`${num(data.reshipments.delivered)} / ${num(data.reshipments.created)}`} sub="delivered / created" />
-          </div>
+          {/* ── Row 5: secondary stat strip — only tiles with live data ── */}
+          {(() => {
+            const tiles: React.ReactNode[] = [];
+            if (showActionable) {
+              tiles.push(<StatTile key="act" icon={ShieldCheck} label="Actionable NDRs" value={pctStr(data.actionable.actionablePct)}
+                sub={`${num(data.actionable.actionable)} actionable · ${num(data.actionable.nonActionable)} not`} />);
+              tiles.push(<StatTile key="resc" icon={TrendingUp} label="Actionable Rescue Rate" color={C_GOOD} value={pctStr(data.actionable.actionableRescuePct)}
+                sub={`${num(data.actionable.actionableRescued)} of ${num(data.actionable.actionable)} saved`} />);
+            }
+            // Resolution time moves up into Row 3.5 when reattempt has no data.
+            if (showReattempt) {
+              tiles.push(<StatTile key="res" icon={Clock} label="Avg Resolution Time" value={hrStr(data.resolutionTime.overallHours)}
+                sub={`Deliver ${hrStr(data.resolutionTime.deliveredHours)} · RTO ${hrStr(data.resolutionTime.returnedHours)}`} />);
+            }
+            if (showReshipments) {
+              tiles.push(<StatTile key="resh" icon={Repeat} label="Reshipments" value={`${num(data.reshipments.delivered)} / ${num(data.reshipments.created)}`} sub="delivered / created" />);
+            }
+            if (!tiles.length) return null;
+            const cols = ["", "", "sm:grid-cols-2", "sm:grid-cols-3", "sm:grid-cols-2 lg:grid-cols-4"][tiles.length];
+            return <div className={`grid gap-3 ${cols}`}>{tiles}</div>;
+          })()}
 
-          {/* ── Row 5.5: actionable open-NDR queue (drill-down) ── */}
+          {/* ── Row 5.5: actionable open-NDR queue (drill-down, paginated) ── */}
           <Panel title="Open NDRs to Action"
-            right={<span className="text-[11px] text-muted-foreground">oldest first · {data.openList.length} shown</span>}>
-            {data.openList.length === 0 ? (
+            right={<span className="text-[11px] text-muted-foreground">oldest first</span>}>
+            {openList.length === 0 ? (
               <EmptyState text="No open NDRs right now. 🎉" />
             ) : (
               <div className="-mx-2 overflow-x-auto">
@@ -474,20 +549,28 @@ export default function NdrAnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.openList.map((r, i) => (
-                      <tr key={i} className="border-b border-border/40 hover:bg-muted/40">
+                    {pageRows.map((r, i) => (
+                      <tr key={`${r.awb ?? r.orderNumber ?? ""}-${i}`} className="border-b border-border/40 hover:bg-muted/40">
                         <td className="px-2 py-2 font-medium whitespace-nowrap">
-                          {r.orderNumber ? `#${r.orderNumber}` : "—"}
-                          {r.awb && <div className="font-mono text-[10px] text-muted-foreground">{r.awb}</div>}
+                          {r.awb ? (
+                            <a href={trackingUrl(r.awb)} target="_blank" rel="noopener noreferrer"
+                              className="group inline-flex flex-col hover:underline" title="Open shipment on Delhivery">
+                              <span className="inline-flex items-center gap-1">
+                                {r.orderNumber ? `#${r.orderNumber}` : "—"}
+                                <ExternalLink className="h-3 w-3 text-muted-foreground group-hover:text-foreground" />
+                              </span>
+                              <span className="font-mono text-[10px] text-muted-foreground">{r.awb}</span>
+                            </a>
+                          ) : (r.orderNumber ? `#${r.orderNumber}` : "—")}
                         </td>
                         <td className="px-2 py-2 whitespace-nowrap">
                           {r.customerName || "—"}
                           {r.customerPhone && <div className="text-[10px] text-muted-foreground">{r.customerPhone}</div>}
                         </td>
                         <td className="px-2 py-2 whitespace-nowrap">{r.city || "—"}</td>
-                        <td className="px-2 py-2 max-w-[180px] truncate" title={r.reason ?? ""}>
+                        <td className="px-2 py-2 max-w-[200px] truncate" title={r.reason ?? ""}>
                           <span className="inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle" style={{ background: r.isActionable ? C_GOOD : C_GREY_LT }} />
-                          {r.reason || r.nslCode || "—"}
+                          {r.reasonKey ? reasonLabel(r.reasonKey) : (r.reason || r.nslCode || "—")}
                         </td>
                         <td className="px-2 py-2">
                           <Badge variant="secondary" className="text-[10px] font-medium">{r.paymentType}</Badge>
@@ -501,6 +584,23 @@ export default function NdrAnalyticsPage() {
                     ))}
                   </tbody>
                 </table>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-2 text-xs text-muted-foreground">
+                  <span className="tabular-nums">
+                    {num(curPage * OPEN_PAGE_SIZE + 1)}–{num(curPage * OPEN_PAGE_SIZE + pageRows.length)} of {num(openList.length)}
+                    {openTotal > openList.length && ` (oldest ${num(openList.length)} of ${num(openTotal)} open)`}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" className="h-7 px-2" disabled={curPage === 0}
+                      onClick={() => setPage(curPage - 1)} aria-label="Previous page">
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="px-2 tabular-nums">Page {curPage + 1} of {pageCount}</span>
+                    <Button variant="outline" size="sm" className="h-7 px-2" disabled={curPage >= pageCount - 1}
+                      onClick={() => setPage(curPage + 1)} aria-label="Next page">
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
           </Panel>
@@ -519,6 +619,7 @@ export default function NdrAnalyticsPage() {
             Window {new Date(data.window.start).toLocaleDateString()} – {new Date(data.window.end).toLocaleDateString()} ·
             Trend chips compare the previous equal-length period · Rates &amp; revenue are per distinct order
             (multi-attempt NDRs counted once) · Geography ranked by NDR rate with a minimum-volume floor.
+            {hiddenMetrics.length > 0 && <> · Hidden until data is live: {hiddenMetrics.join("; ")}.</>}
           </p>
         </div>
       )}
