@@ -63,6 +63,27 @@ interface RTOInsights {
   };
 }
 
+interface DeliveryRateSegment {
+  rate: number;        // delivered ÷ matured, as a percentage
+  delivered: number;
+  matured: number;     // the denominator: dispatched parcels old enough to judge
+  total: number;       // all dispatched parcels in the period
+  immature: number;    // excluded — too recent to have had a fair chance
+  rto: number;
+  lost: number;
+  stuck: number;       // mature but still in transit = failures
+  coverage: number;    // matured ÷ total, as a percentage
+  is_final: boolean;   // coverage ≥ 98% → safe to pay incentives on
+}
+
+interface DeliveryRate {
+  maturity_days: number;
+  observation_date: string;
+  overall: DeliveryRateSegment;
+  cod: DeliveryRateSegment;
+  prepaid: DeliveryRateSegment;
+}
+
 export default function AnalyticsPage() {
   const userEmail = localStorage.getItem("userEmail");
   const userId = localStorage.getItem("userId");
@@ -125,6 +146,25 @@ export default function AnalyticsPage() {
     refetchInterval: 60000,
   });
 
+  const { data: deliveryRate, isLoading: deliveryRateLoading } = useQuery<DeliveryRate>({
+    queryKey: [
+      "/api/analytics/delivery-rate",
+      activeStoreId,
+      dateRange.startDate?.toISOString() || "all",
+      dateRange.endDate?.toISOString() || "all",
+    ],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (dateRange.startDate) params.append("startDate", dateRange.startDate.toISOString());
+      if (dateRange.endDate) params.append("endDate", dateRange.endDate.toISOString());
+
+      const res = await apiRequest("GET", `/api/analytics/delivery-rate?${params.toString()}`);
+      return res.json();
+    },
+    enabled: !!activeStoreId,
+    refetchInterval: 60000,
+  });
+
   const stats = {
     assignedOrders: metrics?.assignedOrders || 0,
     confirmedOrders: metrics?.confirmedOrders || 0,
@@ -177,7 +217,43 @@ export default function AnalyticsPage() {
 
           <TabsContent value="rto-insights" className="space-y-6">
             {/* KPI Cards Row */}
-            <div className="grid gap-4 md:grid-cols-3" data-testid="rto-kpi-cards">
+            <div className="grid gap-4 md:grid-cols-4" data-testid="rto-kpi-cards">
+              <Card data-testid="card-delivery-rate">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
+                  <CardTitle className="text-sm font-medium">Delivery Rate</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {!deliveryRateLoading && deliveryRate && (
+                      <Badge
+                        variant={deliveryRate.overall.is_final ? "secondary" : "outline"}
+                        className="text-[10px] px-1.5 py-0"
+                        data-testid="badge-delivery-final"
+                      >
+                        {deliveryRate.overall.is_final ? "Final" : "Provisional"}
+                      </Badge>
+                    )}
+                    <Truck className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {deliveryRateLoading ? (
+                    <Skeleton className="h-8 w-16" />
+                  ) : (
+                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-500" data-testid="stat-delivery-rate">
+                      {deliveryRate?.overall.rate ?? 0}%
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    COD {deliveryRate?.cod.rate ?? 0}% · Prepaid {deliveryRate?.prepaid.rate ?? 0}%
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {deliveryRate?.overall.delivered ?? 0}/{deliveryRate?.overall.matured ?? 0} matured
+                    {(deliveryRate?.overall.immature ?? 0) > 0
+                      ? ` · ${deliveryRate?.overall.immature} still maturing (<${deliveryRate?.maturity_days ?? 11}d)`
+                      : ""}
+                  </p>
+                </CardContent>
+              </Card>
+
               <Card data-testid="card-rto-rate">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
                   <CardTitle className="text-sm font-medium">RTO Rate</CardTitle>

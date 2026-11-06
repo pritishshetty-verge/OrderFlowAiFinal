@@ -12,7 +12,7 @@ import {
   orders, leaveRequests, orderStatusHistory, invites,
   attendance, orderAssignments, calls, notifications, ndrEvents,
   courses, resources, userLessonProgress, userOnboardingProgress, users,
-  webhooks, insertWebhookSchema, stores, userStores,
+  webhooks, insertWebhookSchema, stores, userStores, shipments,
   RETURN_STATUSES,
   ABANDONED_RECOVERY_STATUSES,
   type MetaAdAccountConfig,
@@ -10746,6 +10746,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================================================
   // ANALYTICS API
   // ============================================================================
+
+  // Successful Delivery Rate (maturity-gated)
+  // GET /api/analytics/delivery-rate
+  // Share of DISPATCHED parcels that were delivered, per active store,
+  // cohorted by shipments.created_at. We capture NO pickup scan
+  // (shipments.picked_up_at is empty on every row), so manifest/AWB-creation
+  // time is the dispatch anchor — its P95 created→delivered (~8.3d here) is
+  // within ~0.15d of the true pickup→delivery time, so it's an accurate proxy.
+  //
+  // The honest part (right-censoring fix): parcels created within the last
+  // `maturityDays` (M) haven't had a fair chance to arrive, so they are
+  // EXCLUDED, not counted as failures — this stops the rate drifting upward as
+  // recent parcels land. Parcels older than M that are NOT delivered (RTO,
+  // lost, or still stuck in transit) DO count as failures. `coverage` =
+  // matured ÷ total dispatched; a period is `is_final` once coverage ≥ 98%
+  // (pay incentives on final periods only; true-up the rare later arrivals).
+  // Split COD vs prepaid via orders.payment_method. Accepts startDate/endDate
+  // (ISO) applied to shipments.created_at; empty = All Time.
+  app.get("/api/analytics/delivery-rate", async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      const startDateParsed = startDate && typeof startDate === 'string' && startDate.trim()
+        ? new Date(startDate) : null;
+      const endDateParsed = endDate && typeof endDate === 'string' && endDate.trim()
+        ? new Date(endDate) : null;
+
+      const storeId = req.storeScope?.storeId;
+
+      // Resolve the maturity window: per-store override, else the default (11),
+      // which is ceil(P95)+2 of this account's created→delivered transit time.
+      const DEFAULT_MATURITY_DAYS = 11;
+      let maturityDays = DEFAULT_MATURITY_DAYS;
+      if (storeId) {
+        const [s] = await db
+          .select({ m: stores.maturityDays })
+          .from(stores)
+          .where(eq(stores.id, storeId));
+        if (s?.m && s.m > 0) maturityDays = s.m;
+      }
+
+      const conditions = [];
+      if (storeId) conditions.push(eq(shipments.storeId, storeId));
+      if (startDateParsed && !isNaN(startDateParsed.getTime())) {
+        conditions.push(gte(shipments.createdAt, startDateParsed));
+      }
+      if (endDateParsed && !isNaN(endDateParsed.getTime())) {
+        conditions.push(lte(shipments.createdAt, endDateParsed));
+      }
+
+      // Pull the dispatch cohort. The cohort/anchor is shipments.created_at
+      // (reliable, 100% populated), but the DELIVERY OUTCOME is read from the
+      // joined order's normalized status — shipments.status/delivered_at are
+      // stale (never advanced past "in transit" for ~40% of parcels), whereas
+      // orders.status / orders.shipment_status are the app's source of truth
+      // (same fields RTO Insights and the dashboard trust). Having a shipment
+      // row == dispatched, so the join defines the "dispatched parcels" cohort.
+      const baseSelect = db
+        .select({
+          createdAt: shipments.createdAt,
+          orderStatus: orders.status,
+          orderShipmentStatus: orders.shipmentStatus,
+          paymentMethod: orders.paymentMethod,
+        })
+        .from(shipments)
+        .leftJoin(orders, eq(orders.id, shipments.orderId));
+      const rows = conditions.length > 0
+        ? await baseSelect.where(and(...conditions))
+        : await baseSelect;
+
+      // Maturity cutoff: a parcel created after this instant is too young to
+      // have had a fair chance, so it's excluded from the denominator.
+      const now = Date.now();
+      const cutoff = now - maturityDays * 24 * 60 * 60 * 1000;
+
+      type Row = {
+        createdAt: Date;
+        orderStatus: string | null;
+        orderShipmentStatus: string | null;
+        paymentMethod: string | null;
+      };
+      // Outcome detection mirrors the RTO Insights route: delivered/RTO/lost
+      // from the order's normalized status, with shipment_status as a fallback.
+      const isDelivered = (r: Row) =>
+        r.orderStatus === "delivered" || (r.orderShipmentStatus ?? "").toLowerCase() === "delivered";
+      const isRto = (r: Row) =>
+        r.orderStatus === "rto_initiated" ||
+        r.orderStatus === "rto_delivered" ||
+        (r.orderShipmentStatus ?? "").toUpperCase() === "RTO";
+      const isLost = (r: Row) => r.orderStatus === "lost";
+
+      const summarise = (cohort: Row[]) => {
+        const total = cohort.length;
+        const mature = cohort.filter(r => r.createdAt && new Date(r.createdAt).getTime() <= cutoff);
+        const matured = mature.length;
+        // Single pass with precedence (delivered > rto > lost > stuck) so the
+        // four buckets are mutually exclusive and sum exactly to `matured`.
+        let delivered = 0, rto = 0, lost = 0, stuck = 0;
+        for (const r of mature) {
+          if (isDelivered(r)) delivered++;
+          else if (isRto(r)) rto++;
+          else if (isLost(r)) lost++;
+          else stuck++; // mature but still "in transit" past its fair window = a failure
+        }
+        const rate = matured > 0 ? Math.round((delivered / matured) * 10000) / 100 : 0;
+        const coverage = total > 0 ? Math.round((matured / total) * 10000) / 100 : 0;
+        return {
+          rate,
+          delivered,
+          matured,
+          total,
+          immature: total - matured,
+          rto,
+          lost,
+          stuck,
+          coverage,
+          is_final: total > 0 && coverage >= 98,
+        };
+      };
+
+      const isCod = (pm: string | null) => !!pm && pm.toLowerCase().includes("cod");
+      const codRows = rows.filter(r => isCod(r.paymentMethod));
+      const prepaidRows = rows.filter(r => !isCod(r.paymentMethod));
+
+      res.json({
+        maturity_days: maturityDays,
+        observation_date: new Date(now).toISOString(),
+        overall: summarise(rows),
+        cod: summarise(codRows),
+        prepaid: summarise(prepaidRows),
+      });
+    } catch (error: any) {
+      console.error("[delivery-rate] error:", error);
+      res.status(500).json({ error: "Failed to compute delivery rate" });
+    }
+  });
 
   // RTO Insights Dashboard
   // GET /api/analytics/rto-insights

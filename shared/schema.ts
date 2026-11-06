@@ -344,6 +344,17 @@ export const stores = pgTable("stores", {
   // PAYU_MERCHANT_KEY / PAYU_MERCHANT_SALT env vars when unset.
   payuMerchantKey: text("payu_merchant_key"),
   payuMerchantSalt: text("payu_merchant_salt"),
+  // Maturity window (days) for the Successful Delivery Rate metric: the
+  // number of days after a shipment is created (manifest/dispatch — we
+  // capture no pickup scan, so shipments.created_at is the anchor) by which
+  // virtually all parcels that will ever deliver have delivered. Parcels
+  // younger than this are EXCLUDED from the rate as "immature" (not yet a
+  // fair chance), rather than counted as failures — this is what stops the
+  // rate from drifting as recent parcels land. NULL falls back to
+  // DEFAULT_MATURITY_DAYS (11), derived from this account's P95
+  // created→delivered transit time (ceil(P95)+2). Refresh monthly from real
+  // data as transit times drift (festival season, courier mix).
+  maturityDays: integer("maturity_days"),
   isActive: boolean("is_active").notNull().default(true),
   lastTestedAt: timestamp("last_tested_at"),
   testStatus: text("test_status"), // success | failed

@@ -3847,6 +3847,12 @@ export class DbStorage implements IStorage {
     await db.execute(sql`
       ALTER TABLE stores
         ADD COLUMN IF NOT EXISTS payu_merchant_salt TEXT`);
+    // Per-store maturity window for the Successful Delivery Rate metric.
+    // NULL → code falls back to DEFAULT_MATURITY_DAYS (11). See the
+    // stores.maturityDays comment in shared/schema.ts.
+    await db.execute(sql`
+      ALTER TABLE stores
+        ADD COLUMN IF NOT EXISTS maturity_days INTEGER`);
   }
 
   async seedDefaultSettings(): Promise<void> {
