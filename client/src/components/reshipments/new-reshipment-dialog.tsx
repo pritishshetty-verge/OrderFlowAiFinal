@@ -43,7 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 const REASONS = [
   { value: "courier_error", label: "Courier error" },
   { value: "customer_unavailable", label: "Customer unavailable" },
-  { value: "fake_delivery_attempt", label: "Fake delivery attempt" },
+  { value: "fake_delivery", label: "Fake delivery attempt" },
   { value: "address_issue", label: "Address issue" },
   { value: "product_damaged", label: "Product damaged" },
   { value: "other", label: "Other" },

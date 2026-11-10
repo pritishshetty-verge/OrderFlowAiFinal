@@ -76,6 +76,8 @@ const REASON_LABEL: Record<string, string> = {
   courier_error: "Courier error",
   customer_unavailable: "Customer unavailable",
   fake_delivery: "Fake delivery attempt",
+  // Legacy rows written before the reason enum was fixed.
+  fake_delivery_attempt: "Fake delivery attempt",
   address_issue: "Address issue",
   product_damaged: "Product damaged",
   other: "Other",

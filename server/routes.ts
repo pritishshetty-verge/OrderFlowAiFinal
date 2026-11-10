@@ -25,6 +25,7 @@ import { triggerWebhooks } from "./services/webhooks";
 import { handleOrderCreated, handleOrderUpdated, handleOrderCancelled, handleFulfillmentUpdate } from "./webhooks";
 import { shopifyClient, getShopifyClient } from "./shopify";
 import { requireStoreScope } from "./storeScope";
+import { RESHIPMENT_REASONS, normalizeReshipmentReason } from "@shared/schema";
 import { insertOrderSchema, insertLeaveRequestSchema, insertUserSchema, updateUserSchema, insertShopifyCredentialsSchema, insertInviteSchema, insertAttendanceSchema, pincodeTiers } from "@shared/schema";
 import { ZodError } from "zod";
 import { encrypt, decrypt } from "./encryption";
@@ -477,44 +478,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return buildOrderReadScope(requestingUserId, 'assigned', requestedAssignedTo, storeId);
   }
   
+  // ── Session-derived identity for WRITE endpoints ──────────────────
+  //
+  // Write endpoints must take the acting user from the server-side
+  // session ONLY. Body / query fields such as `userId`, `changedBy`,
+  // `assignedBy`, `requestedBy`, `actionBy`, `reviewedBy` are still
+  // accepted (old clients keep sending them) but are IGNORED as the
+  // actor — otherwise anyone who learns an admin's user id could act
+  // as that admin without logging in.
+
+  /** The signed-in user id from the session cookie, or null. */
+  function getSessionUserId(req: Request): string | null {
+    const id = req.session?.userId;
+    return typeof id === "string" && id.length > 0 ? id : null;
+  }
+
+  /**
+   * Resolve the signed-in user. Sends 401 and returns null when there
+   * is no session or the session's user no longer exists.
+   */
+  async function requireSessionUser(req: Request, res: Response): Promise<User | null> {
+    const sessionUserId = getSessionUserId(req);
+    if (!sessionUserId) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    const user = await storage.getUser(sessionUserId);
+    if (!user) {
+      res.status(401).json({ error: "Authentication required" });
+      return null;
+    }
+    return user;
+  }
+
+  /**
+   * Resolve the signed-in user and require them to satisfy `allowed`
+   * (default: admin/developer). Sends 401/403 and returns null on failure.
+   */
+  async function requireSessionUserWith(
+    req: Request,
+    res: Response,
+    allowed: (u: User) => boolean = isAdmin,
+    forbiddenMessage = "Forbidden: admin role required.",
+  ): Promise<User | null> {
+    const user = await requireSessionUser(req, res);
+    if (!user) return null;
+    if (!allowed(user)) {
+      res.status(403).json({ error: forbiddenMessage });
+      return null;
+    }
+    return user;
+  }
+
+  /**
+   * If the store-scope middleware rejected this request (e.g. header
+   * names a store the caller has no membership for), surface that error.
+   * Returns false (after responding) when the request must stop.
+   */
+  function passStoreScopeGuard(req: Request, res: Response): boolean {
+    const stashed = (req as any).storeScopeError as { status: number; message: string } | undefined;
+    if (stashed) {
+      res.status(stashed.status).json({ error: stashed.message });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * True when a store-owned record may be touched under the caller's
+   * active store. Records with a NULL storeId (pre-backfill rows) pass,
+   * mirroring canUserReadOrder's legacy single-store contract.
+   */
+  function recordInActiveStore(req: Request, recordStoreId: string | null | undefined): boolean {
+    const active = req.storeScope?.storeId;
+    if (!active || !recordStoreId) return true;
+    return recordStoreId === active;
+  }
+
   /**
    * Checks if a user can access/modify an order.
-   * Returns true if user is Admin OR user is assigned to the order.
-   * Used for both read and write protection on single-order endpoints.
+   * Returns true if user is Admin (admin/developer) OR user is assigned
+   * to the order, AND the order belongs to the caller's active store.
+   * Used for write protection on single-order endpoints.
    */
   async function canUserAccessOrder(
     userId: string | undefined,
-    orderId: string
-  ): Promise<{ authorized: boolean; reason?: string; isAdmin: boolean }> {
+    orderId: string,
+    activeStoreId?: string,
+  ): Promise<{ authorized: boolean; reason?: string; isAdmin: boolean; status?: number }> {
     if (!userId) {
-      return { authorized: false, reason: "User ID is required for authorization", isAdmin: false };
+      return { authorized: false, reason: "Authentication required", isAdmin: false, status: 401 };
     }
-    
+
     const user = await storage.getUser(userId);
     if (!user) {
-      return { authorized: false, reason: "User not found", isAdmin: false };
+      return { authorized: false, reason: "Authentication required", isAdmin: false, status: 401 };
     }
-    
-    // Admins can access any order
-    if (user.role === "admin") {
-      return { authorized: true, isAdmin: true };
-    }
-    
-    // For agents, verify they own the order
+    const userIsAdmin = isAdmin(user);
+
     const order = await storage.getOrder(orderId);
     if (!order) {
-      return { authorized: false, reason: "Order not found", isAdmin: false };
+      return { authorized: false, reason: "Order not found", isAdmin: userIsAdmin, status: 404 };
     }
-    
+
+    // Cross-store containment — applies to admins too, exactly like
+    // canUserReadOrder. NULL-store legacy rows pass through.
+    if (activeStoreId && order.storeId && order.storeId !== activeStoreId) {
+      return {
+        authorized: false,
+        reason: "Order does not belong to the active store",
+        isAdmin: userIsAdmin,
+        status: 403,
+      };
+    }
+
+    // Admins (admin + developer) can modify any order in the store
+    if (userIsAdmin) {
+      return { authorized: true, isAdmin: true };
+    }
+
+    // For agents, verify they own the order
     if (order.assignedTo !== userId) {
-      return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false };
+      return { authorized: false, reason: "You are not authorized to access this order", isAdmin: false, status: 403 };
     }
-    
+
     return { authorized: true, isAdmin: false };
   }
-  
+
   // Alias for backward compatibility - same function, different name for clarity
   const canUserModifyOrder = canUserAccessOrder;
+
+  /**
+   * Route guard for single-order WRITE endpoints: session user (401),
+   * store-scope errors, then canUserModifyOrder with the active store.
+   * Sends the error response and returns null on failure.
+   */
+  async function requireOrderWriteAccess(
+    req: Request,
+    res: Response,
+    orderId: string,
+  ): Promise<{ user: User; isAdmin: boolean } | null> {
+    const user = await requireSessionUser(req, res);
+    if (!user) return null;
+    if (!passStoreScopeGuard(req, res)) return null;
+    const check = await canUserModifyOrder(user.id, orderId, req.storeScope?.storeId);
+    if (!check.authorized) {
+      res.status(check.status ?? 403).json({
+        error: check.reason || "You are not authorized to process this order",
+      });
+      return null;
+    }
+    return { user, isAdmin: check.isAdmin };
+  }
   
   /**
    * canUserReadOrder - READ permission check for individual order detail endpoints.
@@ -874,8 +989,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update the telecalling recovery status of an abandoned checkout.
+  // SECURITY: signed-in users only, and only for carts in their active store.
   app.patch("/api/abandoned-checkouts/:id/status", async (req, res) => {
     try {
+      const user = await requireSessionUser(req, res);
+      if (!user) return;
+      if (!passStoreScopeGuard(req, res)) return;
       const id = Number(req.params.id);
       if (!Number.isInteger(id)) {
         return res.status(400).json({ error: "Invalid checkout id" });
@@ -885,6 +1004,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({
           error: `Invalid status. Must be one of: ${ABANDONED_RECOVERY_STATUSES.join(", ")}`,
         });
+      }
+      const existing = await storage.getAbandonedCheckout(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Abandoned checkout not found" });
+      }
+      if (!recordInActiveStore(req, existing.storeId)) {
+        return res.status(403).json({ error: "Checkout does not belong to the active store" });
       }
       const updated = await storage.updateAbandonedCheckoutStatus(id, status);
       if (!updated) {
@@ -1339,25 +1465,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //  delivery. Admin + agents on the NDR team can create; anyone in
   //  the store can view the log.
   // ═══════════════════════════════════════════════════════════════════
+  // SECURITY: the acting user comes from the session only. Clients
+  // still send `?userId=` / `body.userId`; that value is ignored.
   const requireReshipmentUser = async (
     req: Request,
     res: Response,
   ): Promise<{ user: User } | null> => {
-    const uid =
-      typeof req.query.userId === "string"
-        ? req.query.userId
-        : typeof req.body?.userId === "string"
-          ? req.body.userId
-          : null;
-    if (!uid) {
-      res.status(401).json({ error: "Unauthorized: userId required." });
-      return null;
-    }
-    const user = await storage.getUser(uid);
-    if (!user) {
-      res.status(401).json({ error: "Unauthorized: user not found." });
-      return null;
-    }
+    const user = await requireSessionUser(req, res);
+    if (!user) return null;
     return { user };
   };
 
@@ -1417,6 +1532,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const k of required) {
         if (!b[k]) return res.status(400).json({ error: `Missing field: ${k}` });
       }
+      const reason = normalizeReshipmentReason(b.reason);
+      if (!reason) {
+        return res.status(400).json({
+          error: `Invalid reason. Must be one of: ${RESHIPMENT_REASONS.join(", ")}`,
+        });
+      }
       if (b.urgency === "scheduled" && !b.scheduledDate) {
         return res
           .status(400)
@@ -1435,7 +1556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerName: b.customerName,
           customerPhone: b.customerPhone,
           shippingAddress: b.shippingAddress,
-          reason: b.reason,
+          reason,
           urgency: b.urgency,
           scheduledDate: b.scheduledDate ?? null,
           internalNotes: b.internalNotes ?? null,
@@ -1521,6 +1642,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!scope) return;
       const { updateReshipment, ReshipmentError } = await import("./reshipments/service");
       const b = req.body ?? {};
+      let reason: NonNullable<ReturnType<typeof normalizeReshipmentReason>> | undefined;
+      if (b.reason !== undefined) {
+        const normalized = normalizeReshipmentReason(b.reason);
+        if (!normalized) {
+          return res.status(400).json({
+            error: `Invalid reason. Must be one of: ${RESHIPMENT_REASONS.join(", ")}`,
+          });
+        }
+        reason = normalized;
+      }
       if (b.urgency === "scheduled" && !b.scheduledDate) {
         return res
           .status(400)
@@ -1534,7 +1665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           {
             customerPhone: b.customerPhone,
             shippingAddress: b.shippingAddress,
-            reason: b.reason,
+            reason,
             urgency: b.urgency,
             scheduledDate: b.scheduledDate ?? null,
             internalNotes: b.internalNotes,
@@ -1805,22 +1936,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/orders/:id/address", async (req, res) => {
     try {
       const orderId = req.params.id;
-      const { 
-        firstName, lastName, address1, address2, 
+      // `userId` in the body is accepted but ignored — the actor is the
+      // session user.
+      const {
+        firstName, lastName, address1, address2,
         city, province, zip, country, phone, email,
-        userId
       } = req.body;
 
-      // SECURITY: userId is REQUIRED for authorization
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required for authorization" });
-      }
-      
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, orderId);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
-      }
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, orderId);
+      if (!authed) return;
 
       // Get the order to find its Shopify ID
       const order = await storage.getOrder(orderId);
@@ -1828,34 +1954,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Order not found" });
       }
 
-      // Sync to Shopify first
+      // Sync to Shopify first — via the per-store client keyed by the
+      // order's own storeId (falls back to the legacy client for
+      // pre-backfill rows), so multi-store setups hit the right shop.
       try {
-        const credentials = await storage.getShopifyCredentials();
-        if (credentials) {
-          const { decrypt } = await import("./encryption");
-          const decryptedClientId = decrypt(credentials.apiKey);
-          const decryptedClientSecret = decrypt(credentials.apiSecret);
-          
-          const { ShopifyClient } = await import("./shopify");
-          const client = new ShopifyClient({
-            storeUrl: credentials.storeUrl,
-            apiKey: decryptedClientId,
-            apiSecret: decryptedClientSecret,
-            useClientCredentials: true,
-          });
+        const { getShopifyClient, getLegacyStoreShopifyClient } = await import("./shopify");
+        const client = order.storeId
+          ? await getShopifyClient(order.storeId)
+          : await getLegacyStoreShopifyClient();
 
-          await client.updateOrderShippingAddress(order.shopifyOrderId, {
-            firstName,
-            lastName,
-            address1,
-            address2,
-            city,
-            province,
-            zip,
-            country: country || "India",
-            phone,
-          });
-        }
+        await client.updateOrderShippingAddress(order.shopifyOrderId, {
+          firstName,
+          lastName,
+          address1,
+          address2,
+          city,
+          province,
+          zip,
+          country: country || "India",
+          phone,
+        });
       } catch (shopifyError) {
         console.error("Shopify address update failed:", shopifyError);
         return res.status(400).json({ 
@@ -1912,7 +2030,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Assign order to user
   app.post("/api/orders/:id/assign", async (req, res) => {
     try {
-      const { userId, assignedBy, note } = req.body;
+      // NOTE: `userId` here is the TARGET agent, not the actor. The actor
+      // (`assignedBy`) comes from the session; a body `assignedBy` is ignored.
+      const { userId, note } = req.body;
+
+      // SECURITY: actor = session user, must be able to assign orders.
+      const currentUser = await requireSessionUserWith(
+        req,
+        res,
+        canAssignOrders,
+        "You don't have permission to assign orders",
+      );
+      if (!currentUser) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const assignedBy = currentUser.id;
 
       // Body contract:
       //   • userId: string  → assign / re-assign to that agent
@@ -1930,18 +2061,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      if (!assignedBy) {
-        return res.status(400).json({ error: "assignedBy is required" });
+      // Store containment: the order must live in the caller's active store.
+      const targetOrder = await storage.getOrder(req.params.id);
+      if (!targetOrder) {
+        return res.status(404).json({ error: "Order not found" });
       }
-
-      // Check permission
-      const currentUser = await storage.getUser(assignedBy);
-      if (!currentUser) {
-        return res.status(404).json({ error: "Current user not found" });
-      }
-
-      if (!canAssignOrders(currentUser)) {
-        return res.status(403).json({ error: "You don't have permission to assign orders" });
+      if (!recordInActiveStore(req, targetOrder.storeId)) {
+        return res.status(403).json({ error: "Order does not belong to the active store" });
       }
 
       // Unassign path: skip the assignmentEngine entirely — that
@@ -1986,21 +2112,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURITY: Write protection - agents can only update status on their assigned orders
   app.patch("/api/orders/:id/status", async (req, res) => {
     try {
-      const { status, changedBy, note } = req.body;
+      // `changedBy` in the body is accepted but ignored — actor = session user.
+      const { status, note } = req.body;
+
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, req.params.id);
+      if (!authed) return;
+      const changedBy = authed.user.id;
 
       if (!status) {
         return res.status(400).json({ error: "status is required" });
-      }
-
-      // SECURITY: changedBy is REQUIRED for authorization
-      if (!changedBy) {
-        return res.status(400).json({ error: "changedBy is required for authorization" });
-      }
-      
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(changedBy, req.params.id);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       const existingOrder = await storage.getOrder(req.params.id);
@@ -2033,18 +2155,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURITY: Write protection - agents can only update their assigned orders
   app.patch("/api/orders/:id", async (req, res) => {
     try {
-      const { tags, callStatus, userId } = req.body;
+      // `userId` in the body is accepted but ignored — actor = session user.
+      const { tags, callStatus } = req.body;
 
-      // SECURITY: userId is REQUIRED for authorization
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required for authorization" });
-      }
-      
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, req.params.id);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
-      }
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, req.params.id);
+      if (!authed) return;
 
       const existingOrder = await storage.getOrder(req.params.id);
       if (!existingOrder) {
@@ -2073,20 +2190,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auto-assign a COD order using round-robin algorithm
   app.post("/api/orders/:id/auto-assign", async (req, res) => {
     try {
-      const { requestedBy } = req.body;
+      // `requestedBy` in the body is accepted but ignored — actor = session user.
+      const currentUser = await requireSessionUserWith(
+        req,
+        res,
+        canTriggerAutoAssignment,
+        "You don't have permission to trigger auto-assignment",
+      );
+      if (!currentUser) return;
+      if (!passStoreScopeGuard(req, res)) return;
 
-      if (!requestedBy) {
-        return res.status(400).json({ error: "requestedBy is required" });
-      }
-
-      // Check permission
-      const currentUser = await storage.getUser(requestedBy);
-      if (!currentUser) {
-        return res.status(404).json({ error: "Current user not found" });
-      }
-
-      if (!canTriggerAutoAssignment(currentUser)) {
-        return res.status(403).json({ error: "You don't have permission to trigger auto-assignment" });
+      const targetOrder = await storage.getOrder(req.params.id);
+      if (targetOrder && !recordInActiveStore(req, targetOrder.storeId)) {
+        return res.status(403).json({ error: "Order does not belong to the active store" });
       }
 
       const assignmentEngine = new OrderAssignmentEngine(storage);
@@ -2110,20 +2226,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Manually assign order to specific agent (admin override)
   app.post("/api/orders/:id/assign-manual", async (req, res) => {
     try {
-      const { agentId, assignedBy, note } = req.body;
+      // `agentId` is the TARGET agent. `assignedBy` in the body is
+      // accepted but ignored — the actor is the session user.
+      const { agentId, note } = req.body;
 
-      if (!agentId || !assignedBy) {
-        return res.status(400).json({ error: "agentId and assignedBy are required" });
+      const currentUser = await requireSessionUserWith(
+        req,
+        res,
+        canAssignOrders,
+        "You don't have permission to assign orders",
+      );
+      if (!currentUser) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const assignedBy = currentUser.id;
+
+      if (!agentId) {
+        return res.status(400).json({ error: "agentId is required" });
       }
 
-      // Check permission
-      const currentUser = await storage.getUser(assignedBy);
-      if (!currentUser) {
-        return res.status(404).json({ error: "Current user not found" });
-      }
-
-      if (!canAssignOrders(currentUser)) {
-        return res.status(403).json({ error: "You don't have permission to assign orders" });
+      const targetOrder = await storage.getOrder(req.params.id);
+      if (targetOrder && !recordInActiveStore(req, targetOrder.storeId)) {
+        return res.status(403).json({ error: "Order does not belong to the active store" });
       }
 
       const assignmentEngine = new OrderAssignmentEngine(storage);
@@ -2146,24 +2269,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Bulk assign multiple orders to agents
   app.post("/api/orders/bulk-assign", async (req, res) => {
     try {
-      const { orderIds, agentId, assignedBy, note } = req.body;
+      // `agentId` is the TARGET agent. `assignedBy` in the body is
+      // accepted but ignored — the actor is the session user.
+      const { orderIds, agentId, note } = req.body;
+
+      const currentUser = await requireSessionUserWith(
+        req,
+        res,
+        canBulkAssignOrders,
+        "You don't have permission to bulk assign orders",
+      );
+      if (!currentUser) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const assignedBy = currentUser.id;
 
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ error: "orderIds array is required" });
       }
 
-      if (!agentId || !assignedBy) {
-        return res.status(400).json({ error: "agentId and assignedBy are required" });
-      }
-
-      // Check permission
-      const currentUser = await storage.getUser(assignedBy);
-      if (!currentUser) {
-        return res.status(404).json({ error: "Current user not found" });
-      }
-
-      if (!canBulkAssignOrders(currentUser)) {
-        return res.status(403).json({ error: "You don't have permission to bulk assign orders" });
+      if (!agentId) {
+        return res.status(400).json({ error: "agentId is required" });
       }
 
       const assignmentEngine = new OrderAssignmentEngine(storage);
@@ -2171,6 +2296,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       for (const orderId of orderIds) {
         try {
+          const targetOrder = await storage.getOrder(orderId);
+          if (targetOrder && !recordInActiveStore(req, targetOrder.storeId)) {
+            results.push({ orderId, success: false, error: "Order does not belong to the active store" });
+            continue;
+          }
           await assignmentEngine.manualAssignOrder(orderId, agentId, assignedBy, note, req.storeScope?.storeId);
           results.push({ orderId, success: true });
         } catch (error) {
@@ -2220,17 +2350,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURITY: Write protection - agents can only confirm their assigned orders
   app.post("/api/orders/:id/confirm", async (req, res) => {
     try {
-      const { userId, notes } = req.body;
+      // `userId` in the body is accepted but ignored — actor = session user.
+      const { notes } = req.body;
 
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required" });
-      }
-
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, req.params.id);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
-      }
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, req.params.id);
+      if (!authed) return;
+      const userId = authed.user.id;
 
       const order = await storage.confirmOrder(req.params.id, userId, notes);
       if (!order) {
@@ -2263,16 +2390,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURITY: Write protection - agents can only cancel their assigned orders
   app.post("/api/orders/:id/cancel", async (req, res) => {
     try {
-      const { userId, reason, notes } = req.body;
+      // `userId` in the body is accepted but ignored — actor = session user.
+      const { reason, notes } = req.body;
 
-      if (!userId || !reason) {
-        return res.status(400).json({ error: "userId and reason are required" });
-      }
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store. This route
+      // cancels in Shopify (refund + customer email), so it must never
+      // trust a client-declared identity.
+      const authed = await requireOrderWriteAccess(req, res, req.params.id);
+      if (!authed) return;
+      const userId = authed.user.id;
 
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, req.params.id);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
+      if (!reason) {
+        return res.status(400).json({ error: "reason is required" });
       }
 
       // STEP 1: Get order from DB to retrieve shopifyOrderId
@@ -2356,16 +2486,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SECURITY: Write protection - agents can only set follow-up on their assigned orders
   app.post("/api/orders/:id/followup", async (req, res) => {
     try {
-      const { userId, followupAt, notes } = req.body;
+      // `userId` in the body is accepted but ignored — actor = session user.
+      const { followupAt, notes } = req.body;
 
-      if (!userId || !followupAt) {
-        return res.status(400).json({ error: "userId and followupAt are required" });
-      }
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, req.params.id);
+      if (!authed) return;
+      const userId = authed.user.id;
 
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, req.params.id);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
+      if (!followupAt) {
+        return res.status(400).json({ error: "followupAt is required" });
       }
 
       const followupDate = new Date(followupAt);
@@ -8446,12 +8577,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Initiate call to customer
   app.post("/api/calls/initiate", async (req, res) => {
     try {
-      const { userId, orderId, customerPhone } = req.body;
+      // `userId` in the body is accepted but ignored — the call is placed
+      // from the SESSION user's extension.
+      const { orderId, customerPhone } = req.body;
+
+      const user = await requireSessionUser(req, res);
+      if (!user) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const userId = user.id;
 
       // Validate required fields
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required" });
-      }
       if (!orderId) {
         return res.status(400).json({ error: "orderId is required" });
       }
@@ -8459,10 +8594,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "customerPhone is required" });
       }
 
-      // Look up user
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
+      // The order must exist and live in the caller's active store.
+      const callOrder = await storage.getOrder(orderId);
+      if (!callOrder) {
+        return res.status(404).json({ error: "Order not found" });
+      }
+      if (!recordInActiveStore(req, callOrder.storeId)) {
+        return res.status(403).json({ error: "Order does not belong to the active store" });
       }
 
       // Check if user has agent extension configured
@@ -9171,8 +9309,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const { shiprocketService } = await import("./shiprocket");
 
   // Create shipment for confirmed order
+  // SECURITY: admin-only (no UI caller today); order must be in the active store.
   app.post("/api/shiprocket/orders/:id/create-shipment", async (req, res) => {
     try {
+      const admin = await requireSessionUserWith(req, res);
+      if (!admin) return;
+      if (!passStoreScopeGuard(req, res)) return;
+
       const orderId = req.params.id;
       const { weight, length, breadth, height, pickupLocation } = req.body;
 
@@ -9180,6 +9323,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const order = await storage.getOrder(orderId);
       if (!order) {
         return res.status(404).json({ error: "Order not found" });
+      }
+      if (!recordInActiveStore(req, order.storeId)) {
+        return res.status(403).json({ error: "Order does not belong to the active store" });
       }
 
       // Check if order is confirmed
@@ -9438,25 +9584,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { awb } = req.params;
       const { address1, address2, phone, deferredDate, notes } = req.body;
-      // Resolve the actor from the authenticated session first — the
-      // body-supplied actionBy is only honoured as an admin override.
-      // Without this fallback, any client that forgot to send actionBy
-      // (or any direct caller) silently wrote NULL to ndr_events.action_by,
-      // and Chandi/Tanisha's recovery attribution for payroll went to
-      // zero. For Sept 2026 Glow & Me, 0 of 11,582 events had action_by
-      // populated as a result.
-      const sessionUserId: string | null =
-        (req as any).session?.userId ??
-        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
-        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
-      const actionBy: string | null =
-        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
-        sessionUserId;
-      if (!actionBy) {
-        return res.status(401).json({
-          error: "Unauthorized: NDR action requires a signed-in user (so recovery credit can be recorded).",
-        });
-      }
+      // SECURITY: the actor is ALWAYS the session user. A body-supplied
+      // `actionBy` is accepted but ignored — it used to win over the
+      // session, which let any caller credit (or blame) any user for an
+      // NDR action. action_by feeds payroll recovery attribution, so it
+      // must reflect who actually acted.
+      const actor = await requireSessionUser(req, res);
+      if (!actor) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const actionBy = actor.id;
 
       // Address and phone are now OPTIONAL - one-click reattempt support
       // If not provided, courier will use existing details on file
@@ -9465,6 +9601,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const shipment = await storage.getShipmentByAWB(awb);
       if (!shipment) {
         return res.status(404).json({ error: "Shipment not found" });
+      }
+      if (!recordInActiveStore(req, shipment.storeId)) {
+        return res.status(403).json({ error: "Shipment does not belong to the active store" });
       }
 
       // Courier switchboard - route to appropriate service
@@ -9563,20 +9702,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { awb } = req.params;
       const { address1, address2, phone, deferredDate, notes } = req.body;
 
-      // Resolve actor from session with body fallback — see the
-      // /api/ndr/:awb/reattempt handler for the full rationale.
-      const sessionUserId: string | null =
-        (req as any).session?.userId ??
-        (typeof req.query.currentUserId === "string" ? req.query.currentUserId : null) ??
-        (typeof (req.body ?? {}).currentUserId === "string" ? req.body.currentUserId : null);
-      const actionBy: string | null =
-        (typeof req.body?.actionBy === "string" && req.body.actionBy) ||
-        sessionUserId;
-      if (!actionBy) {
-        return res.status(401).json({
-          error: "Unauthorized: NDR action requires a signed-in user.",
-        });
-      }
+      // SECURITY: legacy route with no UI caller — admin-only, actor =
+      // session user (body `actionBy` ignored). See /api/ndr/:awb/reattempt.
+      const actor = await requireSessionUserWith(req, res);
+      if (!actor) return;
+      if (!passStoreScopeGuard(req, res)) return;
+      const actionBy = actor.id;
 
       if (!address1 || !phone) {
         return res.status(400).json({ error: "Address and phone are required" });
@@ -9585,6 +9716,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const shipment = await storage.getShipmentByAWB(awb);
       if (!shipment) {
         return res.status(404).json({ error: "Shipment not found" });
+      }
+      if (!recordInActiveStore(req, shipment.storeId)) {
+        return res.status(403).json({ error: "Shipment does not belong to the active store" });
       }
 
       // Legacy route always uses Shiprocket
@@ -9715,21 +9849,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/orders/:id/ship", async (req, res) => {
     try {
       const orderId = req.params.id;
-      const { courierId, userId } = req.body;
+      // `userId` in the body is accepted but ignored — actor = session user.
+      const { courierId } = req.body;
+
+      // SECURITY: session user must be admin or the assigned agent, and
+      // the order must be in the caller's active store.
+      const authed = await requireOrderWriteAccess(req, res, orderId);
+      if (!authed) return;
+      const userId = authed.user.id;
 
       if (!courierId) {
         return res.status(400).json({ error: "Courier ID is required" });
-      }
-      
-      // SECURITY: userId is REQUIRED for authorization
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required for authorization" });
-      }
-      
-      // SECURITY: Verify user can modify this order (admin or assigned agent)
-      const authCheck = await canUserModifyOrder(userId, orderId);
-      if (!authCheck.authorized) {
-        return res.status(403).json({ error: authCheck.reason || "You are not authorized to process this order" });
       }
 
       // Get order
@@ -10263,12 +10393,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // SECURITY: approving/rejecting leave is admin-only (admin/developer),
+  // and the reviewer is the session user — body `reviewedBy` is ignored.
   app.patch("/api/leave-requests/:id", async (req, res) => {
     try {
-      const { status, reviewedBy, reviewNote } = req.body;
+      const reviewer = await requireSessionUserWith(
+        req,
+        res,
+        isAdmin,
+        "Forbidden: only admins can review leave requests.",
+      );
+      if (!reviewer) return;
+      const { status, reviewNote } = req.body;
       const request = await storage.updateLeaveRequest(req.params.id, {
         status,
-        reviewedBy,
+        reviewedBy: reviewer.id,
         reviewNote,
       });
       if (!request) {
@@ -10284,8 +10423,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // SECURITY: admin-only (the UI only offers delete to admins).
   app.delete("/api/leave-requests/:id", async (req, res) => {
     try {
+      const admin = await requireSessionUserWith(
+        req,
+        res,
+        isAdmin,
+        "Forbidden: only admins can delete leave requests.",
+      );
+      if (!admin) return;
       const request = await storage.getLeaveRequest(req.params.id);
       if (!request) {
         return res.status(404).json({ error: "Leave request not found" });
@@ -10337,10 +10484,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Mark a notification as read
+  // SECURITY: signed-in users may only mark their OWN notifications read.
+  // A notification owned by someone else returns 404 (no existence leak).
   app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
+      const user = await requireSessionUser(req, res);
+      if (!user) return;
 
-      const notification = await storage.markNotificationAsRead(req.params.id);
+      const notification = await storage.markNotificationAsRead(req.params.id, user.id);
       if (!notification) {
         return res.status(404).json({ error: "Notification not found" });
       }
@@ -10355,12 +10506,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Mark all user's notifications as read
   app.patch("/api/notifications/read-all", async (req, res) => {
     try {
-      const userId = req.body.userId as string;
-      if (!userId) {
-        return res.status(400).json({ error: "userId is required in request body" });
-      }
+      // SECURITY: always the session user's notifications — body `userId`
+      // is accepted but ignored.
+      const user = await requireSessionUser(req, res);
+      if (!user) return;
 
-      await storage.markAllNotificationsAsRead(userId);
+      await storage.markAllNotificationsAsRead(user.id);
       res.json({ message: "All notifications marked as read" });
     } catch (error) {
       console.error("Error marking all notifications as read:", error);
