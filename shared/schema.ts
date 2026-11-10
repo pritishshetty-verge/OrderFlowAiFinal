@@ -2127,6 +2127,24 @@ export const RESHIPMENT_REASONS = [
 ] as const;
 export type ReshipmentReason = (typeof RESHIPMENT_REASONS)[number];
 
+/**
+ * Legacy spellings still sent by older/cached clients. The New
+ * Reshipment dialog used to send `fake_delivery_attempt`, which never
+ * matched the canonical `fake_delivery` above.
+ */
+const RESHIPMENT_REASON_ALIASES: Record<string, ReshipmentReason> = {
+  fake_delivery_attempt: "fake_delivery",
+};
+
+/** Canonical reason for a client-supplied value, or null if unknown. */
+export function normalizeReshipmentReason(value: unknown): ReshipmentReason | null {
+  if (typeof value !== "string") return null;
+  if ((RESHIPMENT_REASONS as readonly string[]).includes(value)) {
+    return value as ReshipmentReason;
+  }
+  return RESHIPMENT_REASON_ALIASES[value] ?? null;
+}
+
 export const RESHIPMENT_URGENCIES = ["instant", "scheduled"] as const;
 export type ReshipmentUrgency = (typeof RESHIPMENT_URGENCIES)[number];
 

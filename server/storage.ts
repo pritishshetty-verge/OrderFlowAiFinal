@@ -378,7 +378,7 @@ export interface IStorage {
   // Notifications
   createNotification(notification: InsertNotification): Promise<Notification>;
   getUserNotifications(userId: string, unreadOnly?: boolean): Promise<Notification[]>;
-  markNotificationAsRead(id: string): Promise<Notification | undefined>;
+  markNotificationAsRead(id: string, ownerUserId?: string): Promise<Notification | undefined>;
   markAllNotificationsAsRead(userId: string): Promise<void>;
   getUnreadNotificationCount(userId: string): Promise<number>;
   getDueFollowups(): Promise<Order[]>; // Get orders with followup_at <= now and not notified yet
@@ -2357,11 +2357,17 @@ export class DbStorage implements IStorage {
       .orderBy(desc(notifications.createdAt));
   }
 
-  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+  async markNotificationAsRead(id: string, ownerUserId?: string): Promise<Notification | undefined> {
+    // When ownerUserId is given, only that user's notification is
+    // touched — someone else's id simply matches nothing (-> undefined).
     const [updated] = await db
       .update(notifications)
       .set({ isRead: true, readAt: new Date() })
-      .where(eq(notifications.id, id))
+      .where(
+        ownerUserId
+          ? and(eq(notifications.id, id), eq(notifications.userId, ownerUserId))
+          : eq(notifications.id, id),
+      )
       .returning();
     return updated;
   }
