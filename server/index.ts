@@ -141,20 +141,28 @@ app.use(
 //     put in `req.query.currentUserId` and `req.body.currentUserId`
 //     with the server-trusted value from the session. Spoofs are
 //     silently corrected — the route handler reads what we say.
-//   • If there is no session (logged-out client, webhook from
-//     Shopify, an old cached frontend that hasn't redeployed yet),
-//     the middleware does nothing and the legacy
-//     client-supplied `currentUserId` path still works. This keeps
-//     the deploy gracefully backwards-compatible during the
-//     transition; the fallback will be deleted in a follow-up once
-//     the whole frontend is migrated.
+//   • If there is no session (logged-out client, expired cookie,
+//     webhook), any client-supplied `currentUserId` is STRIPPED from
+//     the query and body. The old "legacy fallback" (trust whatever
+//     currentUserId the client sent when there's no session) let
+//     anyone who knew an admin's user id call every route that keys
+//     off currentUserId — including requireAdmin() — without logging
+//     in. The client already rehydrates identity from /api/auth/me
+//     (session cookie) and treats 401 as "logged out", so nothing
+//     legitimate depends on the fallback any more.
 //
 // Placement: must run AFTER session() (needs `req.session`) and
 // AFTER express.json/urlencoded (needs `req.body`), BEFORE routes.
 // ─────────────────────────────────────────────────────────────────────
 app.use((req, _res, next) => {
   const sessionUserId = req.session?.userId;
-  if (sessionUserId) {
+  const bodyIsObject =
+    !!req.body && typeof req.body === "object" && !Array.isArray(req.body);
+  if (!sessionUserId) {
+    // No session → no client-declared identity either.
+    delete (req.query as any).currentUserId;
+    if (bodyIsObject) delete (req.body as any).currentUserId;
+  } else {
     // Express 4's `req.query` is a mutable plain object; safe to assign.
     (req.query as any).currentUserId = sessionUserId;
     if (
