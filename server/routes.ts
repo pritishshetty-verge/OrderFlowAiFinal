@@ -10916,7 +10916,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const agentUsers = agentIds.length > 0 
         ? await db.select({ id: users.id, name: users.fullName })
             .from(users)
-            .where(sql`${users.id} = ANY(${agentIds})`)
+            // inArray, not sql`= ANY(${array})`: drizzle expands an array in a
+            // sql template into a parameter list, so one id reached Postgres as
+            // a plain string ("malformed array literal").
+            .where(inArray(users.id, agentIds))
         : [];
       
       const agentNameMap = new Map(agentUsers.map(u => [u.id, u.name]));
