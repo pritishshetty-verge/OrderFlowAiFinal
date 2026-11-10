@@ -9489,6 +9489,185 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ---- Ops Copilot (v1): admin-only, read-only, streamed over SSE ----
+  //
+  // Identity comes from the server session, not a client-supplied
+  // currentUserId: the copilot can read payroll and customer PII.
+  app.post("/api/copilot/message", async (req, res) => {
+    const sessionUserId = (req as any).session?.userId as string | undefined;
+    if (!sessionUserId) return res.status(401).json({ error: "Not authenticated." });
+
+    try {
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester) return res.status(401).json({ error: "Session user no longer exists." });
+      if (!isAdmin(requester)) return res.status(403).json({ error: "Admin role required." });
+      const userId = requester.id;
+
+      const { logCopilot, messagesInLastDay, COPILOT_DAILY_MESSAGE_LIMIT } = await import(
+        "./services/copilot/audit"
+      );
+      const used = await messagesInLastDay(userId);
+      if (used != null && used >= COPILOT_DAILY_MESSAGE_LIMIT) {
+        return res.status(429).json({
+          error: `Daily copilot limit reached (${COPILOT_DAILY_MESSAGE_LIMIT} messages / 24h). Try again later.`,
+        });
+      }
+
+      // Store scope comes from the shared middleware (X-Active-Store-Id).
+      // A bad header is rejected there (stashed error → 4xx here) — never
+      // silently answer for a different store. With no header the
+      // middleware falls back to the oldest store; if that one is inactive,
+      // use the oldest active store instead.
+      const scope = requireStoreScope(req, res);
+      if (!scope) return;
+      const { stores: storesTable } = await import("@shared/schema");
+      const [scoped] = await db
+        .select({ id: storesTable.id, name: storesTable.storeName, isActive: storesTable.isActive })
+        .from(storesTable)
+        .where(eq(storesTable.id, scope.storeId))
+        .limit(1);
+      let storeId: string | null = null;
+      let storeName: string | null = null;
+      if (scoped?.isActive) {
+        storeId = scoped.id;
+        storeName = scoped.name ?? null;
+      } else if (!scope.isFallback) {
+        return res.status(400).json({ error: "That store is inactive." });
+      } else {
+        const [live] = await db
+          .select({ id: storesTable.id, name: storesTable.storeName })
+          .from(storesTable)
+          .where(eq(storesTable.isActive, true))
+          .orderBy(storesTable.createdAt)
+          .limit(1);
+        storeId = live?.id ?? null;
+        storeName = live?.name ?? null;
+      }
+      if (!storeId) return res.status(400).json({ error: "No active store configured" });
+
+      const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+      // Client-reported (path + open record label). Untrusted: strip control
+      // chars and cap length; the prompt also frames it as data.
+      const pageContext =
+        typeof req.body?.pageContext === "string"
+          ? req.body.pageContext.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 300) || null
+          : null;
+      const history = rawHistory
+        .filter(
+          (t: any) =>
+            t &&
+            (t.role === "user" || t.role === "assistant") &&
+            typeof t.content === "string" &&
+            t.content.trim() !== "",
+        )
+        .map((t: any) => ({ role: t.role as "user" | "assistant", content: String(t.content).slice(0, 8000) }))
+        .slice(-20);
+      // Trimming to the last 20 can leave an assistant turn first.
+      while (history.length && history[0].role !== "user") history.shift();
+      if (history.length === 0 || history[history.length - 1].role !== "user") {
+        return res.status(400).json({ error: "history must end with a user message" });
+      }
+
+      // Server-Sent Events stream.
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      (res as any).flushHeaders?.();
+      const send = (ev: any) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
+
+      const t0 = Date.now();
+      let streamError: string | null = null;
+      const { streamCopilot } = await import("./services/copilot/agent");
+      // Stop spending tokens if the user hits Stop or closes the panel.
+      const clientGone = new AbortController();
+      res.on("close", () => {
+        if (!res.writableEnded) clientGone.abort();
+      });
+      const usage = await streamCopilot({
+        signal: clientGone.signal,
+        history,
+        ctx: { storeId, storeName, userId, isAdmin: true },
+        pageContext,
+        onEvent: (ev) => {
+          if (ev.type === "error") streamError = ev.message;
+          send(ev);
+        },
+        onToolRun: (run) => {
+          void logCopilot({
+            userId,
+            storeId,
+            kind: "tool",
+            toolName: run.name,
+            input: run.input,
+            ok: run.ok,
+            error: run.error,
+            durationMs: run.durationMs,
+          });
+        },
+      });
+      await logCopilot({
+        userId,
+        storeId,
+        kind: "message",
+        input: { question: history[history.length - 1].content.slice(0, 2000), pageContext },
+        ok: !streamError,
+        error: streamError,
+        // All input incl. prompt-cache reads/writes, so the audit reflects volume.
+        inputTokens: usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+        outputTokens: usage.outputTokens,
+        durationMs: Date.now() - t0,
+      });
+      res.end();
+    } catch (err: any) {
+      console.error("Error in POST /api/copilot/message:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: errorMessage(err) ?? "Copilot failed" });
+      } else {
+        res.write(
+          `data: ${JSON.stringify({ type: "error", message: errorMessage(err) ?? "Copilot failed" })}\n\n`,
+        );
+        res.end();
+      }
+    }
+  });
+
+  // Flo action audit: the panel reports the outcome of every action the user
+  // confirmed (the action itself already ran through its normal endpoint).
+  app.post("/api/copilot/action-log", async (req, res) => {
+    const sessionUserId = (req as any).session?.userId as string | undefined;
+    if (!sessionUserId) return res.status(401).json({ error: "Not authenticated." });
+    try {
+      const requester = await storage.getUser(sessionUserId);
+      if (!requester || !isAdmin(requester)) return res.status(403).json({ error: "Admin role required." });
+      const b = req.body ?? {};
+      const steps = Array.isArray(b.steps) ? b.steps.slice(0, 200) : [];
+      const { logCopilot } = await import("./services/copilot/audit");
+      await logCopilot({
+        userId: requester.id,
+        storeId: req.storeScope?.storeId ?? null,
+        kind: "action",
+        toolName: typeof b.action === "string" ? b.action.slice(0, 60) : null,
+        input: {
+          proposalId: typeof b.proposalId === "string" ? b.proposalId.slice(0, 64) : null,
+          title: typeof b.title === "string" ? b.title.slice(0, 200) : null,
+          steps: steps.map((x: any) => ({
+            path: typeof x?.path === "string" ? x.path.slice(0, 200) : null,
+            status: Number(x?.status) || null,
+            ok: !!x?.ok,
+            error: typeof x?.error === "string" ? x.error.slice(0, 300) : null,
+          })),
+        },
+        ok: !!b.ok,
+        error: b.ok ? null : typeof b.error === "string" ? b.error.slice(0, 300) : "failed",
+        durationMs: Number(b.durationMs) || null,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: errorMessage(err) ?? "Failed to log action" });
+    }
+  });
+
   // Get all NDR events (generic endpoint - supports both Shiprocket and Delhivery)
   // Enriches NDR events with order-level fields (nslCode, failureReason, lastFailedAt)
   // Get NDR events

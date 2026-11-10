@@ -2251,3 +2251,32 @@ export const insertReshipmentLogSchema = createInsertSchema(reshipmentLogs).omit
 });
 export type InsertReshipmentLog = z.infer<typeof insertReshipmentLogSchema>;
 export type ReshipmentLog = typeof reshipmentLogs.$inferSelect;
+
+// ============================================================================
+// OPS COPILOT AUDIT
+// ============================================================================
+//
+// One row per copilot request ("message") and per tool it ran ("tool").
+// Drives the audit trail and the per-user daily message cap. Token counts
+// are on "message" rows (summed across the request's tool-loop turns).
+export const copilotAudit = pgTable(
+  "copilot_audit",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+    storeId: varchar("store_id").references(() => stores.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(), // message | tool
+    toolName: text("tool_name"),
+    input: jsonb("input"), // tool input, or { question } for a message
+    ok: boolean("ok").notNull().default(true),
+    error: text("error"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    userCreatedIdx: index("copilot_audit_user_created_idx").on(table.userId, table.createdAt),
+  }),
+);
+export type CopilotAudit = typeof copilotAudit.$inferSelect;
