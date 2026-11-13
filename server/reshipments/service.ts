@@ -16,6 +16,7 @@ import {
   type ReshipmentReason,
   type ReshipmentUrgency,
 } from "@shared/schema";
+import { isCodOrder } from "@shared/payment";
 import { getShopifyClient } from "../shopify";
 import {
   buildReshipmentPayload,
@@ -224,10 +225,20 @@ export async function createReshipment(
     );
   }
 
-  // 4. Derive the payment_type from the original order.
-  //    Same predicate the ingest layer uses: case-insensitive "cod".
+  // 4. Derive the payment_type from the original order, with the same rule
+  //    as the Orders page badge: COD if the gateway name says "cod" OR the
+  //    order is still unpaid (financial_status "pending"). Gateway-only
+  //    matching sent COD orders stored as "Unknown" (no gateway from
+  //    Shopify) out as PAID replacements, so the courier collected nothing.
+  //    Prefer Shopify's live values when we fetched the order.
+  const liveGateways: string[] = Array.isArray(shopifyOrder.payment_gateway_names)
+    ? shopifyOrder.payment_gateway_names
+    : [];
   const paymentType: "cod" | "prepaid" =
-    (order.paymentMethod ?? "").toLowerCase().includes("cod") ? "cod" : "prepaid";
+    isCodOrder(order.paymentMethod, shopifyOrder.financial_status ?? order.financialStatus) ||
+    liveGateways.some((g) => isCodOrder(g, null))
+      ? "cod"
+      : "prepaid";
 
   // 5. Build the exact JSON body and POST it. Any Shopify validation
   //    error surfaces with the response body attached.
