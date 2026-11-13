@@ -107,6 +107,73 @@ test("Prepaid with a discount (TARA10): keeps the discount, pays the discounted 
   assert.equal(txns[0].amount, "1080.00");
 });
 
+test("Percentage discount over ₹100 is sent as its rupee value (fixed_amount), not as a percent", () => {
+  // Shopify reports a 10% code on a ₹1,299 order as amount "129.90",
+  // type "percentage". Passing that through made Shopify read it as 129.9%
+  // and 422 with "Amount must be less than or equal to 100".
+  const p = buildReshipmentPayload(
+    baseArgs({
+      original: {
+        id: 44,
+        name: "#18656",
+        currency: "INR",
+        payment_gateway_names: ["Cash on Delivery (COD)"],
+        total_price: "1169.10",
+        total_discounts: "129.90",
+        discount_codes: [{ code: "PrepaidDiscount", amount: "129.90", type: "percentage" }],
+        line_items: [{ variant_id: 1, title: "Brush", quantity: 1, price: "1299.00" }],
+      },
+    }),
+  ).order;
+  const disc = p.discount_codes as any[];
+  assert.equal(disc.length, 1);
+  assert.equal(disc[0].code, "PrepaidDiscount");
+  assert.equal(disc[0].type, "fixed_amount");
+  assert.equal(disc[0].amount, "129.90");
+  const txns = p.transactions as any[];
+  assert.equal(txns[0].amount, "1169.10", "collects the real discounted value");
+});
+
+test("Percentage discount under ₹100 is NOT turned into a huge percent-off", () => {
+  // amount "90.00" + type "percentage" would have been read as 90% off.
+  const p = buildReshipmentPayload(
+    baseArgs({
+      original: {
+        id: 45,
+        name: "#900",
+        currency: "INR",
+        payment_gateway_names: ["Cash on Delivery (COD)"],
+        discount_codes: [{ code: "SAVE10", amount: "90.00", type: "percentage" }],
+        line_items: [{ variant_id: 1, title: "Cream", quantity: 1, price: "900.00" }],
+      },
+    }),
+  ).order;
+  const disc = p.discount_codes as any[];
+  assert.equal(disc[0].type, "fixed_amount");
+  assert.equal(disc[0].amount, "90.00");
+  assert.equal((p.transactions as any[])[0].amount, "810.00");
+});
+
+test("Shipping-type and zero-value discount codes are not carried over", () => {
+  const p = buildReshipmentPayload(
+    baseArgs({
+      original: {
+        id: 46,
+        name: "#901",
+        currency: "INR",
+        payment_gateway_names: ["Cash on Delivery (COD)"],
+        discount_codes: [
+          { code: "FREESHIP", amount: "50.00", type: "shipping" },
+          { code: "ZERO", amount: "0.00", type: "fixed_amount" },
+        ],
+        line_items: [{ variant_id: 1, title: "Cream", quantity: 1, price: "500.00" }],
+      },
+    }),
+  ).order;
+  assert.equal(p.discount_codes, undefined);
+  assert.equal((p.transactions as any[])[0].amount, "500.00");
+});
+
 test("Reshipment of a legacy ₹0 prepaid reshipment is NOT free (safety net)", () => {
   // A chained reshipment: the parent was a legacy ₹0 prepaid reshipment
   // whose discount_codes zeroed the whole subtotal and total_price = 0.
