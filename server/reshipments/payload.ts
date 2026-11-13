@@ -144,15 +144,22 @@ export function buildReshipmentPayload(args: BuildReshipmentPayloadArgs): Shopif
 
   // Discount inheritance — the reshipment carries the parent's discount
   // code (e.g. TARA10) so attribution reports credit the same coupon.
-  // We normalise into Shopify's create-order shape (fixed_amount with a
-  // money string) and remember the primary code for the note attribute.
+  //
+  // On an EXISTING Shopify order, discount_codes[].amount is the rupee
+  // amount actually discounted — even when type is "percentage". On
+  // CREATE, Shopify reads amount according to type, so a percentage code
+  // passed through as-is is taken as a PERCENT: ₹129.90 → 422 "Amount must
+  // be less than or equal to 100", and ₹90 → a silent 90%-off order.
+  // So always send the exact rupee value as fixed_amount. Shipping-type
+  // codes are skipped: the reshipment has no shipping line to discount.
   const originalDiscountCodes = (args.original.discount_codes ?? [])
-    .filter((d) => !!d?.code)
+    .filter((d) => !!d?.code && String(d.type ?? "").toLowerCase() !== "shipping")
     .map((d) => ({
       code: String(d.code),
       amount: money(Number(d.amount ?? 0)),
-      type: d.type ?? "fixed_amount",
-    }));
+      type: "fixed_amount" as const,
+    }))
+    .filter((d) => Number(d.amount) > 0);
   const primaryOriginalCode = originalDiscountCodes[0]?.code ?? null;
   const originalTotalDiscounts = Number(args.original.total_discounts ?? 0);
 

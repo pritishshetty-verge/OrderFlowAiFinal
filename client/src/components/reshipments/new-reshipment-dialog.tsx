@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isCodOrder } from "@shared/payment";
 import {
   Dialog,
   DialogContent,
@@ -55,6 +56,7 @@ interface Order {
   customerName: string;
   customerPhone: string;
   paymentMethod: string | null;
+  financialStatus?: string | null;
   shippingAddress: any;
   shippingAddressLine1?: string | null;
   shippingAddressLine2?: string | null;
@@ -267,9 +269,9 @@ export function NewReshipmentDialog({ open, onOpenChange, onCreated }: Props) {
     !!reason &&
     (urgency !== "scheduled" || !!scheduledDate);
 
-  const paymentType = (order?.paymentMethod ?? "").toLowerCase().includes("cod")
-    ? "COD"
-    : "PREPAID";
+  // Same rule the server uses to create the replacement order, and the
+  // Orders page badge: gateway says "cod" OR the order is still unpaid.
+  const paymentType = isCodOrder(order?.paymentMethod, order?.financialStatus) ? "COD" : "PREPAID";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
