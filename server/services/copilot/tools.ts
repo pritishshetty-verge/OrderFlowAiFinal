@@ -13,7 +13,6 @@ import {
   getOpenNdrList,
 } from "../ndr-analytics";
 import {
-  getConfirmationDeliveryRatePct,
   getDeliveredGMVForAgent,
   getBrandNDRDeliveryRate,
 } from "../payroll-metrics";
@@ -420,7 +419,20 @@ async function employeePerformance(input: any, ctx: CopilotToolContext) {
   }
   const u = matches[0];
   const [confirmationRate, deliveredGmv, brandNdr] = await Promise.all([
-    getConfirmationDeliveryRatePct(u.id, year, month).catch(() => null),
+    // This store only. (The shared payroll helper counts the agent's
+    // confirmations across every store.)
+    db
+      .execute(sql`
+        SELECT COUNT(*)::int4 AS confirmed, COUNT(*) FILTER (WHERE status = 'delivered')::int4 AS delivered
+        FROM orders
+        WHERE store_id = ${ctx.storeId} AND confirmed_by = ${u.id}
+          AND confirmed_at >= ${new Date(Date.UTC(year, month - 1, 1)).toISOString()}::timestamptz
+          AND confirmed_at <  ${new Date(Date.UTC(year, month, 1)).toISOString()}::timestamptz`)
+      .then((r) => {
+        const x = rowsOf(r)[0];
+        return num(x?.confirmed) ? pct(num(x.delivered), num(x.confirmed)) : null;
+      })
+      .catch(() => null),
     getDeliveredGMVForAgent(u.id, ctx.storeId, year, month).catch(() => null),
     getBrandNDRDeliveryRate(ctx.storeId, year, month).catch(() => null),
   ]);

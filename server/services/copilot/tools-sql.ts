@@ -1,5 +1,6 @@
 // Flo (Ops Copilot) — ad-hoc read-only SQL for questions no dedicated tool
 // covers. Admin-only. Defence in depth:
+//   0. Store scope enforced by the database (temp views; see scopeViews).
 //   1. Static checks: one SELECT/WITH statement, no semicolons, no blocked
 //      tables (sessions, credentials, settings, invites…), no secret columns,
 //      no dangerous functions.
@@ -7,7 +8,7 @@
 //      in an outer SELECT … LIMIT so the row count is bounded.
 //   3. Results are redacted: any key that looks like a secret and any value
 //      that looks like a password hash or token is masked.
-// The model is told to scope every query to the current store with $STORE.
+// The model does not have to (and cannot) choose the store.
 
 import { sql } from "drizzle-orm";
 import { db } from "../../db";
@@ -17,6 +18,9 @@ import { rowsOf, clamp } from "./util";
 const BLOCKED_TABLES = [
   "session", "sessions", "shopify_credentials", "app_settings", "invites", "webhooks",
   "copilot_audit", "pg_shadow", "pg_authid", "pg_user", "pg_roles", "pg_stat_activity",
+  // Not store-scoped and not reference data: private messages, raw courier
+  // webhooks for every store.
+  "team_messages", "inbound_webhook_logs",
 ];
 // Secret columns (users.password, stores.*_token / *_api_key / payu salt…)
 // plus a few huge raw-payload columns.
@@ -35,7 +39,7 @@ const SCHEMA_NOTES = [
   "COD detection: LOWER(COALESCE(payment_method,'')) LIKE '%cod%' (values vary).",
   "Exclude test orders: orders.test_order = false.",
   "Shopify order number: orders.shopify_order_number (may have a leading '#').",
-  "Store scoping: most tables have store_id; users belong to stores via user_stores(user_id, store_id).",
+  "Store scoping is automatic: every table you query already contains ONLY the current store's rows (and users/attendance/leave only this store's team). You cannot see other stores, so never add or remove a store filter and never use a schema prefix like public.",
 ];
 
 export const SQL_TOOLS = [
@@ -54,11 +58,11 @@ export const SQL_TOOLS = [
   {
     name: "run_sql",
     description:
-      "Run ONE read-only PostgreSQL SELECT (or WITH … SELECT) when no other tool answers the question. Use $STORE for the current store id and always filter by it (e.g. WHERE o.store_id = $STORE). No semicolons. Max 200 rows, 8 s timeout. Admin only. Prefer the dedicated tools whenever they fit.",
+      "Run ONE read-only PostgreSQL SELECT (or WITH … SELECT) when no other tool answers the question. Every table is automatically limited to the current store's rows, so no store filter is needed (and other stores can't be queried). Use plain table names with no schema prefix. No semicolons. Max 200 rows, 8 s timeout. Admin only. Prefer the dedicated tools whenever they fit.",
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "A single SELECT/WITH query using $STORE for the store id." },
+        query: { type: "string", description: "A single SELECT/WITH query. $STORE is available as the current store id but is not required." },
         purpose: { type: "string", description: "One line: what question this query answers." },
         maxRows: { type: "integer", description: "Row cap (default 50, max 200)." },
       },
@@ -120,6 +124,10 @@ export function checkQuery(raw: string): string | null {
   if (/;/.test(code)) return "only one statement allowed (no semicolons)";
   if (!/^\s*(select|with)\b/i.test(code)) return "query must start with SELECT or WITH";
   if (/\$\$|\bE'/.test(q)) return "dollar-quoted / escape strings are not allowed";
+  // Store scoping works by shadowing tables with temp views; a schema prefix
+  // or an escaped identifier would step around them.
+  if (/\b(public|pg_temp\w*)\b/i.test(code) || /"\s*\./.test(code)) return "use plain table names (no schema prefix)";
+  if (/\bU&\s*["']/i.test(q)) return "unicode-escaped identifiers are not allowed";
   if (WRITE_WORDS.test(code)) return "only read queries are allowed";
   if (/\bfor\s+(update|share|no\s+key\s+update|key\s+share)\b/i.test(code)) return "row locks are not allowed";
   if (/\binto\b/i.test(code)) return "SELECT INTO is not allowed";
@@ -139,49 +147,77 @@ export function checkQuery(raw: string): string | null {
   return null;
 }
 
-// Tables that hold secrets in some columns but are useful to query. Every
-// reference is rewritten to a subquery exposing only non-secret columns, so
-// whole-row tricks (SELECT s FROM stores s, json_agg(u), u::text) can't
-// reach the secret columns at all.
-const PROTECTED_TABLES = ["users", "stores"];
+// ── Store scoping, enforced by the database ─────────────────────────────
+//
+// The model is NOT trusted to add a store filter. Before the query runs we
+// create TEMP VIEWS that shadow every table the query mentions (pg_temp is
+// searched before public), each exposing only non-secret columns and only
+// the current store's rows:
+//   • tables with store_id        → store_id = <store>
+//   • stores                      → id = <store>
+//   • users / tables with user_id → members of this store (user_stores)
+//   • payroll_ledger (cycle_id)   → cycles of this store
+//   • attendance_breaks, return_items → via their parent table
+// Schema-qualified names are rejected, so the views can't be bypassed, and
+// the transaction is rolled back so nothing persists. Reference tables with
+// no store link (holidays, courses, pincode_tiers…) are left as they are.
 const SECRET_COLUMN_NAME = /pass|secret|token|api_?key|salt|cred|kyc|merchant_key/i;
-const SQL_KEYWORDS = new Set([
-  "where", "join", "left", "right", "inner", "outer", "full", "cross", "natural", "on", "using", "group",
-  "order", "limit", "offset", "union", "except", "intersect", "having", "window", "lateral", "as", "and", "or",
-]);
-let safeColsCache: { at: number; cols: Record<string, string[]> } | null = null;
 
-async function safeColumns(): Promise<Record<string, string[]>> {
-  if (safeColsCache && Date.now() - safeColsCache.at < 10 * 60_000) return safeColsCache.cols;
+interface ScopedTable {
+  cols: string[];
+  /** WHERE clause with {S} for the quoted store id; null = global table. */
+  where: string | null;
+}
+let catalogCache: { at: number; tables: Record<string, ScopedTable> } | null = null;
+
+const MEMBERS = `(SELECT user_id FROM public.user_stores WHERE store_id = {S})`;
+
+async function scopeCatalog(): Promise<Record<string, ScopedTable>> {
+  if (catalogCache && Date.now() - catalogCache.at < 10 * 60_000) return catalogCache.tables;
   const r = await db.execute(sql`
-    SELECT table_name, column_name FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name IN ('users', 'stores')
-    ORDER BY ordinal_position`);
-  const cols: Record<string, string[]> = { users: [], stores: [] };
-  for (const row of rowsOf(r)) {
-    const c = String(row.column_name);
-    if (!SECRET_COLUMN_NAME.test(c) && !BLOCKED_COLUMNS.test(c)) cols[String(row.table_name)].push(`"${c}"`);
+    SELECT c.table_name, c.column_name
+    FROM information_schema.columns c
+    JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+    WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+    ORDER BY c.table_name, c.ordinal_position`);
+  const all: Record<string, string[]> = {};
+  for (const row of rowsOf(r)) (all[String(row.table_name)] ??= []).push(String(row.column_name));
+  const tables: Record<string, ScopedTable> = {};
+  for (const [name, columns] of Object.entries(all)) {
+    if (BLOCKED_TABLES.includes(name) || !/^[a-z_][a-z0-9_]*$/.test(name)) continue;
+    const has = (c: string) => columns.includes(c);
+    let where: string | null = null;
+    if (name === "stores") where = `id = {S}`;
+    else if (name === "users") where = `id IN ${MEMBERS}`;
+    else if (has("store_id")) where = `store_id = {S}`;
+    else if (has("cycle_id") && all["payroll_cycles"]?.includes("store_id")) {
+      where = `cycle_id IN (SELECT id FROM public.payroll_cycles WHERE store_id = {S})`;
+    } else if (has("user_id")) where = `user_id IN ${MEMBERS}`;
+    else if (has("attendance_id") && all["attendance"]) {
+      where = `attendance_id IN (SELECT id FROM public.attendance WHERE user_id IN ${MEMBERS})`;
+    } else if (has("return_id") && all["returns"]?.includes("store_id")) {
+      where = `return_id IN (SELECT id FROM public.returns WHERE store_id = {S})`;
+    }
+    tables[name] = {
+      cols: columns.filter((c) => /^[a-z_][a-z0-9_]*$/.test(c) && !SECRET_COLUMN_NAME.test(c) && !BLOCKED_COLUMNS.test(c)),
+      where,
+    };
   }
-  safeColsCache = { at: Date.now(), cols };
-  return cols;
+  catalogCache = { at: Date.now(), tables };
+  return tables;
 }
 
-/** Rewrite FROM/JOIN users|stores [alias] → (SELECT safe cols FROM …) AS alias. */
-export function rewriteProtected(body: string, cols: Record<string, string[]>): string | { error: string } {
-  let out = body.replace(
-    /\b(from|join)\s+(?:public\.)?(users|stores)\b(\s+(?:as\s+)?([a-z_][a-z0-9_]*))?/gi,
-    (_m, kw: string, table: string, aliasPart: string | undefined, alias: string | undefined) => {
-      const t = table.toLowerCase();
-      const keepAlias = alias && !SQL_KEYWORDS.has(alias.toLowerCase());
-      const name = keepAlias ? alias : t;
-      const rest = aliasPart && !keepAlias ? aliasPart : "";
-      return `${kw} (SELECT ${cols[t].join(", ")} FROM public.${t}) AS ${name}${rest}`;
-    },
-  );
-  // Any other way of naming these tables (comma joins, ONLY, …) is refused.
-  const stripped = out.replace(/\(SELECT [^)]*FROM public\.(users|stores)\)/g, "");
-  if (/,\s*(?:public\.)?(users|stores)\b(?!\s*\.)|\bonly\s+(?:public\.)?(users|stores)\b|\bpublic\.(users|stores)\b/i.test(stripped)) {
-    return { error: "join users/stores with JOIN … ON (not comma joins)" };
+/** CREATE TEMP VIEW statements for every scoped table the query mentions. */
+export function scopeViews(query: string, storeId: string, catalog: Record<string, ScopedTable>): string[] {
+  const lowered = query.toLowerCase();
+  const out: string[] = [];
+  for (const [name, t] of Object.entries(catalog)) {
+    // Substring (not word) match on purpose: over-creating a view is harmless,
+    // missing one would be a leak.
+    if (!t.where || !t.cols.length || !lowered.includes(name)) continue;
+    out.push(
+      `CREATE TEMP VIEW "${name}" AS SELECT ${t.cols.map((c) => `"${c}"`).join(", ")} FROM public."${name}" WHERE ${t.where.replace(/\{S\}/g, `'${storeId}'`)}`,
+    );
   }
   return out;
 }
@@ -212,6 +248,8 @@ export function redact(v: any, depth = 0): any {
   return v;
 }
 
+class RollbackSignal extends Error {}
+
 async function runSql(input: any, ctx: CopilotToolContext) {
   const err = checkQuery(input?.query);
   if (err) return { error: `Query rejected: ${err}` };
@@ -221,20 +259,36 @@ async function runSql(input: any, ctx: CopilotToolContext) {
   if (/\$\d|\$[A-Za-z]/.test(body.replace(/'(?:[^']|'')*'/g, "''"))) {
     return { error: "Query rejected: only the $STORE placeholder is supported" };
   }
-  const rewritten = rewriteProtected(body, await safeColumns());
-  if (typeof rewritten !== "string") return { error: `Query rejected: ${rewritten.error}` };
-  const wrapped = `SELECT * FROM (\n${rewritten}\n) AS flo_q LIMIT ${maxRows + 1}`;
+  const views = scopeViews(body, ctx.storeId, await scopeCatalog());
+  const wrapped = `SELECT * FROM (\n${body}\n) AS flo_q LIMIT ${maxRows + 1}`;
   const t0 = Date.now();
   try {
-    const rows = await db.transaction(async (tx) => {
-      await tx.execute(sql`SET TRANSACTION READ ONLY`);
-      await tx.execute(sql.raw(`SET LOCAL statement_timeout = '8000'`));
-      await tx.execute(sql.raw(`SET LOCAL idle_in_transaction_session_timeout = '10000'`));
-      return rowsOf(await tx.execute(sql.raw(wrapped)));
-    });
+    // Always rolled back: the temp views must not outlive the query on a
+    // pooled connection.
+    let rows: any[] = [];
+    await db
+      .transaction(async (tx) => {
+        await tx.execute(
+          sql.raw(
+            [
+              `SET LOCAL statement_timeout = '8000'`,
+              `SET LOCAL idle_in_transaction_session_timeout = '10000'`,
+              ...views,
+              // Read-only from here on (after the views exist).
+              `SET TRANSACTION READ ONLY`,
+            ].join(";\n"),
+          ),
+        );
+        rows = rowsOf(await tx.execute(sql.raw(wrapped)));
+        throw new RollbackSignal();
+      })
+      .catch((e) => {
+        if (!(e instanceof RollbackSignal)) throw e;
+      });
     const truncated = rows.length > maxRows;
     return {
       purpose: String(input?.purpose ?? "").slice(0, 200),
+      scope: `${ctx.storeName ?? "current store"} only`,
       rowCount: Math.min(rows.length, maxRows),
       truncated,
       ms: Date.now() - t0,

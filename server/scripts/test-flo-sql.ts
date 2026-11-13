@@ -59,8 +59,12 @@ async function main() {
     ["copy", "COPY orders TO STDOUT"],
     ["dollar quote", "SELECT $$x$$"],
     ["nextval", "SELECT nextval('orders_id_seq')"],
-    ["comma join users", `SELECT o.id FROM orders o, users WHERE o.assigned_to = users.id`],
-    ["only users", "SELECT id FROM ONLY users"],
+    ["schema prefix", "SELECT id FROM public.orders"],
+    ["quoted schema prefix", `SELECT id FROM "public"."orders"`],
+    ["pg_temp prefix", "SELECT id FROM pg_temp.orders"],
+    ["unicode-escaped identifier", String.raw`SELECT id FROM U&"\006frders"`],
+    ["private messages table", "SELECT body FROM team_messages"],
+    ["raw courier webhooks (all stores)", "SELECT source FROM inbound_webhook_logs"],
     ["positional param", "SELECT id FROM orders WHERE store_id = $1"],
     ["empty", "   "],
     ["not select", "EXPLAIN ANALYZE SELECT 1"],
@@ -87,6 +91,8 @@ async function main() {
     ["comment hiding", "SELECT 1 AS one /* ; DROP TABLE orders */"],
     ["explicit schema users join", "SELECT u FROM orders x JOIN public.users u ON u.id = x.assigned_to LIMIT 3"],
     ["keyword after table", "SELECT users FROM orders o JOIN users ON users.id = o.assigned_to LIMIT 3"],
+    ["comma join users", `SELECT users FROM orders o, users WHERE o.assigned_to = users.id LIMIT 3`],
+    ["only users", "SELECT u FROM ONLY users u"],
   ];
   for (const [name, query] of sneaky) {
     const r = await q(query);
@@ -94,6 +100,53 @@ async function main() {
   }
   const ordersStill = rows(await db.execute(sql`SELECT COUNT(*)::int AS n FROM orders`))[0].n;
   check("orders table intact after attacks", ordersStill > 0);
+
+  // ── Store isolation: enforced by the database, not by the query ──────
+  const cnt = async (table: string, storeId: string) =>
+    rows(await db.execute(sql.raw(`SELECT COUNT(*)::int AS n FROM ${table} WHERE store_id = '${storeId}'`)))[0].n as number;
+  const other = rows(await db.execute(sql`SELECT id, store_name FROM stores WHERE id <> ${store.id} ORDER BY created_at LIMIT 1`))[0];
+  const mine = await cnt("orders", store.id);
+  let s: any = await q("SELECT COUNT(*)::int AS n, COUNT(DISTINCT store_id)::int AS stores FROM orders");
+  check("scope: a query with NO store filter only sees this store", s.rows?.[0]?.n === mine && s.rows?.[0]?.stores === 1, JSON.stringify(s).slice(0, 160));
+  check("scope: result says which store it covers", typeof s.scope === "string");
+  s = await q(`SELECT (SELECT COUNT(*) FROM order_items)::int AS items, (SELECT COUNT(*) FROM shipments)::int AS shipments, (SELECT COUNT(*) FROM ndr_events)::int AS ndr`);
+  check("scope: order_items / shipments / ndr_events are this store only",
+    s.rows?.[0]?.items === (await cnt("order_items", store.id)) && s.rows?.[0]?.shipments === (await cnt("shipments", store.id)) && s.rows?.[0]?.ndr === (await cnt("ndr_events", store.id)),
+    JSON.stringify(s).slice(0, 160));
+  s = await q("SELECT COUNT(*)::int AS n FROM orders o, order_items oi WHERE oi.order_id = o.id");
+  check("scope: comma joins work and stay scoped", s.rows?.[0]?.n === (await cnt("order_items", store.id)), JSON.stringify(s).slice(0, 160));
+  s = await q("WITH orders AS (SELECT id FROM orders) SELECT COUNT(*)::int AS n FROM orders");
+  check("scope: a CTE named like a table can't escape", s.rows?.[0]?.n === mine, JSON.stringify(s).slice(0, 160));
+  s = await q(`SELECT COUNT(*)::int AS n FROM "orders"`);
+  check("scope: quoted table name is scoped", s.rows?.[0]?.n === mine, JSON.stringify(s).slice(0, 160));
+  s = await q("SELECT COUNT(*)::int AS n FROM ORDERS");
+  check("scope: upper-case table name is scoped", s.rows?.[0]?.n === mine, JSON.stringify(s).slice(0, 160));
+  s = await q("SELECT COUNT(*)::int AS n FROM stores");
+  check("scope: only the current store row is visible", s.rows?.[0]?.n === 1, JSON.stringify(s).slice(0, 160));
+  const members = rows(await db.execute(sql`SELECT COUNT(DISTINCT user_id)::int AS n FROM user_stores WHERE store_id = ${store.id}`))[0].n;
+  s = await q("SELECT COUNT(*)::int AS n FROM users");
+  check("scope: only this store's team is visible", s.rows?.[0]?.n === members, `${JSON.stringify(s.rows?.[0])} vs ${members}`);
+  const att = rows(await db.execute(sql`SELECT COUNT(*)::int AS n FROM attendance WHERE user_id IN (SELECT user_id FROM user_stores WHERE store_id = ${store.id})`))[0].n;
+  s = await q("SELECT COUNT(*)::int AS n FROM attendance");
+  check("scope: attendance is this store's team only", s.rows?.[0]?.n === att, `${JSON.stringify(s.rows?.[0])} vs ${att}`);
+  if (other) {
+    const O: CopilotToolContext = { ...A, storeId: other.id, storeName: other.store_name };
+    const theirs = await cnt("orders", other.id);
+    s = await q(`SELECT COUNT(*)::int AS n FROM orders WHERE store_id = '${other.id}'`);
+    check("scope: asking for another store's id returns nothing", s.rows?.[0]?.n === 0, JSON.stringify(s).slice(0, 160));
+    s = await q("SELECT COUNT(*)::int AS n FROM orders", O);
+    check("scope: the other store sees only its own orders", s.rows?.[0]?.n === theirs && theirs !== mine, `${JSON.stringify(s.rows?.[0])} vs ${theirs}`);
+    // Products only one store sells must not show up in the other.
+    const onlyMine = rows(await db.execute(sql`SELECT oi.product_name FROM order_items oi
+      WHERE oi.store_id = ${store.id} AND NOT EXISTS (SELECT 1 FROM order_items x WHERE x.store_id = ${other.id} AND x.product_name = oi.product_name)
+      GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1`))[0]?.product_name;
+    if (onlyMine) {
+      s = await q(`SELECT COUNT(*)::int AS n FROM order_items WHERE product_name = '${String(onlyMine).replace(/'/g, "''")}'`, O);
+      check("scope: this store's products don't appear in the other store", s.rows?.[0]?.n === 0, JSON.stringify(s).slice(0, 160));
+    }
+  }
+  const leftover = rows(await db.execute(sql`SELECT COUNT(*)::int AS n FROM pg_class WHERE relpersistence = 't' AND relkind = 'v'`))[0].n;
+  check("scope: no temp views left behind", leftover === 0, String(leftover));
 
   // ── Runtime guards ────────────────────────────────────────────────────
   let r: any = await q("SELECT COUNT(*) AS n FROM order_items a CROSS JOIN order_items b CROSS JOIN order_items c");

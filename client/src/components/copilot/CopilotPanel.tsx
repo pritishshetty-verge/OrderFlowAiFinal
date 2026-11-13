@@ -13,7 +13,7 @@ import { getCopilotFocus } from "@/lib/copilot-focus";
 import { CopilotMarkdown } from "./CopilotMarkdown";
 import { ActionCard } from "./ActionCard";
 import { type ActionCardData, executeProposal, isProposal, outcomeLine } from "./actions";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, getActiveStoreId } from "@/lib/queryClient";
 
 type Role = "user" | "assistant";
 interface Msg {
@@ -69,7 +69,8 @@ const STARTERS = [
 ];
 
 export default function CopilotPanel() {
-  const { activeStoreId } = useActiveStore();
+  const { activeStoreId, activeStore } = useActiveStore();
+  const storeLabel = activeStore?.storeName ?? null;
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>(() => loadChat(activeStoreId));
   // Store the current `messages` belong to. Kept in state (not read from
@@ -148,6 +149,13 @@ export default function CopilotPanel() {
     async (text: string) => {
       const q = text.trim();
       if (!q || pending) return;
+      // Flo answers for exactly one store. Never send without it: the server
+      // refuses, rather than guessing a store.
+      const storeForRequest = activeStoreId ?? getActiveStoreId();
+      if (!storeForRequest) {
+        setError("Pick a store in the sidebar first.");
+        return;
+      }
       setError(null);
       const history: Msg[] = [...messages, { role: "user", content: q }];
       // Append an empty assistant turn we stream into.
@@ -183,8 +191,10 @@ export default function CopilotPanel() {
       abortRef.current = controller;
       discardRef.current = false;
       try {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (activeStoreId) headers[STORE_HEADER_NAME] = activeStoreId;
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          [STORE_HEADER_NAME]: storeForRequest,
+        };
         const res = await fetch("/api/copilot/message", {
           method: "POST",
           headers,
@@ -353,7 +363,9 @@ ${ev.delta}` : ev.delta);
                 </div>
                 <div>
                   <div className="text-sm font-semibold text-foreground">Flo</div>
-                  <div className="text-[11px] text-muted-foreground">OrderFlow assistant · actions need your OK</div>
+                  <div className="text-[11px] text-muted-foreground" data-flo-store={storeLabel ?? ""}>
+                    {storeLabel ? `${storeLabel} only` : "OrderFlow assistant"} · actions need your OK
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -382,7 +394,7 @@ ${ev.delta}` : ev.delta);
               {messages.length === 0 && (
                 <div className="mt-6 text-center">
                   <p className="text-sm text-muted-foreground">
-                    Hi, I'm Flo. Ask me about orders, NDRs, delivery, sales, products, stuck orders, your team, payroll or integrations.
+                    Hi, I'm Flo. {storeLabel ? `I'm looking at ${storeLabel} only. ` : ""}Ask me about orders, NDRs, delivery, sales, products, stuck orders, your team, payroll or integrations.
                   </p>
                   <div className="mt-4 flex flex-col gap-2">
                     {STARTERS.map((s) => (

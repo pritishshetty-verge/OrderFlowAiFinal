@@ -110,7 +110,7 @@ async function main() {
     check(`store: knows it's on ${s2.store_name}`, r.status === 200 && r.text.includes(s2.store_name), r.text?.slice(0, 80));
   }
   r = await post(ask("Which store am I on? Reply with only the store name."), { user: admin.id });
-  check("store: no header → falls back to a real store", r.status === 200 && stores.some((s) => r.text.includes(s.store_name)));
+  check("store: no store header → refused (never guesses a store)", r.status === 400 && /store/i.test(r.json?.error ?? ""), JSON.stringify(r).slice(0, 160));
 
   // ── SSE contract ─────────────────────────────────────────────────────
   r = await post(ask("What was the delivery rate in March 2026? One line."), { user: admin.id, store: s1.id });

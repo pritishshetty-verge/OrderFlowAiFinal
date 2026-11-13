@@ -262,6 +262,15 @@ export function summarizeActionTool(name: string, input: any): string | null {
 // ─────────────────────────────────────────────────────────────────────
 
 export async function runActionTool(name: string, input: any, ctx: CopilotToolContext): Promise<any> {
+  const r = await buildAction(name, input, ctx);
+  // Every card says which store it acts on.
+  if (r && typeof r === "object" && "proposal" in r && ctx.storeName) {
+    (r as { proposal: ActionProposal }).proposal.details.unshift({ label: "Store", value: ctx.storeName });
+  }
+  return r;
+}
+
+async function buildAction(name: string, input: any, ctx: CopilotToolContext): Promise<any> {
   switch (name) {
     case "propose_confirm_order": return confirmOrder(input, ctx);
     case "propose_cancel_order": return cancelOrder(input, ctx);

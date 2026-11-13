@@ -9514,12 +9514,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Store scope comes from the shared middleware (X-Active-Store-Id).
-      // A bad header is rejected there (stashed error → 4xx here) — never
-      // silently answer for a different store. With no header the
-      // middleware falls back to the oldest store; if that one is inactive,
-      // use the oldest active store instead.
+      // A bad header is rejected there (stashed error → 4xx here). With NO
+      // header the middleware falls back to the oldest store — for Flo that
+      // would mean silently answering about a store the user isn't looking
+      // at, so require the store to be sent explicitly.
       const scope = requireStoreScope(req, res);
       if (!scope) return;
+      if (scope.isFallback) {
+        return res.status(400).json({ error: "No store selected. Pick a store in the sidebar and try again." });
+      }
       const { stores: storesTable } = await import("@shared/schema");
       const [scoped] = await db
         .select({ id: storesTable.id, name: storesTable.storeName, isActive: storesTable.isActive })
@@ -9531,19 +9534,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (scoped?.isActive) {
         storeId = scoped.id;
         storeName = scoped.name ?? null;
-      } else if (!scope.isFallback) {
-        return res.status(400).json({ error: "That store is inactive." });
       } else {
-        const [live] = await db
-          .select({ id: storesTable.id, name: storesTable.storeName })
-          .from(storesTable)
-          .where(eq(storesTable.isActive, true))
-          .orderBy(storesTable.createdAt)
-          .limit(1);
-        storeId = live?.id ?? null;
-        storeName = live?.name ?? null;
+        return res.status(400).json({ error: "That store is inactive." });
       }
-      if (!storeId) return res.status(400).json({ error: "No active store configured" });
 
       const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
       // Client-reported (path + open record label). Untrusted: strip control

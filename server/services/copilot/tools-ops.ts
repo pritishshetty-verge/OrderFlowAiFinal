@@ -655,7 +655,8 @@ async function systemHealth(input: any, ctx: CopilotToolContext) {
     shopifyWebhooks: webhooks[0] ?? null,
     courierEvents: inbound.map(({ secs_since_last, ...x }) => ({ ...x, lastEventAge: humanAge(num(secs_since_last) / 60) })),
     lastPayrollSyncRun: payrollRun[0] ?? null,
-    note: "A long gap since the last order or courier event during business hours usually means a webhook or sync problem.",
+    sharedAcrossStores: ["courierEvents", "lastPayrollSyncRun"],
+    note: "Orders, Shopify write-back and Shopify webhooks are for this store. Courier events and the payroll sync run are shared by all stores — say so if you mention them. A long gap since the last order or courier event during business hours usually means a webhook or sync problem.",
   };
 }
 
