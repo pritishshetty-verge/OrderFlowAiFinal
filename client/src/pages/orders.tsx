@@ -23,6 +23,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useScope } from "@/contexts/scope-context";
 import { useActiveStore } from "@/hooks/use-store";
+import { setCopilotFocus } from "@/lib/copilot-focus";
 import type { Order as BackendOrder, User } from "@shared/schema";
 
 // Extended backend order type with joined user data from API
@@ -96,6 +97,11 @@ export default function OrdersPage({ userRole = "admin" }: OrdersPageProps) {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  // Tell the Ops Copilot which order is open in the preview.
+  useEffect(() => {
+    setCopilotFocus(isQuickPreviewOpen && selectedOrder ? `order #${String(selectedOrder.shopifyOrderId).replace(/^#/, "")}` : null);
+    return () => setCopilotFocus(null);
+  }, [isQuickPreviewOpen, selectedOrder]);
   // Initialize search from URL param for persistence on refresh
   const initialSearch = useMemo(() => {
     const params = new URLSearchParams(searchString);

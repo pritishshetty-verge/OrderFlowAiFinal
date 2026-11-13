@@ -10,6 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ScopeProvider } from "@/contexts/scope-context";
 import { AuthProvider } from "@/hooks/use-auth";
 import { StoreProvider } from "@/hooks/use-store";
+import CopilotPanel from "@/components/copilot/CopilotPanel";
 import { StoreSwitchProgress } from "@/components/store-switch-progress";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
@@ -382,6 +383,10 @@ export default function App() {
                   </div>
                 </SidebarWithHover>
                 <Toaster />
+                {/* Ops Copilot — admin/developer only (server enforces too). */}
+                {isLoggedIn && !isLoginPage && !isSignupPage && (isLoggedIn === "admin" || isLoggedIn === "developer") && (
+                  <CopilotPanel />
+                )}
               </ScopeProvider>
             </StoreProvider>
           </AuthProvider>

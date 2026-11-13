@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
@@ -30,12 +30,18 @@ import type { Order as BackendOrder } from "@shared/schema";
 import type { Order } from "@/components/orders-table";
 import { apiRequest } from "@/lib/queryClient";
 import { useActiveStore } from "@/hooks/use-store";
+import { setCopilotFocus } from "@/lib/copilot-focus";
 
 export default function FulfilPage() {
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(-1);
   const [isQuickPreviewOpen, setIsQuickPreviewOpen] = useState(false);
+  // Tell the Ops Copilot which order is open in the preview.
+  useEffect(() => {
+    setCopilotFocus(isQuickPreviewOpen && selectedOrder ? `order #${String(selectedOrder.shopifyOrderId).replace(/^#/, "")}` : null);
+    return () => setCopilotFocus(null);
+  }, [isQuickPreviewOpen, selectedOrder]);
   const [courierSelectionModalOpen, setCourierSelectionModalOpen] = useState(false);
   const [selectedOrderForCourier, setSelectedOrderForCourier] = useState<BackendOrder | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
